@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav_planner::contract::{BoundZoneExempt, LegView, RouteView, WildernessView};
+use nav_planner::contract::{BoundZoneExempt, LegView, MultiwayView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 
@@ -22,6 +22,9 @@ use std::future::Future;
 pub struct Estimate<'a> {
     pub zones: Option<ZoneTableView<'a>>,
     pub wilderness: WildernessView<'a>,
+    /// Multi-combat map cells. [`MultiwayView::none`] keeps every attacker
+    /// summed (an absent table never grants a single-way claim).
+    pub multiway: MultiwayView<'a>,
     pub risks: &'a RiskTables,
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
@@ -930,7 +933,32 @@ fn timeline_bound(
     poison: super::timeline::PoisonCharge,
 ) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy> {
     super::timeline::with_event_buffer(|events| {
-        let summary = super::timeline::build_timeline(
+        // Single-way combat (content `npc_combat.rs2:372-389`) lets one
+        // attacker at a time hit the player. The schedule that counts it is
+        // an upper bound of the real process, and so is the all-summed
+        // schedule; the smaller of the two bounds is still an upper bound.
+        let single = super::timeline::build_single_way_timeline(
+            path,
+            plan,
+            input,
+            context.combat,
+            context.risks,
+            poison,
+            context.multiway,
+            events,
+        );
+        let single = match single {
+            Ok(summary) if summary.single_way_rows == 0 => {
+                // Nothing collapsed: this schedule is the all-summed one.
+                let bound = super::odds::death_bound(events.events(), input.hp)?;
+                return Ok((summary, bound));
+            }
+            Ok(summary) => super::odds::death_bound(events.events(), input.hp)
+                .map(|bound| (summary, bound))
+                .ok(),
+            Err(_) => None,
+        };
+        let summed = super::timeline::build_timeline(
             path,
             plan,
             input,
@@ -938,10 +966,25 @@ fn timeline_bound(
             context.risks,
             poison,
             events,
-        )?;
-        let bound = super::odds::death_bound(events.events(), input.hp)?;
-        Ok((summary, bound))
+        )
+        .and_then(|summary| {
+            super::odds::death_bound(events.events(), input.hp).map(|bound| (summary, bound))
+        });
+        match (single, summed) {
+            (Some(single), Ok(summed)) => Ok(if score(single.1) <= score(summed.1) {
+                single
+            } else {
+                summed
+            }),
+            (Some(single), Err(_)) => Ok(single),
+            (None, summed) => summed,
+        }
     })
+}
+
+/// The admission statistic of a bound: the closed form plus its rounding guard.
+fn score(bound: super::odds::DeathBound) -> f64 {
+    bound.bound + f64::from(bound.visits) * f64::EPSILON
 }
 
 async fn timeline_bound_cooperative<F, U>(

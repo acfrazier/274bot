@@ -1301,6 +1301,12 @@ pub struct NpcNameRow {
     /// onto whatever protect we are not using. Combat holds one protect.
     #[serde(default)]
     pub counter_protect: bool,
+    /// True when the NPC's attack records its combat variables
+    /// (`npc_set_attack_vars`) only on a hit, so a second NPC may attack the
+    /// player after the first one's misses (content `mortton_shades.rs2:239-246`).
+    /// Every shared attack records them on every attack (`npc_combat_melee.rs2:38`).
+    #[serde(default)]
+    pub combat_vars_on_hit: bool,
     /// Source poison severity before conversion to per-tick damage. Absent means
     /// that this selected row carries no explicit poison severity fact.
     #[serde(default)]

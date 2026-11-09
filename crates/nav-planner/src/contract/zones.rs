@@ -428,3 +428,60 @@ impl<'a> WildernessView<'a> {
         self.rules.level(tile)
     }
 }
+
+/// Multi-combat map cells of the selected pack (`maps/multiway.csv`).
+///
+/// Content `map_multiway(coord)` reads the engine's 8x8 zone map
+/// (`GameMap.ts:102-105`). A pack built without that file has an empty key
+/// list; the view then reports every tile as not known to be single-way, so
+/// an absent table never grants a single-way claim. No public key storage.
+#[derive(Clone, Copy, Debug)]
+pub struct MultiwayView<'a> {
+    keys: &'a [u32],
+}
+
+impl<'a> MultiwayView<'a> {
+    pub(crate) fn new(keys: &'a [u32]) -> Self {
+        Self { keys }
+    }
+
+    /// A view with no table: [`Self::single_way_around`] is always false.
+    pub const fn none() -> Self {
+        Self { keys: &[] }
+    }
+
+    /// True when the pack carries a multiway table.
+    pub fn known(self) -> bool {
+        !self.keys.is_empty()
+    }
+
+    /// True when every 8x8 map cell within `margin` tiles of `tile` is known
+    /// to be outside the multiway table. An absent table, an unpackable tile
+    /// or a negative coordinate is false (never a single-way claim).
+    pub fn single_way_around(self, tile: WorldTile, margin: u8) -> bool {
+        if !self.known() || tile.x < 0 || tile.z < 0 || !(0..4).contains(&tile.level) {
+            return false;
+        }
+        let margin = i32::from(margin);
+        let x0 = ((tile.x - margin).max(0)) >> 3;
+        let x1 = (tile.x + margin) >> 3;
+        let z0 = ((tile.z - margin).max(0)) >> 3;
+        let z1 = (tile.z + margin) >> 3;
+        for cell_x in x0..=x1 {
+            for cell_z in z0..=z1 {
+                let origin = WorldTile {
+                    x: cell_x << 3,
+                    z: cell_z << 3,
+                    level: tile.level,
+                };
+                let Ok(key) = crate::pack::pack_tile_key(origin) else {
+                    return false;
+                };
+                if self.keys.binary_search(&key).is_ok() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}

@@ -981,17 +981,38 @@ all-zone exemption. An implicit endpoint-completion grant never removes that ref
 Live and estimated attackers are always summed, even when their identities may
 overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
 distance-limited or count-limited scene cannot certify coverage or erase a
-retained live row. Single-way flags stay false (no eligibility source yet).
+retained live row. The per-row single-way flags stay false; single-way combat
+is counted in the timeline instead (below).
 
 Admission builds one attack timeline and computes an upper bound on death.
 Each exposed NPC contributes one attack per its own attack interval, including
-the first exposed tick. All zones and retained live attackers are summed.
+the first exposed tick. All zones and retained live attackers are summed,
+except where single-way combat applies (below).
 Curated hazards and already-launched hits contribute certain damage.
 The check credits no food, protection prayer, or escape action. It admits a
 crossing when the bound is at most 1%. Display-only damage and floor totals
 saturate at their field limits; they do not turn a numeric bound into overflow.
 Unsupported facts, missing input, input locks, and a schedule above the event
 limit remain explicit `Unknown` verdicts.
+
+In single-way combat the content lets one NPC at a time attack a player:
+`npc_check_notcombat` and `npc_check_notcombat_self`
+(`npc_combat.rs2:372-389`) run at the start of every shared melee, ranged and
+magic attack and refuse it while the player was in combat within 8 ticks and
+`%aggressive_npc` is another NPC. They do nothing on a multiway map cell
+(`maps/multiway.csv`, in the pack's multiway section) or for an NPC with
+`npc_forcemulti`. The timeline counts this when the pack carries a multiway
+table. Rows of one NPC kind (same maximum hit, hit chance and attack interval,
+interval of at most 8 ticks) whose intervals overlap become one cluster that
+attacks once per interval over the union of its intervals, if every route tile
+it can hit the player on, widened by the NPC's reach, lies on a cell outside the
+table. A cluster of an NPC that records combat variables only on a hit
+(`combat_vars_on_hit`, the Mort'ton shades) rolls its damage on every one of
+those slots, because a second NPC may attack after misses and hits stay at
+least one interval apart. Admission takes the smaller of this bound and the
+all-summed bound; both are upper bounds. A pack without a multiway table, a
+multiway cell near the route, a `forcemulti` NPC, a bespoke attack and a ninth
+overlapping kind keep their own schedules.
 
 Known poison retains its largest observed pulse until a confirmed cure or
 death and respawn. An onset line invalidates an older severity. The live
@@ -1050,6 +1071,19 @@ only NPCs present in a zone; on revision 289, eleven poisoned rows yield a
 maximum severity of 55 and a bound of 11 damage per pulse.
 If any selected NPC row lacks poison severity, the bound is `u8::MAX` and that
 kind is `MissingFacts`; an absent schema field never means zero poison.
+
+The extractor recognizes Mort'ton's shade family from pinned content: the
+`[ai_opplayer2,_shade]` handler and the `shade_attack`, `shade_meleeattack`,
+`shade_playerhit` and `npc_melee_attack_roll` routines of
+`minigames/game_mortton/scripts/mortton_shades.rs2` and
+`npc_combat_melee.rs2`, compared by normalized text. A Loar, Phrin, Riyl, Asyn
+or Fiyr Shadow (`next_npc_type` set) has `combat_transform` of its Shade, and
+the Shade attacks in place with the shared melee roll: it is not bespoke, and
+`combat_vars_on_hit` is true because `shade_playerhit` records combat variables
+only on a hit. A changed routine leaves both rows bespoke and the awakening
+unknown (`MissingFacts` at admission). The shade's hunt rule
+(`huntmode=shades`, `mortton_shades.hunt`) is not modeled: a shadow counts as
+attacking wherever the model already counts an aggressive NPC.
 
 | Revision 289 NPC | Maximum event | Attack interval |
 | --- | ---: | ---: |

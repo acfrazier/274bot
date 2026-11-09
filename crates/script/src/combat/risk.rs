@@ -123,6 +123,10 @@ pub mod consts {
     pub const POISON_PERIOD: i32 = 30;
     /// Admitted chance of death over one route (operator Q1, 2026-10-29).
     pub const DEATH_BOUND: f64 = 0.01;
+    /// Ticks after the last combat the player had before another NPC may
+    /// attack in single-way combat: content `npc_combat.rs2:374-378`
+    /// (`lastcombat + 8 > map_clock` refuses the attack).
+    pub const SINGLE_WAY_LULL: u8 = 8;
     /// Shared cap for scheduled attacks, fixed hazards and poison pulses.
     pub const MAX_EVENTS: usize = 2048;
 }
