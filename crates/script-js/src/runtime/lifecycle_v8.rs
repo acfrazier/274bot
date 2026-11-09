@@ -31,6 +31,8 @@ struct RegistryState {
     by_name: RefCell<HashMap<String, usize>>,
     by_origin: RefCell<HashMap<String, usize>>,
     runtime_context: RefCell<Option<Arc<ScriptRuntimeContext>>>,
+    /// The run view handed to scripts, cached for the generation it was built for.
+    context_view: RefCell<Option<(u64, v8::Global<v8::Object>)>>,
 }
 struct SettingsListener {
     callback: Option<v8::Global<v8::Function>>,
@@ -300,6 +302,17 @@ fn dispatch_runtime<'s>(
         ));
     }
     let operation = operation.to_rust_string_lossy(scope);
+    runtime_op(scope, &operation, args.get(1), args.get(2))
+}
+
+/// One ScriptRunner runtime operation. `arg1` is the run generation the
+/// caller holds (a BigInt) when it holds one; `arg2` is a setter's value.
+fn runtime_op<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    operation: &str,
+    arg1: v8::Local<'s, v8::Value>,
+    arg2: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let state = state_for_scope(scope)
         .ok_or_else(|| cb::type_error(scope, "ScriptRunner runtime state is not installed"))?;
     let context = state.runtime_context.borrow().as_ref().map(Arc::clone);
@@ -307,31 +320,36 @@ fn dispatch_runtime<'s>(
     let run_state = snapshot
         .as_ref()
         .map_or(RuntimeRunState::Idle, |snapshot| snapshot.state);
-    let requested_generation = generation_arg(args.get(1));
+    let requested_generation = generation_arg(arg1);
     let generation_matches = match requested_generation {
         None => true,
         Some(requested) => snapshot
             .as_ref()
             .is_some_and(|snapshot| snapshot.generation == requested),
     };
-    match operation.as_str() {
+    match operation {
         "isBotManifest" => {
-            let is_manifest = is_bot_manifest(scope, args.get(1))?;
+            let is_manifest = is_bot_manifest(scope, arg1)?;
             Ok(v8::Boolean::new(scope, is_manifest).into())
         }
         "hasContext" => Ok(v8::Boolean::new(scope, context.is_some()).into()),
-        "generation" => {
-            let value: v8::Local<'s, v8::Value> = match snapshot {
-                Some(snapshot) => v8::BigInt::new_from_u64(scope, snapshot.generation).into(),
-                None => v8::null(scope).into(),
-            };
-            Ok(value)
+        "contextView" => context_view(scope, &state, snapshot.as_ref().map(|s| s.generation)),
+        "activeContext" => {
+            if matches!(
+                run_state,
+                RuntimeRunState::Running | RuntimeRunState::Paused | RuntimeRunState::Stopping
+            ) {
+                context_view(scope, &state, snapshot.as_ref().map(|s| s.generation))
+            } else {
+                Ok(v8::null(scope).into())
+            }
         }
-        "isCurrent" => Ok(v8::Boolean::new(
-            scope,
-            requested_generation.is_some() && generation_matches,
-        )
-        .into()),
+        "activeEvent" => {
+            if requested_generation.is_none() || !generation_matches {
+                return Ok(v8::null(scope).into());
+            }
+            posted_active_event(scope)
+        }
         "state" => Ok(cb::string(
             scope,
             if generation_matches {
@@ -371,7 +389,7 @@ fn dispatch_runtime<'s>(
             else {
                 return Ok(v8::Boolean::new(scope, false).into());
             };
-            let value = args.get(2);
+            let value = arg2;
             let hold = if value.is_null_or_undefined() {
                 None
             } else {
@@ -432,6 +450,132 @@ fn generation_arg(value: v8::Local<v8::Value>) -> Option<u64> {
     let token = v8::Local::<v8::BigInt>::try_from(value).ok()?;
     let (generation, lossless) = token.u64_value();
     lossless.then_some(generation)
+}
+
+/// The run view of generation `generation`: one object per generation, so
+/// `ScriptRunner.ctx` and `Scheduler.active` return the same identity until the
+/// generation changes. `null` when no run context is bound.
+fn context_view<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &RegistryState,
+    generation: Option<u64>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let Some(generation) = generation else {
+        *state.context_view.borrow_mut() = None;
+        return Ok(v8::null(scope).into());
+    };
+    if let Some((cached, view)) = state.context_view.borrow().as_ref() {
+        if *cached == generation {
+            return Ok(v8::Local::new(scope, view).into());
+        }
+    }
+    let view = build_context_view(scope, generation)?;
+    *state.context_view.borrow_mut() = Some((generation, v8::Global::new(scope, view)));
+    Ok(view.into())
+}
+
+/// The view's `state`, `aborted`, `stopReason`, `activeEvent` and
+/// `watchdogHold` accessors and its `abortWaiters` method. Each reads the live
+/// run through the runtime dispatcher, bound to this generation.
+fn build_context_view<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    generation: u64,
+) -> JsResult<'s, v8::Local<'s, v8::Object>> {
+    let view = v8::Object::new(scope);
+    let token: v8::Local<v8::Value> = v8::BigInt::new_from_u64(scope, generation).into();
+    for (key, getter, setter) in [
+        ("state", "state", None),
+        ("aborted", "aborted", None),
+        ("stopReason", "stopReason", None),
+        ("activeEvent", "activeEvent", None),
+        ("watchdogHold", "watchdogHold", Some("setWatchdogHold")),
+    ] {
+        let getter = view_function(scope, getter, token)?;
+        let setter: v8::Local<v8::Value> = match setter {
+            Some(operation) => view_function(scope, operation, token)?.into(),
+            None => v8::undefined(scope).into(),
+        };
+        let mut descriptor = v8::PropertyDescriptor::new_from_get_set(getter.into(), setter);
+        descriptor.set_enumerable(true);
+        descriptor.set_configurable(false);
+        define_view_property(scope, view, key, &descriptor)?;
+    }
+    let abort_waiters = view_function(scope, "abortWaiters", token)?;
+    let mut descriptor = v8::PropertyDescriptor::new_from_value(abort_waiters.into());
+    descriptor.set_enumerable(true);
+    descriptor.set_configurable(false);
+    define_view_property(scope, view, "abortWaiters", &descriptor)?;
+    Ok(view)
+}
+
+fn define_view_property<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    view: v8::Local<'s, v8::Object>,
+    key: &str,
+    descriptor: &v8::PropertyDescriptor,
+) -> JsResult<'s, ()> {
+    let key = v8::String::new(scope, key)
+        .ok_or_else(|| cb::type_error(scope, "ScriptRunner context key could not be created"))?;
+    let defined = cb::catching(scope, |scope| {
+        view.define_property(scope, key.into(), descriptor)
+    })?;
+    if defined {
+        Ok(())
+    } else {
+        Err(cb::type_error(
+            scope,
+            "ScriptRunner context property could not be defined",
+        ))
+    }
+}
+
+/// A native function that runs `operation` for the generation `token`.
+fn view_function<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    operation: &str,
+    token: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Function>> {
+    let operation = cb::string(scope, operation);
+    let data = v8::Array::new_with_elements(scope, &[operation, token]);
+    v8::Function::builder(context_view_callback)
+        .data(data.into())
+        .build(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptRunner context function could not be created"))
+}
+
+fn context_view_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let data = args.data();
+        let operation = cb::get_index(scope, data, 0)?.to_rust_string_lossy(scope);
+        let token = cb::get_index(scope, data, 1)?;
+        runtime_op(scope, &operation, token, args.get(0))
+    })();
+    cb::finish(scope, rv, result);
+}
+
+/// The Guardian event the host posted, or `null`.
+fn posted_active_event<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let host = cb::get(scope, global.into(), "__rs2b0t_host")?;
+    if host.is_null_or_undefined() {
+        return Ok(v8::null(scope).into());
+    }
+    let snapshot = cb::get(scope, host, "snapshot")?;
+    if snapshot.is_null_or_undefined() {
+        return Ok(v8::null(scope).into());
+    }
+    let event = cb::get(scope, snapshot, "guardian_active_event")?;
+    if event.is_null_or_undefined() {
+        Ok(v8::null(scope).into())
+    } else {
+        Ok(event)
+    }
 }
 
 #[derive(Clone, Copy)]

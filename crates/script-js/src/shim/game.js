@@ -5,7 +5,6 @@ import { Execution } from '../execution/Execution.js';
 import { host, snap, notImpl, proxy, queue, optionalText, runMachine } from '../../shim/_kernel.js';
 
 const COM_MODE_VARP = 43;
-const COMBAT_TAB = 0;
 const RUN_VARP = 173;
 export const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
@@ -20,17 +19,12 @@ export function facingPlayer(faceEntity) {
     return globalThis.rustyscript.functions.__rs2b0t_facing_player(Number(faceEntity));
 }
 
-/** The active combat-tab root, or -1 when that tab is not posted. */
-function combatRoot() {
-    return reader.sideTabInterface(COMBAT_TAB);
-}
+const clientFacts = (kind, method, ...args) =>
+    globalThis.__rs2b0t_selected_facts(kind, method, ...args);
 
 /** The posted combat-tab style buttons, or null until the tab has loaded. */
 function offeredCombatModes() {
-    const root = combatRoot();
-    if (root < 0) return null;
-    const labels = reader.selectButtonLabelsByVarp(root, COM_MODE_VARP);
-    return labels.length > 0 ? labels : null;
+    return clientFacts('client-adapter-reader', 'combatStyleLabels');
 }
 
 /** The isolate's registered Rust functions. */
@@ -48,10 +42,9 @@ function matchCombatRow(style) {
 }
 
 function selectCombatMode(mode) {
-    const root = combatRoot();
-    if (root < 0) return false;
-    const btn = reader.selectButtonByVarp(root, COM_MODE_VARP, mode);
-    return btn !== -1 && actions.ifButton(btn);
+    // One native decision: the posted style button for `mode`, else null.
+    const btn = clientFacts('client-adapter-action', 'selectCombatMode', mode);
+    return btn !== null && actions.ifButton(btn);
 }
 
 /** One Rust call: the posted magic-tab component for `spell`, else -1. */
@@ -211,11 +204,11 @@ export const Game = new Proxy(
             return snap().attacked_by_player === true;
         },
         async castOnNpc(spell, npc) {
-            const component = spellButtonComponent(spell);
-            if (component < 0) return false;
+            // The native machine looks the spell's posted component up and
+            // starts the cast; an unknown spell or target is `false`.
             const out = await runMachine('cast-npc', {
-                component_id: component,
-                index: npc.index,
+                spell: String(spell ?? ''),
+                index: npc?.index ?? -1,
             });
             return out.kind === 'done' && out.value === true;
         },

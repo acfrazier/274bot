@@ -262,6 +262,8 @@ pub(super) fn action<'s>(
             let open = bool_property(scope, snapshot, "count_dialog_open")?;
             Ok(v8::Boolean::new(scope, valid && open).into())
         }
+        // The combat-tab button that selects the style, once the tab is posted.
+        "selectCombatMode" => select_combat_mode(scope, snapshot, facts, arg0),
         other => Err(format!("unsupported ClientAdapter action: {other}")),
     }
 }
@@ -433,6 +435,7 @@ pub(super) fn read<'s>(
         "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot),
         "questStatuses" => quest_statuses(scope, snapshot, facts),
         "sideTabInterface" => side_tab_interface(scope, snapshot, arg0),
+        "combatStyleLabels" => combat_style_labels(scope, snapshot, facts),
         "attached" => bool_property_value(scope, facts, "attached"),
         "mapBuildBase" => map_build_base(scope, facts),
         "modalCloseObservation" => modal_close_observation(scope, snapshot, facts),
@@ -1523,6 +1526,50 @@ fn combat_tab_style_rows<'s>(
 /// the combat tab.
 const COMBAT_MODE_VARP: i32 = 43;
 const COMBAT_SIDE_TAB: i32 = 0;
+
+/// The combat tab's posted root component, when the tab has loaded.
+fn combat_root<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+) -> Result<Option<v8::Local<'s, v8::Value>>, String> {
+    let root = side_tab_interface_value(scope, snapshot, COMBAT_SIDE_TAB)?;
+    Ok((root >= 0).then(|| v8::Integer::new(scope, root).into()))
+}
+
+/// The posted combat-tab style buttons, or `null` until the tab has loaded.
+fn combat_style_labels<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+    facts: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(root) = combat_root(scope, snapshot)? else {
+        return Ok(json_null(scope));
+    };
+    let varp = v8::Integer::new(scope, COMBAT_MODE_VARP).into();
+    let labels = select_button_labels_by_varp(scope, snapshot, facts, root, varp)?;
+    match array(labels) {
+        Some(rows) if rows.length() > 0 => Ok(labels),
+        _ => Ok(json_null(scope)),
+    }
+}
+
+/// The combat-tab button that selects style `mode`, or `null`.
+fn select_combat_mode<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+    facts: v8::Local<'s, v8::Value>,
+    mode: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(root) = combat_root(scope, snapshot)? else {
+        return Ok(json_null(scope));
+    };
+    let varp = v8::Integer::new(scope, COMBAT_MODE_VARP).into();
+    let button = select_button_by_varp(scope, snapshot, facts, root, varp, mode)?;
+    match js_i32(scope, button)? {
+        Some(id) if id != -1 => Ok(button),
+        _ => Ok(json_null(scope)),
+    }
+}
 
 fn select_button_by_varp<'s>(
     scope: &mut v8::HandleScope<'s>,

@@ -2,47 +2,13 @@
 // the clear hook; Stop dispatch lands with the Execution wiring);
 // `paintControls` advertises the host's Pause/Resume and Stop controls as
 // paint buttons with fixed ids. The host owns their labels and commands;
-// a click on them never returns to the script.
-import { HOST_CONTROLS, snap } from '../shim/_kernel.js';
+// a click on them never returns to the script. The run context view
+// (`ctx`) is built, cached per generation and read by the native runtime
+// dispatcher; this shim keeps no state.
+import { HOST_CONTROLS } from '../shim/_kernel.js';
 
 const host = () => globalThis.__rs2b0t_host || {};
-const runtime = (...args) => globalThis.__rs2b0t_script_runtime(...args);
-let context;
-let contextGeneration;
-
-function contextView() {
-    const generation = runtime('generation');
-    if (generation === null) {
-        context = undefined;
-        contextGeneration = undefined;
-        return null;
-    }
-    if (context && contextGeneration === generation) return context;
-    contextGeneration = generation;
-    context = Object.defineProperties({}, {
-        state: { enumerable: true, get: () => runtime('state', generation) },
-        aborted: { enumerable: true, get: () => runtime('aborted', generation) },
-        stopReason: { enumerable: true, get: () => runtime('stopReason', generation) },
-        activeEvent: {
-            enumerable: true,
-            get: () => runtime('isCurrent', generation)
-                ? (snap().guardian_active_event ?? null)
-                : null,
-        },
-        watchdogHold: {
-            enumerable: true,
-            get: () => runtime('watchdogHold', generation),
-            set: (value) => runtime('setWatchdogHold', generation, value),
-        },
-        abortWaiters: {
-            enumerable: true,
-            value: () => runtime('abortWaiters', generation),
-        },
-    });
-    return context;
-}
-
-globalThis.__rs2b0t_script_context_view = contextView;
+const runtime = (operation) => globalThis.__rs2b0t_script_runtime(operation);
 
 export const ScriptRunner = {
     get state() {
@@ -52,7 +18,7 @@ export const ScriptRunner = {
         return runtime('meta');
     },
     get ctx() {
-        return contextView();
+        return runtime('contextView');
     },
     pause() {
         runtime('pause');

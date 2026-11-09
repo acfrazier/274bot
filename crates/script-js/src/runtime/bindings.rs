@@ -159,7 +159,7 @@ pub(crate) fn resolve_combat_style_modes(
 /// The posted magic-tab button whose label names `spell`, else `-1`. The
 /// magic tab posts one row per target button; the component id is Rust's, not
 /// a JS row scan.
-fn posted_spell_button_com(spell: &str) -> i32 {
+pub(crate) fn posted_spell_button_com(spell: &str) -> i32 {
     let wanted = spell.trim().to_ascii_lowercase();
     if wanted.is_empty() {
         return -1;

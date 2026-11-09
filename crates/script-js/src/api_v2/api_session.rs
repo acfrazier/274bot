@@ -479,10 +479,12 @@ impl Family for ProgressQuery {
 }
 
 /// One awaited typed spell-on-NPC action; the host native machine owns all
-/// target validation, dispatch and receipt evidence.
+/// target validation, dispatch and receipt evidence. The spell's magic-tab
+/// component is looked up here, in the posted rows; a spell that is not posted
+/// or a negative target index finishes `false` without a request.
 #[derive(Deserialize)]
 pub(crate) struct CastNpcArgs {
-    component_id: i32,
+    spell: String,
     index: i32,
 }
 
@@ -494,7 +496,8 @@ impl Family for CastNpc {
     type Output = bool;
 
     fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
-        if args.component_id < 0 || args.index < 0 {
+        let component_id = crate::runtime::bindings::posted_spell_button_com(&args.spell);
+        if component_id < 0 || args.index < 0 {
             return Begin::Done(false);
         }
         let Some(request_id) = cx.seat_token() else {
@@ -503,7 +506,7 @@ impl Family for CastNpc {
         cx.emit(InteractReq::CastNpc {
             request_id,
             request: script::combat::CastNpcRequest {
-                component_id: args.component_id,
+                component_id,
                 index: args.index,
             },
         });

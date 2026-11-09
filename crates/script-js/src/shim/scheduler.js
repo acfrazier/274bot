@@ -3,11 +3,8 @@
 import './ScriptRunner.js';
 import { proxy } from '../shim/_kernel.js';
 
-const runtime = (operation) => globalThis.__rs2b0t_script_runtime(operation);
-
 export const Scheduler = proxy('Scheduler', {
     get active() {
-        if (!runtime('active')) return null;
-        return globalThis.__rs2b0t_script_context_view();
+        return globalThis.__rs2b0t_script_runtime('activeContext');
     },
 });

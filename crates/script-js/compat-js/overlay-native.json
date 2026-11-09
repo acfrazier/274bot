@@ -139,7 +139,7 @@
     "module": "api/game/Game.js",
     "selector": "Game.combatStyleMode",
     "reason": "Native facade ignores the legacy style argument and returns the current posted varp mode.",
-    "runtime": "crates/script-js/src/shim/game.js:201",
+    "runtime": "crates/script-js/src/shim/game.js:194",
     "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;"
   },
   {

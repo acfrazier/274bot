@@ -2480,13 +2480,18 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 }
 
 /// Every slot, native-only ones included, owns one `Arc<ScriptRuntimeContext>` from `SlotScript::new`
-/// (`slot.rs` `runtime_context`), the run-fenced projection `compiled.rs` reads for control requests
-/// and native input. The input authority is a lazy `OnceLock` inside it; it was one eager
-/// `Arc<NativeInputAuthority>` slot field before. So against dev 91d2ca897 an idle slot gains the
-/// context (240 B on Linux x86_64, 248 B on macOS aarch64), a run's own fresh context replaces it at
-/// start as it always did, and the authority allocation (Arc header plus the type: 40 B on Linux, 48 B on macOS)
-/// moves from slot construction to the first native-input use. The Gatherer and API-seat caps below
-/// subtract a shared baseline slot, so the delta they see is that allocation. This pins both sizes.
+/// (`slot.rs:704`), the run-fenced projection `compiled.rs` reads for control requests and native
+/// input (`slot/compiled.rs:1454,1461`; a native-only slot cannot skip it). The input authority is a
+/// lazy `OnceLock` inside it; it was one eager `Arc<NativeInputAuthority>` slot field before.
+/// Measured against dev 91d2ca897 (a warm `SlotScript::new()` and a started stub surface, same test
+/// on both heads): an idle slot goes 296 -> 496 B on Linux x86_64 and 304 -> 504 B on macOS aarch64
+/// (+200 B each: the 240/248 B context less the 40/48 B authority it no longer allocates up front).
+/// A started slot goes 1488 -> 1760 B (+272 B) and 1656 -> 2000 B (+344 B). The start replaces the idle
+/// context with the run's own (`slot.rs:1357-1371`, after forcing the authority), so a running slot
+/// holds one context (240/248 B) over what dev held; the other 32 B (Linux, one allocation) and 96 B
+/// (macOS, two allocations) of the running delta are in the start path and are not traced to a line.
+/// The Gatherer and API-seat caps below subtract a shared baseline slot, so the delta they see is the
+/// authority allocation moving from slot construction to the first native-input use. This pins both sizes.
 #[test]
 fn the_slot_runtime_context_and_lazy_authority_have_known_sizes() {
     let mut context = None;

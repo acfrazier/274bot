@@ -478,4 +478,53 @@ fn combat_style_labels_filter_on_both_tab_paths() {
         paths["hidden"], accepted,
         "hidden-tab fallback filters Punch"
     );
+    let facts: Value = serde_json::from_str(
+        &runtime
+            .eval::<String>(
+                "(() => {
+                    const select = (mode) => __rs2b0t_selected_facts(
+                        'client-adapter-action', 'selectCombatMode', mode);
+                    const snapshot = globalThis.__rs2b0t_host.snapshot;
+                    const labels = __rs2b0t_selected_facts(
+                        'client-adapter-reader', 'combatStyleLabels');
+                    const aggressive = select(2);
+                    const missing = select(99);
+                    const tabs = snapshot.side_tab_ifaces;
+                    snapshot.side_tab_ifaces = tabs.filter((row) => row.index !== 0);
+                    const noTabLabels = __rs2b0t_selected_facts(
+                        'client-adapter-reader', 'combatStyleLabels');
+                    const noTabSelect = select(2);
+                    snapshot.side_tab_ifaces = tabs;
+                    return JSON.stringify({ labels, aggressive, missing, noTabLabels, noTabSelect });
+                })()",
+            )
+            .unwrap(),
+    )
+    .expect("combat style op results");
+    assert_eq!(
+        facts["labels"],
+        json!([
+            { "mode": 1, "label": "(Accurate)" },
+            { "mode": 2, "label": "(Aggressive)" },
+            { "mode": 3, "label": "(Controlled)" },
+            { "mode": 4, "label": "(Defensive)" },
+        ]),
+        "the posted combat tab's style buttons"
+    );
+    assert_eq!(
+        facts["aggressive"],
+        json!(8002),
+        "mode 2 is the third widget"
+    );
+    assert_eq!(facts["missing"], json!(null), "no button selects mode 99");
+    assert_eq!(
+        facts["noTabLabels"],
+        json!(null),
+        "no combat tab, no labels"
+    );
+    assert_eq!(
+        facts["noTabSelect"],
+        json!(null),
+        "no combat tab, no button"
+    );
 }
