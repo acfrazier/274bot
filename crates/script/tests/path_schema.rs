@@ -644,6 +644,138 @@ fn bundled_paths_decode_and_compile() {
     }
 }
 
+/// Prince Ali Rescue works inside Draynor jail from stage 20 on (key imprint,
+/// Keli, the cell). The jail guards hunt as `aggressive_melee`
+/// (`area_draynor/configs/draynor.npc:152-190`), so a stage that walks to Keli
+/// is refused unless it declares the baked `draynor-jail-guards` group.
+/// QUESTER-QUALIFY-029 live run 1 blocked at `prince:20` step `20-key`
+/// (`search_result=Danger ... [draynor-jail-guards]`) with no declaration.
+#[test]
+fn prince_jail_stages_declare_the_draynor_jail_guard_group() {
+    let _home = script::IsolatedEnv::enter("path-schema-prince-jail");
+    let path = paths_dir().join("prince.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read prince.json"))
+            .expect("decode prince.json");
+    let role = &document.roles[0];
+    for stage in [
+        "prince:20",
+        "prince:30",
+        "prince:40",
+        "prince:50",
+        "prince:100",
+    ] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["draynor-jail-guards"], "{stage} danger declaration");
+    }
+    for stage in ["prince:0", "prince:10"] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        assert!(
+            sequence.cross.is_empty(),
+            "{stage} stays outside the jail and declares no danger zone"
+        );
+    }
+    // The group id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "prince.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
+}
+
+/// Monk's Friend stage 10 walks through the blanket cave (ladder 2561,3222 to
+/// the blanket at 2570,9604). The baked zone catalog lists the cave's hobgoblins
+/// and head thief, and the combined admission refuses the route when they are
+/// undeclared. QUESTER-QUALIFY-029 live run 1 stopped at tick 87 with
+/// `NoWayOut: ends inside Head Thief (L26) ... standing inside Hobgoblin (L28)`.
+/// Run 3 passed the whole quest with these three declarations.
+#[test]
+fn drunkmonk_cave_stage_declares_the_blanket_cave_zones() {
+    let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-cave");
+    let path = paths_dir().join("drunkmonk.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read drunkmonk.json"))
+            .expect("decode drunkmonk.json");
+    for sequence in &document.roles[0].sequences {
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        if sequence.stage.0.as_ref() == "drunkmonk:10" {
+            assert_eq!(
+                ids,
+                [
+                    "hobgoblin_unarmed@2566,9632,0",
+                    "hobgoblin_unarmed@2573,9626,0",
+                    "headthief_blanket@2569,9606,0",
+                ]
+            );
+        } else {
+            assert!(
+                ids.is_empty(),
+                "{} stays outside the cave",
+                sequence.stage.0
+            );
+        }
+    }
+    // Every id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "drunkmonk.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
+}
+
 #[test]
 fn unknown_talk_arguments_are_rejected_with_step_context() {
     let _home = script::IsolatedEnv::enter("path-schema-talk-errors");

@@ -1,0 +1,25 @@
+{
+  "stage": "vampire:0",
+  "stand": [
+    3098,
+    3268,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [
+    "givebank rune_full_helm 1",
+    "givebank rune_chainbody 1",
+    "givebank rune_platelegs 1",
+    "givebank rune_kiteshield 1",
+    "givebank rune_scimitar 1",
+    "givebank 4dose2attack 1",
+    "givebank 4dose2strength 1",
+    "givebank 4doseprayerrestore 2",
+    "givebank lobster 6",
+    "givebank coins 200"
+  ],
+  "expect": [],
+  "mode": "clean"
+}

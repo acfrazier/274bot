@@ -1,0 +1,16 @@
+{
+  "stage": "hetty:0",
+  "stand": [
+    2970,
+    3207,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [
+    "givebank coins 50"
+  ],
+  "expect": [],
+  "mode": "clean"
+}

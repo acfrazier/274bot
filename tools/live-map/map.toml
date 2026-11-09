@@ -883,6 +883,86 @@ cells = [
   "host.quester-qualified-priest-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=priest QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/priest-start.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
 ]
 
+# Full-run cells of the qualified Quester guides (the quest runs from a fresh account to its completion
+# on Engine Q). Each guide's Path file and its seed fixture select its own cell.
+[[cover]]
+globs = ["crates/script/paths/289/cook.json", "crates/host-play/tests/fixtures/quester-path/cook-clean.json"]
+cells = [
+  "host.quester-cook-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=cook QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/cook-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/sheep.json", "crates/host-play/tests/fixtures/quester-path/sheep-clean.json"]
+cells = [
+  "host.quester-sheep-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=sheep QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/sheep-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/runemysteries.json", "crates/host-play/tests/fixtures/quester-path/runemysteries-clean.json"]
+cells = [
+  "host.quester-runemysteries-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=runemysteries QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/runemysteries-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/romeojuliet.json", "crates/host-play/tests/fixtures/quester-path/romeojuliet-clean.json"]
+cells = [
+  "host.quester-romeojuliet-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=romeojuliet QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/romeojuliet-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/imp.json", "crates/host-play/tests/fixtures/quester-path/imp-clean.json"]
+cells = [
+  "host.quester-imp-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=imp QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/imp-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/vampire.json", "crates/host-play/tests/fixtures/quester-path/vampire-clean.json"]
+cells = [
+  "host.quester-vampire-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=vampire QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/vampire-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/doric.json", "crates/host-play/tests/fixtures/quester-path/doric-clean.json"]
+cells = [
+  "host.quester-doric-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=doric QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/doric-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/gobdip.json", "crates/host-play/tests/fixtures/quester-path/gobdip-clean.json"]
+cells = [
+  "host.quester-gobdip-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=gobdip QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/gobdip-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/hetty.json", "crates/host-play/tests/fixtures/quester-path/hetty-clean.json"]
+cells = [
+  "host.quester-hetty-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=hetty QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/hetty-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/demon.json", "crates/host-play/tests/fixtures/quester-path/demon-clean.json"]
+cells = [
+  "host.quester-demon-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=demon QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/demon-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/hazeelcult.json", "crates/host-play/tests/fixtures/quester-path/hazeelcult-clean.json"]
+cells = [
+  "host.quester-hazeelcult-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=hazeelcult QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/hazeelcult-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/priestperil.json", "crates/host-play/tests/fixtures/quester-path/priestperil-clean.json"]
+cells = [
+  "host.quester-priestperil-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=priestperil QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/priestperil-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/paths/289/drunkmonk.json", "crates/host-play/tests/fixtures/quester-path/drunkmonk-clean.json"]
+cells = [
+  "host.quester-drunkmonk-full-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=drunkmonk QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/drunkmonk-clean.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
 # Refusal coverage ONLY: these exact drafts are not shipped as runnable guides.
 # The release cell proves typed admission refusal and the picker reason, not
 # quest-body execution. Priest supplies the paired qualified live witness.
@@ -891,36 +971,50 @@ cells = [
 [[cover]]
 globs = [
   "crates/script/paths/289/arena.json",
+  "crates/script/paths/289/arthur.json",
   "crates/script/paths/289/ball.json",
   "crates/script/paths/289/biohazard.json",
+  "crates/script/paths/289/blackarmgang.json",
   "crates/script/paths/289/chompybird.json",
+  "crates/script/paths/289/cog.json",
   "crates/script/paths/289/crest.json",
+  "crates/script/paths/289/death.json",
+  "crates/script/paths/289/desertrescue.json",
   "crates/script/paths/289/dragon.json",
   "crates/script/paths/289/druid.json",
   "crates/script/paths/289/druidspirit.json",
   "crates/script/paths/289/eadgar.json",
   "crates/script/paths/289/elemental_workshop.json",
+  "crates/script/paths/289/elena.json",
   "crates/script/paths/289/fishingcompo.json",
+  "crates/script/paths/289/fluffs.json",
   "crates/script/paths/289/fortress.json",
   "crates/script/paths/289/grail.json",
   "crates/script/paths/289/grandtree.json",
   "crates/script/paths/289/haunted.json",
   "crates/script/paths/289/hero.json",
   "crates/script/paths/289/horror.json",
+  "crates/script/paths/289/hunt.json",
   "crates/script/paths/289/ikov.json",
+  "crates/script/paths/289/itexam.json",
   "crates/script/paths/289/itgronigen.json",
   "crates/script/paths/289/itwatchtower.json",
+  "crates/script/paths/289/junglepotion.json",
   "crates/script/paths/289/legends.json",
   "crates/script/paths/289/mcannon.json",
   "crates/script/paths/289/misc.json",
   "crates/script/paths/289/mm.json",
   "crates/script/paths/289/mortton.json",
   "crates/script/paths/289/murder.json",
+  "crates/script/paths/289/prince.json",
   "crates/script/paths/289/regicide.json",
   "crates/script/paths/289/routequest.json",
   "crates/script/paths/289/scorpcatcher.json",
+  "crates/script/paths/289/seaslug.json",
   "crates/script/paths/289/sheepherder.json",
+  "crates/script/paths/289/squire.json",
   "crates/script/paths/289/tbwt.json",
+  "crates/script/paths/289/totem.json",
   "crates/script/paths/289/tree.json",
   "crates/script/paths/289/troll.json",
   "crates/script/paths/289/troll_love.json",

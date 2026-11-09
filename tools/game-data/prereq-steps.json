@@ -342,7 +342,12 @@
         "values": { "min": 9, "max": 61 }
       },
       "after": [
-        { "proves": { "min": 9, "max": 61 }, "after": { "min": 9, "max": 61 } }
+        { "proves": { "min": 9, "max": 61 }, "after": { "min": 9, "max": 61 } },
+        { "proves": { "min": 5, "max": 5 }, "after": { "min": 5, "max": 61 } },
+        { "proves": { "min": 6, "max": 6 }, "after": { "min": 6, "max": 61 } },
+        { "proves": { "min": 7, "max": 7 }, "after": { "min": 7, "max": 61 } },
+        { "proves": { "min": 8, "max": 8 }, "after": { "min": 8, "max": 61 } },
+        { "proves": { "min": 10, "max": 59 }, "after": { "min": 10, "max": 61 } }
       ],
       "reviewed_writes": [
         {
@@ -361,6 +366,41 @@
             "quest complete!"
           ],
           "proves": { "min": 9, "max": 61 },
+          "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:1-106; scripts/quests/quest_priestperil/configs/priestperil.constant:1-12; scripts/general/configs/quest.constant:46"
+        },
+        {
+          "all": [
+            "i need to find the key to his cell and free him!"
+          ],
+          "proves": { "min": 5, "max": 5 },
+          "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:31-37; scripts/quests/quest_priestperil/configs/priestperil.constant:6"
+        },
+        {
+          "all": [
+            "but i still have to do something about that vampire"
+          ],
+          "proves": { "min": 6, "max": 6 },
+          "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:48-55; scripts/quests/quest_priestperil/configs/priestperil.constant:7"
+        },
+        {
+          "all": [
+            "i should speak to drezel again"
+          ],
+          "proves": { "min": 7, "max": 7 },
+          "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:65-72; scripts/quests/quest_priestperil/configs/priestperil.constant:8"
+        },
+        {
+          "all": [
+            "i should head downstairs to the monument like drezel asked me to"
+          ],
+          "proves": { "min": 8, "max": 8 },
+          "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:74-81; scripts/quests/quest_priestperil/configs/priestperil.constant:9"
+        },
+        {
+          "all": [
+            "i need to bring drezel fifty rune essences to undo the damage done by the zamorakians and purify the salve"
+          ],
+          "proves": { "min": 10, "max": 59 },
           "source": "scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2:1-106; scripts/quests/quest_priestperil/configs/priestperil.constant:1-12; scripts/general/configs/quest.constant:46"
         }
       ],

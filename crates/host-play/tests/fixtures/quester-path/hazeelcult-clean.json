@@ -1,0 +1,14 @@
+{
+  "stage": "hazeelcult:0",
+  "stand": [
+    2565,
+    3271,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}
