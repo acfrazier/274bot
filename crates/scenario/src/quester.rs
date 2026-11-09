@@ -550,14 +550,38 @@ impl QuesterSeed {
     /// Call immediately before the harness emits Start. A stale, higher
     /// stat or a missing/refused kit cannot turn into invented TestedStats.
     pub fn observe_start(&self, snapshot: &GameSnapshot) -> Result<Value, String> {
-        validate_start_seed(
+        validate_start_seed_with(
             snapshot,
             &self.stats,
             &self.expected_inventory,
             &self.expected_equipment,
+            false,
         )?;
         validate_start_stand(snapshot.tile(), self.stand)?;
-        let (x, z, level) = snapshot.tile().expect("validated fixture stand");
+        Ok(self.start_receipt(snapshot))
+    }
+
+    /// [`Self::observe_start`] for a cell whose Start tile is inside an
+    /// aggressive NPC's hunt range: a hit that landed first may leave the
+    /// hitpoints below the seeded level. Every other stat, the carried items
+    /// and the worn kit are checked exactly as in `observe_start`. The tile is
+    /// not checked here; the caller states how far the fixture may have moved.
+    pub fn observe_start_after_hit(&self, snapshot: &GameSnapshot) -> Result<Value, String> {
+        validate_start_seed_with(
+            snapshot,
+            &self.stats,
+            &self.expected_inventory,
+            &self.expected_equipment,
+            true,
+        )?;
+        if snapshot.tile().is_none() {
+            return Err("fixture Start observed no local tile".into());
+        }
+        Ok(self.start_receipt(snapshot))
+    }
+
+    fn start_receipt(&self, snapshot: &GameSnapshot) -> Value {
+        let (x, z, level) = snapshot.tile().expect("validated fixture tile");
         let observed: Vec<_> = self
             .stats
             .iter()
@@ -570,9 +594,9 @@ impl QuesterSeed {
                 json!({"skill": minimum.skill, "base": stat.base, "effective": stat.effective})
             })
             .collect();
-        Ok(json!({"profile": self.profile, "stats": observed,
+        json!({"profile": self.profile, "stats": observed,
             "loadout": self.loadout, "inventory": self.expected_inventory,
-            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}}))
+            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}})
     }
 }
 
@@ -586,11 +610,24 @@ fn validate_start_stand(tile: Option<(i32, i32, i32)>, stand: WorldTile) -> Resu
     Ok(())
 }
 
+/// The Hitpoints skill index (`stats_for` keys it as `3`).
+const HITPOINTS_SKILL: u8 = 3;
+
 fn validate_start_seed(
     snapshot: &GameSnapshot,
     stats: &[SkillMinimum],
     inventory: &[(i32, i32)],
     equipment: &[i32],
+) -> Result<(), String> {
+    validate_start_seed_with(snapshot, stats, inventory, equipment, false)
+}
+
+fn validate_start_seed_with(
+    snapshot: &GameSnapshot,
+    stats: &[SkillMinimum],
+    inventory: &[(i32, i32)],
+    equipment: &[i32],
+    hitpoints_may_be_hurt: bool,
 ) -> Result<(), String> {
     if !snapshot.ingame() || snapshot.scene_state() != 2 {
         return Err("fixture Start needs ingame && scene_state == 2".into());
@@ -601,7 +638,12 @@ fn validate_start_seed(
             .iter()
             .find(|stat| stat.index == i32::from(minimum.skill))
             .ok_or_else(|| format!("fixture stat {} is unobserved", minimum.skill))?;
-        if stat.base != i32::from(minimum.level) || stat.effective != i32::from(minimum.level) {
+        let hurt_only = hitpoints_may_be_hurt
+            && minimum.skill == HITPOINTS_SKILL
+            && stat.effective <= i32::from(minimum.level);
+        if stat.base != i32::from(minimum.level)
+            || (stat.effective != i32::from(minimum.level) && !hurt_only)
+        {
             return Err(format!(
                 "fixture stat {} expected {}, observed base {} effective {}",
                 minimum.skill, minimum.level, stat.base, stat.effective
@@ -1987,6 +2029,42 @@ mod tests {
         assert!(validate_start_seed(&snapshot, &expected, &[], &[]).is_ok());
         assert!(validate_start_seed(&snapshot, &expected, &[], &[1333]).is_err());
         assert!(validate_start_seed(&snapshot, &expected, &[(995, 1000)], &[]).is_err());
+    }
+
+    /// A hit that lands before Start may lower Hitpoints and nothing else: the
+    /// tolerant gate accepts hurt Hitpoints only, and the exact gate refuses it.
+    #[test]
+    fn hurt_gate_accepts_lowered_hitpoints_and_no_other_drift() {
+        use api::snapshot::StatView;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let expected = [
+            SkillMinimum {
+                skill: 0,
+                level: 40,
+            },
+            SkillMinimum {
+                skill: HITPOINTS_SKILL,
+                level: 40,
+            },
+        ];
+        let stat = |index, base, effective| StatView {
+            index,
+            name: Skill::names[index as usize].into(),
+            effective,
+            base,
+            xp: 0,
+            used: true,
+        };
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 40, 31)]);
+        assert!(validate_start_seed(&snapshot, &expected, &[], &[]).is_err());
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_ok());
+        snapshot.seed_stats(vec![stat(0, 40, 39), stat(3, 40, 31)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_err());
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 41, 41)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_err());
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 40, 40)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_ok());
     }
 
     #[test]
