@@ -1,3 +1,72 @@
+
+
+# The rs2b0t gather catalogs (camps, fishing methods and gear, cook plans, quest
+# junk) are compiled from `gather-catalog.json`; the compat contract tests compare
+# every table and calculation with the upstream modules' own results.
+[[cover]]
+globs = [
+  "crates/api/src/fishing_gear.rs",
+  "crates/api/src/gather_camps.rs",
+  "crates/api/src/quest_junk.rs",
+  "crates/script/src/fishing_gear.rs",
+  "crates/script-js/src/shim/fishing_gear.js",
+  "crates/script-js/src/shim/data/cooking_ranges.js",
+  "crates/script-js/src/shim/data/fishing_locations.js",
+  "crates/script-js/src/shim/data/fishing_methods.js",
+  "crates/script-js/src/shim/data/gathering_locations.js",
+  "crates/script-js/src/shim/data/mining_locations.js",
+  "crates/script-js/src/shim/data/woodcutting_locations.js",
+]
+cells = [
+  "api.catalog-codegen-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test catalog_codegen -- --nocapture",
+  "api.gather-tables-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib gather_camps::tests:: fishing_gear::tests:: quest_junk::tests::",
+  "script.fishing-gear-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib fishing_gear::tests::",
+  "compat.v1-gather-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_gather",
+]
+
+# The compatibility adapter shims and the native seat contract they drive: the
+# game-state, ClientAdapter, event and bank families run in a real isolate.
+[[cover]]
+globs = [
+  "crates/script-js/compat-js/overlay-scene.json",
+  "crates/script-js/src/shim/bot.js",
+  "crates/script-js/src/shim/bot_host.js",
+  "crates/script-js/src/shim/chat_dialog.js",
+  "crates/script-js/src/shim/client_adapter.js",
+  "crates/script-js/src/shim/client_skill.js",
+  "crates/script-js/src/shim/define_bot.js",
+  "crates/script-js/src/shim/event_evade.js",
+  "crates/script-js/src/shim/event_signal.js",
+  "crates/script-js/src/shim/game.js",
+  "crates/script-js/src/shim/input.js",
+  "crates/script-js/src/shim/players.js",
+  "crates/script-js/src/shim/run_manager.js",
+  "crates/script-js/src/shim/scheduler.js",
+  "crates/script-js/src/shim/script_activity.js",
+  "crates/script-js/src/shim/script_registry.js",
+  "crates/script-js/src/shim/script_runner.js",
+  "crates/script-js/src/shim/settings.js",
+  "crates/script-js/src/shim/worlds.js",
+  "crates/script/src/api_progress.rs",
+  "crates/script/src/native/abi.rs",
+  "crates/script/src/native/request.rs",
+  "crates/script/src/slot/cast_npc.rs",
+]
+cells = [
+  "compat.v1-game-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_game_state",
+  "compat.v1-client-adapter-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_client_adapter",
+  "compat.v1-events-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_events",
+  "compat.v1-bank-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_bank",
+  "script.seat-slot-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib slot::",
+]
+
+# Test-only fixture field in the scenario proof module.
+[[cover]]
+globs = ["crates/scenario/src/proof.rs"]
+cells = [
+  "scenario.proof-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib proof::tests::",
+]
+
 [live]
 globs = [
   "Cargo.toml",
@@ -76,6 +145,8 @@ globs = [
   "crates/host-play/Cargo.toml",
   "crates/host/Cargo.toml",
   "crates/script-js/src/tooling/compat_dts.rs",
+  # API example compiled and run by the headless actor_observation tests.
+  "crates/script-js/examples/actor_observation_v2.ts",
   # deleted by script split S3; its code moved to `script-js`
   # S3 commit: 6831a262cbb35272e6a596b14a1239901b1ea90b.
   "crates/script/src/shim/mod.rs",
