@@ -6,6 +6,7 @@ pub mod gather;
 pub mod item_arg;
 pub mod partner;
 pub mod progress_predicates;
+pub mod prompt;
 pub mod reach;
 pub mod s2;
 pub mod setting;
@@ -106,6 +107,20 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
         super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
         super::compile::step!("gather", 1, Explicit, gather::Args, gather::compile),
         super::compile::step!("thieve", 1, Explicit, thieve::Args, thieve::compile),
+        super::compile::step!(
+            "answer_count",
+            1,
+            Explicit,
+            prompt::AnswerCountArgs,
+            prompt::compile_answer_count
+        ),
+        super::compile::step!(
+            "if_button",
+            1,
+            Explicit,
+            prompt::IfButtonArgs,
+            prompt::compile_if_button
+        ),
     ];
     HANDLERS
 }

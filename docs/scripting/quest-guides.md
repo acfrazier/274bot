@@ -25,7 +25,7 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
-- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`). Default kinds compile as `false` when it is omitted.
+- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, `answer_count`, `if_button`, and `x:*`). Default kinds compile as `false` when it is omitted.
 
 ### Retry limits
 
@@ -121,6 +121,20 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
+| `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. `source` cites the content. |
+| `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for. `source` cites the content. |
+
+### Count dialogs and interface buttons
+
+Content can ask for a number (`p_countdialog`) or wait for a press on its own interface. Neither is a dialogue page, so `talk` does not answer them. Use the two steps in order after the conversation that opens them:
+
+1. A `talk` step whose conversation ends at the prompt. Set `gap_ticks` when the script closes the chat and delays before the prompt (`p_delay(n)` costs n + 1 ticks).
+2. `answer_count` with the number to type, or `if_button` with the component to press. Both send one request, and only while the prompt is shown. The step never repeats a request; a failure goes to the runner's bounded retry.
+3. Settle on what the content does next (a chat line, an item, a stage), not on the step itself. Both steps are Explicit: declare `advances`.
+
+`max_ticks` is observed game ticks from the step's start. Size it from the content delay before the prompt, and cite it in `source`. Use `talk` with `continue_only` for the chat pages that follow, and use `answer_once` only for menus.
+
+Death Plateau's dice game uses all three: Harold's stake (`death_guard_equiproom.rs2:227-228`), the roll button `death_dice:com_28` (`:46-47`, shown after three `p_delay(2)` at `:88-99`) and the continue button `death_dice:com_30` (`:123`, `p_pausebutton`).
 
 ## Checks a guide can use
 

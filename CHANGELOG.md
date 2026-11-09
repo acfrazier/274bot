@@ -78,6 +78,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The Tribal Totem door lock no longer stops with a budget error when a dial
   click follows another click in the same game tick. The click waits for the
   next tick.
+- Quester guides can answer a numeric count dialog (`answer_count`) and press
+  an interface button once it is shown (`if_button`), so a guide can play
+  content such as Death Plateau's dice game.
 
 ### Memory diagnostics
 
