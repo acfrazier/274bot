@@ -3168,15 +3168,12 @@ mod survival_provisioning {
     use std::task::Poll;
     use std::time::{Duration, Instant};
 
-    #[derive(Default)]
-    struct Output(Vec<String>);
+    struct Output;
 
     impl NativeOutput for Output {
         fn status(&mut self, _: ScriptStatus) {}
         fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {}
-        fn log(&mut self, _: api::hostlog::Level, message: &str) {
-            self.0.push(message.to_owned());
-        }
+        fn log(&mut self, _: api::hostlog::Level, _: &str) {}
         fn settings_applied(&mut self, _: u64) {}
     }
 
@@ -3310,7 +3307,7 @@ mod survival_provisioning {
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        let mut output = Output::default();
+        let mut output = Output;
         let prepared = script::native::with_test_tick(
             frame,
             evidence,
@@ -3348,7 +3345,7 @@ mod survival_provisioning {
         assert!(status.need > 0 && status.need <= 28);
         assert_eq!(status.pack, 0);
         assert_eq!(status.bank, Some(0));
-        assert!(output.0.iter().any(|line| line.contains(&missing)));
+        assert!(selected.items().any(|item| item.name.as_deref() == Some(missing.as_str())));
         assert!(ledger
             .as_ref()
             .is_none_or(|ledger| ledger.outbox.is_empty()));
