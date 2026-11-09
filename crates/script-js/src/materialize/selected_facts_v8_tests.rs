@@ -4,15 +4,16 @@ use rustyscript::{Runtime, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
-    "selected_facts_v8::tests::catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded";
+    "materialize::selected_facts_v8::tests::catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded";
 const MUTATION_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_MUTATION_CHILD";
 const MUTATION_TEST_NAME: &str =
-    "selected_facts_v8::tests::catalog_ignores_script_mutation_of_the_record_array";
+    "materialize::selected_facts_v8::tests::catalog_ignores_script_mutation_of_the_record_array";
 const SETTER_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_SETTER_CHILD";
 const SETTER_TEST_NAME: &str =
-    "selected_facts_v8::tests::catalog_rebuild_ignores_an_array_prototype_setter";
+    "materialize::selected_facts_v8::tests::catalog_rebuild_ignores_an_array_prototype_setter";
 const REWRITTEN_ID_CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_CATALOG_REWRITTEN_ID_CHILD";
-const REWRITTEN_ID_TEST_NAME: &str = "selected_facts_v8::tests::catalog_rejects_a_rewritten_row_id";
+const REWRITTEN_ID_TEST_NAME: &str =
+    "materialize::selected_facts_v8::tests::catalog_rejects_a_rewritten_row_id";
 /// Round-3 review R3-2 probe: install an index accessor on `Array.prototype`,
 /// empty the cached row array so the next `obj-records` call rebuilds it, and
 /// rebuild with the accessor in place.

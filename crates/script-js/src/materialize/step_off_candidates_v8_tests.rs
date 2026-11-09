@@ -4,7 +4,7 @@ use rustyscript::RuntimeOptions;
 
 const CHILD_ENV: &str = "SCRIPT_STEP_OFF_CANDIDATES_V8_TEST_CHILD";
 const TEST_NAME: &str =
-    "step_off_candidates_v8::tests::rows_have_fast_properties_and_bounded_v8_heap";
+    "materialize::step_off_candidates_v8::tests::rows_have_fast_properties_and_bounded_v8_heap";
 const SETUP: &str = r#"
 globalThis.__stepRows = () => __rs2b0t_step_off_candidates(10, 20, 2, 6, 18);
 globalThis.__fastStepRows = () => {

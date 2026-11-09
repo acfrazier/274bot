@@ -2673,10 +2673,13 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // The new private owner probe reproduces all three preparation totals
     // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
     // Inline TickKit storage is already in Prepared; shared tables stay out.
+    // Compat finish adds one 40 B slot allocation (dev 91d2ca897 measures 9,938 / 9,990
+    // for the oak and Knife samples; the merge measures 9,978 / 10,030, so 10030 + 8 B
+    // headroom = 10038). macOS +40 B by the same allocation size, not measured (10166).
     #[cfg(target_os = "macos")]
-    let exclusive_cap = 10126;
+    let exclusive_cap = 10166;
     #[cfg(not(target_os = "macos"))]
-    let exclusive_cap = 9998;
+    let exclusive_cap = 10038;
     for (oak, knife, exclusive) in measurements {
         assert!(
             (0..=exclusive_cap).contains(&exclusive),
@@ -3582,15 +3585,19 @@ mod api_gather_seat {
         // measured; macOS +24 B by the same allocation size, not measured).
         // Non-blocking follow-up: "Off" could use &'static str or a shared
         // static Arc instead of a separate allocation per bot.
+        // Compat finish adds one 40 B allocation to the slot (the allocation count rises
+        // by one against dev 91d2ca897: 9,995 B -> Linux 10,035 B; the slot's runtime
+        // context and native-input hand-off are the state it adds). macOS +40 B by the
+        // same allocation size, not measured.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10067;
+        let exclusive_limit = 10107;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 10003;
+        let exclusive_limit = 10043;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let exclusive_limit = 8848;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat exceeds {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
+            "exclusive API seat is {exclusive} B, over {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

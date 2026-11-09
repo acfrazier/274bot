@@ -2,7 +2,7 @@ use super::*;
 use rustyscript::RuntimeOptions;
 
 const SHAPE_TEST_NAME: &str =
-    "gather_catalog_v8::tests::every_table_object_has_fast_properties_from_its_cached_shape";
+    "materialize::gather_catalog_v8::tests::every_table_object_has_fast_properties_from_its_cached_shape";
 const CHILD_ENV: &str = "SCRIPT_GATHER_CATALOG_SHAPE_TEST_CHILD";
 
 const SETUP: &str = r#"

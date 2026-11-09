@@ -3,7 +3,7 @@ use rustyscript::{Module, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_STABLE_CLOSED_POLL_V8_TEST_CHILD";
 const TEST_NAME: &str =
-    "partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
+    "materialize::partner_trade_v8::tests::stable_closed_poll_wrapper_has_fast_properties_and_bounded_heap";
 const CLOSURE_COUNT: usize = 512;
 const REPEAT_COUNT: usize = 1_000;
 // 512 wrapped predicates grew 108,776 bytes; allow 8 KiB for V8/allocator variance.

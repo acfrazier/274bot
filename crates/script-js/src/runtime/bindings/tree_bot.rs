@@ -149,7 +149,7 @@ mod tests {
 
     const CHILD_ENV: &str = "SCRIPT_COMPAT_V1_BOT_SHAPE_TEST_CHILD";
     const TEST_NAME: &str =
-        "bindings::tree_bot::tests::bot_objects_have_fast_properties_and_bounded_heap";
+        "runtime::bindings::tree_bot::tests::bot_objects_have_fast_properties_and_bounded_heap";
 
     fn setup() -> Runtime {
         crate::runtime::platform::bootstrap_test_v8_platform();

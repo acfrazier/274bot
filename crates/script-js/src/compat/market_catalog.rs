@@ -547,7 +547,7 @@ mod tests {
     use client::io::ClientRevision;
     const COLD_CHILD_ENV: &str = "SCRIPT_MARKET_INDEX_COLD_TEST_CHILD";
     const COLD_TEST_NAME: &str =
-        "market_catalog::tests::market_index_cold_build_has_bounded_process_allocation";
+        "compat::market_catalog::tests::market_index_cold_build_has_bounded_process_allocation";
 
     #[test]
     fn market_index_cold_build_has_bounded_process_allocation() {

@@ -3,7 +3,7 @@ use rustyscript::RuntimeOptions;
 
 const CHILD_ENV: &str = "SCRIPT_QUEST_JUNK_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
-    "bank_quest_junk_v8::tests::quest_junk_rows_have_fast_properties_and_bound_v8_heap";
+    "materialize::bank_quest_junk_v8::tests::quest_junk_rows_have_fast_properties_and_bound_v8_heap";
 
 /// A full bank (288 rows, the selected capacity) of distinct table ids, so each
 /// call materializes one finding per matching table row.

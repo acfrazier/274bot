@@ -3544,7 +3544,7 @@ export default class RuntimeShapeProbe extends LoopingBot {}
 fn script_activity_context_views_and_handles_have_fast_properties() {
     const CHILD_ENV: &str = "SCRIPT_ACTIVITY_FAST_PROPERTIES_CHILD";
     const TEST_NAME: &str =
-        "isolate::tests::script_activity_context_views_and_handles_have_fast_properties";
+        "runtime::isolate::tests::script_activity_context_views_and_handles_have_fast_properties";
     if std::env::var_os(CHILD_ENV).is_none() {
         run_exact_child(TEST_NAME, CHILD_ENV);
         return;

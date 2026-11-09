@@ -2,7 +2,7 @@ use super::*;
 use rustyscript::RuntimeOptions;
 
 const SHAPE_TEST_NAME: &str =
-    "walk_destinations_v8::tests::every_destination_uses_cached_fast_shapes";
+    "materialize::walk_destinations_v8::tests::every_destination_uses_cached_fast_shapes";
 const CHILD_ENV: &str = "SCRIPT_WALK_DESTINATIONS_SHAPE_TEST_CHILD";
 
 const SETUP: &str = r#"
@@ -155,7 +155,7 @@ fn repeated_reads_return_the_same_bounded_catalog() {
 #[test]
 fn loaded_declared_surface_materializes_walk_catalog() {
     const TEST_NAME: &str =
-        "walk_destinations_v8::tests::loaded_declared_surface_materializes_walk_catalog";
+        "materialize::walk_destinations_v8::tests::loaded_declared_surface_materializes_walk_catalog";
     if std::env::var_os(CHILD_ENV).is_some() {
         crate::runtime::platform::bootstrap_test_v8_platform();
         CALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);

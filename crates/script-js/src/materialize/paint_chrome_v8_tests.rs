@@ -3,9 +3,10 @@ use rustyscript::{Runtime, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_PAINT_STEPPER_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
-    "paint_chrome::tests::stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded";
+    "materialize::paint_chrome::tests::stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded";
 const SINGLETON_CHILD_ENV: &str = "SCRIPT_PAINT_SINGLETON_STORE_TEST_CHILD";
-const SINGLETON_TEST_NAME: &str = "paint_chrome::tests::singleton_store_lives_in_the_v8_heap";
+const SINGLETON_TEST_NAME: &str =
+    "materialize::paint_chrome::tests::singleton_store_lives_in_the_v8_heap";
 
 const SETUP: &str = r#"
 globalThis.__draw = click => {

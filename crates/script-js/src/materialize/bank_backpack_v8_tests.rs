@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 const CHILD_ENV: &str = "SCRIPT_NORMAL_BACKPACK_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
-    "bank_backpack_v8::tests::normal_backpack_rows_have_fast_properties_and_bound_v8_heap";
+    "materialize::bank_backpack_v8::tests::normal_backpack_rows_have_fast_properties_and_bound_v8_heap";
 
 const BANK_KERNEL: &str = r#"
 export function runMachine() { throw new Error('unused'); }
@@ -219,10 +219,10 @@ fn normal_backpack_is_null_unless_closed_ready_and_28_slots() {
 
 const BANK_FAST_CHILD_ENV: &str = "SCRIPT_BANK_ITEMS_FAST_TEST_CHILD";
 const BANK_FAST_TEST_NAME: &str =
-    "bank_backpack_v8::tests::bank_288_item_rows_have_fast_properties";
+    "materialize::bank_backpack_v8::tests::bank_288_item_rows_have_fast_properties";
 const BANK_HEAP_CHILD_ENV: &str = "SCRIPT_BANK_ITEMS_HEAP_TEST_CHILD";
 const BANK_HEAP_TEST_NAME: &str =
-    "bank_backpack_v8::tests::bank_288_item_rows_have_bounded_v8_heap";
+    "materialize::bank_backpack_v8::tests::bank_288_item_rows_have_bounded_v8_heap";
 
 /// A full 288-row bank (`interface_bank/configs/bank.constant:1`).
 fn full_bank() -> Vec<ItemRow> {

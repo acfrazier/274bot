@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 const FAST_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_FAST_SHAPE_TEST_CHILD";
 const FAST_TEST_NAME: &str =
-    "selected_facts_v8::client_adapter_v8::tests::client_adapter_objects_have_fast_properties";
+    "materialize::selected_facts_v8::client_adapter_v8::tests::client_adapter_objects_have_fast_properties";
 const HEAP_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_HEAP_SHAPE_TEST_CHILD";
 const HEAP_TEST_NAME: &str =
-    "selected_facts_v8::client_adapter_v8::tests::client_adapter_objects_have_bounded_v8_heap";
+    "materialize::selected_facts_v8::client_adapter_v8::tests::client_adapter_objects_have_bounded_v8_heap";
 const STYLE_CHILD_ENV: &str = "SCRIPT_CLIENT_ADAPTER_STYLE_FILTER_TEST_CHILD";
 const STYLE_TEST_NAME: &str =
-    "selected_facts_v8::client_adapter_v8::tests::combat_style_labels_filter_on_both_tab_paths";
+    "materialize::selected_facts_v8::client_adapter_v8::tests::combat_style_labels_filter_on_both_tab_paths";
 
 const SETUP: &str = r#"
 // r289 decodes the active NPC list length from an unsigned 8-bit field.
