@@ -75,6 +75,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   per route is gone: a guide can declare any number. Start still lists the
   zones a guide declares. A walk option that forbids danger zones no longer
   overrides the global setting.
+- The Tribal Totem door lock no longer stops with a budget error when a dial
+  click follows another click in the same game tick. The click waits for the
+  next tick.
 
 ### Memory diagnostics
 
