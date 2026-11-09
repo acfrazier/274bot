@@ -16,7 +16,7 @@
     { "id": "squire", "file": "squire.json", "status": "draft" },
     { "id": "death", "file": "death.json", "status": "draft" },
     { "id": "desertrescue", "file": "desertrescue.json", "status": "draft" },
-    { "id": "priestperil", "file": "priestperil.json", "status": "draft" },
+    { "id": "priestperil", "file": "priestperil.json", "status": "qualified" },
     { "id": "cog", "file": "cog.json", "status": "draft" },
     { "id": "drunkmonk", "file": "drunkmonk.json", "status": "draft" },
     { "id": "hazeelcult", "file": "hazeelcult.json", "status": "qualified" },
