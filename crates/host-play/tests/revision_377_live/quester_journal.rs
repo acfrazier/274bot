@@ -47,43 +47,46 @@ struct NpcSample {
 // Forty-three in these stats gives combat 49 (canon Player.ts:1429-1434).
 // That is the first level exempt from the palace's level-24 zombie hunts
 // (canon all.npc:2289; Npc.ts:1017). Keep the production danger policy at default.
-const COMBAT_FIXTURE: &[&str] = &[
+const COMBAT_STATS_FIXTURE: &[&str] = &[
     "setstat attack 43",
     "setstat strength 43",
     "setstat defence 43",
     "setstat hitpoints 43",
-    "give trout 5",
 ];
 
+#[derive(Clone, Copy)]
+struct CombatFoodSeed {
+    command: &'static str,
+    item_id: i32,
+    count: i32,
+    receipt_label: &'static str,
+    phase_label: &'static str,
+}
+
+const COMBAT_FOOD_SEED: CombatFoodSeed = CombatFoodSeed {
+    command: "give trout 5",
+    item_id: 333,
+    count: 5,
+    receipt_label: "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, five trout; default danger policy",
+    phase_label: "SEED own-account combat-only area fixture",
+};
+const SQUIRE_COMBAT_FOOD_SEED: CombatFoodSeed = CombatFoodSeed {
+    command: "give lobster 6",
+    item_id: 379,
+    count: 6,
+    receipt_label: "labelled Squire combat-only area and food fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, six lobsters for blurite; default danger policy",
+    phase_label: "SEED own-account food: Squire blurite step (six lobsters)",
+};
+
 // The journal needs Mining 10, and the fresh pie recipe needs Cooking 10.
-// This live fixture seeds two bars in the own-account bank to test the
-// existing fast path; the path's iron-bar acquisition route stays unproven.
+// Squire receives six lobsters for its blurite step but no iron bars, so the
+// Path's own iron-bar route is exercised.
 // Sources: quest_squire/scripts/squire_journal.rs2:7-12;
 // skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
 const SQUIRE_MINING_LEVEL: i32 = 10;
 const SQUIRE_SMITHING_LEVEL: i32 = 1;
 const SQUIRE_COOKING_LEVEL: i32 = 10;
 const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &["setstat mining 10", "setstat cooking 10"];
-#[derive(Clone, Copy)]
-struct BankSeed {
-    label: &'static str,
-    alias: &'static str,
-    count: i32,
-}
-
-const SQUIRE_BANK_SEEDS: &[BankSeed] = &[BankSeed {
-    label: "SEED own-account bank: Squire two-bar fast-path input",
-    alias: "iron_bar",
-    count: 2,
-}];
-
-fn bank_seeds_for(quest: Quest) -> &'static [BankSeed] {
-    if quest.key == "squire" {
-        SQUIRE_BANK_SEEDS
-    } else {
-        &[]
-    }
-}
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -96,6 +99,13 @@ struct Quest {
     xp_delta: i32,
     qp_delta: i32,
     qp_reward: &'static str,
+}
+fn combat_food_seed(quest: Quest) -> CombatFoodSeed {
+    if quest.key == "squire" {
+        SQUIRE_COMBAT_FOOD_SEED
+    } else {
+        COMBAT_FOOD_SEED
+    }
 }
 
 // quest_sheep.rs2:5 gives 150 XP. The fresh account also spins 20 balls:
@@ -304,25 +314,26 @@ impl Sample {
             && self.hitpoints == 43
             && self.safe_to_relog()
     }
-    fn combat_fixture_ready(&self) -> bool {
+    fn combat_fixture_ready(&self, quest: Quest) -> bool {
+        let food = combat_food_seed(quest);
         self.combat_can_relog()
             && self
                 .inventory
                 .iter()
-                .filter(|(id, _)| *id == 333)
+                .filter(|(id, _)| *id == food.item_id)
                 .map(|(_, count)| count)
                 .sum::<i32>()
-                == 5
+                == food.count
     }
     fn quest_fixture_ready(&self, quest: Quest) -> bool {
         match quest.key {
             "squire" => {
-                self.combat_fixture_ready()
+                self.combat_fixture_ready(quest)
                     && self.mining_level == SQUIRE_MINING_LEVEL
                     && self.level == SQUIRE_SMITHING_LEVEL
                     && self.cooking_level == SQUIRE_COOKING_LEVEL
             }
-            key if needs_combat_fixture(key) => self.combat_fixture_ready(),
+            key if needs_combat_fixture(key) => self.combat_fixture_ready(quest),
             _ => true,
         }
     }
@@ -406,7 +417,9 @@ fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool
     if baseline {
         if quest.key == "vampire" {
             // The labelled combat fixture raises Attack, the reward skill.
-            sample.qp == 0 && sample.quest_colour == Some(0xF80000) && sample.combat_fixture_ready()
+            sample.qp == 0
+                && sample.quest_colour == Some(0xF80000)
+                && sample.combat_fixture_ready(quest)
         } else {
             sample.fresh() && base_xp == sample.xp && sample.quest_fixture_ready(quest)
         }
@@ -595,31 +608,12 @@ impl Witness {
         };
         let mut seeds = vec!["own-account tutorial bypass and mainland position, then clean relog"];
         if needs_combat_fixture(self.quest.key) {
-            seeds.push(
-                "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, five trout; default danger policy",
-            );
+            seeds.push(combat_food_seed(self.quest).receipt_label);
         }
         if self.quest.key == "squire" {
             seeds.push("labelled own-account quest minima: Mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12) and Cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP");
         }
-        let bank_seeds = bank_seeds_for(self.quest);
-        for seed in bank_seeds {
-            seeds.push(seed.label);
-        }
-        let bank_seed_rows = bank_seeds
-            .iter()
-            .map(|seed| {
-                json!({
-                    "label": seed.label,
-                    "item_alias": seed.alias,
-                    "count": seed.count,
-                    "command": format!("givebank {} {}", seed.alias, seed.count),
-                    "scope": "own-account bank"
-                })
-            })
-            .collect::<Vec<_>>();
-        let quest_item_seeds = bank_seeds.iter().map(|seed| seed.count).sum::<i32>();
-        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":bank_seed_rows,"quest_state_seeds":0,"quest_item_seeds":quest_item_seeds,"reward_xp_seeds":0,"quest_point_seeds":0});
+        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":[],"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
             png_path: self.directory.join(format!("{phase}.png")),
@@ -676,34 +670,32 @@ impl Witness {
                             } else {
                                 &[]
                             };
-                            for command in COMBAT_FIXTURE.iter().chain(requirement_fixture.iter()) {
+                            let food_seed = combat_food_seed(self.quest);
+                            for command in COMBAT_STATS_FIXTURE
+                                .iter()
+                                .chain(std::iter::once(&food_seed.command))
+                                .chain(requirement_fixture.iter())
+                            {
                                 let command = *command;
                                 if !interact::cheat(client, command).is_sent() {
                                     return Err(format!(
                                         "combat fixture command refused: {command}"
                                     ));
                                 }
-                                let phase = match command {
-                                    "setstat mining 10" => {
-                                        "SEED quest Mining 10 minimum (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12)"
+                                let phase = if command == food_seed.command {
+                                    food_seed.phase_label
+                                } else {
+                                    match command {
+                                        "setstat mining 10" => {
+                                            "SEED quest Mining 10 minimum (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12)"
+                                        }
+                                        "setstat cooking 10" => {
+                                            "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
+                                        }
+                                        _ => "SEED own-account combat-only area fixture",
                                     }
-                                    "setstat cooking 10" => {
-                                        "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
-                                    }
-                                    _ => "SEED own-account combat-only area fixture",
                                 };
                                 self.record(json!({"phase":phase,"command":command}))?;
-                            }
-                            for seed in bank_seeds_for(self.quest) {
-                                let command = format!("givebank {} {}", seed.alias, seed.count);
-                                if !interact::cheat(client, &command).is_sent() {
-                                    return Err(format!("bank fixture command refused: {command}"));
-                                }
-                                self.record(json!({
-                                    "phase": seed.label,
-                                    "command": command,
-                                    "scope": "own-account bank"
-                                }))?;
                             }
                             self.fixture_seeded = true;
                             return Ok(());
@@ -1017,19 +1009,6 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
 }
 
 #[test]
-fn squire_bank_seed_is_labelled_and_scoped_to_squire() {
-    let seeds = bank_seeds_for(SQUIRE);
-    assert_eq!(seeds.len(), 1);
-    assert_eq!(
-        seeds[0].label,
-        "SEED own-account bank: Squire two-bar fast-path input"
-    );
-    assert_eq!((seeds[0].alias, seeds[0].count), ("iron_bar", 2));
-    assert!(bank_seeds_for(SHEEP).is_empty());
-    assert!(bank_seeds_for(HETTY).is_empty());
-}
-
-#[test]
 fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
     let baseline = Sample {
         tick: 1,
@@ -1040,7 +1019,7 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         cooking_level: SQUIRE_COOKING_LEVEL,
         qp: 0,
         quest_colour: Some(0xF80000),
-        inventory: vec![(333, 5)],
+        inventory: vec![(379, 6)],
         main_root: 0,
         main_text: vec![],
         dialogue: vec![],
@@ -1053,6 +1032,18 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         nearby_npcs: vec![],
     };
     assert!(witness_predicate(&baseline, SQUIRE, baseline.xp, true));
+    let mut five_trout = baseline.clone();
+    five_trout.inventory = vec![(333, 5)];
+    assert!(
+        !witness_predicate(&five_trout, SQUIRE, baseline.xp, true),
+        "Squire requires its lobster food, not the other combat fixture's trout"
+    );
+    let mut short_lobster_seed = baseline.clone();
+    short_lobster_seed.inventory = vec![(379, 5)];
+    assert!(
+        !witness_predicate(&short_lobster_seed, SQUIRE, baseline.xp, true),
+        "Squire's blurite step requires six lobsters"
+    );
     let mut pre_relog = baseline.clone();
     pre_relog.level = 1;
     pre_relog.mining_level = 1;
