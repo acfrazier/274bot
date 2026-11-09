@@ -1940,6 +1940,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -1970,6 +1980,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2158,6 +2171,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2189,6 +2212,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2490,6 +2516,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2521,6 +2557,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2724,6 +2763,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2755,6 +2804,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2818,6 +2870,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2848,6 +2910,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2912,6 +2977,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2942,6 +3017,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3059,6 +3137,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3089,6 +3177,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3185,6 +3276,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3215,6 +3316,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3351,6 +3455,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3382,6 +3496,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3441,6 +3558,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3471,6 +3598,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3511,6 +3641,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3541,6 +3681,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3581,6 +3724,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3611,6 +3764,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3651,6 +3807,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3681,6 +3847,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4260,6 +4429,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4291,6 +4470,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4417,6 +4599,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4447,6 +4639,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4584,6 +4779,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4615,6 +4820,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4720,6 +4928,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4751,6 +4969,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -5145,6 +5366,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -5176,6 +5407,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
