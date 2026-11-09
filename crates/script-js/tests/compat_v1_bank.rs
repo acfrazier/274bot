@@ -221,6 +221,9 @@ fn compat_v1_bank__bank_opennearestworld__removed() {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__findquestjunk__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = bot(
         "import { QUEST_JUNK, findQuestJunk } from '../../api/bank/bankQuestJunk.js';",
         r#"

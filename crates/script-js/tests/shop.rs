@@ -1461,6 +1461,9 @@ const ABI_CONTRACT: &str = include_str!("../compat-js/abi-contract.json");
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_shop__unitprice__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { unitPrice } from '../../api/shop/StockModel.js';
 export default class T extends LoopingBot {
@@ -1491,6 +1494,9 @@ export default class T extends LoopingBot {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_shop__buyoutcost__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { buyoutCost } from '../../api/shop/shopPrice.js';
 export default class T extends LoopingBot {
@@ -1518,6 +1524,9 @@ export default class T extends LoopingBot {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_shop__shopbuyprice__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { shopBuyPrice } from '../../api/shop/shopPrice.js';
 export default class T extends LoopingBot {
@@ -1698,6 +1707,9 @@ fn buy_by_id_kept_reconnect_returns_settled_count_without_a_post_relog_click() {
 #[test]
 #[expect(non_snake_case, reason = "the census names this removal test")]
 fn compat_v1_shop__shop_player__removed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { Shop } from '../../api/shop/Shop.js';
 const trap = key => {

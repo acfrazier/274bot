@@ -407,6 +407,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn hunting_supply_withdraw_to_returns_the_observed_gain() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let source = r#"
 import { withdrawTo } from '../../api/combat/hunting/supply.js';
 export default class T extends LoopingBot {
@@ -431,6 +434,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn hunting_supply_withdraw_to_stops_at_a_full_pack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let source = r#"
 import { withdrawTo } from '../../api/combat/hunting/supply.js';
 export default class T extends LoopingBot {

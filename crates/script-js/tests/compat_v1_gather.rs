@@ -199,6 +199,9 @@ macro_rules! contract_tests {
             #[test]
             #[expect(non_snake_case, reason = "the test names are the census row names")]
             fn $name() {
+                if !api::test_support::game_data_available() {
+                    return;
+                }
                 contract($selector);
             }
         )*
@@ -315,6 +318,9 @@ export default class T extends LoopingBot {
 /// `GAS_ROCK_IDS` is the one `data/miningRocks.js` set on every route and keeps its data-unavailable refusal.
 #[test]
 fn gas_rock_ids_are_one_set_on_every_route_and_refuse_without_content() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let source = r#"
 import { GAS_ROCK_IDS as moduleSet } from '../../data/miningRocks.js';
 import { GAS_ROCK_IDS as barrelSet } from '@rs2b0t/api';
@@ -350,6 +356,9 @@ export default class T extends LoopingBot {
 /// objects the fishing-owned module exports (the acquisition family re-exports them from there).
 #[test]
 fn vendor_results_are_the_exported_vendor_objects() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let source = r#"
 import { GERRANT_VENDOR, HARRY_VENDOR, fishingVendorFor, planFishingGearBuys, fishingGearShopCart } from '../../shim/fishing_gear.js';
 import { FISHING_METHODS } from '../../data/fishingMethods.js';

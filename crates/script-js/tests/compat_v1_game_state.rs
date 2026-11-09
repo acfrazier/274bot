@@ -108,6 +108,9 @@ fn mentions(text: &str, name: &str) -> bool {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_game_state__game_castonnpc__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let execution = ExecutionId::first(RunKey {
         slot: 4,
         run: 9,

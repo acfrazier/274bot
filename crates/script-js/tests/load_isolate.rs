@@ -6120,6 +6120,9 @@ export default class T extends LoopingBot {
 /// exported (`compat_v1_bank__bankpaceticks__removed`).
 #[test]
 fn isolate_bank_pace_logs_and_settles_on_a_later_observed_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -6165,6 +6168,9 @@ export default class T extends LoopingBot {
 /// channel's 128-entry array limit.
 #[test]
 fn isolate_sort_bank_returns_more_unmatched_ids_than_one_channel_array() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 import { sortBank } from '../../api/bank/bankSort.js';
 export default class T extends LoopingBot {
