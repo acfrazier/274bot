@@ -453,8 +453,8 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
-| `NAV_PACK_289` | Use the CI reference v18 pack for ordinary and reference-contract cells. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
-| `NAV_FLAGS_289` | Use the matching `274bot-289-v18.navflags` in the same reference-v18 directory as `NAV_PACK_289`. |
+| `NAV_PACK_289` | The v19 pack that `tools/local-data/build.py` writes, `target/local-data/nav/289/274bot.navpack` in the repository under test. `run_cells.py` uses it when the variable is unset. The stored v17 and v18 reference packs are refused by the current reader. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
+| `NAV_FLAGS_289` | The matching `target/local-data/nav/289/274bot.navflags`. `run_cells.py` uses it when the variable is unset. |
 | `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`, on chardonnay. |
 | `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`, on chardonnay. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
@@ -466,7 +466,7 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `QUESTER_PATH` | The map fixes `cook`, `sheep`, and `prince` for the Cook, sheep-spinning, and Prince-production cells. The caller does not choose it. |
 | `QUESTER_SEEDS` | The map points to the committed Cook, sheep-spin, and Prince-production seed files in `crates/host-play/tests/fixtures/quester-path/`. Run the command from the repository root. The caller does not supply seed data. |
 | `QUESTER_PATH_DIR` | Set to `${PWD}/crates/script/paths/289` from the composed repository root. The Zanaris Path source must be merged into the tested head. Do not substitute an unmerged external Path checkout. |
-| `NAV_PACK_274` | Use `274bot-274-v18.navpack` in the same reference-v18 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
+| `NAV_PACK_274` | The matching `target/local-data/nav/274/274bot.navpack`. `run_cells.py` uses it when the variable is unset. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
 | `GATHERER_ENGINE_DIR` | Use the absolute read-only client tree for the 600 ms Engine L service at `47594/3080`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine`; on chardonnay, use the local Engine L tree supplied as `BOT_ENGINE_DIR`. |
 | `GATHERER_TICK_EVIDENCE` | Each of the five native tick cells writes to a fresh, nonexistent absolute path below its `LIVE_EVIDENCE_DIR`; the map assigns a distinct subdirectory per cell and pass. |
@@ -634,7 +634,7 @@ pass's `LIVE_EVIDENCE_DIR`; writes in one pass do not change the seed or another
 pass's cache. The runner also creates per-cell unpack dirs and a kept panel home.
 It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
 `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the selected engine ports. Explicit caller
-engine and nav paths take precedence over discovered reference-v17 defaults.
+engine and nav paths take precedence over the repository's `target/local-data` defaults.
 It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
 for each cell and pass, so `isohome` keeps `HOME` under `BOT_EVIDENCE_DIR`
 (`crates/host-play/tests/script_api_live.rs:503-507`). Panel cells override this
@@ -646,18 +646,18 @@ to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
 
-Paired quest cells, including `host.quester-jonny-stand-engine-q`, also require
-`BOT_LIVE_PARTNER_NAME_PREFIX`. Export a distinct partner prefix in the same
-remote shell that invokes the runner (for example, partner `b2q` with
-`--prefix b29`). The runner inherits that value; a Merlot-only environment
-assignment is not forwarded by the lab wrapper. It still sets the primary
+Cells that run two real accounts (`host.quester-jonny-stand-engine-q`,
+`host.quester-partner-trade`) use `${BOT_LIVE_PARTNER_NAME_PREFIX}`. Pass the
+second account's prefix with `--partner-prefix` (1 to 4 characters, different
+from `--prefix`; for example `--prefix b29 --partner-prefix b2q`). When the flag
+is absent the runner reads the `BOT_LIVE_PARTNER_NAME_PREFIX` variable, and it
+refuses to start a two-account cell with neither. It still sets the primary
 prefix from `--prefix`.
 
-For batch proofs that require the composed head, export its canonical pack and
-matching flags/sidecars with the local-data build receipt. Do not substitute a
-discovered reference pack for those cells; the named reference pack remains
-valid only for ordinary and reference-contract cells. This identity requirement
-is artifact provenance, not quest-family binding.
+For batch proofs that require the composed head, use its canonical pack and
+matching flags/sidecars with the local-data build receipt (the runner's default
+is the repository's own `target/local-data/nav`). This identity requirement is
+artifact provenance, not quest-family binding.
 
 Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
 required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as

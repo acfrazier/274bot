@@ -19,7 +19,7 @@ globs = [
 ]
 cells = [
   "api.catalog-codegen-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test catalog_codegen -- --nocapture",
-  "api.gather-tables-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib gather_camps::tests:: fishing_gear::tests:: quest_junk::tests::",
+  "api.gather-tables-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib -- gather_camps::tests:: fishing_gear::tests:: quest_junk::tests::",
   "script.fishing-gear-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib fishing_gear::tests::",
   "compat.v1-gather-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_gather",
 ]
@@ -70,14 +70,14 @@ globs = [
 cells = [
   "compat_v1_walking_probeable|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=$(git rev-parse HEAD) LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_walking_live -- --ignored --exact compat_v1_walking_probeable --nocapture --test-threads=1",
   "compat.v1-walking-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_walking",
-  "nav-planner.contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib contract::",
+  "nav-planner.contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --features api/test-support --lib contract::",
 ]
 
 # Test-only fixture field in the scenario proof module.
 [[cover]]
 globs = ["crates/scenario/src/proof.rs"]
 cells = [
-  "scenario.proof-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib proof::tests::",
+  "scenario.proof-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib proof::tests::",
 ]
 
 [live]
@@ -1058,7 +1058,7 @@ cells = [
 [[cover]]
 globs = ["crates/script/paths/289/blackarmgang.json", "crates/script/src/combat/machine.rs", "crates/script/src/quester/families/combat.rs"]
 cells = [
-  "host.quester-jonny-stand-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=blackarmgang QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/blackarm-jonny.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+  "host.quester-jonny-stand-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_LIVE_PARTNER_NAME_PREFIX=${BOT_LIVE_PARTNER_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=blackarmgang QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/blackarm-jonny.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
 ]
 
 # The native Quester partner trade between two real accounts: the offer, both
