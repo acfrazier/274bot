@@ -155,6 +155,39 @@ impl<'a> ZoneTableView<'a> {
         Ok(self.zone(bound)?.kind())
     }
 
+    /// Zone rows covered by one pack-bound zone or group, in pack order.
+    /// The iterator borrows the table and allocates nothing.
+    pub fn covered_zones(
+        self,
+        bound: BoundZoneKey,
+    ) -> Result<impl Iterator<Item = ZoneView<'a>> + 'a, ContractError> {
+        if bound.pack != self.pack {
+            return Err(ContractError::PackMismatch);
+        }
+        if !self.contains_key(bound.key) {
+            return Err(ContractError::UnknownKey);
+        }
+        Ok(self
+            .table
+            .zones()
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, _)| {
+                let index = u16::try_from(index).ok()?;
+                let covered = match bound.key {
+                    ZoneKey::Zone(wanted) => index == wanted,
+                    ZoneKey::Group(group) => self.table.groups()[usize::from(group)]
+                        .members
+                        .contains(&index),
+                };
+                covered.then_some(ZoneView {
+                    pack: self.pack,
+                    table: self.table,
+                    index,
+                })
+            }))
+    }
+
     /// Member zone keys of a bound group key, bound to this pack, in pack
     /// order. Not public: the frozen facade names a group by its key; the
     /// owner boundary judges a group member by member

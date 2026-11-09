@@ -704,6 +704,34 @@ fn exemption_contains_matches_the_router_whole_walk_mask() {
 }
 
 #[test]
+fn covered_zones_preserves_zone_group_and_pack_identity() {
+    let (a, b) = zone_world();
+    let zones = a.zones().unwrap();
+    let one = zones.bind(ZoneKey::Zone(2)).unwrap();
+    let rows: Vec<_> = zones.covered_zones(one).unwrap().collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key(), one);
+    let group = zones.bind(ZoneKey::Group(0)).unwrap();
+    let members: Vec<_> = zones
+        .covered_zones(group)
+        .unwrap()
+        .map(|zone| zone.key())
+        .collect();
+    assert_eq!(
+        members,
+        [
+            zones.bind(ZoneKey::Zone(0)).unwrap(),
+            zones.bind(ZoneKey::Zone(1)).unwrap()
+        ]
+    );
+    let foreign = b.zones().unwrap().bind(ZoneKey::Zone(0)).unwrap();
+    assert!(matches!(
+        zones.covered_zones(foreign),
+        Err(ContractError::PackMismatch)
+    ));
+}
+
+#[test]
 fn zone_exemptions_are_pack_bound_and_unknown_keys_refuse() {
     assert_eq!(MAX_ZONE_KEYS, 8);
     let (a, b) = zone_world();
