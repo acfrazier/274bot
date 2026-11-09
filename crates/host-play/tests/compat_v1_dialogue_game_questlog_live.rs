@@ -583,7 +583,7 @@ fn verify_live_environment() {
     assert_eq!(
         required("BOT_NAV_BUILD"),
         "skip",
-        "use the explicit v17 nav pack"
+        "use the explicit local-data nav pack"
     );
     let prefix = required("BOT_LIVE_NAME_PREFIX");
     assert!(
@@ -609,8 +609,8 @@ fn verify_live_environment() {
         nav_pack.display()
     );
     assert!(
-        nav_pack.ends_with("274bot-289-v17.navpack"),
-        "live cells require the explicit revision-289 v17 nav pack"
+        nav_pack.ends_with("274bot.navpack"),
+        "live cells require the revision-289 nav pack from tools/local-data"
     );
     assert!(required_path("WORLD_ENGINE_DIR").is_dir());
     assert!(required_path("BOT_CACHE_DIR").is_dir());
@@ -1718,7 +1718,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, the local-data 289 nav pack, and three fresh-account runs"]
 fn compat_v1_dialogue_make_one_live() {
     run_captured(
         "compat_v1_dialogue_make_one_live",
@@ -1728,7 +1728,7 @@ fn compat_v1_dialogue_make_one_live() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, the local-data 289 nav pack, and three fresh-account runs"]
 fn compat_v1_game_cast_on_npc_live() {
     run_captured(
         "compat_v1_game_cast_on_npc_live",
@@ -1738,7 +1738,7 @@ fn compat_v1_game_cast_on_npc_live() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, the local-data 289 nav pack, and three fresh-account runs"]
 fn compat_v1_quest_journal_live() {
     run_captured(
         "compat_v1_quest_journal_live",

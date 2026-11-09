@@ -291,7 +291,7 @@ fn verify_live_environment() {
     assert_eq!(
         required("BOT_NAV_BUILD"),
         "skip",
-        "use the explicit v17 nav pack"
+        "use the explicit local-data nav pack"
     );
     let prefix = required("BOT_LIVE_NAME_PREFIX");
     assert!(
@@ -299,7 +299,7 @@ fn verify_live_environment() {
         "BOT_LIVE_NAME_PREFIX must be one to four ASCII alphanumeric characters"
     );
     assert!(required_path("RS2B0T").is_dir());
-    assert!(required_path("WORLD_NAV_PACK").ends_with("274bot-289-v17.navpack"));
+    assert!(required_path("WORLD_NAV_PACK").ends_with("274bot.navpack"));
     assert!(required_path("WORLD_ENGINE_DIR").is_dir());
     assert!(required_path("BOT_CACHE_DIR").is_dir());
 }
