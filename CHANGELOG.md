@@ -67,6 +67,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   kill without the drop, up to a limit of 281 kills, instead of stopping. This
   fixes Doric's Quest stopping after the first iron ore. The step still fails
   at the limit and reports the last combat result.
+- The Tribal Totem door lock no longer stops with a budget error when a dial
+  click follows another click in the same game tick. The click waits for the
+  next tick.
 
 ### Memory diagnostics
 
