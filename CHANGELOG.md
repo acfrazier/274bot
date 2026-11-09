@@ -60,6 +60,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - A continuing KnifeArm routes its exact resource click as `MOVE_OPCLICK`,
   not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
   unchanged.
+- Revision 377 maps all 104 questlist rows. The 69 canonical handlers and
+  D5-authorized Wanted product handler are admitted; 34 other gaps stay refused.
 
 ### Memory diagnostics
 

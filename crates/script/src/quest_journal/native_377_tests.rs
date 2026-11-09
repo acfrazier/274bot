@@ -211,6 +211,166 @@ fn selected_377_adopts_only_matching_fresh_page_and_refuses_foreign_modals() {
 }
 
 #[test]
+fn selected_377_admits_newly_mapped_quest_buttons() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let catalog = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    assert_eq!(
+        revision_377::admit(catalog.quest("fortress").unwrap()).unwrap(),
+        7332
+    );
+    for (id, expected) in [
+        ("blackarmgang", 7345),
+        ("cog", 7353),
+        ("itexam", 7354),
+        ("horror", 10135),
+        ("golem", 12839),
+        ("rd", 668),
+        ("wanted", 6024),
+    ] {
+        assert_eq!(
+            revision_377::admit(catalog.quest(id).unwrap()).unwrap(),
+            expected,
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn selected_377_preserves_the_original_nine_button_ids() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let catalog = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    for (id, expected) in [
+        ("cook", 7333),
+        ("runemysteries", 7335),
+        ("romeojuliet", 7343),
+        ("sheep", 7344),
+        ("demon", 7334),
+        ("gobdip", 7338),
+        ("squire", 7346),
+        ("vampire", 7347),
+        ("hetty", 7348),
+    ] {
+        assert_eq!(
+            revision_377::admit(catalog.quest(id).unwrap()).unwrap(),
+            expected,
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn selected_377_content_gaps_are_not_admitted() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let identity = data.quest_identity().unwrap();
+    let catalog = QuestCatalog::from_identity(Some(identity)).unwrap();
+    for id in ["mm", "creatureoffenkenstrain"] {
+        assert!(
+            revision_377::admit(catalog.quest(id).unwrap()).is_err(),
+            "{id}"
+        );
+    }
+    for row in identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "stub" && row.journal_script.is_none() && row.id != "wanted")
+    {
+        assert!(
+            revision_377::admit(catalog.quest(&row.id).unwrap()).is_err(),
+            "{}",
+            row.id
+        );
+    }
+}
+
+#[test]
+fn selected_377_admits_every_published_journal_row() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let identity = data.quest_identity().unwrap();
+    let catalog = QuestCatalog::from_identity(Some(identity)).unwrap();
+    let quest_count = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "quest")
+        .count();
+    let admitted_quests = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "quest")
+        .filter(|row| revision_377::admit(catalog.quest(&row.id).unwrap()).is_ok())
+        .count();
+    let stub_count = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "stub")
+        .count();
+    let admitted_stubs = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "stub")
+        .filter(|row| revision_377::admit(catalog.quest(&row.id).unwrap()).is_ok())
+        .count();
+    let questlist_rows = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind != "miniquest")
+        .count();
+    let mapped_rows = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind != "miniquest")
+        .filter(|row| {
+            revision_377::BUTTONS
+                .iter()
+                .any(|(component, _, _)| row.component == *component)
+        })
+        .count();
+    let shared_opener_rows = revision_377::BUTTONS
+        .iter()
+        .filter(|(_, _, shared_opener)| *shared_opener)
+        .count();
+    for row in identity.rows.iter().filter(|row| row.kind != "miniquest") {
+        let (_, _, shared_opener) = revision_377::BUTTONS
+            .iter()
+            .find(|(component, _, _)| row.component == *component)
+            .expect("every questlist identity row has a mapped button");
+        assert_eq!(
+            *shared_opener,
+            row.journal_script.is_some() || row.id == "wanted",
+            "{}",
+            row.id
+        );
+    }
+    let admitted_total = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind != "miniquest")
+        .filter(|row| revision_377::admit(catalog.quest(&row.id).unwrap()).is_ok())
+        .count();
+    let admitted_miniquests = identity
+        .rows
+        .iter()
+        .filter(|row| row.kind == "miniquest")
+        .filter(|row| revision_377::admit(catalog.quest(&row.id).unwrap()).is_ok())
+        .count();
+
+    assert_eq!(identity.rows.len(), 105);
+    assert_eq!(quest_count, 65);
+    assert_eq!(admitted_quests, 63);
+    assert_eq!(stub_count, 39);
+    assert_eq!(admitted_stubs, 7);
+    assert_eq!(questlist_rows, 104);
+    assert_eq!(revision_377::BUTTONS.len(), 104);
+    assert_eq!(mapped_rows, 104);
+    assert_eq!(shared_opener_rows, 70);
+    assert_eq!(admitted_total, 70);
+    assert_eq!(admitted_miniquests, 0);
+}
+
+#[test]
 fn selected_377_missing_body_and_button_tables_fail_closed() {
     crate::require_local_game_data_for_test!(ClientRevision::R377);
     let (mut snapshot, request, title, _) = fixture("sheep");
@@ -238,6 +398,6 @@ fn selected_377_missing_body_and_button_tables_fail_closed() {
     let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let catalog = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     assert!(
-        matches!(revision_377::admit(catalog.quest("imp").unwrap()), Err(ActionError::Unavailable(reason)) if reason.contains("button table unavailable"))
+        matches!(revision_377::admit(catalog.quest("barcrawl").unwrap()), Err(ActionError::Unavailable(reason)) if reason.contains("button table unavailable"))
     );
 }
