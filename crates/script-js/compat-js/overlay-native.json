@@ -190,7 +190,7 @@
     "operation": "optional",
     "parameters": ["opts"],
     "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-    "runtime": "crates/script-js/src/shim/traversal.js:52"
+    "runtime": "crates/script-js/src/shim/traversal.js:58"
   },
   {
     "id": "cook-native-bound-table",

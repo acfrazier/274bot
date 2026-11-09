@@ -84,7 +84,7 @@
     "module": "api/execution/Execution.js",
     "selector": "$add",
     "reason": "Native step-machine park is a host-only helper, resolving a completion envelope.",
-    "runtime": "crates/script-js/src/shim/execution.js:110",
+    "runtime": "crates/script-js/src/shim/execution.js:132",
     "declaration": "export function parkMachine(handle: number): Promise<import('../../shim/_kernel.js').MachineResult>;"
   },
   {
