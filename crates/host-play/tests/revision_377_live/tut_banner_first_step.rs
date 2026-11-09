@@ -30,7 +30,7 @@ struct Pins {
 #[derive(Clone)]
 struct Observation {
     tick: u32,
-    tutorial: Option<i32>,
+    tutorial_client_cache: Option<i32>,
     progress: Option<i32>,
     banner_hidden: Option<bool>,
     main_overlay: i32,
@@ -105,6 +105,16 @@ fn pin_paths(pins: &Pins) -> Value {
     })
 }
 
+fn tutorial_step_oracle() -> Value {
+    json!({
+        "source": "fresh same-account `getvar tutorial` server reply, newer than the chat-sequence baseline; message-box replies are dismissed before continuing",
+        "step_1": "server tutorial step 1; the initial timer baseline is normal character-design acceptance",
+        "step_4": "server tutorial step 4; the Guide's first scenery-interaction stage, where the banner must stay hidden",
+        "client_varp_281": "scope=perm without transmit=yes; recorded only as a non-authoritative client cache",
+        "progress_varp_406": "progress-bar invariance only; not used to determine tutorial step",
+    })
+}
+
 fn classify_failure(error: &str) -> &'static str {
     if error.contains("tooling gap") {
         "tooling-gap"
@@ -148,7 +158,7 @@ fn record_observation(
             "tick": state.tick,
             "elapsed_ticks": elapsed_ticks,
             "elapsed_ms": elapsed_ms,
-            "tutorial_varp_281": state.tutorial,
+            "tutorial_client_cache_varp_281": state.tutorial_client_cache,
             "progress_varp_406": state.progress,
             "component_12227_hide": state.banner_hidden,
             "main_overlay_id": state.main_overlay,
@@ -188,7 +198,7 @@ fn record_assertion(
 fn observe(client: &Client, snapshot: &GameSnapshot) -> Observation {
     Observation {
         tick: snapshot.tick(),
-        tutorial: snapshot
+        tutorial_client_cache: snapshot
             .varps()
             .iter()
             .find(|varp| varp.index == TUTORIAL_VARP)
@@ -208,36 +218,211 @@ fn observe(client: &Client, snapshot: &GameSnapshot) -> Observation {
     }
 }
 
-fn require_in_game(state: &Observation, phase: &str) -> Result<(), String> {
-    if !state.ingame || !state.attached {
+#[derive(Clone)]
+struct FreshTutorialReply {
+    value: i32,
+    source: &'static str,
+    chat_sequence: Option<i32>,
+    modal_text: Option<String>,
+}
+
+struct TutorialReadback {
+    value: i32,
+    reply_tick: u32,
+    chat_sequence_baseline: i32,
+    reply_source: &'static str,
+    chat_sequence: Option<i32>,
+    message_box_dismissed: bool,
+    message_box_dismissal_tick: Option<u32>,
+}
+
+fn fresh_tutorial_reply(
+    snapshot: &GameSnapshot,
+    chat_baseline: i32,
+    modal_baseline: &[String],
+) -> Option<FreshTutorialReply> {
+    if let Some((value, text)) = snapshot
+        .chat_modal_texts()
+        .iter()
+        .filter(|text| !modal_baseline.contains(*text))
+        .find_map(|text| {
+            scenario::tutorial::parse_tutorial_reply(text).map(|value| (value, text.clone()))
+        })
+    {
+        return Some(FreshTutorialReply {
+            value,
+            source: "message_box",
+            chat_sequence: None,
+            modal_text: Some(text),
+        });
+    }
+
+    snapshot
+        .chat_lines()
+        .iter()
+        .filter(|line| line.sequence > chat_baseline)
+        .filter_map(|line| {
+            scenario::tutorial::parse_tutorial_reply(&line.text)
+                .map(|value| (line.sequence, value))
+        })
+        .max_by_key(|&(sequence, _)| sequence)
+        .map(|(sequence, value)| FreshTutorialReply {
+            value,
+            source: "chat_line",
+            chat_sequence: Some(sequence),
+            modal_text: None,
+        })
+}
+
+fn read_tutorial_server(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    log: &mut File,
+    pins: &Pins,
+    account: &str,
+    phase: &str,
+) -> Result<TutorialReadback, String> {
+    let chat_baseline = scenario::tutorial::chat_baseline(snapshot);
+    let modal_baseline = snapshot.chat_modal_texts().to_vec();
+    let wait_started = snapshot.tick();
+    let wait_wall = Instant::now();
+    if !interact::cheat(client, scenario::tutorial::TUTORIAL_GETVAR).is_sent() {
         return Err(format!(
-            "{phase}: expected an attached in-game client, got ingame={} attached={}",
-            state.ingame, state.attached
+            "tooling gap: {phase} server get tutorial read was refused"
+        ));
+    }
+    let mut reply = None;
+    pump_until(
+        client,
+        snapshot,
+        pump,
+        phase,
+        Duration::from_secs(15),
+        |client, snapshot| {
+            log_tick(
+                log,
+                pins,
+                account,
+                phase,
+                client,
+                snapshot,
+                wait_started,
+                wait_wall,
+            )
+        },
+        |_client, snapshot| {
+            if let Some(fresh) =
+                fresh_tutorial_reply(snapshot, chat_baseline, &modal_baseline)
+            {
+                reply = Some(fresh);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        },
+    )?;
+    let reply = reply.ok_or_else(|| format!("tooling gap: {phase} no fresh get tutorial reply"))?;
+    let reply_tick = snapshot.tick();
+    let mut message_box_dismissal_tick = None;
+    if let Some(modal_text) = reply.modal_text.as_ref() {
+        if snapshot
+            .chat_modal_texts()
+            .iter()
+            .any(|text| text == modal_text)
+        {
+            if snapshot.chat_continue_component_id() == -1 {
+                return Err(format!(
+                    "tooling gap: {phase} get tutorial message box has no dismiss control"
+                ));
+            }
+            accepted(
+                Interactions::new(snapshot, client).continue_dialog(None),
+                "dismiss get tutorial message box",
+            )?;
+            let dismissal_started = snapshot.tick();
+            let dismissal_wall = Instant::now();
+            pump_until(
+                client,
+                snapshot,
+                pump,
+                phase,
+                Duration::from_secs(10),
+                |client, snapshot| {
+                    log_tick(
+                        log,
+                        pins,
+                        account,
+                        phase,
+                        client,
+                        snapshot,
+                        dismissal_started,
+                        dismissal_wall,
+                    )
+                },
+                |_client, snapshot| {
+                    Ok(!snapshot
+                        .chat_modal_texts()
+                        .iter()
+                        .any(|text| text == modal_text))
+                },
+            )?;
+            message_box_dismissal_tick = Some(snapshot.tick());
+        }
+    }
+
+    let readback = TutorialReadback {
+        value: reply.value,
+        reply_tick,
+        chat_sequence_baseline: chat_baseline,
+        reply_source: reply.source,
+        chat_sequence: reply.chat_sequence,
+        message_box_dismissed: message_box_dismissal_tick.is_some(),
+        message_box_dismissal_tick,
+    };
+    write_row(
+        log,
+        &json!({
+            "kind": "server_readback",
+            "test": "tut_banner_first_step_377",
+            "account": account,
+            "pins": pin_values(pins),
+            "checkpoint": phase,
+            "command": scenario::tutorial::TUTORIAL_GETVAR,
+            "server_tutorial_step": readback.value,
+            "reply_tick": readback.reply_tick,
+            "chat_sequence_baseline": readback.chat_sequence_baseline,
+            "chat_sequence": readback.chat_sequence,
+            "reply_source": readback.reply_source,
+            "message_box_text": reply.modal_text,
+            "message_box_dismissed": readback.message_box_dismissed,
+            "message_box_dismissal_tick": readback.message_box_dismissal_tick,
+        }),
+    )?;
+    Ok(readback)
+}
+
+fn require_server_tutorial_step(
+    readback: &TutorialReadback,
+    expected: i32,
+    phase: &str,
+) -> Result<(), String> {
+    if readback.value != expected {
+        return Err(format!(
+            "{phase}: server get tutorial returned {}, expected {expected}",
+            readback.value
         ));
     }
     Ok(())
 }
 
-fn require_common_state(
+/// Client cache varp 281 is `scope=perm` and is not transmitted; use the fresh server readback for tutorial steps.
+fn require_progress_state(
     state: &Observation,
-    tutorial: i32,
     progress: i32,
     phase: &str,
 ) -> Result<(), String> {
     require_in_game(state, phase)?;
-    match state.tutorial {
-        Some(value) if value == tutorial => {}
-        Some(value) => {
-            return Err(format!(
-                "{phase}: tutorial varp {TUTORIAL_VARP} was {value}, expected {tutorial}"
-            ));
-        }
-        None => {
-            return Err(format!(
-                "tooling gap: {phase} cannot observe varp {TUTORIAL_VARP}"
-            ))
-        }
-    }
     match state.progress {
         Some(value) if value == progress => {}
         Some(value) => {
@@ -259,6 +444,17 @@ fn require_common_state(
     }
     Ok(())
 }
+
+fn require_in_game(state: &Observation, phase: &str) -> Result<(), String> {
+    if !state.ingame || !state.attached {
+        return Err(format!(
+            "{phase}: expected an attached in-game client, got ingame={} attached={}",
+            state.ingame, state.attached
+        ));
+    }
+    Ok(())
+}
+
 
 fn require_banner(state: &Observation, hidden: bool, phase: &str) -> Result<(), String> {
     match state.banner_hidden {
@@ -384,7 +580,7 @@ fn wait_for_banner(
         },
         |client, snapshot| {
             let state = observe(client, snapshot);
-            require_common_state(&state, 1, progress, checkpoint)?;
+            require_progress_state(&state, progress, checkpoint)?;
             let elapsed = state.tick.saturating_sub(start_tick);
             match state.banner_hidden {
                 None => Err(format!(
@@ -477,7 +673,7 @@ fn ensure_dialogue(
                     wall_start,
                 )?;
                 let state = observe(client, snapshot);
-                require_common_state(&state, 1, progress, phase)?;
+                require_progress_state(&state, progress, phase)?;
                 require_banner(&state, false, phase)
             },
             |_client, snapshot| Ok(snapshot.chat_continue_component_id() != -1),
@@ -576,7 +772,7 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             "asset_port": ASSET_PORT,
             "pins": pin_values(&pins),
             "pin_paths": pin_paths(&pins),
-            "client_cache_dir": bound.cache_dir.display().to_string(),
+            "tutorial_step_oracle": tutorial_step_oracle(),
             "client_cache_manifest": bound.cache_dir.join("SHA256SUMS").display().to_string(),
             "client_unpack_dir": bound.unpack_dir.display().to_string(),
             "observations_path": observations_path.display().to_string(),
@@ -675,14 +871,14 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             }),
         )?;
 
-        let start_wait = snapshot.tick();
-        let start_wall = Instant::now();
+        let first_t0 = snapshot.tick();
+        let first_wall = Instant::now();
         pump_until(
             &mut client,
             &mut snapshot,
             &mut pump,
             "step1_start_wait",
-            Duration::from_secs(90),
+            Duration::from_secs(15),
             |client, snapshot| {
                 log_tick(
                     &mut log,
@@ -691,28 +887,32 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                     "step1_start_wait",
                     client,
                     snapshot,
-                    start_wait,
-                    start_wall,
+                    first_t0,
+                    first_wall,
                 )
             },
-            |client, snapshot| {
-                let state = observe(client, snapshot);
-                if !state.ingame || !state.attached {
-                    return Ok(false);
-                }
-                if state.tutorial == Some(4) {
-                    return Err(
-                        "fresh character entered tutorial step 4 before the cell began".into(),
-                    );
-                }
-                Ok(state.tutorial == Some(1))
+            |_client, snapshot| {
+                Ok(snapshot.tick() > first_t0 && snapshot.ingame() && snapshot.attached())
             },
         )?;
-        let first_start = observe(&client, &snapshot);
-        let progress = first_start
+        let first_start_before_readback = observe(&client, &snapshot);
+        let progress = first_start_before_readback
             .progress
             .ok_or("tooling gap: step-1 start cannot observe progress varp 406")?;
-        require_common_state(&first_start, 1, progress, "step1_start")?;
+        require_progress_state(&first_start_before_readback, progress, "step1_start")?;
+        require_banner(&first_start_before_readback, true, "step1_start")?;
+        let first_start_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "step1_start_server_readback",
+        )?;
+        require_server_tutorial_step(&first_start_step, 1, "step1_start")?;
+        let first_start = observe(&client, &snapshot);
+        require_progress_state(&first_start, progress, "step1_start")?;
         require_banner(&first_start, true, "step1_start")?;
         record_observation(
             &mut log,
@@ -720,9 +920,14 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &account,
             "step1_start",
             &first_start,
-            Some(0),
-            Some(start_wall.elapsed().as_millis()),
-            json!({"expected_banner_hidden": true}),
+            Some(first_start.tick.saturating_sub(first_t0)),
+            Some(first_wall.elapsed().as_millis()),
+            json!({
+                "timer_start_tick": first_t0,
+                "server_tutorial_step": first_start_step.value,
+                "server_readback_reply_tick": first_start_step.reply_tick,
+                "expected_banner_hidden": true,
+            }),
         )?;
         pass_assertion(
             &mut assertions,
@@ -730,11 +935,18 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &pins,
             &account,
             "step1_start_hidden_and_progress_bar_present",
-            json!({"tick": first_start.tick, "tutorial_varp_281": 1, "component_12227_hide": true, "progress_varp_406": progress, "overlay_id": PROGRESS_OVERLAY}),
+            json!({
+                "tick": first_start.tick,
+                "timer_start_tick": first_t0,
+                "server_tutorial_step": first_start_step.value,
+                "server_readback_reply_tick": first_start_step.reply_tick,
+                "tutorial_client_cache_281": first_start.tutorial_client_cache,
+                "component_12227_hide": first_start.banner_hidden,
+                "progress_varp_406": progress,
+                "overlay_id": PROGRESS_OVERLAY,
+            }),
         )?;
 
-        let first_t0 = first_start.tick;
-        let first_wall = Instant::now();
         let first_shown = wait_for_banner(
             &mut client,
             &mut snapshot,
@@ -746,18 +958,33 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             first_t0,
             progress,
         )?;
+        let first_reminder_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "first_reminder_server_readback",
+        )?;
+        require_server_tutorial_step(&first_reminder_step, 1, "first_reminder")?;
+        let first_reminder_state = observe(&client, &snapshot);
+        require_progress_state(&first_reminder_state, progress, "first_reminder")?;
+        require_banner(&first_reminder_state, false, "first_reminder")?;
         pass_assertion(
             &mut assertions,
             &mut log,
             &pins,
             &account,
-            "first_reminder_shown_at_50_plus_minus_1_ticks_while_varp_281_stays_1",
+            "first_reminder_shown_at_50_plus_minus_1_ticks_while_server_tutorial_step_is_1",
             json!({
                 "start_tick": first_t0,
                 "shown_tick": first_shown.tick,
                 "elapsed_ticks": first_shown.tick.saturating_sub(first_t0),
-                "tutorial_varp_281": first_shown.tutorial,
-                "component_12227_hide": first_shown.banner_hidden,
+                "server_tutorial_step": first_reminder_step.value,
+                "server_readback_reply_tick": first_reminder_step.reply_tick,
+                "tutorial_client_cache_281": first_shown.tutorial_client_cache,
+                "component_12227_hide": first_reminder_state.banner_hidden,
             }),
         )?;
 
@@ -772,7 +999,7 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             progress,
         )?;
         let before_continue = observe(&client, &snapshot);
-        require_common_state(&before_continue, 1, progress, "before_first_continue")?;
+        require_progress_state(&before_continue, progress, "before_first_continue")?;
         require_banner(&before_continue, false, "before_first_continue")?;
         record_observation(
             &mut log,
@@ -807,13 +1034,23 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                     continue_wall,
                 )?;
                 let state = observe(client, snapshot);
-                require_common_state(&state, 1, progress, "first_continue_wait")?;
+                require_progress_state(&state, progress, "first_continue_wait")?;
                 require_banner(&state, false, "first_continue_wait")
             },
             |_client, snapshot| Ok(snapshot.tick() > before_continue.tick),
         )?;
+        let after_continue_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "after_first_continue_server_readback",
+        )?;
+        require_server_tutorial_step(&after_continue_step, 1, "after_first_continue")?;
         let after_continue = observe(&client, &snapshot);
-        require_common_state(&after_continue, 1, progress, "after_first_continue")?;
+        require_progress_state(&after_continue, progress, "after_first_continue")?;
         require_banner(&after_continue, false, "after_first_continue")?;
         record_observation(
             &mut log,
@@ -823,7 +1060,11 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &after_continue,
             Some(after_continue.tick.saturating_sub(first_t0)),
             Some(first_wall.elapsed().as_millis()),
-            json!({"continue_component_id_before": before_continue.continue_component}),
+            json!({
+                "continue_component_id_before": before_continue.continue_component,
+                "server_tutorial_step": after_continue_step.value,
+                "server_readback_reply_tick": after_continue_step.reply_tick,
+            }),
         )?;
         pass_assertion(
             &mut assertions,
@@ -831,7 +1072,13 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &pins,
             &account,
             "banner_remains_shown_after_dialogue_continue",
-            json!({"tutorial_varp_281": after_continue.tutorial, "component_12227_hide": after_continue.banner_hidden, "progress_varp_406": after_continue.progress}),
+            json!({
+                "server_tutorial_step": after_continue_step.value,
+                "server_readback_reply_tick": after_continue_step.reply_tick,
+                "tutorial_client_cache_281": after_continue.tutorial_client_cache,
+                "component_12227_hide": after_continue.banner_hidden,
+                "progress_varp_406": after_continue.progress,
+            }),
         )?;
 
         let before_logout = observe(&client, &snapshot);
@@ -870,7 +1117,7 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                 )?;
                 let state = observe(client, snapshot);
                 if state.ingame {
-                    require_common_state(&state, 1, progress, "logout_wait")?;
+                    require_progress_state(&state, progress, "logout_wait")?;
                     require_banner(&state, false, "logout_wait")?;
                 }
                 Ok(())
@@ -915,31 +1162,49 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                     relog_wall,
                 )?;
                 let state = observe(client, snapshot);
-                if state.ingame && state.attached && state.tutorial == Some(1) {
-                    require_common_state(&state, 1, progress, "relogin_step1_wait")?;
+                if state.ingame && state.attached {
+                    require_progress_state(&state, progress, "relogin_step1_wait")?;
                     require_banner(&state, true, "relogin_step1_wait")?;
                 }
                 Ok(())
             },
             |client, snapshot| {
                 let state = observe(client, snapshot);
-                Ok(state.ingame && state.attached && state.tutorial == Some(1))
+                Ok(state.ingame && state.attached)
             },
         )?;
         let relog_start = observe(&client, &snapshot);
-        require_common_state(&relog_start, 1, progress, "relogin_step1_start")?;
+        require_progress_state(&relog_start, progress, "relogin_step1_start")?;
         require_banner(&relog_start, true, "relogin_step1_start")?;
         let relog_t0 = relog_start.tick;
         let relog_timer_wall = Instant::now();
+        let relog_start_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "relogin_step1_server_readback",
+        )?;
+        require_server_tutorial_step(&relog_start_step, 1, "relogin_step1_start")?;
+        let relog_start_after_readback = observe(&client, &snapshot);
+        require_progress_state(&relog_start_after_readback, progress, "relogin_step1_start")?;
+        require_banner(&relog_start_after_readback, true, "relogin_step1_start")?;
         record_observation(
             &mut log,
             &pins,
             &account,
             "relogin_step1_start",
-            &relog_start,
-            Some(0),
-            Some(relog_wall.elapsed().as_millis()),
-            json!({"expected_banner_hidden": true}),
+            &relog_start_after_readback,
+            Some(relog_start_after_readback.tick.saturating_sub(relog_t0)),
+            Some(relog_timer_wall.elapsed().as_millis()),
+            json!({
+                "timer_start_tick": relog_t0,
+                "server_tutorial_step": relog_start_step.value,
+                "server_readback_reply_tick": relog_start_step.reply_tick,
+                "expected_banner_hidden": true,
+            }),
         )?;
         pass_assertion(
             &mut assertions,
@@ -947,7 +1212,14 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &pins,
             &account,
             "relogin_step1_login_is_hidden",
-            json!({"tick": relog_t0, "tutorial_varp_281": relog_start.tutorial, "component_12227_hide": relog_start.banner_hidden, "progress_varp_406": relog_start.progress}),
+            json!({
+                "tick": relog_t0,
+                "server_tutorial_step": relog_start_step.value,
+                "server_readback_reply_tick": relog_start_step.reply_tick,
+                "tutorial_client_cache_281": relog_start.tutorial_client_cache,
+                "component_12227_hide": relog_start_after_readback.banner_hidden,
+                "progress_varp_406": relog_start_after_readback.progress,
+            }),
         )?;
         let relog_shown = wait_for_banner(
             &mut client,
@@ -960,13 +1232,34 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             relog_t0,
             progress,
         )?;
+        let relog_reminder_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "relogin_reminder_server_readback",
+        )?;
+        require_server_tutorial_step(&relog_reminder_step, 1, "relogin_reminder")?;
+        let relog_reminder_state = observe(&client, &snapshot);
+        require_progress_state(&relog_reminder_state, progress, "relogin_reminder")?;
+        require_banner(&relog_reminder_state, false, "relogin_reminder")?;
         pass_assertion(
             &mut assertions,
             &mut log,
             &pins,
             &account,
-            "relogin_reminder_shown_at_50_plus_minus_1_ticks_while_varp_281_stays_1",
-            json!({"start_tick": relog_t0, "shown_tick": relog_shown.tick, "elapsed_ticks": relog_shown.tick.saturating_sub(relog_t0), "component_12227_hide": relog_shown.banner_hidden}),
+            "relogin_reminder_shown_at_50_plus_minus_1_ticks_while_server_tutorial_step_is_1",
+            json!({
+                "start_tick": relog_t0,
+                "shown_tick": relog_shown.tick,
+                "elapsed_ticks": relog_shown.tick.saturating_sub(relog_t0),
+                "server_tutorial_step": relog_reminder_step.value,
+                "server_readback_reply_tick": relog_reminder_step.reply_tick,
+                "tutorial_client_cache_281": relog_shown.tutorial_client_cache,
+                "component_12227_hide": relog_reminder_state.banner_hidden,
+            }),
         )?;
 
         ensure_dialogue(
@@ -979,15 +1272,13 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             "guide_dialogue_ready",
             progress,
         )?;
+        let mut tutorial_step = relog_reminder_step;
+        require_server_tutorial_step(&tutorial_step, 1, "guide_dialogue_start")?;
         let mut dialogue_pages = 0_u32;
         loop {
             let before = observe(&client, &snapshot);
-            if before.tutorial == Some(4) {
-                require_common_state(&before, 4, progress, "step4_advanced")?;
-                require_banner(&before, true, "step4_advanced")?;
-                break;
-            }
-            require_common_state(&before, 1, progress, "guide_dialogue_continue")?;
+            require_progress_state(&before, progress, "guide_dialogue_continue")?;
+            require_server_tutorial_step(&tutorial_step, 1, "guide_dialogue_continue")?;
             require_banner(&before, false, "guide_dialogue_continue")?;
             if before.continue_component == -1 {
                 ensure_dialogue(
@@ -1016,7 +1307,10 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                 &before,
                 Some(before.tick.saturating_sub(relog_t0)),
                 Some(relog_timer_wall.elapsed().as_millis()),
-                json!({"page": dialogue_pages}),
+                json!({
+                    "page": dialogue_pages,
+                    "server_tutorial_step": tutorial_step.value,
+                }),
             )?;
             accepted(
                 Interactions::new(&snapshot, &mut client).continue_dialog(None),
@@ -1041,73 +1335,92 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                         page_wall,
                     )?;
                     let state = observe(client, snapshot);
-                    require_common_state(
-                        &state,
-                        state.tutorial.unwrap_or(1),
-                        progress,
-                        "guide_dialogue_progress",
-                    )?;
-                    match state.tutorial {
-                        Some(1) => require_banner(&state, false, "guide_dialogue_progress"),
-                        Some(4) => require_banner(&state, true, "guide_dialogue_progress"),
-                        Some(value) => Err(format!(
-                            "Guide dialogue advanced tutorial varp 281 to unexpected value {value}"
-                        )),
-                        None => Err("tooling gap: Guide dialogue cannot observe varp 281".into()),
-                    }
+                    require_progress_state(&state, progress, "guide_dialogue_progress")
                 },
                 |_client, snapshot| {
-                    let state = observe(_client, snapshot);
-                    if state.tutorial == Some(4) {
-                        require_common_state(&state, 4, progress, "step4_advanced")?;
-                        require_banner(&state, true, "step4_advanced")?;
-                        return Ok(true);
-                    }
-                    Ok(state.tutorial == Some(1) && state.dialogue != before.dialogue)
+                    Ok(snapshot.tick() > before.tick
+                        && (snapshot.chat_modal_texts() != before.dialogue.as_slice()
+                            || snapshot.chat_continue_component_id()
+                                != before.continue_component))
                 },
             )?;
-            let after = observe(&client, &snapshot);
-            if after.tutorial == Some(4) {
-                require_common_state(&after, 4, progress, "step4_advanced")?;
-                require_banner(&after, true, "step4_advanced")?;
-                record_observation(
-                    &mut log,
-                    &pins,
-                    &account,
-                    "step4_advanced",
-                    &after,
-                    Some(after.tick.saturating_sub(before.tick)),
-                    Some(page_wall.elapsed().as_millis()),
-                    json!({"guide_continue_pages": dialogue_pages}),
-                )?;
-                pass_assertion(
-                    &mut assertions,
-                    &mut log,
-                    &pins,
-                    &account,
-                    "banner_hidden_when_tutorial_varp_advances_to_4",
-                    json!({"tick": after.tick, "tutorial_varp_281": after.tutorial, "component_12227_hide": after.banner_hidden, "progress_varp_406": after.progress}),
-                )?;
-                break;
-            }
-            require_common_state(&after, 1, progress, "guide_dialogue_next_page")?;
-            require_banner(&after, false, "guide_dialogue_next_page")?;
-            record_observation(
+            let readback_phase = format!("guide_step_after_continue_{dialogue_pages}");
+            let next_step = read_tutorial_server(
+                &mut client,
+                &mut snapshot,
+                &mut pump,
                 &mut log,
                 &pins,
                 &account,
-                "guide_dialogue_next_page",
-                &after,
-                Some(after.tick.saturating_sub(before.tick)),
-                Some(page_wall.elapsed().as_millis()),
-                json!({"page": dialogue_pages}),
+                &readback_phase,
             )?;
+            let after = observe(&client, &snapshot);
+            require_progress_state(&after, progress, "guide_dialogue_next_page")?;
+            match next_step.value {
+                4 => {
+                    require_banner(&after, true, "step4_advanced")?;
+                    record_observation(
+                        &mut log,
+                        &pins,
+                        &account,
+                        "step4_advanced",
+                        &after,
+                        Some(after.tick.saturating_sub(before.tick)),
+                        Some(page_wall.elapsed().as_millis()),
+                        json!({
+                            "guide_continue_pages": dialogue_pages,
+                            "server_tutorial_step": next_step.value,
+                            "server_readback_reply_tick": next_step.reply_tick,
+                        }),
+                    )?;
+                    pass_assertion(
+                        &mut assertions,
+                        &mut log,
+                        &pins,
+                        &account,
+                        "banner_hidden_when_server_tutorial_step_advances_to_4",
+                        json!({
+                            "tick": after.tick,
+                            "server_tutorial_step": next_step.value,
+                            "server_readback_reply_tick": next_step.reply_tick,
+                            "tutorial_client_cache_281": after.tutorial_client_cache,
+                            "component_12227_hide": after.banner_hidden,
+                            "progress_varp_406": after.progress,
+                        }),
+                    )?;
+                    break;
+                }
+                1 => {
+                    require_banner(&after, false, "guide_dialogue_next_page")?;
+                    record_observation(
+                        &mut log,
+                        &pins,
+                        &account,
+                        "guide_dialogue_next_page",
+                        &after,
+                        Some(after.tick.saturating_sub(before.tick)),
+                        Some(page_wall.elapsed().as_millis()),
+                        json!({
+                            "page": dialogue_pages,
+                            "server_tutorial_step": next_step.value,
+                            "server_readback_reply_tick": next_step.reply_tick,
+                        }),
+                    )?;
+                    tutorial_step = next_step;
+                }
+                value => {
+                    return Err(format!(
+                        "Guide dialogue advanced server tutorial step to unexpected value {value}"
+                    ));
+                }
+            }
         }
 
         let step4 = observe(&client, &snapshot);
+        require_progress_state(&step4, progress, "step4_hidden_watch_start")?;
+        require_banner(&step4, true, "step4_hidden_watch_start")?;
         let step4_tick = step4.tick;
         let step4_wall = Instant::now();
-        let post_step4_wall = Instant::now();
         pump_until(
             &mut client,
             &mut snapshot,
@@ -1123,21 +1436,33 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                     client,
                     snapshot,
                     step4_tick,
-                    post_step4_wall,
+                    step4_wall,
                 )?;
                 let state = observe(client, snapshot);
-                require_common_state(&state, 4, progress, "step4_hidden_watch")?;
+                require_progress_state(&state, progress, "step4_hidden_watch")?;
                 require_banner(&state, true, "step4_hidden_watch")
             },
             |client, snapshot| {
                 let state = observe(client, snapshot);
-                require_common_state(&state, 4, progress, "step4_hidden_watch")?;
+                require_progress_state(&state, progress, "step4_hidden_watch")?;
                 require_banner(&state, true, "step4_hidden_watch")?;
                 Ok(state.tick.saturating_sub(step4_tick) >= POST_STEP4_TICKS
                     && step4_wall.elapsed() >= Duration::from_secs(40))
             },
         )?;
+        let final_step = read_tutorial_server(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &mut log,
+            &pins,
+            &account,
+            "step4_final_server_readback",
+        )?;
+        require_server_tutorial_step(&final_step, 4, "step4_hidden_after_40_seconds")?;
         let final_state = observe(&client, &snapshot);
+        require_progress_state(&final_state, progress, "step4_hidden_after_40_seconds")?;
+        require_banner(&final_state, true, "step4_hidden_after_40_seconds")?;
         let final_elapsed = final_state.tick.saturating_sub(step4_tick);
         let final_wall_ms = step4_wall.elapsed().as_millis();
         record_observation(
@@ -1148,7 +1473,12 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &final_state,
             Some(final_elapsed),
             Some(final_wall_ms),
-            json!({"minimum_game_ticks": POST_STEP4_TICKS, "minimum_wall_seconds": 40}),
+            json!({
+                "minimum_game_ticks": POST_STEP4_TICKS,
+                "minimum_wall_seconds": 40,
+                "server_tutorial_step": final_step.value,
+                "server_readback_reply_tick": final_step.reply_tick,
+            }),
         )?;
         pass_assertion(
             &mut assertions,
@@ -1156,7 +1486,14 @@ fn tut_banner_first_step_377() -> Result<(), String> {
             &pins,
             &account,
             "banner_remains_hidden_for_40_seconds_after_step4",
-            json!({"elapsed_ticks": final_elapsed, "elapsed_ms": final_wall_ms, "tutorial_varp_281": final_state.tutorial, "component_12227_hide": final_state.banner_hidden}),
+            json!({
+                "elapsed_ticks": final_elapsed,
+                "elapsed_ms": final_wall_ms,
+                "server_tutorial_step": final_step.value,
+                "server_readback_reply_tick": final_step.reply_tick,
+                "tutorial_client_cache_281": final_state.tutorial_client_cache,
+                "component_12227_hide": final_state.banner_hidden,
+            }),
         )?;
         pass_assertion(
             &mut assertions,
@@ -1181,6 +1518,7 @@ fn tut_banner_first_step_377() -> Result<(), String> {
         "account": account,
         "fresh_account": true,
         "tutorial_state_seeds": [],
+        "tutorial_step_oracle": tutorial_step_oracle(),
         "pins": pin_values(&pins),
         "pin_paths": pin_paths(&pins),
         "assertions_passed": assertions,
