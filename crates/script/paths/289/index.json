@@ -12,7 +12,7 @@
     { "id": "hetty", "file": "hetty.json", "status": "qualified" },
     { "id": "prince", "file": "prince.json", "status": "draft" },
     { "id": "hunt", "file": "hunt.json", "status": "draft" },
-    { "id": "demon", "file": "demon.json", "status": "draft" },
+    { "id": "demon", "file": "demon.json", "status": "qualified" },
     { "id": "squire", "file": "squire.json", "status": "draft" },
     { "id": "death", "file": "death.json", "status": "draft" },
     { "id": "desertrescue", "file": "desertrescue.json", "status": "draft" },
