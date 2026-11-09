@@ -132,73 +132,19 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """The following Quester guides are drafts. Release builds do not support them:
-  - Cook's Assistant
-  - Sheep Shearer
-  - Rune Mysteries
-  - Romeo & Juliet
-  - Imp Catcher
-  - Vampire Slayer
-  - Doric's Quest
-  - Goblin Diplomacy
-  - Witch's Potion
-  - Prince Ali Rescue
-  - Pirate's Treasure
-  - Demon Slayer
-  - The Knight's Sword
-  - Death Plateau
-  - The Tourist Trap
-  - Priest in Peril
-  - Clock Tower
-  - Monk's Friend
-  - Hazeel Cult
-  - Plague City
-  - Druidic Ritual
-  - Gertrude's Cat
-  - Jungle Potion
-  - Sea Slug Quest
-  - Tribal Totem
-  - Black Knight's Fortress
-  - Ernest the Chicken
-  - Fishing Contest
-  - Elemental Workshop
-  - Merlin's Crystal
-  - Lost City
-  - Tree Gnome Village
-  - Scorpion Catcher
-  - Observatory Quest
-  - Shield of Arrav
-  - Hero's Quest
-  - Temple of Ikov
-  - Holy Grail
-  - Watch Tower
-  - Digsite Quest
-  - Biohazard
-  - Murder Mystery
-  - Witch's House
-  - Big Chompy Bird Hunting
-  - Dwarf Cannon
-  - Family Crest
-  - Fight Arena
-  - The Grand Tree
-  - Dragon Slayer
-  - Horror from the Deep
-  - Shilo Village
-  - Tai Bwo Wannai Trio
-  - Nature Spirit
-  - In Search of the Myreque
-  - Troll Stronghold
-  - Eadgar's Ruse
-  - Troll Romance
-  - Throne of Miscellania
-  - Waterfall Quest
-  - Legends Quest
-  - Sheep Herder
-  - Underground Pass
-  - Regicide
-  - Shades of Mort'ton
-  - The Fremennik Trials
-  - Monkey Madness"""
+text = """These Quester guides are drafts, and release builds do not start them: Prince
+  Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The Tourist
+  Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle Potion,
+  Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the Chicken,
+  Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City, Tree Gnome
+  Village, Scorpion Catcher, Observatory Quest, Shield of Arrav, Hero's Quest,
+  Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest, Biohazard, Murder
+  Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf Cannon, Family Crest,
+  Fight Arena, The Grand Tree, Dragon Slayer, Horror from the Deep, Shilo
+  Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the Myreque, Troll
+  Stronghold, Eadgar's Ruse, Troll Romance, Throne of Miscellania, Waterfall
+  Quest, Legends Quest, Sheep Herder, Underground Pass, Regicide, Shades of
+  Mort'ton, The Fremennik Trials and Monkey Madness."""
 first = "0.2.0"
 listed = "0.2.5"
 target = "0.2.9"
@@ -934,10 +880,9 @@ area = "Quester"
 text = """In Imp Catcher, the Quester can wrongly report that it has no way out
   when it walks near the caged Lesser demon in the Wizards' Tower. The route
   check treats the caged demon as free to chase the bot across a wide area, and
-  it ignores the cage, so it refuses a walk that is safe. Imp Catcher is a draft
-  guide that release builds do not start, so this shows only in builds that
-  allow draft guides. No workaround is known. A fix is planned for after
-  0.2.9."""
+  it ignores the cage, so it can refuse a walk that is safe. This does not
+  happen on every run; the release qualification run finished the quest. No
+  workaround is known. A fix is planned for after 0.2.9."""
 first = "0.2.9"
 target = "none"
 severity = "low"

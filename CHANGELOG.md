@@ -12,11 +12,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Saved data in formats from before 0.2.8 no longer upgrades. Interactive users
   can move refused files aside and start fresh. Noninteractive runs stop without
   changing files. Supported 0.2.8 formats still load.
-- Release builds start only Quester guides that have passed live qualification.
-  In this release that is The Restless Ghost. The twenty guides that 0.2.8
-  released, from Cook's Assistant to Plague City, are now drafts and no longer
-  start. The quest picker does not offer them, and a saved choice of one shows
-  why it cannot start. Known issues lists the draft guides.
+- Release builds start only Quester guides that have passed a full live run.
+  In this release there are fourteen: Cook's Assistant, Demon Slayer, Doric's
+  Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend, Priest in
+  Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep Shearer,
+  Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released are now
+  drafts and no longer start: Prince Ali Rescue, Pirate's Treasure, The
+  Knight's Sword, Death Plateau, The Tourist Trap, Clock Tower and Plague City.
+  The quest picker does not offer drafts, and a saved choice of one shows why
+  it cannot start. Known issues lists the draft guides.
 
 ### Panel and terminal app
 
@@ -224,9 +228,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
-- The Quester supports **The Restless Ghost**. The quest picker offers only
-  guides that passed live qualification. A saved choice of a draft guide still
-  loads, shows why it cannot start, and does not enable the draft.
+- The Quester supports **The Restless Ghost**. Each of its fourteen release
+  guides now passes a full run on a live server. The quest picker offers only
+  those guides. A saved choice of a draft guide still loads, shows why it
+  cannot start, and does not enable the draft.
 - The Quester's blocked message now ends "then start the Quester again": the
   Stop button is unavailable once the run has ended, so the message names the
   action you can take.
@@ -795,24 +800,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
   zones). This permits dangerous routes. Use it only when the account can handle
   the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
-- **Quester:** The following Quester guides are drafts. Release builds do not
-  support them: - Cook's Assistant - Sheep Shearer - Rune Mysteries - Romeo &
-  Juliet - Imp Catcher - Vampire Slayer - Doric's Quest - Goblin Diplomacy -
-  Witch's Potion - Prince Ali Rescue - Pirate's Treasure - Demon Slayer - The
-  Knight's Sword - Death Plateau - The Tourist Trap - Priest in Peril - Clock
-  Tower - Monk's Friend - Hazeel Cult - Plague City - Druidic Ritual -
-  Gertrude's Cat - Jungle Potion - Sea Slug Quest - Tribal Totem - Black
-  Knight's Fortress - Ernest the Chicken - Fishing Contest - Elemental Workshop
-  - Merlin's Crystal - Lost City - Tree Gnome Village - Scorpion Catcher -
-  Observatory Quest - Shield of Arrav - Hero's Quest - Temple of Ikov - Holy
-  Grail - Watch Tower - Digsite Quest - Biohazard - Murder Mystery - Witch's
-  House - Big Chompy Bird Hunting - Dwarf Cannon - Family Crest - Fight Arena -
-  The Grand Tree - Dragon Slayer - Horror from the Deep - Shilo Village - Tai
-  Bwo Wannai Trio - Nature Spirit - In Search of the Myreque - Troll Stronghold
-  - Eadgar's Ruse - Troll Romance - Throne of Miscellania - Waterfall Quest -
-  Legends Quest - Sheep Herder - Underground Pass - Regicide - Shades of
-  Mort'ton - The Fremennik Trials - Monkey Madness 0.2.0 to 0.2.8 have the same
-  problem.
+- **Quester:** These Quester guides are drafts, and release builds do not start
+  them: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau,
+  The Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat,
+  Jungle Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest
+  the Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
+  Tree Gnome Village, Scorpion Catcher, Observatory Quest, Shield of Arrav,
+  Hero's Quest, Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest,
+  Biohazard, Murder Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf
+  Cannon, Family Crest, Fight Arena, The Grand Tree, Dragon Slayer, Horror from
+  the Deep, Shilo Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the
+  Myreque, Troll Stronghold, Eadgar's Ruse, Troll Romance, Throne of
+  Miscellania, Waterfall Quest, Legends Quest, Sheep Herder, Underground Pass,
+  Regicide, Shades of Mort'ton, The Fremennik Trials and Monkey Madness. 0.2.0
+  to 0.2.8 have the same problem.
 - **Quester:** When the Quester cannot start a walk between quest steps, it can
   stop the quest at once instead of trying again, and asks you to resolve the
   condition and restart the Quester. 0.2.0 to 0.2.8 have the same problem.
@@ -932,9 +933,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - **Quester:** In Imp Catcher, the Quester can wrongly report that it has no way
   out when it walks near the caged Lesser demon in the Wizards' Tower. The route
   check treats the caged demon as free to chase the bot across a wide area, and
-  it ignores the cage, so it refuses a walk that is safe. Imp Catcher is a draft
-  guide that release builds do not start, so this shows only in builds that
-  allow draft guides. No workaround is known. A fix is planned for after 0.2.9.
+  it ignores the cage, so it can refuse a walk that is safe. This does not
+  happen on every run; the release qualification run finished the quest. No
+  workaround is known. A fix is planned for after 0.2.9.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
