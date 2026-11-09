@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove mapped drafts are refused by a production release library."""
+"""Prove mapped drafts are refused and every qualified guide is admitted by a production release library."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,7 @@ from live_map import ROOT, load_map
 
 CELL = "script.release-path-refusal"
 SOURCE = Path(__file__).with_name("release_path_refusal.rs")
+INDEX = ROOT / "crates/script/paths/289/index.json"
 SCRIPT_SOURCE = ROOT / "crates/script/src/lib.rs"
 
 
@@ -44,6 +45,27 @@ def mapped_draft_ids(config: dict[str, Any]) -> list[str]:
         ):
             raise ProofError(f"refusal coverage must name an exact draft guide: {path}")
     return sorted(Path(path).stem for path in paths)
+
+
+def qualified_ids(index: dict[str, Any]) -> list[str]:
+    """Ids of every guide whose release-index status is qualified."""
+    ids = [path["id"] for path in index["paths"] if path.get("status") == "qualified"]
+    if len(set(ids)) != len(ids):
+        raise ProofError("the release index names a qualified guide twice")
+    if "priest" not in ids:
+        raise ProofError("the qualified Priest guide is missing from the release index")
+    return sorted(ids)
+
+
+def probe_arguments(drafts: list[str], qualified: list[str]) -> list[str]:
+    """Arguments of the external consumer: one `draft:` or `qualified:` per guide."""
+    stale = sorted(set(drafts) & set(qualified))
+    if stale:
+        raise ProofError(
+            "a qualified guide must leave refusal coverage and gain its own real cell: "
+            + ", ".join(stale)
+        )
+    return [*(f"draft:{id}" for id in drafts), *(f"qualified:{id}" for id in qualified)]
 
 
 def release_artifact(messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -88,6 +110,7 @@ def refusal_compile_command(artifact: dict[str, Any], executable: Path) -> list[
 
 def prove_release_refusal() -> int:
     ids = mapped_draft_ids(load_map())
+    qualified = qualified_ids(json.loads(INDEX.read_text()))
     evidence = os.environ.get("LIVE_EVIDENCE_DIR")
     if not evidence:
         raise ProofError("LIVE_EVIDENCE_DIR must name the cell's evidence directory")
@@ -116,7 +139,7 @@ def prove_release_refusal() -> int:
             cwd=ROOT,
             check=True,
         )
-        subprocess.run([str(executable), *ids], cwd=ROOT, check=True)
+        subprocess.run([str(executable), *probe_arguments(ids, qualified)], cwd=ROOT, check=True)
     return 0
 
 
@@ -193,6 +216,30 @@ class ReleaseRefusalTests(unittest.TestCase):
                 mapped_draft_ids(config(path))
         with self.assertRaises(ProofError):
             mapped_draft_ids({"cover": []})
+
+    def test_qualified_ids_come_from_the_index_status(self) -> None:
+        index = {"paths": [
+            {"id": "cook", "status": "qualified"},
+            {"id": "prince", "status": "draft"},
+            {"id": "unmarked"},
+            {"id": "priest", "status": "qualified"},
+        ]}
+        self.assertEqual(qualified_ids(index), ["cook", "priest"])
+        for paths in [
+            [{"id": "cook", "status": "qualified"}],
+            [{"id": "priest", "status": "qualified"}, {"id": "priest", "status": "qualified"}],
+            [{"id": "priest", "status": "draft"}],
+        ]:
+            with self.subTest(paths=paths), self.assertRaises(ProofError):
+                qualified_ids({"paths": paths})
+
+    def test_probe_arguments_tag_every_guide_and_refuse_a_qualified_draft(self) -> None:
+        self.assertEqual(
+            probe_arguments(["prince", "hunt"], ["cook", "priest"]),
+            ["draft:prince", "draft:hunt", "qualified:cook", "qualified:priest"],
+        )
+        with self.assertRaises(ProofError):
+            probe_arguments(["prince", "cook"], ["cook", "priest"])
 
 
 def main() -> int:

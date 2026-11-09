@@ -145,9 +145,10 @@ Each cell is one full quest run of a guide whose `index.json` status is `qualifi
 **Draft release refusal**
 
 The exact draft files in the `script.release-path-refusal` row do not ship as
-runnable guides. This cell proves refusal only. It does not execute their quest
-bodies or qualify them for release. Run its paired qualified-Priest live cell as
-well.
+runnable guides. This cell proves refusal of those drafts and admission of every
+guide whose `index.json` status is `qualified`. It does not execute any quest
+body or qualify a guide for release. Each qualified guide's own live cell is
+listed above.
 
 The cell first builds `script` with `cargo build --release --locked --lib`.
 It selects the exact rlib and one rmeta from that invocation's Cargo artifact
@@ -158,8 +159,13 @@ The test-artifact, debug-assertion, `test-hooks` and ambiguous-rlib checks remai
 The external Rust consumer calls the public production queue entry point for
 each mapped draft, with both an explicit pick and an explicit priority. It
 requires the typed `UnqualifiedPath` reason and its complete display text, even
-when saved settings request draft inclusion. It also checks that Priest remains
-selectable. This uses the external-library proof pattern in
+when saved settings request draft inclusion. It then calls the same entry point
+for every qualified guide, with an explicit pick and an explicit priority, and
+requires success and that the guide is the next candidate. The default queue must
+pick exactly the qualified guides. The caller reads the qualified ids from
+`index.json` and the consumer requires that the production library's bundled
+index names the same set, so a guide that is qualified in one and not the other
+fails the cell. This uses the external-library proof pattern in
 `tools/architecture/nav_clippy.py`; no probe crate or product API is added.
 
 The second part runs the real shared picker model against every bundled draft.
@@ -173,7 +179,8 @@ Each draft's own run stays with the quest campaign. Before changing its status
 to qualified, that campaign must qualify it. The same diff must remove the exact
 file from refusal coverage and add its real quest cell. The production probe
 fails if a qualified row remains in the refusal map. A Priest pass does not
-substitute for that quest's live qualification.
+substitute for that quest's live qualification, and one guide's admission does not
+substitute for another's.
 
 `python3 -B tools/live-map/release_refusal.py --self-test` checks exact-path and
 artifact selection. `--verify-cells` lists only this cell's picker-test selector;
