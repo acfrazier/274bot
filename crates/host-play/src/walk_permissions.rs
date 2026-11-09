@@ -1818,6 +1818,36 @@ mod tests {
         }
     }
 
+    /// The compat (compiled, bool-wire) path reads the same decision: the global
+    /// override permits its walks, and without it they are refused.
+    #[test]
+    fn compat_walks_follow_the_global_override_and_refuse_without_it() {
+        for (level, permitted) in [
+            (DangerLevel::Never, false),
+            (DangerLevel::WhenSurvivable, false),
+            (DangerLevel::Always, true),
+        ] {
+            let mut globals = WalkGlobals::fail_closed();
+            globals.set_danger_level(level);
+            for card in [None, Some(WalkPermissions::default())] {
+                let navs = Arc::new(Mutex::new(HashMap::from([(
+                    "alice".into(),
+                    super::super::NavBot {
+                        native_permissions: card,
+                        walk_globals: Some(Arc::new(Mutex::new(globals))),
+                        ..Default::default()
+                    },
+                )])));
+                let resolved = compiled_options(&navs, "alice", FindOptions::default());
+                assert_eq!(
+                    resolved.zones.is_all(),
+                    permitted,
+                    "level={level:?}, card={card:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn inherited_avoid_does_not_remove_named_zone_grants() {
         use nav_planner::zones::ZoneKey;

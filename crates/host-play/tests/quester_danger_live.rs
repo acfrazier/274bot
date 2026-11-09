@@ -63,8 +63,8 @@ fn default_crossing_start(snapshot: &GameSnapshot) -> Result<Value, String> {
         return Err("the default crossing cell must not seed items or equipment".into());
     }
     Ok(
-        json!({"cell": "Merlin declared keep stairs", "seed": ["setvar arthur 3", "~clearinv", "tele 0 2778 3401", "minme", "~clearinv worn"],
-        "blanket_danger": false, "world_speed_command": false,
+        json!({"cell": "Merlin keep stairs", "seed": ["setvar arthur 3", "~clearinv", "tele 0 2778 3401", "minme", "~clearinv worn"],
+        "quester_card_blanket_danger": false, "world_speed_command": false,
         "observed": crossing_observation(snapshot)}),
     )
 }
@@ -72,6 +72,65 @@ fn default_crossing_start(snapshot: &GameSnapshot) -> Result<Value, String> {
 #[test]
 #[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
 fn merlin_declared_keep_stairs() {
+    run_keep_stairs(false);
+}
+
+/// The global Danger routing setting overrides everything, Quester included:
+/// the same crossing with no declaration in the guide and the setting on.
+#[test]
+#[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
+fn merlin_keep_stairs_global_override_without_declaration() {
+    run_keep_stairs(true);
+}
+
+fn strip_declarations(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(cross) = map.get_mut("cross").filter(|cross| cross.is_array()) {
+                *cross = json!([]);
+            }
+            map.values_mut().for_each(strip_declarations);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_declarations),
+        _ => {}
+    }
+}
+
+/// Serve Arthur from a folder whose stages and steps declare no crossings.
+fn serve_arthur_without_declarations() {
+    let (document, _) = scenario::quester::load_quester_path_document("arthur")
+        .expect("the bundled Arthur Path loads");
+    let mut value = serde_json::to_value(&document).expect("Arthur serializes");
+    strip_declarations(&mut value);
+    let folder = std::path::PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR is required"),
+    )
+    .join("undeclared-arthur");
+    std::fs::create_dir_all(&folder).expect("create the undeclared Arthur folder");
+    std::fs::write(
+        folder.join("arthur.json"),
+        serde_json::to_vec_pretty(&value).expect("Arthur re-serializes"),
+    )
+    .expect("write the undeclared Arthur Path");
+    scenario::quester::reload_quester_path_source("arthur", Some(&folder))
+        .expect("the folder serves Arthur");
+    let (served, source) =
+        scenario::quester::load_quester_path_document("arthur").expect("the folder Arthur loads");
+    assert_eq!(
+        source, "folder",
+        "Arthur must come from the stripped folder"
+    );
+    assert!(
+        served
+            .roles
+            .iter()
+            .flat_map(|role| &role.sequences)
+            .all(|sequence| sequence.cross.is_empty()),
+        "the served guide declares no stage crossings"
+    );
+}
+
+fn run_keep_stairs(global_override_without_declaration: bool) {
     assert!(
         std::env::var_os("QUESTER_TICK_MS").is_none(),
         "the shared Engine Q speed must remain unchanged"
@@ -81,8 +140,17 @@ fn merlin_declared_keep_stairs() {
         z: 3403,
         level: 2,
     };
+    let label = if global_override_without_declaration {
+        "merlin-global-override-undeclared-keep-stairs"
+    } else {
+        "merlin-declared-keep-stairs"
+    };
+    let source_before = script::quester::registry::source();
+    if global_override_without_declaration {
+        serve_arthur_without_declarations();
+    }
     let mut scenario = scenario::quester_stage_with_watch(
-        "merlin-declared-keep-stairs",
+        label,
         "Merlin's Crystal",
         "arthur",
         3,
@@ -130,14 +198,21 @@ fn merlin_declared_keep_stairs() {
         .steps
         .last_mut()
         .expect("the shared stage builder supplies a watch");
-    watch.name = "observe the native declared-zone stair crossing";
+    watch.name = if global_override_without_declaration {
+        "observe the native undeclared stair crossing under the global override"
+    } else {
+        "observe the native declared-zone stair crossing"
+    };
     watch.wait.arm = final_proof;
     scenario.proof = final_proof;
     scenario.settings.deadline = Duration::from_secs(180);
+    // The global override is a user setting: with it on, the walk needs no
+    // declaration at all.
+    scenario.settings.nav.allow_danger_zones = global_override_without_declaration;
     let cell = Cell {
         quest: "arthur",
         display: "Merlin's Crystal",
-        label: "merlin-declared-keep-stairs".into(),
+        label: label.into(),
         scenario,
         start_settings: Map::from_iter([
             ("quests".into(), json!(["arthur"])),
@@ -148,7 +223,7 @@ fn merlin_declared_keep_stairs() {
         },
         observe_start: Some(Box::new(default_crossing_start)),
     };
-    quester_live::run_observed(
+    let outcome = quester_live::run_observed(
         cell,
         Box::new(|snapshot, _, _| {
             if snapshot
@@ -166,6 +241,7 @@ fn merlin_declared_keep_stairs() {
                 .map(|_| crossing_observation(snapshot)))
         }),
         Box::new(|snapshot, _| Some(crossing_observation(snapshot))),
-    )
-    .unwrap();
+    );
+    script::quester::registry::set_source(source_before);
+    outcome.unwrap();
 }
