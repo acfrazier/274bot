@@ -6,6 +6,8 @@
 //!
 //! - [`Mode::Stage`]/[`PairMode::Stage`]: seeded stage(s) settle into expected
 //!   next stage keys (PASS criterion 1);
+//! - [`Mode::PathTerminal`]: the authored Path ends without requiring quest
+//!   completion; this mode is for focused Path probes.
 //! - [`Mode::Clean`]/[`PairMode::Clean`]: clean completion with no cheat after
 //!   Start, no park, zero deaths and one Start per account (criterion 2);
 //! - [`Mode::Restart`]/[`PairMode::Restart`]: Stop mid-step at two stage points
@@ -38,14 +40,11 @@
 //! the stage, stand, loadout, extra items, explicit stage seeds, pre-relog
 //! cheats and expected stages) and optional `QUESTER_PATH_DIR` (an absolute
 //! folder served through the existing `FolderSource` registry, shadowing the
-//! embedded release index). It runs with the Base40 qualification profile
-//! under a fixed deadline.
-//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
-//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
-//! Engine Q, never on shared Engine A or the builder. The shared runner waits
-//! for a fresh exact system-chat confirmation and restores `::speed 600` on
-//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
-//! defaulting on when `QUESTER_TICK_MS` is set.
+//! embedded release index). It uses the qualification profile in the fixture
+//! table under a fixed deadline.
+//! Quester live cells use Engine Q at its fixed 300 ms tick speed. Do not set
+//! `QUESTER_TICK_MS` or use `::speed`.
+//! `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -66,7 +65,7 @@ use api::selected::{Knowledge, RunKey};
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::evidence_writer::{EvidenceJob, EvidenceRequest, EvidenceWriter, PngColor};
-use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate, SlotArm};
 use scenario::{RunnerStatus, Scenario, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::ScriptLifecycleReceipt;
@@ -74,12 +73,120 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Bound on the wait for the terminal capture file. The serial capture writer
+/// synced the first capture of one run in 25.8 s and the end capture of
+/// another in 14 s (QUESTER-DIALOGUE-OPEN r1 `qvca`), and wrote the path-smoke
+/// and Jailer end captures 32 s and 11 s after their receipts under aubaine
+/// I/O load (r2). The wait ends as soon as the file is durable. The run's
+/// product result never depends on it: `run_result` in the receipt is fixed
+/// before the wait starts.
+const END_CAPTURE_BOUND: Duration = Duration::from_secs(300);
 /// Time a Restart cell lets the step at the Stop stage run before stopping it,
 /// so the Stop lands mid-step rather than on a selection boundary.
 const MID_STEP: Duration = Duration::from_secs(4);
 /// Grace after the scenario deadline for terminal bookkeeping.
 const DEADLINE_GRACE: Duration = Duration::from_secs(15);
 const PAIR_CANCELLED_REASON: &str = "pair cancelled; Stop and freshly Start both accounts";
+/// The live teardown remains bounded even when a script or the server does not progress.
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
+/// Shared fixture escape waits the same content-authored combat lockout.
+const COMBAT_LOGOUT_RETRY_TICKS: u32 = scenario::teardown::COMBAT_LOGOUT_TICKS;
+
+#[derive(Debug)]
+struct TeardownAccount {
+    stop_ack_tick: Option<u32>,
+    logout_attempt_ticks: Vec<u32>,
+    no_logout_arm: bool,
+}
+
+#[derive(Debug)]
+struct TeardownSchedule {
+    accounts: Vec<TeardownAccount>,
+    deadline: Instant,
+}
+
+impl TeardownSchedule {
+    fn new(account_count: usize, deadline: Instant) -> Self {
+        Self {
+            accounts: (0..account_count)
+                .map(|_| TeardownAccount {
+                    stop_ack_tick: None,
+                    logout_attempt_ticks: Vec::new(),
+                    no_logout_arm: false,
+                })
+                .collect(),
+            deadline,
+        }
+    }
+
+    fn acknowledge_stop(&mut self, index: usize, tick: u32) {
+        self.accounts[index].stop_ack_tick.get_or_insert(tick);
+    }
+
+    fn all_stopped(&self) -> bool {
+        self.accounts
+            .iter()
+            .all(|account| account.stop_ack_tick.is_some())
+    }
+
+    fn initial_logout_due(&self, index: usize, now: Instant) -> bool {
+        let account = &self.accounts[index];
+        self.all_stopped()
+            && now < self.deadline
+            && !account.no_logout_arm
+            && account.logout_attempt_ticks.is_empty()
+    }
+
+    fn retry_due(&self, index: usize, tick: u32, connected: bool, now: Instant) -> bool {
+        if !self.all_stopped() || !connected || now >= self.deadline {
+            return false;
+        }
+        self.accounts[index]
+            .logout_attempt_ticks
+            .last()
+            .is_some_and(|last_tick| tick.saturating_sub(*last_tick) >= COMBAT_LOGOUT_RETRY_TICKS)
+    }
+
+    fn record_logout_attempt(&mut self, index: usize, tick: u32, now: Instant) -> bool {
+        if !self.all_stopped() || now >= self.deadline || self.accounts[index].no_logout_arm {
+            return false;
+        }
+        self.accounts[index].logout_attempt_ticks.push(tick);
+        true
+    }
+
+    fn mark_no_logout_arm(&mut self, index: usize) {
+        self.accounts[index].no_logout_arm = true;
+    }
+
+    fn stop_ack_tick(&self, index: usize) -> Option<u32> {
+        self.accounts[index].stop_ack_tick
+    }
+
+    fn logout_attempt_ticks(&self, index: usize) -> &[u32] {
+        &self.accounts[index].logout_attempt_ticks
+    }
+
+    fn deadline_expired(&self, now: Instant) -> bool {
+        now >= self.deadline
+    }
+
+    fn complete(&self, disconnected: &[bool]) -> bool {
+        disconnected.len() == self.accounts.len()
+            && self.all_stopped()
+            && self
+                .accounts
+                .iter()
+                .zip(disconnected)
+                .all(|(account, disconnected)| {
+                    !account.logout_attempt_ticks.is_empty() && *disconnected
+                })
+    }
+}
+
+fn actor_frame_enabled(teardown_started: bool) -> bool {
+    !teardown_started
+}
 
 /// What the cell proves after the fixture's Start.
 #[derive(Debug, Clone)]
@@ -87,6 +194,10 @@ pub enum Mode {
     /// Pass when the published stage key is one of `expect` (a key equal to
     /// the Path's `colour.complete` also passes on the green quest tab).
     Stage { expect: Vec<String> },
+    /// The family observer must prove completion or this exact named stop.
+    ExpectedNamedStop { reason: String },
+    /// Pass when the Path script completes without quest completion.
+    PathTerminal,
     /// Pass on quest complete with one Start, zero deaths and no park.
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
@@ -100,6 +211,8 @@ impl Mode {
     fn name(&self) -> &'static str {
         match self {
             Mode::Stage { .. } => "stage",
+            Mode::ExpectedNamedStop { .. } => "expected-named-stop",
+            Mode::PathTerminal => "path_terminal",
             Mode::Clean => "clean",
             Mode::Restart { .. } => "restart",
             Mode::Death { .. } => "death",
@@ -196,6 +309,50 @@ pub type ObserveFamily = Box<
         ) -> Result<Option<Value>, String>
         + Send,
 >;
+/// Change and observe the profile's Cure poison setting during a live cell.
+pub type ObserveProfileControl = Box<
+    dyn FnMut(
+            &GameSnapshot,
+            Option<&ScriptStatus>,
+            Option<&host_play::SlotStatus>,
+        ) -> Option<vault::CurePoison>
+        + Send,
+>;
+
+/// Initial Cure poison policy and live profile control for one cell.
+pub struct LiveProfileControl {
+    initial_cure_poison: vault::CurePoison,
+    require_members_world: bool,
+    observe: ObserveProfileControl,
+}
+
+impl LiveProfileControl {
+    pub fn new(
+        initial_cure_poison: vault::CurePoison,
+        observe: impl FnMut(
+                &GameSnapshot,
+                Option<&ScriptStatus>,
+                Option<&host_play::SlotStatus>,
+            ) -> Option<vault::CurePoison>
+            + Send
+            + 'static,
+    ) -> Self {
+        Self {
+            initial_cure_poison,
+            require_members_world: false,
+            observe: Box::new(observe),
+        }
+    }
+
+    pub fn require_members_world(mut self) -> Self {
+        self.require_members_world = true;
+        self
+    }
+}
+
+/// A pair oracle: both accounts' snapshots in role order (Phoenix, Black Arm).
+/// `Ok(Some(receipt))` ends the run as passed.
+pub type ObservePair = Box<dyn FnMut([&GameSnapshot; 2]) -> Result<Option<Value>, String> + Send>;
 /// A receipt emitted by a cell-specific observer during live polling.
 pub type ObserveTick = Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Option<Value> + Send>;
 
@@ -387,6 +544,13 @@ fn mint_profile(account: &str, password: &str) -> Result<Profile, String> {
         settings: ProfileSettings::default(),
     })
 }
+fn cure_poison_name(policy: vault::CurePoison) -> &'static str {
+    match policy {
+        vault::CurePoison::WhenNeeded => "when_needed",
+        vault::CurePoison::Always => "always",
+        vault::CurePoison::Never => "never",
+    }
+}
 
 pub fn status_json(status: &ScriptStatus) -> Value {
     let fields: Map<String, Value> = status
@@ -456,10 +620,18 @@ pub fn status_stage(status: &ScriptStatus, quest: &str) -> Option<String> {
 }
 
 fn parked(status: &ScriptStatus) -> Option<String> {
-    if status.phase == NativePhase::Blocked {
-        return Some(format!("phase Blocked: {:?}", status.failure));
-    }
-    text(status, "block_reason").map(str::to_owned)
+    (status.phase == NativePhase::Blocked).then(|| format!("phase Blocked: {:?}", status.failure))
+}
+
+/// Match only the explicitly expected native park, not another blocked state.
+pub fn has_named_stop(status: Option<&ScriptStatus>, reason: &str) -> bool {
+    status.is_some_and(|status| {
+        status.phase == NativePhase::Blocked
+            && status.failure.as_ref().is_some_and(|failure| {
+                failure.code.as_ref() == "parked" && failure.message.as_ref() == reason
+            })
+            && text(status, "block_reason") == Some(reason)
+    })
 }
 
 fn observed_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
@@ -564,6 +736,103 @@ struct OwnedCombat {
     npc_total_health: i32,
 }
 
+/// In-game tick intervals seen by the Path driver's snapshot polls.
+#[derive(Default)]
+pub(super) struct TickMean {
+    last: Option<(u32, Instant)>,
+    elapsed: Duration,
+    intervals: u64,
+}
+
+impl TickMean {
+    pub(super) fn observe(&mut self, snapshot: &GameSnapshot) {
+        self.observe_at(snapshot.tick(), snapshot.ingame(), Instant::now());
+    }
+
+    pub(super) fn observe_at(&mut self, tick: u32, ingame: bool, now: Instant) {
+        if !ingame {
+            self.last = None;
+            return;
+        }
+        match self.last {
+            Some((previous, at)) if tick > previous => {
+                self.elapsed += now.duration_since(at);
+                self.intervals += u64::from(tick - previous);
+                self.last = Some((tick, now));
+            }
+            Some((previous, _)) if tick < previous => {
+                self.last = Some((tick, now));
+            }
+            None => {
+                self.last = Some((tick, now));
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn mean_ms(&self) -> Option<f64> {
+        if self.intervals == 0 {
+            None
+        } else {
+            Some(self.elapsed.as_secs_f64() * 1000.0 / self.intervals as f64)
+        }
+    }
+}
+
+/// Receive-time measurement only. It never controls content waits or deadlines.
+#[derive(Default)]
+struct ObservedTickRate {
+    last: Option<(u32, Instant)>,
+    elapsed: Duration,
+    ticks: u64,
+    samples: u64,
+    minimum_ms: Option<f64>,
+    maximum_ms: Option<f64>,
+    counter_resets: u64,
+}
+
+impl ObservedTickRate {
+    fn observe(&mut self, tick: u32, at: Instant) {
+        if let Some((previous_tick, previous_at)) = self.last {
+            if tick == previous_tick {
+                return;
+            }
+            if let Some(delta) = tick.checked_sub(previous_tick) {
+                let elapsed = at.saturating_duration_since(previous_at);
+                let milliseconds = elapsed.as_secs_f64() * 1000.0 / f64::from(delta);
+                self.elapsed += elapsed;
+                self.ticks += u64::from(delta);
+                self.samples += 1;
+                self.minimum_ms = Some(
+                    self.minimum_ms
+                        .map_or(milliseconds, |value| value.min(milliseconds)),
+                );
+                self.maximum_ms = Some(
+                    self.maximum_ms
+                        .map_or(milliseconds, |value| value.max(milliseconds)),
+                );
+            } else {
+                self.counter_resets += 1;
+            }
+        }
+        self.last = Some((tick, at));
+    }
+
+    fn receipt(&self) -> Value {
+        json!({
+            "source": "monotonic PLAYER_INFO receive observations after Start",
+            "interval_samples": self.samples,
+            "sampled_game_ticks": self.ticks,
+            "elapsed_ms": self.elapsed.as_secs_f64() * 1000.0,
+            "mean_tick_ms": (self.ticks > 0)
+                .then(|| self.elapsed.as_secs_f64() * 1000.0 / self.ticks as f64),
+            "minimum_tick_ms": self.minimum_ms,
+            "maximum_tick_ms": self.maximum_ms,
+            "counter_resets": self.counter_resets,
+        })
+    }
+}
+
 struct ActorShared {
     role: Option<usize>,
     quest: &'static str,
@@ -576,6 +845,9 @@ struct ActorShared {
     snapshot: GameSnapshot,
     latest_status: Option<ScriptStatus>,
     pump: Pump,
+    logout: Option<scenario::teardown::CombatLogout>,
+    logout_retry_ready: bool,
+    logout_error: Option<String>,
     start_handle: Option<ScriptStartHandle>,
     named_banks: Option<Arc<api::named_banks::NamedBankFacts>>,
     start_family: Option<StartFamily>,
@@ -583,9 +855,16 @@ struct ActorShared {
     start_receipt: Option<Value>,
     observe_tick: Option<ObserveTick>,
     tick_observations: Vec<Value>,
+    tick_mean: TickMean,
+    /// `{stage, tick}` at each observed stage change, in observed game ticks.
+    stage_ticks: Vec<Value>,
+    observed_tick_rate: ObservedTickRate,
     starts: u32,
     stops: u32,
     restart_due: bool,
+    /// QUESTER-READ-KEEPS-STEP-R2: summon one random event while a step runs
+    /// (`QUESTER_MACRO_EVENT=<1-8>`, `QUESTER_MACRO_EVENT_STEP=<step id>`).
+    macro_event: Option<MacroEventPlan>,
     death_due: bool,
     death_sent: bool,
     death_seen: bool,
@@ -628,6 +907,7 @@ struct Shared {
     actors: Vec<ActorShared>,
     start_handles_ready: bool,
     initial_start_released: bool,
+    teardown_started: bool,
     inventory_proof: Option<PairInventoryProof>,
     inventory_initial_absence: [bool; 2],
     inventory_boundary: Option<Value>,
@@ -651,6 +931,13 @@ impl RunPlan {
 
     fn is_pair(&self) -> bool {
         matches!(self, Self::Pair(_))
+    }
+
+    fn expected_named_stop(&self) -> Option<&str> {
+        match self {
+            Self::Single(Mode::ExpectedNamedStop { reason }) => Some(reason),
+            _ => None,
+        }
     }
 
     fn restart_targets(&self) -> Option<Vec<PairStage>> {
@@ -815,13 +1102,17 @@ fn stage_or_terminal(
         || (transitioned && current.is_some_and(|stage| expected.iter().any(|key| key == stage)))
 }
 
+fn path_terminal_proven(idle: bool, lifecycle_completed: bool) -> bool {
+    idle && lifecycle_completed
+}
+
 fn completion_proven(
     runner_passed: bool,
     progress_complete: bool,
     idle: bool,
     lifecycle_completed: bool,
 ) -> bool {
-    runner_passed && progress_complete && idle && lifecycle_completed
+    runner_passed && progress_complete && path_terminal_proven(idle, lifecycle_completed)
 }
 
 fn step_matches(status: &ScriptStatus, step: &str) -> bool {
@@ -930,6 +1221,7 @@ fn capture_receipt(
     mut extra: Value,
 ) -> Value {
     extra["label"] = json!(label);
+    extra["tick"] = json!(actor.snapshot.tick());
     extra["role"] = json!(actor.role);
     extra["account"] = json!(actor.account);
     extra["status"] = status.map(status_json).unwrap_or(Value::Null);
@@ -943,10 +1235,10 @@ fn capture_receipt(
     extra
 }
 
-fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
+fn append_status(path: &Path, status: &ScriptStatus, tick: u32) -> Result<Value, String> {
     use std::io::Write;
     let logged = status_json(status);
-    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "status": logged});
+    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "tick": tick, "status": logged});
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -956,18 +1248,94 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
     Ok(line["status"].clone())
 }
 
+#[derive(Clone, Copy)]
+enum FamilyBlockedPolicy {
+    Reject,
+    Observe,
+}
+
+fn family_parked_error(status: &ScriptStatus, policy: FamilyBlockedPolicy) -> Option<String> {
+    if matches!(policy, FamilyBlockedPolicy::Observe)
+        && status.phase == NativePhase::Blocked
+        && status.failure.is_some()
+    {
+        return None;
+    }
+    parked(status)
+}
+
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, false)
+    run_inner(
+        cell,
+        None,
+        None,
+        None,
+        false,
+        FamilyBlockedPolicy::Reject,
+        None,
+    )
 }
 
 /// Run the generic Path live cell with shared world-wide tick-speed controls.
 pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, true)
+    run_inner(
+        cell,
+        None,
+        None,
+        None,
+        true,
+        FamilyBlockedPolicy::Reject,
+        None,
+    )
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None, false)
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        FamilyBlockedPolicy::Reject,
+        None,
+    )
+}
+
+/// Let an explicit negative-family oracle inspect native Blocked with a failure.
+/// The oracle must prove its exact expected refusal and reject changed state.
+pub fn run_family_expected_blocked(
+    cell: Cell,
+    start: StartFamily,
+    observe: ObserveFamily,
+) -> Result<Value, String> {
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        FamilyBlockedPolicy::Observe,
+        None,
+    )
+}
+
+/// Run a family cell with an explicit initial cure policy and live profile control.
+pub fn run_family_with_profile_control(
+    cell: Cell,
+    start: StartFamily,
+    observe: ObserveFamily,
+    profile_control: LiveProfileControl,
+) -> Result<Value, String> {
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        FamilyBlockedPolicy::Reject,
+        Some(profile_control),
+    )
 }
 
 /// Run the Path with a cell-specific success oracle and polling observations.
@@ -976,7 +1344,15 @@ pub fn run_observed(
     observe: ObserveFamily,
     observe_tick: ObserveTick,
 ) -> Result<Value, String> {
-    run_inner(cell, None, Some(observe), Some(observe_tick), false)
+    run_inner(
+        cell,
+        None,
+        Some(observe),
+        Some(observe_tick),
+        false,
+        FamilyBlockedPolicy::Reject,
+        None,
+    )
 }
 
 fn run_inner(
@@ -985,7 +1361,16 @@ fn run_inner(
     observe_family: Option<ObserveFamily>,
     observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    blocked_policy: FamilyBlockedPolicy,
+    profile_control: Option<LiveProfileControl>,
 ) -> Result<Value, String> {
+    if let Mode::ExpectedNamedStop { reason } = &cell.mode {
+        if reason.trim().is_empty() || observe_family.is_none() {
+            return Err(
+                "expected named stop requires a non-empty reason and family observer".into(),
+            );
+        }
+    }
     let Cell {
         quest,
         display,
@@ -1009,6 +1394,7 @@ fn run_inner(
         observe_family,
         observe_tick,
         quester_path,
+        (blocked_policy, profile_control, None),
     )
 }
 
@@ -1039,7 +1425,54 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None, None, false)
+    run_cells(
+        cells,
+        RunPlan::Pair(mode),
+        None,
+        None,
+        None,
+        false,
+        (FamilyBlockedPolicy::Reject, None, None),
+    )
+}
+
+/// Run the pair with a cell-specific success oracle that sees both accounts'
+/// snapshots once both have Started. The oracle ends the run; an account that
+/// parks or blocks still fails it. [`PairMode`] only names the run for receipts
+/// and validation: the oracle, not the mode, decides success.
+pub fn run_pair_observed(pair: PairCell, observe: ObservePair) -> Result<Value, String> {
+    let PairCell { roles, mode } = pair;
+    let cells: Vec<LiveCell> = roles
+        .into_iter()
+        .map(|cell| {
+            let Cell {
+                quest,
+                display,
+                label,
+                scenario,
+                start_settings,
+                observe_start,
+                ..
+            } = cell;
+            LiveCell {
+                quest,
+                display,
+                label,
+                scenario,
+                start_settings,
+                observe_start,
+            }
+        })
+        .collect();
+    run_cells(
+        cells,
+        RunPlan::Pair(mode),
+        None,
+        None,
+        None,
+        false,
+        (FamilyBlockedPolicy::Reject, None, Some(observe)),
+    )
 }
 
 fn has_native_start(script: Option<&str>, family_override: bool) -> bool {
@@ -1053,7 +1486,13 @@ fn run_cells(
     mut observe_family: Option<ObserveFamily>,
     mut observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    controls: (
+        FamilyBlockedPolicy,
+        Option<LiveProfileControl>,
+        Option<ObservePair>,
+    ),
 ) -> Result<Value, String> {
+    let (blocked_policy, mut profile_control, mut observe_pair) = controls;
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
@@ -1077,7 +1516,12 @@ fn run_cells(
             ));
         }
     }
-    let fast_settings = if quester_path {
+    let tick_speed_requested = std::env::var_os("QUESTER_TICK_MS").is_some();
+    let apply_fast_settings = quester_path || tick_speed_requested;
+    if apply_fast_settings && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account Quester live cell".into());
+    }
+    let fast_settings = if apply_fast_settings {
         scenario::quester::QuesterFastSettings::from_env()?
     } else {
         scenario::quester::QuesterFastSettings {
@@ -1085,8 +1529,12 @@ fn run_cells(
             sustain_run: false,
         }
     };
+    let restore_world_speed = std::env::var("QUESTER_SPEED_RESTORE").as_deref() != Ok("0");
     if quester_path && (mode.is_pair() || cells.len() != 1) {
         return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
+    }
+    if matches!(&mode, RunPlan::Single(Mode::PathTerminal)) && !quester_path {
+        return Err("PathTerminal requires a quester_path cell".into());
     }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
@@ -1119,11 +1567,22 @@ fn run_cells(
         isolated.set_rs2b0t(&catalog_root);
     }
     api::hostlog::set_debug(true);
+    let campaign_tick_limit = std::env::var("QUEST_CAMPAIGN_TICKS")
+        .ok()
+        .map(|raw| {
+            raw.parse::<u32>()
+                .ok()
+                .filter(|ticks| *ticks > 0)
+                .ok_or_else(|| {
+                    "QUEST_CAMPAIGN_TICKS must be a positive observed-tick count".to_owned()
+                })
+        })
+        .transpose()?;
 
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
-    if quester_path {
+    if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
     let scenario_deadline = cells
@@ -1134,6 +1593,13 @@ fn run_cells(
     let deadline = Instant::now() + scenario_deadline + DEADLINE_GRACE;
     let temp = TempRoot::new(&run_label)?;
     let (profile, template) = selected_profile(&temp.0)?;
+    if profile_control
+        .as_ref()
+        .is_some_and(|control| control.require_members_world)
+        && !profile.map_members()
+    {
+        return Err("this live profile requires a members world".into());
+    }
     // A persistence cell (`QUESTER_LIVE_ACCOUNT` + `QUESTER_LIVE_PASSWORD`)
     // logs one fixed account in across processes so what the host saved
     // for it under `HOME` — the bank hint — is found again; everything else
@@ -1186,7 +1652,9 @@ fn run_cells(
         directories.push(directory);
     }
 
-    let track_steps = mode.death_target().is_some() || mode.restart_step_target().is_some();
+    let track_steps = campaign_tick_limit.is_some()
+        || mode.death_target().is_some()
+        || mode.restart_step_target().is_some();
     let evidence = Arc::new(EvidenceWriter::new(
         host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
     ));
@@ -1194,6 +1662,7 @@ fn run_cells(
     for (index, cell) in cells.into_iter().enumerate() {
         let mut runner = ScenarioRunner::with_world(cell.scenario, template.world());
         runner.set_tick_speed_endpoint(profile.client().game_host(), profile.client().game_port());
+        runner.set_restore_world_speed(restore_world_speed);
         runner.set_map_members(profile.map_members());
         runner.set_live_names(&[names[index].clone()]);
         runner.set_shot_sink(Box::new(|_, _| {}));
@@ -1209,6 +1678,9 @@ fn run_cells(
             snapshot: GameSnapshot::new(),
             latest_status: None,
             pump: Pump::new(),
+            logout: None,
+            logout_retry_ready: false,
+            logout_error: None,
             start_handle: None,
             named_banks: None,
             start_family: start_family.take(),
@@ -1216,9 +1688,13 @@ fn run_cells(
             start_receipt: None,
             observe_tick: observe_tick.take(),
             tick_observations: Vec::new(),
+            tick_mean: TickMean::default(),
+            stage_ticks: Vec::new(),
+            observed_tick_rate: ObservedTickRate::default(),
             starts: 0,
             stops: 0,
             restart_due: false,
+            macro_event: macro_event_plan_from_env(),
             death_due: false,
             death_sent: false,
             death_seen: false,
@@ -1255,6 +1731,7 @@ fn run_cells(
         actors,
         start_handles_ready: false,
         initial_start_released: false,
+        teardown_started: false,
         inventory_proof: mode.inventory_proof().cloned(),
         inventory_initial_absence: [false; 2],
         inventory_boundary: None,
@@ -1262,8 +1739,26 @@ fn run_cells(
         inventory_last_counts: None,
         inventory_violation: None,
     }));
+    // Each slot's arm is owned here, not by `try_spawn_slot`'s default: the
+    // fixture's own pre-Start relogs log the scriptless bot out, and the
+    // approved idle-park policy keeps it logged out until an explicit Login.
+    // Building the profiles first lets the frame below post that Login on the
+    // same arm the spawned slot runs with.
+    let mut live_profiles = Vec::with_capacity(entries.len());
+    let mut slot_arms = Vec::with_capacity(entries.len());
+    for (index, (account, password)) in entries.iter().enumerate() {
+        let mut profile = mint_profile(account, password)?;
+        if index == 0 {
+            if let Some(control) = profile_control.as_ref() {
+                profile.settings.survival.cure_poison = control.initial_cure_poison;
+            }
+        }
+        slot_arms.push(SlotArm::new(profile.uid, true));
+        live_profiles.push(profile);
+    }
     let frame_shared = Arc::clone(&shared);
     let frame_accounts = names.clone();
+    let frame_arms = slot_arms.clone();
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
         true,
@@ -1297,7 +1792,26 @@ fn run_cells(
             let actor = &mut actors[index];
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
+            let game_tick = actor.snapshot.tick();
+            if actor.starts > 0
+                && actor.observed_tick_rate.last.map(|(tick, _)| tick) != Some(game_tick)
+            {
+                actor.observed_tick_rate.observe(game_tick, Instant::now());
+            }
             actor.last_tile = observed_tile(&actor.snapshot);
+            if !actor_frame_enabled(frame_state.teardown_started) {
+                if let Some(logout) = &mut actor.logout {
+                    actor.logout_retry_ready = logout.allows_retry(&actor.snapshot, Instant::now());
+                    match logout.send_escape(client, Instant::now()) {
+                        Ok(true) => eprintln!(
+                            "[quester-live] logout account-only safe tele account={username}"
+                        ),
+                        Ok(false) => {}
+                        Err(error) => actor.logout_error = Some(error),
+                    }
+                }
+                return;
+            }
 
             if first_start {
                 if let Some(proof) = inventory_proof.as_ref() {
@@ -1386,6 +1900,98 @@ fn run_cells(
                 )
             {
                 actor.runner.tick_with_hold(client, hold.hold);
+                if actor.runner.take_relog_login() {
+                    // The Relog step logged the scriptless bot out; post the
+                    // operator Login for this slot, as every fixture-owned
+                    // preparation logout does. This runs inside the slot's own
+                    // frame, so the arm post needs no extra wake.
+                    frame_arms[index].arm_explicit_login();
+                }
+            }
+            if let Some(plan) = actor.macro_event.as_mut() {
+                // The engine cheat `::macro_event <n>` runs the same
+                // `~macro_event_general_spawn` as the 500-tick login timer
+                // (`cheat_macro_event.rs2`, `macro_events.rs2:2-12`), and
+                // AGENTS.md allows it for random-event tests.
+                if !plan.sent && !hold.hold {
+                    if let Some(status) = actor.latest_status.as_ref() {
+                        if status.phase == NativePhase::Working && step_matches(status, &plan.step)
+                        {
+                            let command = format!("~macro_event {}", plan.event);
+                            if interact::cheat(client, &command).is_sent() {
+                                plan.sent = true;
+                                plan.before =
+                                    actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
+                                plan.chat_baseline = actor
+                                    .snapshot
+                                    .chat_lines()
+                                    .iter()
+                                    .map(|line| line.sequence)
+                                    .max()
+                                    .unwrap_or(0);
+                                actor.transitions.push(json!({
+                                    "event": "macro-event-injected",
+                                    "account": actor.account,
+                                    "command": command,
+                                    "step": plan.step,
+                                    "observed_tick": actor.snapshot.tick(),
+                                    "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
+                                    "status": status_json(status),
+                                    "authorized_injection": "~macro_event (the engine's debugproc char)",
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(plan) = actor.macro_event.as_mut().filter(|plan| plan.sent) {
+                let tick = actor.snapshot.tick();
+                if !plan.npc_seen {
+                    if let Some(npc) = actor
+                        .snapshot
+                        .npcs()
+                        .iter()
+                        .find(|npc| !plan.before.contains(&npc.index) && npc.distance <= 8)
+                    {
+                        plan.npc_seen = true;
+                        actor.transitions.push(json!({
+                            "event": "macro-event-npc",
+                            "observed_tick": tick,
+                            "npc": npc.name,
+                            "type": npc.r#type,
+                            "index": npc.index,
+                            "tile": [npc.tile.x, npc.tile.z, npc.tile.level],
+                        }));
+                    }
+                }
+                if plan.chat_logged < 8 {
+                    let baseline = plan.chat_baseline;
+                    let fresh = actor
+                        .snapshot
+                        .chat_lines()
+                        .iter()
+                        .filter(|line| line.sequence > baseline)
+                        .map(|line| (line.sequence, line.text.clone()))
+                        .collect::<Vec<_>>();
+                    for (sequence, text) in fresh.into_iter().take(8 - plan.chat_logged) {
+                        plan.chat_logged += 1;
+                        plan.chat_baseline = plan.chat_baseline.max(sequence);
+                        actor.transitions.push(json!({
+                            "event": "macro-event-chat",
+                            "observed_tick": tick,
+                            "text": text,
+                        }));
+                    }
+                }
+                if hold.hold != plan.last_hold {
+                    plan.last_hold = hold.hold;
+                    actor.transitions.push(json!({
+                        "event": "guardian-hold",
+                        "held": hold.hold,
+                        "observed_tick": tick,
+                        "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
+                    }));
+                }
             }
             let active_death_combat = actor.latest_status.as_ref().and_then(|status| {
                 let target_step = actor.death_target.as_ref().is_some_and(|(stage, step)| {
@@ -1575,9 +2181,14 @@ fn run_cells(
     if mode.is_pair() {
         play.set_quest_accounts(names.iter().map(String::as_str));
     }
-    for (index, (account, password)) in entries.iter().enumerate() {
-        play.try_spawn_slot(mint_profile(account, password)?, None, None, None)
-            .map_err(|error| format!("spawn role {index} ({account}): {error}"))?;
+    for (index, profile) in live_profiles.iter().enumerate() {
+        play.try_spawn_slot(
+            profile.clone(),
+            None,
+            None,
+            Some(Arc::clone(&slot_arms[index])),
+        )
+        .map_err(|error| format!("spawn role {index} ({}): {error}", profile.username))?;
     }
     {
         let mut state = shared.lock().map_err(|_| "live state poisoned")?;
@@ -1672,7 +2283,11 @@ fn run_cells(
                             actor.last_step_observation = Some(step_key);
                             actor.step_observations.push(json!({
                                 "run": format!("{:?}", status.run),
+                                "tick": actor.snapshot.tick(),
                                 "stage": stage,
+                                "sequence": integer(status, "sequence"),
+                                "step_index": integer(status, "step_index"),
+                                "remaining_steps": integer(status, "remaining_steps"),
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
                                 "action_state": text(status, "action_state"),
@@ -1690,6 +2305,9 @@ fn run_cells(
                     if let Some(receipt) = observe(&actor.snapshot, observation.status.as_deref()) {
                         actor.tick_observations.push(receipt);
                     }
+                }
+                if quester_path {
+                    actor.tick_mean.observe(&actor.snapshot);
                 }
                 observation.runner_status = actor.runner.status();
                 observation.done = quest_done(&actor.snapshot, actor.display);
@@ -1711,7 +2329,10 @@ fn run_cells(
             };
             let logged = status_json(status);
             if last_logged[index].as_ref() != Some(&logged) {
-                match append_status(&status_logs[index], status) {
+                let tick = shared.lock().map_err(|_| "live state poisoned")?.actors[index]
+                    .snapshot
+                    .tick();
+                match append_status(&status_logs[index], status, tick) {
                     Ok(logged) => last_logged[index] = Some(logged),
                     Err(error) => break 'run Err(format!("status log {}: {error}", names[index])),
                 }
@@ -1782,6 +2403,14 @@ fn run_cells(
                     if let Some(stage) = status_stage(status, actor.quest) {
                         if actor.stages_seen.last() != Some(&stage) {
                             actor.stages_seen.push(stage.clone());
+                            actor
+                                .stage_ticks
+                                .push(json!({"stage": stage, "tick": actor.snapshot.tick()}));
+                            actor.transitions.push(json!({
+                                "event": "stage",
+                                "stage": stage,
+                                "tick": actor.snapshot.tick(),
+                            }));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -1834,15 +2463,26 @@ fn run_cells(
                     }
                 }
             } else if !restart_settling {
+                let expected_stop = mode.expected_named_stop().filter(|reason| {
+                    observe_family.is_some()
+                        && has_named_stop(observation.status.as_deref(), reason)
+                });
                 if let Some(error) = &observation.last_error {
-                    break 'run Err(format!("{} Quester lifecycle error: {error}", names[index]));
-                }
-                if let Some(status) = observation.status.as_deref() {
-                    if let Some(reason) = parked(status) {
+                    if expected_stop != Some(error.as_str()) {
                         break 'run Err(format!(
-                            "{} Quester parked/blocked: {reason}",
+                            "{} Quester lifecycle error: {error}",
                             names[index]
                         ));
+                    }
+                }
+                if let Some(status) = observation.status.as_deref() {
+                    if let Some(reason) = family_parked_error(status, blocked_policy) {
+                        if expected_stop.is_none() {
+                            break 'run Err(format!(
+                                "{} Quester parked/blocked: {reason}",
+                                names[index]
+                            ));
+                        }
                     }
                 }
             }
@@ -1871,7 +2511,7 @@ fn run_cells(
         }
         let terminal: Vec<bool> = observations
             .iter()
-            .map(|actor| observe_family.is_none() && actor.terminal)
+            .map(|actor| observe_family.is_none() && observe_pair.is_none() && actor.terminal)
             .collect();
         if let Some(target) = mode.pair_death_target() {
             let cancellation_ready = match shared.lock() {
@@ -2269,6 +2909,63 @@ fn run_cells(
         }
 
         let all_terminal = terminal.iter().all(|value| *value);
+        let live_status = profile_control.as_ref().and_then(|_| {
+            play.statuses()
+                .into_iter()
+                .find(|status| status.username.as_str() == names[0])
+        });
+        if let Some(control) = profile_control.as_mut() {
+            let mut state = match shared.lock() {
+                Ok(state) => state,
+                Err(_) => break 'run Err("live state poisoned".into()),
+            };
+            let requested = (control.observe)(
+                &state.actors[0].snapshot,
+                observations[0].status.as_deref(),
+                live_status.as_ref(),
+            );
+            if let Some(policy) = requested {
+                let profile = &mut live_profiles[0];
+                let previous = profile.settings.survival.cure_poison;
+                if previous != policy {
+                    profile.settings.survival.cure_poison = policy;
+                    let (snapshot_tick, chat_modal, chat_options) = {
+                        let snapshot = &state.actors[0].snapshot;
+                        (
+                            snapshot.tick(),
+                            snapshot.modals().chat,
+                            snapshot
+                                .chat_options()
+                                .iter()
+                                .map(|option| option.text.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+                    play.remember_profile(profile.clone());
+                    let slot_mirror_policy =
+                        play.arm(&profile.username)
+                            .map(|arm| match arm.cure_poison() {
+                                script::survival::CurePoison::WhenNeeded => "when_needed",
+                                script::survival::CurePoison::Always => "always",
+                                script::survival::CurePoison::Never => "never",
+                            });
+                    let slot_mirror_updated = slot_mirror_policy == Some(cure_poison_name(policy));
+                    state.actors[0].transitions.push(json!({
+                        "event": "profile-command",
+                        "command": "SetSurvival",
+                        "setting": "cure_poison",
+                        "before": cure_poison_name(previous),
+                        "after": cure_poison_name(policy),
+                        "tick": snapshot_tick,
+                        "chat_modal": chat_modal,
+                        "chat_options": chat_options,
+                        "slot_mirror_policy": slot_mirror_policy,
+                        "slot_mirror_tick": snapshot_tick,
+                        "slot_mirror_updated": slot_mirror_updated,
+                    }));
+                }
+            }
+        }
         if starts[0] > 0 {
             if let Some(observe) = observe_family.as_mut() {
                 let state = match shared.lock() {
@@ -2289,6 +2986,22 @@ fn run_cells(
                 }
             }
         }
+        if starts.iter().all(|started| *started > 0) {
+            if let Some(observe) = observe_pair.as_mut() {
+                let state = match shared.lock() {
+                    Ok(state) => state,
+                    Err(_) => break 'run Err("live state poisoned".into()),
+                };
+                match observe([&state.actors[0].snapshot, &state.actors[1].snapshot]) {
+                    Ok(Some(receipt)) => {
+                        family_receipt = Some(receipt);
+                        break 'run Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(error) => break 'run Err(format!("pair proof: {error}")),
+                }
+            }
+        }
         match &mode {
             RunPlan::Single(Mode::Stage { expect }) => {
                 let stage_ok = observe_family.is_none()
@@ -2300,6 +3013,17 @@ fn run_cells(
                         terminal[0],
                     );
                 if stage_ok {
+                    break Ok(());
+                }
+            }
+            RunPlan::Single(Mode::PathTerminal) => {
+                let script_terminal = path_terminal_proven(
+                    observations[0].run_state == script::RunState::Idle,
+                    observations[0].lifecycle.as_ref().is_some_and(|receipt| {
+                        receipt.state == script::ScriptTerminalState::Completed
+                    }),
+                );
+                if starts[0] == 1 && stops[0] == 0 && deaths[0] == 0 && script_terminal {
                     break Ok(());
                 }
             }
@@ -2557,6 +3281,21 @@ fn run_cells(
             _ => {}
         }
 
+        if let Some(limit) = campaign_tick_limit {
+            let state = shared.lock().map_err(|_| "live state poisoned")?;
+            if let Some(actor) = state
+                .actors
+                .iter()
+                .find(|actor| actor.snapshot.tick() >= limit)
+            {
+                break Err(format!(
+                    "observed-tick deadline: {} reached {} ticks (limit {limit})",
+                    actor.account,
+                    actor.snapshot.tick()
+                ));
+            }
+        }
+
         if Instant::now() >= deadline {
             let statuses = observations
                 .iter()
@@ -2592,8 +3331,25 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     };
+    if quester_path && result.is_ok() {
+        let observed_tick_mean = shared
+            .lock()
+            .map(|state| state.actors[0].tick_mean.mean_ms().is_some())
+            .unwrap_or(false);
+        if !observed_tick_mean {
+            result = Err("the live path did not observe an in-game tick interval".into());
+        }
+    }
 
     let result_text = format!("{result:?}");
+    let run_result = result.clone();
+    let end_ticks = shared
+        .lock()
+        .map_err(|_| "live state poisoned")?
+        .actors
+        .iter()
+        .map(|actor| actor.snapshot.tick())
+        .collect::<Vec<_>>();
     let mut final_statuses = Vec::with_capacity(names.len());
     let mut final_lifecycles = Vec::with_capacity(names.len());
     for account in &names {
@@ -2617,7 +3373,8 @@ fn run_cells(
             actor.pending_captures.push((label.to_owned(), receipt));
         }
     }
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_wait_started = Instant::now();
+    let capture_deadline = capture_wait_started + END_CAPTURE_BOUND;
     loop {
         let all_captured = shared
             .lock()
@@ -2630,6 +3387,7 @@ fn run_cells(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+    let end_capture_wait_ms = capture_wait_started.elapsed().as_millis() as u64;
 
     let capture_errors = shared
         .lock()
@@ -2648,15 +3406,56 @@ fn run_cells(
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.end_captured)
-        .map(|(index, actor)| format!("{} ({})", index, actor.account))
+        .map(|(index, actor)| {
+            let file = actor
+                .pending_jobs
+                .iter()
+                .find(|pending| pending.label == "end-pass" || pending.label == "end-fail")
+                .map_or_else(
+                    || "never submitted (client not in game)".to_owned(),
+                    |pending| format!("{} not written", pending.png_path.display()),
+                );
+            format!("{index} ({}): end capture {file}", actor.account)
+        })
         .collect::<Vec<_>>();
     if result.is_ok() && !missing_end.is_empty() {
         result = Err(format!(
-            "terminal capture timed out for {}",
-            missing_end.join(", ")
+            "terminal capture file missing after {} s: {}",
+            END_CAPTURE_BOUND.as_secs(),
+            missing_end.join("; ")
         ));
     }
 
+    // A pair-oracle run ends with both accounts logged out through the normal
+    // operator Logout, observed on the slot status rather than assumed.
+    let mut logged_out = vec![false; names.len()];
+    if observe_pair.is_some() {
+        for account in &names {
+            play.script_stop(account);
+        }
+        for account in &names {
+            if let Some(arm) = play.arm(account) {
+                arm.request_logout();
+            }
+            play.wake(account);
+        }
+        let logout_deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let statuses = play.statuses();
+            for (index, account) in names.iter().enumerate() {
+                logged_out[index] = statuses
+                    .iter()
+                    .any(|status| status.username == *account && !status.ingame);
+            }
+            if logged_out.iter().all(|done| *done) || Instant::now() >= logout_deadline {
+                break;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        if result.is_ok() && !logged_out.iter().all(|done| *done) {
+            result = Err(format!("an account did not log out: {logged_out:?}"));
+        }
+    }
     let actor_receipts = {
         let state = shared.lock().map_err(|_| "live state poisoned")?;
         state
@@ -2669,9 +3468,15 @@ fn run_cells(
                 json!({
                     "role": actor.role,
                     "account": actor.account,
+                    "end_tick": end_ticks[index],
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
+                    "observed_ticks": actor.snapshot.tick(),
+                    "observed_tick_rate": actor.observed_tick_rate.receipt(),
+                    "quest_complete": quest_done(&actor.snapshot, actor.display)
+                        || actor.owned_card_complete,
+                    "last_tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
                     "settings": actor.start_settings,
                     "status_log": status_logs[index],
                     "fixture_receipt": actor.start_receipt,
@@ -2695,6 +3500,17 @@ fn run_cells(
                     "pair_cancelled": actor.pair_cancelled,
                     "step_observations": actor.step_observations,
                     "tick_observations": actor.tick_observations,
+                    "observed_tick_mean_ms": if quester_path {
+                        actor.tick_mean.mean_ms()
+                    } else {
+                        None
+                    },
+                    "observed_tick_intervals": if quester_path {
+                        actor.tick_mean.intervals
+                    } else {
+                        0
+                    },
+                    "stage_ticks": actor.stage_ticks,
                     "captures": actor.captures,
                     "final_status": final_statuses[index].as_deref().map(status_json),
                     "lifecycle": format!("{:?}", final_lifecycles[index]),
@@ -2721,53 +3537,259 @@ fn run_cells(
             })
         })
     };
-    let receipt = if mode.is_pair() {
+    let mut receipt = if mode.is_pair() {
         json!({
             "cell": run_label,
             "quest": actor_receipts[0]["quest"],
             "mode": mode.name(),
             "result": format!("{result:?}"),
+            "run_result": format!("{run_result:?}"),
+            "end_capture_wait_ms": end_capture_wait_ms,
             "game_port": profile.client().game_port(),
+            "speed_restore_enabled": restore_world_speed,
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
             "inventory_proof": inventory_proof_receipt,
+            "pair_receipt": family_receipt,
+            "logged_out": logged_out,
         })
     } else {
         let actor = &actor_receipts[0];
-        json!({
-            "cell": actor["cell"],
-            "quest": actor["quest"],
-            "mode": mode.name(),
-            "result": format!("{result:?}"),
-            "account": actor["account"],
-            "game_port": profile.client().game_port(),
-            "nav_pack": profile.nav_pack(),
-            "settings": actor["settings"],
-            "fixture_receipt": actor["fixture_receipt"],
-            "family_receipt": family_receipt,
-            "starts": actor["starts"],
-            "stops": actor["stops"],
-            "transitions": actor["transitions"],
-            "stages_seen": actor["stages_seen"],
-            "tick_observations": actor["tick_observations"],
-            "deaths": actor["deaths"],
-            "death_sent": actor["death_sent"],
-            "death_observed": actor["death_observed"],
-            "death_injections": actor["death_injections"],
-            "death_target": actor["death_target"],
-            "death_combat_ownership": actor["death_combat_ownership"],
-            "death_message_sequences": actor["death_message_sequences"],
-            "death_status": actor["death_status"],
-            "last_tile": actor["last_tile"],
-            "captures": actor["captures"],
-            "final_status": actor["final_status"],
-            "lifecycle": actor["lifecycle"],
-            "status_log": actor["status_log"],
-            "error": actor["error"],
-            "capture_error": actor["capture_error"],
-            "end_captured": actor["end_captured"],
-        })
+        // Keep the flat receipt below json!'s token-recursion limit in every
+        // integration crate that includes this shared runner.
+        Value::Object(Map::from_iter([
+            ("cell".into(), actor["cell"].clone()),
+            ("quest".into(), actor["quest"].clone()),
+            ("mode".into(), json!(mode.name())),
+            ("result".into(), json!(format!("{result:?}"))),
+            ("run_result".into(), json!(format!("{run_result:?}"))),
+            ("end_tick".into(), actor["end_tick"].clone()),
+            ("end_capture_wait_ms".into(), json!(end_capture_wait_ms)),
+            ("account".into(), actor["account"].clone()),
+            ("observed_ticks".into(), actor["observed_ticks"].clone()),
+            (
+                "observed_tick_rate".into(),
+                actor["observed_tick_rate"].clone(),
+            ),
+            ("quest_complete".into(), actor["quest_complete"].clone()),
+            (
+                "step_observations".into(),
+                actor["step_observations"].clone(),
+            ),
+            ("game_port".into(), json!(profile.client().game_port())),
+            ("speed_restore_enabled".into(), json!(restore_world_speed)),
+            ("nav_pack".into(), json!(profile.nav_pack())),
+            ("settings".into(), actor["settings"].clone()),
+            ("fixture_receipt".into(), actor["fixture_receipt"].clone()),
+            ("family_receipt".into(), json!(family_receipt)),
+            ("starts".into(), actor["starts"].clone()),
+            ("stops".into(), actor["stops"].clone()),
+            ("transitions".into(), actor["transitions"].clone()),
+            ("stages_seen".into(), actor["stages_seen"].clone()),
+            (
+                "tick_observations".into(),
+                actor["tick_observations"].clone(),
+            ),
+            (
+                "observed_tick_mean_ms".into(),
+                actor["observed_tick_mean_ms"].clone(),
+            ),
+            (
+                "observed_tick_intervals".into(),
+                actor["observed_tick_intervals"].clone(),
+            ),
+            ("stage_ticks".into(), actor["stage_ticks"].clone()),
+            ("deaths".into(), actor["deaths"].clone()),
+            (
+                "death_count_total_across_runs".into(),
+                actor["death_count_total_across_runs"].clone(),
+            ),
+            ("death_sent".into(), actor["death_sent"].clone()),
+            ("death_observed".into(), actor["death_observed"].clone()),
+            ("death_injections".into(), actor["death_injections"].clone()),
+            ("death_target".into(), actor["death_target"].clone()),
+            (
+                "death_combat_ownership".into(),
+                actor["death_combat_ownership"].clone(),
+            ),
+            (
+                "death_message_sequences".into(),
+                actor["death_message_sequences"].clone(),
+            ),
+            ("death_status".into(), actor["death_status"].clone()),
+            ("last_tile".into(), actor["last_tile"].clone()),
+            ("captures".into(), actor["captures"].clone()),
+            ("final_status".into(), actor["final_status"].clone()),
+            ("lifecycle".into(), actor["lifecycle"].clone()),
+            ("status_log".into(), actor["status_log"].clone()),
+            ("error".into(), actor["error"].clone()),
+            ("capture_error".into(), actor["capture_error"].clone()),
+            ("end_captured".into(), actor["end_captured"].clone()),
+        ]))
     };
+    let logout_deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
+    let mut teardown = TeardownSchedule::new(names.len(), logout_deadline);
+    match shared.lock() {
+        Ok(mut state) => state.teardown_started = true,
+        Err(_) => result = Err("live state poisoned before logout teardown".into()),
+    }
+    for account in &names {
+        play.script_stop(account);
+    }
+    let mut observed_ticks = Vec::with_capacity(names.len());
+    let mut logout_retry_ready = Vec::with_capacity(names.len());
+    let mut disconnected = Vec::with_capacity(names.len());
+    loop {
+        let now = Instant::now();
+        if teardown.deadline_expired(now) {
+            break;
+        }
+        observed_ticks.clear();
+        logout_retry_ready.clear();
+        match shared.lock() {
+            Ok(state) => {
+                observed_ticks.extend(state.actors.iter().map(|actor| actor.snapshot.tick()));
+                logout_retry_ready
+                    .extend(state.actors.iter().map(|actor| actor.logout_retry_ready));
+                if let Some(error) = state
+                    .actors
+                    .iter()
+                    .find_map(|actor| actor.logout_error.as_ref())
+                {
+                    result = Err(error.clone());
+                    break;
+                }
+            }
+            Err(_) => {
+                result = Err("live state poisoned during logout teardown".into());
+                break;
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            if teardown.stop_ack_tick(index).is_none() && start_handle.idle(account) {
+                if let Some(tick) = observed_ticks.get(index).copied() {
+                    teardown.acknowledge_stop(index, tick);
+                    match shared.lock() {
+                        Ok(mut state) => {
+                            let actor = &mut state.actors[index];
+                            actor.logout = Some(scenario::teardown::CombatLogout::new(
+                                &actor.snapshot,
+                                logout_deadline,
+                            ));
+                        }
+                        Err(_) => {
+                            result = Err("live state poisoned after script Stop".into());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let now = Instant::now();
+            if !teardown.initial_logout_due(index, now) {
+                continue;
+            }
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        for (index, account) in names.iter().enumerate() {
+            let connected = play.slot_connected(account);
+            let now = Instant::now();
+            let Some(tick) = observed_ticks.get(index).copied() else {
+                continue;
+            };
+            if !logout_retry_ready[index] || !teardown.retry_due(index, tick, connected, now) {
+                continue;
+            }
+            if let Some(arm) = play.arm(account) {
+                if teardown.record_logout_attempt(index, tick, now) {
+                    arm.request_logout();
+                    play.wake(account);
+                }
+            } else {
+                teardown.mark_no_logout_arm(index);
+            }
+        }
+        disconnected.clear();
+        disconnected.extend(names.iter().map(|account| !play.slot_connected(account)));
+        if teardown.complete(&disconnected) || teardown.deadline_expired(Instant::now()) {
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    disconnected.clear();
+    disconnected.extend(names.iter().map(|account| !play.slot_connected(account)));
+    let failed_accounts = names
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            teardown.stop_ack_tick(*index).is_none()
+                || teardown.logout_attempt_ticks(*index).is_empty()
+                || !disconnected[*index]
+        })
+        .map(|(_, account)| account.clone())
+        .collect::<Vec<_>>();
+    let logout_complete = teardown.complete(&disconnected);
+    for account in &names {
+        play.stop_slot(account);
+    }
+    receipt["clean_logout"] = json!({
+        "complete": logout_complete,
+        "timeout_ms": CLEAN_LOGOUT_DEADLINE.as_millis(),
+        "combat_retry_game_ticks": COMBAT_LOGOUT_RETRY_TICKS,
+        "engine_content": "content/scripts/login_logout/logout.rs2:27",
+        "stop_ack_api": "ScriptStartHandle::idle",
+        "tick_source": "GameSnapshot::tick from observed PLAYER_INFO packets",
+        "combat_escape": shared.lock().ok().map(|state| state.actors.iter().map(|actor| json!({
+            "account": actor.account,
+            "refusal_sequence": actor.logout.as_ref().and_then(|logout| logout.refusal_sequence()),
+            "account_only_teleport_sent": actor.logout.as_ref().is_some_and(|logout| logout.escape_sent()),
+            "safe_arrival_tick": actor.logout.as_ref().and_then(|logout| logout.safe_arrival_tick()),
+            "safe_tile": scenario::teardown::LOGOUT_SAFE_TILE,
+        })).collect::<Vec<_>>()),
+        "accounts": names
+            .iter()
+            .zip(&disconnected)
+            .enumerate()
+            .map(|(index, (account, disconnected))| json!({
+                "account": account,
+                "script_stop_requested": true,
+                "stop_acknowledged": teardown.stop_ack_tick(index).is_some(),
+                "stop_ack_tick": teardown.stop_ack_tick(index),
+                "logout_attempts": teardown
+                    .logout_attempt_ticks(index)
+                    .iter()
+                    .enumerate()
+                    .map(|(attempt, tick)| json!({
+                        "attempt": attempt + 1,
+                        "game_tick": tick,
+                    }))
+                    .collect::<Vec<_>>(),
+                "disconnected": disconnected,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if !logout_complete {
+        let reason = format!(
+            "clean logout teardown failed for {}",
+            failed_accounts.join(", ")
+        );
+        result = match result {
+            Ok(()) => Err(reason),
+            Err(previous) => Err(format!("{previous}; {reason}")),
+        };
+    }
+    receipt["result"] = json!(format!("{result:?}"));
     for (index, directory) in directories.iter().enumerate() {
         let mut role_receipt = receipt.clone();
         if mode.is_pair() {
@@ -2781,12 +3803,6 @@ fn run_cells(
         .map_err(|error| error.to_string())?;
     }
     println!("{receipt}");
-    for account in &names {
-        play.script_stop(account);
-    }
-    for account in &names {
-        play.stop_slot(account);
-    }
     result.map(|()| receipt)
 }
 
@@ -2795,6 +3811,41 @@ fn run_cells(
 /// extras, and an explicitly selected stand tile that may differ from the
 /// Path's authored not-started anchor. Start uses the fixture's own settings;
 /// the fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
+/// One random event summoned while the named step is in flight.
+struct MacroEventPlan {
+    event: u8,
+    step: String,
+    sent: bool,
+    /// NPC indexes in view when the cheat was sent.
+    before: HashSet<usize>,
+    /// Chat sequence when the cheat was sent.
+    chat_baseline: i32,
+    npc_seen: bool,
+    last_hold: bool,
+    chat_logged: usize,
+}
+
+fn macro_event_plan_from_env() -> Option<MacroEventPlan> {
+    let event = std::env::var("QUESTER_MACRO_EVENT").ok()?;
+    let event: u8 = event
+        .parse()
+        .ok()
+        .filter(|event| (1..=8).contains(event))
+        .expect("QUESTER_MACRO_EVENT is 1-8");
+    let step = std::env::var("QUESTER_MACRO_EVENT_STEP")
+        .expect("QUESTER_MACRO_EVENT_STEP names the step to interrupt");
+    Some(MacroEventPlan {
+        event,
+        step,
+        sent: false,
+        before: HashSet::new(),
+        chat_baseline: 0,
+        npc_seen: false,
+        last_hold: false,
+        chat_logged: 0,
+    })
+}
+
 pub struct PathCell<'a> {
     /// Content quest id; the Path body comes from the release index, or from
     /// the folder the `FolderSource` registry currently serves.
@@ -2820,7 +3871,8 @@ pub struct PathCell<'a> {
 
 pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
     let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| error.to_string())?;
     let fixture =
         scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
             name: spec.quest,
@@ -2850,12 +3902,146 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observed_tick_rate_distinguishes_300_and_600_millisecond_sequences() {
+        for milliseconds in [300, 600] {
+            let start = Instant::now();
+            let mut rate = ObservedTickRate::default();
+            assert_eq!(rate.receipt()["mean_tick_ms"], Value::Null);
+            for tick in 1..=4 {
+                rate.observe(
+                    tick,
+                    start + Duration::from_millis(u64::from(tick - 1) * milliseconds),
+                );
+            }
+            let receipt = rate.receipt();
+            assert_eq!(receipt["sampled_game_ticks"], 3);
+            assert_eq!(receipt["mean_tick_ms"], milliseconds as f64);
+            assert_eq!(receipt["minimum_tick_ms"], milliseconds as f64);
+            assert_eq!(receipt["maximum_tick_ms"], milliseconds as f64);
+        }
+    }
+
+    #[test]
+    fn observed_tick_rate_ignores_duplicate_polls_and_counter_reset_gaps() {
+        let start = Instant::now();
+        let mut rate = ObservedTickRate::default();
+        rate.observe(10, start);
+        rate.observe(10, start + Duration::from_secs(5));
+        rate.observe(11, start + Duration::from_millis(300));
+        rate.observe(1, start + Duration::from_secs(20));
+        rate.observe(2, start + Duration::from_millis(20_600));
+        let receipt = rate.receipt();
+        assert_eq!(receipt["interval_samples"], 2);
+        assert_eq!(receipt["sampled_game_ticks"], 2);
+        assert_eq!(receipt["mean_tick_ms"], 450.0);
+        assert_eq!(receipt["counter_resets"], 1);
+    }
+
+    #[test]
+    fn observed_tick_rate_normalizes_batched_game_ticks() {
+        let start = Instant::now();
+        let mut rate = ObservedTickRate::default();
+        rate.observe(1, start);
+        rate.observe(3, start + Duration::from_millis(600));
+        assert_eq!(rate.receipt()["mean_tick_ms"], 300.0);
+        assert_eq!(rate.receipt()["sampled_game_ticks"], 2);
+        assert_eq!(rate.receipt()["interval_samples"], 1);
+    }
+
+    #[test]
     fn native_family_start_requires_an_explicit_override_and_named_script() {
         assert!(has_native_start(Some("Quester"), false));
         assert!(has_native_start(Some("Sherlock"), true));
         assert!(!has_native_start(Some("Sherlock"), false));
         assert!(!has_native_start(None, true));
         assert!(!has_native_start(Some(""), true));
+    }
+
+    #[test]
+    fn named_stop_mode_accepts_only_the_explicit_native_park() {
+        use script::native::{ScriptFailure, StatusField};
+
+        let reason = "GAP-test-drop-budget";
+        let mut status = ScriptStatus {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 0,
+            pending_settings: None,
+            survival: script::survival::SurvivalReport::default(),
+            fields: Arc::from([StatusField {
+                key: "block_reason",
+                label: "Block reason",
+                value: StatusValue::Text(Arc::from(reason)),
+            }]),
+            failure: Some(ScriptFailure {
+                code: Arc::from("parked"),
+                message: Arc::from(reason),
+            }),
+        };
+        assert!(has_named_stop(Some(&status), reason));
+        assert!(parked(&status).is_some());
+        assert!(!has_named_stop(None, reason));
+        assert!(!has_named_stop(Some(&status), "another stop"));
+        status.phase = NativePhase::Working;
+        let failure = status.failure.take();
+        assert!(
+            parked(&status).is_none(),
+            "block_reason precedes native Blocked publication"
+        );
+        assert!(!has_named_stop(Some(&status), reason));
+        status.phase = NativePhase::Blocked;
+        status.failure = failure;
+        status.failure.as_mut().unwrap().code = Arc::from("failed");
+        assert!(!has_named_stop(Some(&status), reason));
+        status.failure.as_mut().unwrap().code = Arc::from("parked");
+        status.fields = Arc::from([]);
+        assert!(!has_named_stop(Some(&status), reason));
+        let mode = RunPlan::Single(Mode::ExpectedNamedStop {
+            reason: reason.into(),
+        });
+        assert_eq!(mode.expected_named_stop(), Some(reason));
+        assert!(RunPlan::Single(Mode::Clean).expected_named_stop().is_none());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_guard_requires_opt_in_and_native_blocked() {
+        let mut status = ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            survival: script::survival::SurvivalReport::default(),
+            failure: Some(script::native::ScriptFailure {
+                code: "parked".into(),
+                message: "expected refusal".into(),
+            }),
+            fields: Arc::from([]),
+        };
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Reject).is_some());
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_none());
+        status.failure = None;
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_some());
+        status.phase = NativePhase::Working;
+        status.fields = Arc::from([script::native::StatusField {
+            key: "block_reason",
+            label: "Block",
+            value: StatusValue::Text("expected refusal".into()),
+        }]);
+        assert!(
+            family_parked_error(&status, FamilyBlockedPolicy::Observe).is_none(),
+            "block_reason precedes native Blocked publication"
+        );
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Reject).is_none());
     }
 
     fn settings(gang: &str) -> Map<String, Value> {
@@ -2963,5 +4149,81 @@ mod tests {
         assert!(!completion_proven(true, false, true, true));
         assert!(!completion_proven(true, true, false, true));
         assert!(!completion_proven(true, true, true, false));
+    }
+
+    #[test]
+    fn path_terminal_proof_needs_idle_and_completed_lifecycle() {
+        assert!(path_terminal_proven(true, true));
+        assert!(!path_terminal_proven(false, true));
+        assert!(!path_terminal_proven(true, false));
+    }
+}
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::*;
+
+    #[test]
+    fn logout_waits_for_every_script_stop_acknowledgement() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(0, 100);
+        assert!(!teardown.initial_logout_due(0, now));
+        assert!(!teardown.record_logout_attempt(0, 100, now));
+        teardown.acknowledge_stop(1, 100);
+        assert!(teardown.initial_logout_due(0, now));
+        assert!(teardown.record_logout_attempt(0, 100, now));
+    }
+
+    #[test]
+    fn unchanged_game_tick_does_not_retry_logout() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(1, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+
+        let later_wall_time = now + Duration::from_secs(25);
+        assert!(!teardown.retry_due(0, 100, true, later_wall_time));
+        assert!(!teardown.retry_due(0, 100, true, now));
+        assert!(!teardown.retry_due(0, 115, true, now));
+    }
+
+    #[test]
+    fn refused_logout_retries_after_sixteen_new_game_ticks() {
+        let now = Instant::now();
+        let mut teardown = TeardownSchedule::new(2, now + CLEAN_LOGOUT_DEADLINE);
+        teardown.acknowledge_stop(0, 100);
+        teardown.acknowledge_stop(1, 104);
+        assert!(teardown.record_logout_attempt(0, 100, now));
+        assert!(teardown.record_logout_attempt(1, 104, now));
+
+        assert!(!teardown.retry_due(0, 115, true, now));
+        assert!(teardown.retry_due(0, 116, true, now));
+        assert!(!teardown.retry_due(1, 116, true, now));
+        assert!(teardown.retry_due(1, 120, true, now));
+        assert!(!teardown.retry_due(0, 116, false, now));
+    }
+
+    #[test]
+    fn fixed_deadline_fails_while_an_account_remains_connected() {
+        let started = Instant::now();
+        let deadline = started + CLEAN_LOGOUT_DEADLINE;
+        let mut teardown = TeardownSchedule::new(1, deadline);
+        teardown.acknowledge_stop(0, 200);
+        assert!(teardown.record_logout_attempt(0, 200, started));
+
+        assert!(teardown.deadline_expired(deadline));
+        assert!(!teardown.record_logout_attempt(0, 216, deadline));
+        assert!(!teardown.retry_due(0, 216, true, deadline));
+        assert!(!teardown.complete(&[false]));
+    }
+
+    #[test]
+    fn teardown_stops_queued_actor_work() {
+        assert!(actor_frame_enabled(false));
+        assert!(!actor_frame_enabled(true));
     }
 }

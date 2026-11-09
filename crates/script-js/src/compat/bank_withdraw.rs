@@ -9,7 +9,7 @@
 //! the posted backpack. Pack-full is read from the scene.
 
 use crate::machine::{Begin, Call, Cx, Family, NativeBankChild, Reply, Step, Thrown};
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use script::bank::compat::js_number;
 use script::bank::ops::{next_chunk, same_name, Chunk};
 use script::bank::request::{BankSeatArgs, BankSeatOperation};

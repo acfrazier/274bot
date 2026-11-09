@@ -4,8 +4,8 @@
 // A queued WalkTo is not arrival. Traveller (`walk` / `walk-near`) is a
 // different host op.
 
-use script::shim::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -77,7 +77,7 @@ fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

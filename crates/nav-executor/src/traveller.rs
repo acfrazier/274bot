@@ -38,6 +38,7 @@ mod walk;
 use dialog::*;
 use npc_hop::*;
 use snapshot::*;
+pub use transport_hop::TickCount;
 use transport_hop::*;
 use walk::*;
 
@@ -87,6 +88,61 @@ pub enum HopFailure {
     EndBlocked,
 }
 
+/// The packed loc identity of a pending transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocId(i32);
+
+impl LocId {
+    pub const fn new(id: i32) -> Self {
+        Self(id)
+    }
+
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+/// The condition the active follow is waiting for, without selecting actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TravelWaitReason {
+    StunRecovery,
+    LocalWalkRoute,
+    Scene,
+    WalkSendRefused,
+    WalkNotSent,
+    StallRecovery,
+    Walk,
+    Transport(TransportKind),
+    SceneSettle,
+}
+
+impl TravelWaitReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StunRecovery => "stun recovery",
+            Self::LocalWalkRoute => "local walk route",
+            Self::Scene => "scene",
+            Self::WalkSendRefused => "walk send refused",
+            Self::WalkNotSent => "walk not sent",
+            Self::StallRecovery => "stall recovery",
+            Self::Walk => "walk",
+            Self::Transport(kind) => match kind {
+                TransportKind::Door => "door",
+                TransportKind::Ladder => "ladder",
+                TransportKind::Stairs => "stairs",
+                TransportKind::Boat => "boat",
+                TransportKind::Teleport => "teleport",
+                TransportKind::AgilityShortcut => "agility shortcut",
+                TransportKind::Glider => "glider",
+                TransportKind::SpiritTree => "spirit tree",
+                TransportKind::Npc => "npc",
+                TransportKind::EssenceExit => "essence exit",
+            },
+            Self::SceneSettle => "scene settle",
+        }
+    }
+}
+
 /// The latest refusal an agility crossing met before its hop ended, kept in
 /// the terminal outcome so a caller without an event subscriber still sees
 /// it ([`TravelOutcome::Stalled::last_refusal`]).
@@ -99,6 +155,18 @@ pub enum TransportRefusal {
     /// the content said nothing.
     #[error("the crossing never began within its baked time")]
     NotStarted,
+}
+
+/// Fresh refusal page evidence correlated with one transport send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefusalMatch {
+    /// Zero-based ordinal among this crossing's entries in
+    /// [`TravelOptions::refusal_texts`].
+    pub text: u8,
+    /// Snapshot tick when the matching page's Continue was sent.
+    pub tick: u64,
+    /// Fresh chat-line sequence associated with the matched page.
+    pub sequence: u64,
 }
 
 /// A transport-specific failure that prevents a web cut from being sent.
@@ -313,6 +381,16 @@ pub enum TravelOutcome {
         leg: usize,
         requirement: nav_planner::world_state::EntranceRequirement,
     },
+    /// A gated crossing was refused by fresh content text after its send.
+    /// The page was acknowledged and the chat modal observed closed before
+    /// this terminal was returned.
+    GateRefused {
+        at: WorldTile,
+        leg: usize,
+        crossing: api::prereq_steps::CrossingId,
+        gates: Arc<[api::selected::QuestGate]>,
+        matched: RefusalMatch,
+    },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
 }
@@ -385,6 +463,19 @@ pub enum TravelEvent {
     },
 }
 
+/// Direction-specific pass evidence for an authored prerequisite crossing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrossingPass {
+    /// The exact directed crossing this message proves.
+    pub crossing: api::prereq_steps::CrossingId,
+    /// Fresh content message required to promote the crossing.
+    pub message: Arc<str>,
+    /// Exact world tile required with the fresh message.
+    pub landing: WorldTile,
+    /// Content delay on the path from the interaction to the pass message.
+    pub delay_ticks: u16,
+}
+
 /// A callback that observes each active route leg's phase transitions.
 pub type TravelLegCallback<'a> = Box<dyn FnMut(&Leg, LegPhase) + 'a>;
 
@@ -395,8 +486,9 @@ pub struct TravelOptions<'a> {
     pub close_enough: i32,
     /// Optional observations; does not select actions or retry policy.
     pub on_event: Option<Box<dyn FnMut(TravelEvent) + 'a>>,
-    /// Tick budget for one hop (a walk send or a transport interact;
-    /// default 60).
+    /// Minimum tick budget for one hop (default 60). A walk also allows
+    /// one tick per planned route step to its aim, not straight-line distance.
+    /// Walk speed: `engine/src/engine/entity/PathingEntity.ts:144-149`.
     pub budget_ticks_per_hop: u32,
     /// Walk hops before `GaveUp` (default 60).
     pub max_hops: u32,
@@ -414,21 +506,39 @@ pub struct TravelOptions<'a> {
     /// Pinned evidence used by route selection, rechecked before gated
     /// transport sends. Missing or undecided evidence fails closed.
     pub quest_evidence: Option<&'a nav_planner::quest_gates::QuestEvidence>,
+    /// Ordered content refusal literals keyed by exact directed crossing.
+    /// `RefusalMatch::text` is the zero-based ordinal within the entries for
+    /// its crossing.
+    pub refusal_texts: Arc<[(api::prereq_steps::CrossingId, Arc<str>)]>,
+    /// Authored direction-specific pass messages and exact landing tiles.
+    /// When present for a gated edge, both the fresh message and exact
+    /// landing are required to settle the hop.
+    pub crossing_passes: Arc<[CrossingPass]>,
+    /// Last route-path index the follow may enter. `None` preserves the
+    /// ordinary full-route behavior.
+    pub route_index_limit: Option<u16>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     pub on_leg: Option<TravelLegCallback<'a>>,
 }
+
+// Preserve dev's fixed default walk bound when a custom short hop scales
+// below it. WALK-STALL-1029-R1's moving cap must not end such a walk sooner.
+const DEFAULT_HOP_BUDGET_TICKS: u32 = 60;
 
 impl Default for TravelOptions<'_> {
     fn default() -> Self {
         TravelOptions {
             close_enough: 2,
             on_event: None,
-            budget_ticks_per_hop: 60,
+            budget_ticks_per_hop: DEFAULT_HOP_BUDGET_TICKS,
             max_hops: 60,
             teleports: None,
             edges: None,
             quest_evidence: None,
+            refusal_texts: Arc::default(),
+            crossing_passes: Arc::default(),
+            route_index_limit: None,
             on_leg: None,
         }
     }
@@ -500,6 +610,73 @@ impl Traveller {
             .as_ref()
             .map(|a| a.tile)
             .or(Some(transport.to))
+    }
+    /// Remaining tiles on the active walk hop after its last cleared tile.
+    /// Transport-only and idle runs have no walk tiles remaining.
+    pub fn remaining(&self) -> usize {
+        self.follow
+            .as_ref()
+            .and_then(|run| run.walk.as_ref())
+            .map_or(0, |walk| walk.tiles().len().saturating_sub(walk.cursor + 1))
+    }
+
+    /// The active follow's wait reason, target tile, and target id, in that
+    /// order. A wait target may be a transport anchor; [`Self::current_aim`]
+    /// remains the precise walk/click target.
+    pub fn current_wait_status(
+        &self,
+    ) -> Option<(TravelWaitReason, Option<WorldTile>, Option<LocId>)> {
+        let run = self.follow.as_ref()?;
+        if run.stun_wait.is_some() {
+            return Some((TravelWaitReason::StunRecovery, self.current_aim(), None));
+        }
+        if let Some(walk) = &run.walk {
+            if !walk.sent {
+                return Some((
+                    match walk.send_refusal {
+                        Some(SendReason::Unreachable) => TravelWaitReason::LocalWalkRoute,
+                        Some(SendReason::OffScene | SendReason::SceneUnavailable) => {
+                            TravelWaitReason::Scene
+                        }
+                        Some(_) => TravelWaitReason::WalkSendRefused,
+                        None => TravelWaitReason::WalkNotSent,
+                    },
+                    Some(walk.aim),
+                    None,
+                ));
+            }
+            let recovering = walk.stall_idle_ticks > 0 || walk.tries > 1;
+            return Some((
+                if recovering {
+                    TravelWaitReason::StallRecovery
+                } else {
+                    TravelWaitReason::Walk
+                },
+                Some(walk.aim),
+                None,
+            ));
+        }
+        if let Some(transport) = &run.transport {
+            let Leg::Transport { edge } = &transport.leg else {
+                return None;
+            };
+            return Some((
+                TravelWaitReason::Transport(edge.kind),
+                Some(edge.at),
+                Some(LocId::new(edge.loc_id)),
+            ));
+        }
+        if run.settle_until.is_some() {
+            let pending = run.pending_leg.as_ref().and_then(wait_status_for_leg);
+            return Some((
+                TravelWaitReason::SceneSettle,
+                pending
+                    .and_then(|(_, target, _)| target)
+                    .or_else(|| self.current_aim()),
+                pending.and_then(|(_, _, target_id)| target_id),
+            ));
+        }
+        run.pending_leg.as_ref().and_then(wait_status_for_leg)
     }
 
     /// Original-route leg associated with the most recent terminal
@@ -670,6 +847,20 @@ impl FollowLeg {
         }
     }
 
+    fn transport_takeoff(&self) -> Option<WorldTile> {
+        match self {
+            Self::Legacy(Leg::Transport { edge }) => Some(edge.takeoff.unwrap_or(edge.at)),
+            Self::Legacy(Leg::Walk { .. }) => None,
+            Self::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
+                nav_planner::router::CompactRouteLeg::Walk(_) => None,
+                nav_planner::router::CompactRouteLeg::Transport(step) => Some(
+                    step.source()
+                        .map_or(step.anchor(), |edge| edge.takeoff.unwrap_or(edge.at)),
+                ),
+            },
+        }
+    }
+
     fn into_transport(self) -> Leg {
         match self {
             Self::Legacy(leg @ Leg::Transport { .. }) => leg,
@@ -708,6 +899,31 @@ impl WalkPacketBudget {
     }
 }
 
+fn wait_status_for_leg(
+    leg: &FollowLeg,
+) -> Option<(TravelWaitReason, Option<WorldTile>, Option<LocId>)> {
+    match leg {
+        FollowLeg::Legacy(Leg::Walk { tiles }) => {
+            Some((TravelWaitReason::Walk, tiles.last().copied(), None))
+        }
+        FollowLeg::Legacy(Leg::Transport { edge }) => Some((
+            TravelWaitReason::Transport(edge.kind),
+            Some(edge.at),
+            Some(LocId::new(edge.loc_id)),
+        )),
+        FollowLeg::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
+            nav_planner::router::CompactRouteLeg::Walk(tiles) => {
+                Some((TravelWaitReason::Walk, tiles.last().copied(), None))
+            }
+            nav_planner::router::CompactRouteLeg::Transport(step) => Some((
+                TravelWaitReason::Transport(step.kind()),
+                Some(step.anchor()),
+                Some(LocId::new(step.loc_id())),
+            )),
+        },
+    }
+}
+
 /// The legs still to work and current hop state. Budgets are captured at
 /// start; callbacks stay with the caller's options.
 struct FollowRun {
@@ -718,6 +934,12 @@ struct FollowRun {
     /// The index (in the original route) of the leg being worked, reported
     /// in `Blocked`; grows as legs complete.
     leg_index: usize,
+    /// First route-path index after the leg currently being worked.
+    route_index_next: usize,
+    /// Route-path index of the current leg, cached while a transport retries.
+    current_route_index: Option<usize>,
+    /// End of the preceding walk, used to match risk geometry's attached hop.
+    previous_walk_end: Option<WorldTile>,
     /// Walk hops performed so far (the m8aq `hops` counter).
     hops: u32,
     max_hops: u32,
@@ -760,6 +982,9 @@ impl FollowRun {
             legs,
             pending_leg: None,
             leg_index: 0,
+            route_index_next: 0,
+            current_route_index: None,
+            previous_walk_end: None,
             hops: 0,
             max_hops: options.max_hops,
             close_enough: options.close_enough,
@@ -774,25 +999,51 @@ impl FollowRun {
     }
 
     fn next_leg(&mut self) -> Option<FollowLeg> {
-        if let Some(leg) = self.pending_leg.take() {
-            return Some(leg);
-        }
-        match &mut self.legs {
-            RouteLegSource::Legacy(legs) => legs.pop_front().map(FollowLeg::Legacy),
-            RouteLegSource::Plan {
-                plan,
-                next_leg,
-                leg_count,
-            } => {
-                if *next_leg >= *leg_count {
-                    return None;
+        let leg = if let Some(leg) = self.pending_leg.take() {
+            leg
+        } else {
+            match &mut self.legs {
+                RouteLegSource::Legacy(legs) => legs.pop_front().map(FollowLeg::Legacy)?,
+                RouteLegSource::Plan {
+                    plan,
+                    next_leg,
+                    leg_count,
+                } => {
+                    if *next_leg >= *leg_count {
+                        return None;
+                    }
+                    let index = *next_leg;
+                    *next_leg += 1;
+                    FollowLeg::Plan {
+                        plan: plan.clone(),
+                        index,
+                    }
                 }
-                let index = *next_leg;
-                *next_leg += 1;
-                Some(FollowLeg::Plan {
-                    plan: plan.clone(),
-                    index,
-                })
+            }
+        };
+        if self.current_route_index.is_none() {
+            self.current_route_index = Some(self.index_route_leg(&leg));
+        }
+        Some(leg)
+    }
+
+    fn index_route_leg(&mut self, leg: &FollowLeg) -> usize {
+        if let Some(tiles) = leg.walk_tiles() {
+            let start = self.route_index_next;
+            self.route_index_next = self.route_index_next.saturating_add(tiles.len());
+            self.previous_walk_end = tiles.last().copied();
+            start
+        } else {
+            let attached = leg
+                .transport_takeoff()
+                .is_some_and(|takeoff| self.previous_walk_end == Some(takeoff));
+            self.previous_walk_end = None;
+            if attached {
+                self.route_index_next.saturating_sub(1)
+            } else {
+                let start = self.route_index_next;
+                self.route_index_next = self.route_index_next.saturating_add(1);
+                start
             }
         }
     }
@@ -876,14 +1127,20 @@ impl FollowRun {
                 match self.poll_walk(d, snapshot, options) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
             }
             if self.transport.is_some() {
                 match self.poll_transport(d, snapshot, options, essence) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
             }
             // No active hop: work the next leg (or finish).
@@ -897,16 +1154,20 @@ impl FollowRun {
                 if tiles.len() <= 1 {
                     fire_follow_leg(options, &route_leg, LegPhase::Done);
                     self.leg_index += 1;
+                    self.current_route_index = None;
                     continue;
                 }
                 let here = here(snapshot);
                 let hop = WalkHop {
                     leg: route_leg,
+                    route_index_start: self.current_route_index.expect("route leg has an index"),
                     cursor: 0,
                     aim: here,
                     aim_index: 0,
                     sent: false,
-                    ticks_waited: 0,
+                    send_refusal: None,
+                    ticks_waited: TickCount::default(),
+                    budget_ticks: self.budget,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
                     start_tile: here,
@@ -921,8 +1182,21 @@ impl FollowRun {
                 match self.send_walk_hop(d, snapshot, options, hop, here) {
                     Poll::Watching => return None,
                     Poll::Terminal(outcome) => return Some(outcome),
-                    Poll::LegDone => continue,
+                    Poll::LegDone => {
+                        self.current_route_index = None;
+                        continue;
+                    }
                 }
+            }
+            let route_index = self
+                .current_route_index
+                .expect("route leg has a route-path index");
+            if options
+                .route_index_limit
+                .is_some_and(|limit| route_index >= usize::from(limit))
+            {
+                self.pending_leg = Some(route_leg);
+                return None;
             }
             let leg = route_leg.into_transport();
             match leg {
@@ -949,6 +1223,7 @@ impl FollowRun {
                         match teleport_send(snapshot, d, edge) {
                             TeleportSend::Sent => {
                                 let to = edge.to;
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -964,6 +1239,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -1008,6 +1285,7 @@ impl FollowRun {
                         let mut ix = Interactions::new(snapshot, d);
                         match ix.walk(to) {
                             SendResult::Sent { .. } => {
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -1023,6 +1301,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -1156,6 +1436,8 @@ impl FollowRun {
                                     door_retry: DoorRetry::default(),
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
+                                    refusal_watch: None,
+                                    pass_watch: None,
                                     npc_index: selected_npc_index,
                                     npc_recovery,
                                     dialog_page: None,
@@ -1249,6 +1531,8 @@ impl FollowRun {
                                         last_tick: Some(snapshot.tick()),
                                         ..Default::default()
                                     };
+                                    let refusal_watch = gate_refusal_watch(snapshot, edge, options);
+                                    let pass_watch = gate_pass_watch(snapshot, edge, options);
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -1264,6 +1548,8 @@ impl FollowRun {
                                         door_retry: DoorRetry::opened_at(open_sent_tick),
                                         occupied: OccupiedRetry::default(),
                                         chat_seq: chat_seq_at_send,
+                                        refusal_watch,
+                                        pass_watch,
                                         dialog_page: None,
                                         approach: None,
                                     });
@@ -1345,7 +1631,6 @@ impl FollowRun {
         }
         let unresolved = match evidence {
             None => gates.gates().into(),
-            Some(evidence) if evidence.family() != gates.family() => Vec::new().into(),
             Some(evidence) => gates
                 .gates()
                 .iter()
@@ -1363,6 +1648,7 @@ impl FollowRun {
 }
 
 /// The outcome of one settle poll inside a follow step.
+#[derive(Debug)]
 enum Poll {
     /// The hop is still being watched: the call ends (`None` to the host).
     Watching,
@@ -1376,6 +1662,8 @@ enum Poll {
 /// One walk-leg hop: the leg's tiles, the aim tile, and the stall clock.
 struct WalkHop {
     leg: FollowLeg,
+    /// First route-path index represented by this walk leg.
+    route_index_start: usize,
     /// Index into the leg tiles of the last cleared tile.
     cursor: usize,
     aim: WorldTile,
@@ -1383,11 +1671,16 @@ struct WalkHop {
     /// Whether the walk for `aim` has been sent; a matched mid-leg hop is
     /// re-armed with `sent: false` and sent on the same poll (click-ahead).
     sent: bool,
+    send_refusal: Option<SendReason>,
     sent_tick: u32,
     /// Original send for this aim, retained across stall-recovery resends.
     start_tile: WorldTile,
     first_sent_tick: u32,
-    ticks_waited: u32,
+    ticks_waited: TickCount,
+    /// One walking tick per planned step to the accepted aim, at least the
+    /// configured minimum. Recovery keeps this original route budget.
+    /// Source: `engine/src/engine/entity/PathingEntity.ts:144-149`.
+    budget_ticks: u32,
     /// The player's tile when the hop's walk was sent. Used for
     /// Dropped vs Expired stall classification (`here == sent_tile` →
     /// Dropped). Stalled-walk recovery idle is tracked separately at the
@@ -1396,14 +1689,13 @@ struct WalkHop {
     tries: u32,
     /// Distinct game ticks observed idle at `stall_idle_at` without actor
     /// movement — a map flag alone does not prove the server is walking.
-    /// Separate from `ticks_waited` (poll budget); duplicate snapshot
-    /// polls do not count. Tile movement resets this counter.
+    /// Separate from `ticks_waited` (observed-tick budget); duplicate
+    /// snapshot polls do not count. Tile movement resets this counter.
     stall_idle_ticks: u32,
-    /// Snapshot tick last credited to `stall_idle_ticks`.
+    /// Last snapshot tick observed by this walk, including live movement.
     stall_idle_last_tick: Option<u32>,
-    /// Latest observed tile while counting stalled-walk idle. A change
-    /// of tile (partial hop progress) clears the idle window and starts
-    /// a new one at the new position.
+    /// Latest observed tile, retained while live so the budget can detect
+    /// progress. A tile change clears the idle window.
     stall_idle_at: Option<WorldTile>,
     /// Distinct game ticks the route's last tile, one step away, refused
     /// the click while no walk of this follow was accepted
@@ -1433,9 +1725,9 @@ impl WalkHop {
 /// recovery within the original hop budget for Door-kind edges with a packed
 /// open leaf or cardinal crossing direction (except dialogue doors and webs):
 /// re-read the matching loc, Open while closed (paced by `door_retry`), probe
-/// and walk when open. `chat_seq` is the watermark
-/// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
-/// hops refresh it at every interaction and recover only before fare dialogue.
+/// and walk when open. `chat_seq` is the send watermark for fresh
+/// reachability, web-cut, and authored crossing evidence; NPC-backed hops
+/// refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
@@ -1466,6 +1758,10 @@ struct TransportHop {
     /// (see [`OccupiedRetry`]).
     occupied: OccupiedRetry,
     chat_seq: i32,
+    /// Page acknowledgement state for an authored gated refusal flow.
+    refusal_watch: Option<GateRefusalWatch>,
+    /// Timing evidence for the exact authored pass, when the table supplies one.
+    pass_watch: Option<GatePassWatch>,
     /// The chat option-page last answered (joined option texts). A new
     /// page (spirit-tree dest list after "Where can I go?") is answered;
     /// the same page is never re-pressed.
@@ -1513,3 +1809,101 @@ fn fire_follow_leg(options: &mut TravelOptions<'_>, leg: &FollowLeg, phase: LegP
 #[cfg(test)]
 #[path = "traveller_tests.rs"]
 mod tests;
+#[cfg(test)]
+mod wait_status_tests {
+    use super::*;
+
+    fn empty_run() -> FollowRun {
+        FollowRun::with_legs(
+            RouteLegSource::Legacy(VecDeque::new()),
+            &TravelOptions::default(),
+        )
+    }
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    #[test]
+    fn door_pending_leg_reports_door_anchor_and_id() {
+        let anchor = tile(100, 200);
+        let mut run = empty_run();
+        run.pending_leg = Some(FollowLeg::Legacy(Leg::Transport {
+            edge: Box::new(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                forbidden_held: Vec::new(),
+                forbidden_worn: Vec::new(),
+                kind: TransportKind::Door,
+                player_delta: None,
+                at: anchor,
+                to: tile(102, 200),
+                loc_id: 1530,
+                option: 1,
+                ticks: 1,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None,
+            }),
+        }));
+        let mut traveller = Traveller::new();
+        traveller.follow = Some(run);
+
+        assert_eq!(
+            traveller.current_wait_status(),
+            Some((
+                TravelWaitReason::Transport(TransportKind::Door),
+                Some(anchor),
+                Some(LocId::new(1530))
+            ))
+        );
+    }
+
+    #[test]
+    fn refused_unsent_walk_reports_send_wait_not_stall_recovery() {
+        let here = tile(100, 200);
+        let aim = tile(101, 200);
+        let leg = FollowLeg::Legacy(Leg::Walk {
+            tiles: vec![here, aim],
+        });
+        let mut run = empty_run();
+        run.walk = Some(WalkHop {
+            leg,
+            // This fixture's only leg starts at the route's first tile.
+            route_index_start: 0,
+            cursor: 0,
+            aim,
+            aim_index: 1,
+            sent: false,
+            send_refusal: Some(SendReason::Unreachable),
+            sent_tick: 0,
+            start_tile: here,
+            first_sent_tick: 0,
+            ticks_waited: TickCount::default(),
+            budget_ticks: 60,
+            sent_tile: None,
+            tries: 0,
+            stall_idle_ticks: 0,
+            stall_idle_last_tick: None,
+            stall_idle_at: None,
+            end_refused_ticks: 1,
+            end_refused_last_tick: Some(1),
+        });
+        let mut traveller = Traveller::new();
+        traveller.follow = Some(run);
+
+        assert_eq!(
+            traveller.current_wait_status(),
+            Some((TravelWaitReason::LocalWalkRoute, Some(aim), None))
+        );
+    }
+}

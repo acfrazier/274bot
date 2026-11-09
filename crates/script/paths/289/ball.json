@@ -1,0 +1,100 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "ball",
+  "display_name": "Witch's House",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 4,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "house": {"boxes": [[2901,3468,2907,3476,0]], "source":"content/maps/m45_54.jm2:5146-5157,5185,5193,5232,5241,5264,5274,5301,5309,5330,5336,5361-5369; outer walls"},
+      "garden_entry": {"boxes": [[2901,3465,2901,3465,0]], "source":"content/maps/m45_54.jm2:5145; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:125; back-door enter force-move landing"},
+      "cellar_west": {"boxes": [[2898,9870,2902,9877,0]], "source":"content/maps/m45_154.jm2:5968-5969,5681-5688,5735,5744,5962; walls 1658 at x=2897 angle 2, z=9869 angle 1, z=9878 angle 3; wall 997 at x=2902 angle 2; GameMap.ts:27,225-227 and CollisionEngine.ts changeWallStraight: floor and wall flags; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:48-55"},
+      "cellar_gate_east": {"boxes": [[2903,9873,2903,9873,0]], "source":"content/maps/m45_154.jm2:5968; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:46-50; content/scripts/doors/scripts/door_procs.rs2:6"}
+    },
+    "tools": ["obj:witches_doorkey","obj:magnet"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:ball",
+    "progress": {
+      "colour": {"not_started":"ball:0","in_progress":"ball:1","complete":"ball:7"},
+      "rules": [
+        {"stage":"ball:3","all":["i have worked out how to unlock the back door"],"any":[],"not":[],"varp":3},
+        {"stage":"ball:2","all":["i have found a magnet in a cupboard"],"any":[],"not":["i have worked out how to unlock the back door"],"varp":2},
+        {"stage":"ball:1","all":["i should find a way into the garden"],"any":[],"not":[],"varp":1}
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {"stage":"ball:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start-boy","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/areas/area_taverly/scripts/boy.rs2:1-15; content/maps/m45_54.jm2:7436-7443",
+         "args":{"npc":"ballboy","anchor":{"tile":[2928,3456,0],"source":"content/maps/m45_54.jm2:7443"},"leash":8,"prefer":["What's the matter?","Ok, I'll see what I can do."]},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"ball","is":"in_progress"}}}}
+      ]},
+      {"stage":"ball:1","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"buy-cheese","kind":"buy","version":1,"args":{"shop":{"npc":"wydin","anchor":{"tile":[3014,3204,0],"source":"content/maps/m47_50.jm2:10005; content/pack/npc.pack:558"}},"obj":"cheese","qty":1,"est_gp":4},"comment":"content/scripts/areas/area_port_sarim/configs/port_sarim.inv:105-121; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:155-184; content/scripts/skill_cooking/configs/cooking_inv/configs/pizza/pizza.obj:192-195.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cheese"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cheese"}}}},
+        {"id":"buy-gloves","kind":"buy","version":1,"args":{"shop":{"npc":"thessalia","anchor":{"tile":[3204,3417,0],"source":"content/maps/m50_53.jm2:12897; content/pack/npc.pack:549"}},"obj":"leather_gloves","qty":1,"est_gp":6},"comment":"Thessalia stocks gloves at full-stock price 6: content/scripts/areas/area_varrock/configs/varrock.inv:158-168; content/scripts/areas/area_varrock/configs/varrock.npc:265-298; content/scripts/skill_crafting/configs/leather/leather_gear.obj:1-4; QUEST-CAMPAIGN/triage/review-batch-5.md:105-115.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}}},
+        {"id":"house-key","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:1-8; content/maps/m45_54.jm2:5115",
+         "args":{"target":{"loc":"witchpot"},"op":"Look-under","anchor":{"tile":[2900,3474,0],"source":"content/maps/m45_54.jm2:5115"},"radius":5},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"witches_doorkey"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"witches_doorkey"}}}},
+        {"id":"enter-house","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:10-31; content/maps/m45_54.jm2:5153",
+         "args":{"target":{"loc":"witchhousedoor"},"op":"Open","anchor":{"tile":[2901,3473,0],"source":"content/maps/m45_54.jm2:5153"},"radius":4},
+         "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"house"}}},{"Fact":{"kind":"near","version":1,"args":{"tile":[2900,9873,0],"radius":15}}}]},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"house"}}}},
+        {"id":"wear-gloves","kind":"equip","version":1,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:33-38",
+         "args":{"obj":"leather_gloves"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}}},
+        {"id":"open-cellar-gate","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:33-58; content/maps/m45_154.jm2:5968-5969",
+         "args":{"target":{"loc":"shockgater"},"op":"Open","anchor":{"tile":[2902,9873,0],"source":"content/maps/m45_154.jm2:5968"},"radius":5},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}}},
+        {"id":"open-cupboard","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:60-63; content/maps/m45_154.jm2:5739",
+         "args":{"target":{"loc":"magnetcbshut"},"op":"Open","anchor":{"tile":[2898,9873,0],"source":"content/maps/m45_154.jm2:5739"},"radius":6},
+         "skip_if":{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"magnetcbopen"}}},"settle":{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"magnetcbopen"}}}},
+        {"id":"take-magnet","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:65-75; content/maps/m45_154.jm2:5739",
+         "args":{"target":{"loc":"magnetcbopen"},"op":"Search","anchor":{"tile":[2898,9873,0],"source":"content/maps/m45_154.jm2:5739"},"radius":6},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"magnet"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"ball","any":["ball:2"]}}}}
+      ]},
+      {"stage":"ball:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"leave-cellar","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:33-58; content/maps/m45_154.jm2:5968",
+         "args":{"target":{"loc":"shockgater"},"op":"Open","anchor":{"tile":[2902,9873,0],"source":"content/maps/m45_154.jm2:5968"},"radius":5},
+         "skip_if":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_gate_east"}}}},
+        {"id":"lure-mouse","kind":"use_on","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:80-93; content/maps/m45_54.jm2:5228",
+         "args":{"item":"cheese","target":{"loc":"witchmousehole"},"anchor":{"tile":[2903,3466,0],"source":"content/maps/m45_54.jm2:5228"},"radius":5},
+         "skip_if":{"Fact":{"kind":"npc_present","version":1,"args":{"npc":"witchrat"}}},"settle":{"Fact":{"kind":"npc_present","version":1,"args":{"npc":"witchrat"}}}},
+        {"id":"unlock-back-door","kind":"use_on","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:102-115; content/scripts/quests/quest_ball/configs/quest_ball.constant:8",
+         "args":{"item":"magnet","target":{"npc":"witchrat"},"anchor":{"tile":[2903,3466,0],"source":"content/scripts/quests/quest_ball/configs/quest_ball.constant:8"},"radius":5},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"ball","any":["ball:3"]}}}}
+      ]},
+      {"stage":"ball:3","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"enter-garden","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:119-125; witch detection radius and patrol: content/scripts/quests/quest_ball/scripts/witch.rs2:1-8; content/scripts/quests/quest_ball/configs/witches_house.npc:26-34. Six tiles is an [INFERENCE] safety margin, not a content timer.",
+         "args":{"target":{"loc":"witchbackdoor"},"op":"Open","anchor":{"tile":[2901,3465,0],"source":"content/maps/m45_54.jm2:5145"},"radius":3,
+                 "wait_until":{"Not":{"Fact":{"kind":"npc_near","version":1,"args":{"npc":"nora_t_hagg","radius":6}}}}},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"garden_entry"}}},
+         "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"garden_entry"}}}}
+      ]},
+      {"stage":"ball:7","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

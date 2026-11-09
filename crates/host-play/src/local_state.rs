@@ -18,11 +18,8 @@
 //!   store: its leases and submissions answer [`ErrorCode::Failed`] with the
 //!   bounded reason, and the file is never written, until a later read
 //!   accepts it. A file whose content the service cannot hold whole is read
-//!   but never rewritten, in every domain. A loadouts file whose rows share
-//!   a name (an older editor could save one) is renamed apart by the read
-//!   that finds it, before any lease or write, under the file's lock and
-//!   losing nothing ([`Shared::dedupe_loadouts`]); while that cannot be
-//!   done the file is refused.
+//!   but never rewritten, in every domain. Loadouts with duplicate names
+//!   are refused whole because names cannot identify an individual row.
 //! - **Submissions** ([`LocalStatePort::submit`]) are nonblocking: a bank
 //!   hint replaces a queued hint of the same account (the replaced request
 //!   settles `Cancelled(Superseded)`, and the service remembers which
@@ -57,11 +54,12 @@
 //!   write, after the bytes and their directory entries are durable and
 //!   read back; one `terminal` line per accepted write that ends any other
 //!   way (failed, conflicted, cancelled). A repair the service makes on its
-//!   own (a malformed preferences file moved aside, loadouts renamed apart)
-//!   has one info audit line of its own and a warning for the operator.
-//! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities are held;
-//!   a new one evicts the least recently used idle one, or is refused
-//!   `Busy` when none is idle. A lease is one bounded snapshot.
+//!   own (a malformed preferences or script-settings file moved aside) has one
+//!   info audit line of its own and a warning for the operator.
+//! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities and the
+//!   bounded script-settings identities are held; a new identity evicts the
+//!   least recently used idle store of its domain, or is refused `Busy`.
+//!   A lease is one bounded snapshot.
 //! - **Shutdown:** dropping the last handle stops new work and lets the
 //!   writer finish every accepted write within [`SHUTDOWN_TIMEOUT`]. Past
 //!   that bound every accepted write not yet being published settles
@@ -116,7 +114,11 @@ mod files;
 mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
-pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
+pub use files::{
+    StateRoot, HINT_SCHEMA_VERSION, MAX_HINT_BYTES, MAX_LOADOUTS_BYTES, MAX_PREFERENCES_BYTES,
+};
+#[cfg(any(test, feature = "test-support"))]
+pub use frontend::{transient_wait, wait_outcome, WaitOutcome};
 pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
@@ -131,6 +133,8 @@ const PREFERENCE_WATCH_CAP: usize = OPERATOR_QUEUE_CAP + 1;
 /// evicts the least recently used idle store (nothing queued, in flight
 /// or being read); with none idle it is refused `Busy`.
 pub const MAX_BANK_STORES: usize = 256;
+/// How many script runtime settings identities the service holds at once.
+pub const MAX_SCRIPT_RUNTIME_SETTINGS_STORES: usize = 256;
 
 /// How many settlements each store keeps for its observers: a slot reads
 /// its own within frames, and one account has at most one hint in flight
@@ -183,11 +187,22 @@ pub type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
 #[cfg(test)]
 pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// A test's witness of each line of a repair (a preferences quarantine,
-/// loadouts renamed apart): the operator's notice, the audit line, or why
-/// the repair could not be made. Called where the line is logged.
+/// A test's witness of each line the service logs for file recovery or
+/// refusal: the operator's notice, audit line, or why recovery could not be made.
 #[cfg(test)]
 pub(crate) type NoticeHook = Arc<dyn Fn(Level, &str) + Send + Sync>;
+
+fn emit_local_notice(
+    level: Level,
+    line: std::fmt::Arguments<'_>,
+    #[cfg(test)] hook: Option<&NoticeHook>,
+) {
+    host_log!(Category::Lifecycle, level, "{line}");
+    #[cfg(test)]
+    if let Some(hook) = hook {
+        hook(level, &line.to_string());
+    }
+}
 
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
@@ -291,6 +306,25 @@ impl StateComposition {
             )),
         }
     }
+
+    /// Ready the box-scoped settings file before a synchronous JS Start.
+    /// An absent file is ready; read failures and timeouts refuse the Start.
+    #[cfg(feature = "js")]
+    pub(crate) fn prepare_script_runtime_settings(&self, username: &str) -> Result<(), String> {
+        let identity = self
+            .identity(LocalStateDomain::ScriptRuntimeSettings, username)
+            .map_err(|error| format!("script runtime settings: {error}"))?;
+        let path = self.service.root().script_runtime_settings_file(
+            identity.account().profile(),
+            identity.account().account(),
+            identity.scope().revision().as_i32(),
+            identity.scope().content(),
+        );
+        self.service
+            .readback_lease(&identity, START_LEASE_TIMEOUT)
+            .map(|_| ())
+            .map_err(|code| format!("script runtime settings: {code} ({})", path.display()))
+    }
 }
 
 /// Where an accepted request stands, for host-side observers that must
@@ -338,7 +372,7 @@ pub struct LocalStateService {
 
 struct Shared {
     root: StateRoot,
-    open: [bool; 4],
+    open: [bool; 5],
     minter: Arc<RequestIdMinter>,
     preference_path: Arc<str>,
     preference_not_ready: PreferenceError,
@@ -420,6 +454,8 @@ struct Hooks {
     terminal: Option<TerminalHook>,
     #[cfg(test)]
     notice: Option<NoticeHook>,
+    #[cfg(test)]
+    read_refusal: Option<NoticeHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -506,10 +542,17 @@ struct Cached {
     rewrite: Rewrite,
 }
 
+#[derive(Clone)]
+struct PendingRuntimeSetting {
+    namespace: String,
+    key: String,
+    raw: Arc<str>,
+}
 /// The edit the writer thread holds for one store.
 #[derive(Clone)]
 struct InFlight {
     terminal: Terminal,
+    setting: Option<PendingRuntimeSetting>,
     /// The writer passed its last check and is renaming the bytes into
     /// place: past the shutdown bound it is left to finish.
     publishing: bool,
@@ -595,6 +638,9 @@ impl WriteIntent {
             Self::Port(DomainEdit::Loadout(_)) => CommitAction::LoadoutWrite,
             Self::Port(DomainEdit::Bank(_)) => CommitAction::BankHintWrite,
             Self::Port(DomainEdit::Knowledge(_)) => CommitAction::KnowledgeWrite,
+            Self::Port(DomainEdit::ScriptRuntimeSettings(_)) => {
+                CommitAction::ScriptRuntimeSettingsWrite
+            }
         }
     }
 
@@ -670,7 +716,7 @@ impl LocalStateService {
         minter: Arc<RequestIdMinter>,
         state: State,
     ) -> Arc<Self> {
-        let mut open = [false; 4];
+        let mut open = [false; 5];
         for domain in domains {
             open[domain_index(*domain)] = true;
         }
@@ -737,6 +783,7 @@ impl LocalStateService {
                 LocalStateDomain::Preferences,
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
+                LocalStateDomain::ScriptRuntimeSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -755,6 +802,7 @@ impl LocalStateService {
                 LocalStateDomain::Preferences,
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
+                LocalStateDomain::ScriptRuntimeSettings,
             ],
             Arc::new(RequestIdMinter::new()),
         )
@@ -829,6 +877,30 @@ impl LocalStateService {
         identity: &DomainIdentity,
         freshness: Duration,
     ) -> Result<crate::walk_permissions::WalkGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.walk_globals.clone()
+        })
+    }
+
+    pub(super) fn preferences_pvp_globals(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<script::native::PvpGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.pvp_globals.clone()
+        })
+    }
+
+    /// One worker-built projection of the cached preferences, read without
+    /// waiting for storage: a cold or refused store, or a projection the
+    /// worker could not build, is a typed error.
+    fn preferences_projection<T>(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+        pick: impl FnOnce(&files::PreferenceProjection) -> Result<T, Arc<str>>,
+    ) -> Result<T, PreferenceError> {
         if !self.is_open(identity.domain()) {
             return Err(self.shared.preference_not_ready.clone());
         }
@@ -837,7 +909,7 @@ impl LocalStateService {
         let Some(store) = state.stores.get(&key) else {
             return Err(self.shared.preference_not_ready.clone());
         };
-        let (walk_globals, stale) = match &store.file {
+        let (projected, stale) = match &store.file {
             FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
             FileState::Rejected(rejection) => {
                 return Err(PreferenceError::from_cached(
@@ -854,16 +926,13 @@ impl LocalStateService {
                     .preferences
                     .as_ref()
                     .unwrap_or(&state.preference_default);
-                (
-                    projection.walk_globals.clone(),
-                    cached.refreshed_at.elapsed() >= freshness,
-                )
+                (pick(projection), cached.refreshed_at.elapsed() >= freshness)
             }
         };
         if stale {
             self.shared.request_readback(&mut state, &key);
         }
-        walk_globals.map_err(|cause| {
+        projected.map_err(|cause| {
             PreferenceError::from_cached(Arc::clone(&self.shared.preference_path), cause, None)
         })
     }
@@ -1411,6 +1480,67 @@ impl LocalStatePort for LocalStateService {
         self.shared.request_readback(&mut state, &key);
         Err(ErrorCode::NotReady { domain })
     }
+    fn runtime_setting_raw(
+        &self,
+        identity: &DomainIdentity,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Option<String>, ErrorCode> {
+        let store_key = self.store_key(identity)?;
+        let domain = identity.domain();
+        let mut state = self.shared.state.lock();
+        let (pending, cached) = {
+            let store = state.admit(&store_key)?;
+            let queued = store
+                .queue
+                .iter()
+                .rev()
+                .find_map(|queued| match &queued.intent {
+                    WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit))
+                        if edit.namespace() == namespace && edit.key() == key =>
+                    {
+                        Some(edit.raw().to_owned())
+                    }
+                    _ => None,
+                });
+            let in_flight = store.in_flight.as_ref().and_then(|in_flight| {
+                in_flight.setting.as_ref().and_then(|setting| {
+                    (setting.namespace == namespace && setting.key == key)
+                        .then(|| setting.raw.to_string())
+                })
+            });
+            let pending = queued.or(in_flight);
+            let cached = match &store.file {
+                FileState::Read(cached) => {
+                    let rows = cached.snapshot.as_script_runtime_settings().ok_or(
+                        ErrorCode::Validation {
+                            domain,
+                            reason: ValidationReason::Identity,
+                        },
+                    )?;
+                    Some(Ok(rows
+                        .iter()
+                        .find(|row| row.namespace() == namespace && row.key() == key)
+                        .map(|row| row.raw().to_owned())))
+                }
+                FileState::Rejected(rejection) => Some(Err(ErrorCode::Failed {
+                    domain,
+                    reason: rejection.reason,
+                })),
+                FileState::Cold => None,
+            };
+            (pending, cached)
+        };
+        if let Some(raw) = pending {
+            return Ok(Some(raw));
+        }
+        if let Some(cached) = cached {
+            return cached;
+        }
+        // Cold: queue hydration rather than reading a file in the caller.
+        self.shared.request_readback(&mut state, &store_key);
+        Err(ErrorCode::NotReady { domain })
+    }
 
     fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
         let domain = edit.identity().domain();
@@ -1431,6 +1561,15 @@ impl LocalStatePort for LocalStateService {
             Ok(store) => store,
             Err(code) => return SubmitReceipt::Refused(code),
         };
+        let recovering_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+            && edit.expected().is_none()
+            && matches!(
+                &store.file,
+                FileState::Rejected(rejection) if rejection.reason == FailureReason::Schema
+            );
+        let cold_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+            && edit.expected().is_none()
+            && matches!(&store.file, FileState::Cold);
         let (accepted_at, growth) = match gate(&key, store, &edit, growth) {
             Gate::Accept(version, growth) => (version, growth),
             Gate::Hydrate(code) => {
@@ -1457,13 +1596,28 @@ impl LocalStatePort for LocalStateService {
             .stores
             .get_mut(&key)
             .expect("the store was admitted under this lock");
-        let superseded = match &key {
-            // A newer hint of the same account makes a queued one moot: at
-            // most one waits behind the one in flight.
-            StoreKey::BankHint { .. } => store.queue.pop_front().map(|queued| queued.terminal()),
-            StoreKey::Loadouts | StoreKey::Preferences => None,
+        let superseded = match (&key, &edit) {
+            (StoreKey::BankHint { .. }, _) => {
+                store.queue.pop_front().map(|queued| queued.terminal())
+            }
+            (StoreKey::ScriptRuntimeSettings { .. }, DomainEdit::ScriptRuntimeSettings(edit)) => {
+                let replaced = store.queue.iter().position(|queued| {
+                    matches!(
+                        &queued.intent,
+                        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(pending))
+                            if pending.namespace() == edit.namespace()
+                                && pending.key() == edit.key()
+                    )
+                });
+                replaced
+                    .and_then(|index| store.queue.remove(index))
+                    .map(|queued| queued.terminal())
+            }
+            _ => None,
         };
-        let external = store.external;
+        let external = store
+            .external
+            .saturating_add(if recovering_runtime_settings { 1 } else { 0 });
         store.queue.push_back(Queued {
             request,
             intent: WriteIntent::Port(edit),
@@ -1473,6 +1627,10 @@ impl LocalStatePort for LocalStateService {
             growth,
         });
         state.requests.insert(request, key.clone());
+        if cold_runtime_settings {
+            // The writer cannot take a cold store's queue until a readback settles.
+            let _ = self.shared.request_readback(&mut state, &key);
+        }
         let cancelled = Settlement::Cancelled(Cancellation::Superseded);
         let superseded = superseded.filter(|terminal| {
             state.settle(&key, terminal.request, cancelled.clone(), Some(request))
@@ -1575,26 +1733,53 @@ enum Gate {
 /// budget together with the edits queued before it.
 fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) -> Gate {
     let domain = key.domain();
+    let replaces_pending = match edit {
+        DomainEdit::ScriptRuntimeSettings(edit) => store.queue.iter().any(|queued| {
+            matches!(
+                &queued.intent,
+                WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(pending))
+                    if pending.namespace() == edit.namespace() && pending.key() == edit.key()
+            )
+        }),
+        _ => false,
+    };
+    if key.operator_wide() && store.queue.len() >= OPERATOR_QUEUE_CAP {
+        return Gate::Refuse(ErrorCode::Busy { domain });
+    }
+    if matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+        && store.queue.len() >= OPERATOR_QUEUE_CAP
+        && !replaces_pending
+    {
+        return Gate::Refuse(ErrorCode::Busy { domain });
+    }
     let cached = match &store.file {
+        FileState::Cold
+            if matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+                && edit.expected().is_none() =>
+        {
+            return Gate::Accept(StoreVersion::INITIAL, growth);
+        }
         FileState::Cold => return Gate::Hydrate(ErrorCode::NotReady { domain }),
+        FileState::Rejected(rejection)
+            if matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+                && rejection.reason == FailureReason::Schema
+                && edit.expected().is_none() =>
+        {
+            return Gate::Accept(StoreVersion::INITIAL, growth);
+        }
         FileState::Rejected(rejection) => {
             return Gate::Hydrate(ErrorCode::Failed {
                 domain,
                 reason: rejection.reason,
-            })
+            });
         }
         FileState::Read(cached) => cached,
     };
     if let Rewrite::Refused { .. } = cached.rewrite {
-        // The rows read are not everything the file holds: a rewrite would
-        // lose the rest. Re-read: a repaired file is accepted again.
         return Gate::Hydrate(ErrorCode::Failed {
             domain,
             reason: FailureReason::Schema,
         });
-    }
-    if key.operator_wide() && store.queue.len() >= OPERATOR_QUEUE_CAP {
-        return Gate::Refuse(ErrorCode::Busy { domain });
     }
     if let DomainEdit::Preferences(edit) = edit {
         let malformed = edit.changes().iter().any(|change| {
@@ -1684,6 +1869,25 @@ fn refused_visibly(key: &StoreKey, code: ErrorCode) -> SubmitReceipt {
     SubmitReceipt::Refused(code)
 }
 
+fn bounded_store_limit(key: &StoreKey) -> Option<usize> {
+    match key {
+        StoreKey::BankHint { .. } => Some(MAX_BANK_STORES),
+        StoreKey::ScriptRuntimeSettings { .. } => Some(MAX_SCRIPT_RUNTIME_SETTINGS_STORES),
+        StoreKey::Loadouts | StoreKey::Preferences => None,
+    }
+}
+
+fn same_bounded_store_kind(left: &StoreKey, right: &StoreKey) -> bool {
+    matches!(
+        (left, right),
+        (StoreKey::BankHint { .. }, StoreKey::BankHint { .. })
+            | (
+                StoreKey::ScriptRuntimeSettings { .. },
+                StoreKey::ScriptRuntimeSettings { .. }
+            )
+    )
+}
+
 impl State {
     fn next_seq(&mut self) -> u64 {
         self.seq += 1;
@@ -1702,17 +1906,19 @@ impl State {
     }
 
     /// The store of `key`, admitted (and stamped used) if it is new. A new
-    /// bank-hint identity past [`MAX_BANK_STORES`] evicts the least
-    /// recently used idle bank store, or is refused `Busy`.
+    /// bounded identity evicts the least recently used idle store of its
+    /// domain, or is refused `Busy`.
     fn admit(&mut self, key: &StoreKey) -> Result<&mut Store, ErrorCode> {
         let used = self.next_seq();
         if !self.stores.contains_key(key) {
-            if let StoreKey::BankHint { .. } = key {
-                let held = self.stores.len()
-                    - usize::from(self.stores.contains_key(&StoreKey::Loadouts))
-                    - usize::from(self.stores.contains_key(&StoreKey::Preferences));
-                if held >= MAX_BANK_STORES {
-                    self.evict_idle_bank_store(key)?;
+            if let Some(limit) = bounded_store_limit(key) {
+                let held = self
+                    .stores
+                    .keys()
+                    .filter(|candidate| same_bounded_store_kind(candidate, key))
+                    .count();
+                if held >= limit {
+                    self.evict_idle_bounded_store(key, limit)?;
                 }
             }
             self.stores.insert(key.clone(), Store::default());
@@ -1722,18 +1928,22 @@ impl State {
         Ok(store)
     }
 
-    fn evict_idle_bank_store(&mut self, wanted: &StoreKey) -> Result<(), ErrorCode> {
+    fn evict_idle_bounded_store(
+        &mut self,
+        wanted: &StoreKey,
+        limit: usize,
+    ) -> Result<(), ErrorCode> {
         let victim = self
             .stores
             .iter()
-            .filter(|(key, store)| matches!(key, StoreKey::BankHint { .. }) && store.idle())
+            .filter(|(key, store)| same_bounded_store_kind(key, wanted) && store.idle())
             .min_by_key(|(_, store)| store.used)
             .map(|(key, _)| key.clone());
         let Some(victim) = victim else {
             host_log!(
                 Category::Lifecycle,
                 Level::Warn,
-                "local state: {} refused: {MAX_BANK_STORES} identities held and none idle",
+                "local state: {} refused: {limit} identities held and none idle",
                 wanted.domain()
             );
             return Err(ErrorCode::Busy {
@@ -1745,16 +1955,23 @@ impl State {
                 self.requests.remove(&settled.request);
             }
         }
-        if let StoreKey::BankHint {
-            profile, account, ..
-        } = &victim
-        {
-            host_log!(
-                Category::Lifecycle,
-                Level::Info,
-                "local state: bank-hints holds {MAX_BANK_STORES} identities; forgot idle {profile}/{account}"
-            );
-        }
+        let (profile, account) = match &victim {
+            StoreKey::BankHint {
+                profile, account, ..
+            }
+            | StoreKey::ScriptRuntimeSettings {
+                profile, account, ..
+            } => (profile, account),
+            StoreKey::Loadouts | StoreKey::Preferences => {
+                unreachable!("only bounded account stores can be evicted")
+            }
+        };
+        host_log!(
+            Category::Lifecycle,
+            Level::Info,
+            "local state: {} holds {limit} identities; forgot idle {profile}/{account}",
+            wanted.domain()
+        );
         Ok(())
     }
 
@@ -1981,12 +2198,15 @@ impl State {
                 }
             }
             Err(error) => {
-                host_log!(
-                    Category::Lifecycle,
+                emit_local_notice(
                     Level::Warn,
-                    "local state: {domain} file refused path={}: {error}; it is neither leased \
-                     nor written until it reads cleanly",
-                    path.display()
+                    format_args!(
+                        "local state: {domain} file refused path={}: {error}; it is neither leased \
+                         nor written until it reads cleanly",
+                        path.display()
+                    ),
+                    #[cfg(test)]
+                    self.hooks.read_refusal.as_ref(),
                 );
                 FileState::Rejected(Rejection {
                     reason: error.reason(),
@@ -2158,6 +2378,24 @@ fn collect_preference_audit_change<'a>(
     if old == new {
         return;
     }
+    // The first write of the PvP setting adds the whole `pvp` object (and
+    // clearing it removes the object): show the one member's old and new
+    // value, not "set" for the object.
+    if path.as_slice() == ["pvp"] && old.is_none() != new.is_none() {
+        let present = old.or(new).and_then(serde_json::Value::as_object);
+        if present.is_some_and(|object| object.len() == 1 && object.contains_key("start_fights")) {
+            path.push("start_fights");
+            collect_preference_audit_change(
+                old.and_then(|value| value.get("start_fights")),
+                new.and_then(|value| value.get("start_fights")),
+                path,
+                changes,
+                total,
+            );
+            path.pop();
+            return;
+        }
+    }
     if !(path.len() == 1
         && matches!(
             path[0],
@@ -2306,6 +2544,7 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
         {
             Some(PreferenceAuditScalarKind::Boolean)
         }
+        ["pvp", "start_fights"] => Some(PreferenceAuditScalarKind::Boolean),
         ["quester_paths", "enabled"] => Some(PreferenceAuditScalarKind::Boolean),
         ["map_bake"] => Some(PreferenceAuditScalarKind::MapBake),
         ["server_revision"] => Some(PreferenceAuditScalarKind::ServerRevision),
@@ -2464,6 +2703,30 @@ mod preference_audit_tests {
             before.as_object().expect("an object"),
         )
         .is_none());
+    }
+
+    #[test]
+    fn summary_shows_the_pvp_setting_old_and_new() {
+        let before = json!({ "nav": { "allow_teleports": true } });
+        let after = json!({ "nav": { "allow_teleports": true }, "pvp": { "start_fights": true } });
+        let summary = preference_audit_summary(
+            before.as_object().expect("an object"),
+            after.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(
+            summary.text.contains("pvp.start_fights"),
+            "{}",
+            summary.text
+        );
+        assert!(summary.text.contains("true"), "{}", summary.text);
+        let off = json!({ "pvp": { "start_fights": false } });
+        let summary = preference_audit_summary(
+            after.as_object().expect("an object"),
+            off.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(summary.text.contains("pvp.start_fights: true -> false"));
     }
 
     #[test]
@@ -2677,19 +2940,11 @@ impl Shared {
         }
     }
 
-    /// Read `key`'s file, first repairing, under the file's
-    /// [`files::WriteLock`], what the service repairs rather than refuses:
-    /// a loadouts file whose rows share a name is renamed apart, on every
-    /// read ([`Self::dedupe_loadouts`]); a preferences file whose content is
-    /// malformed (not JSON, or JSON that is not an object) is quarantined
-    /// and started fresh, only on the read a save makes (`recover`,
-    /// [`LocalStateService::start_readback`];
-    /// [`Self::quarantine_preferences`]). The file is then read as the
-    /// repair left it. `held` is the lock when the caller (a write) holds it
-    /// already; otherwise the repair takes it. Every other refusal (owner,
-    /// mode, size, an I/O error, content the service cannot hold whole)
-    /// stands, and a repair that cannot be made leaves the file as it is,
-    /// refused, and says why.
+    /// Read `key`'s file. On a save-path read, malformed preferences or
+    /// script-settings content is quarantined under the file's lock and started
+    /// fresh ([`Self::quarantine_preferences`],
+    /// [`Self::quarantine_script_runtime_settings`]). Every other refusal, including an
+    /// unsupported saved format, stands and leaves the file unchanged.
     fn read_repairing(
         &self,
         key: &StoreKey,
@@ -2705,9 +2960,13 @@ impl Shared {
             }
         }
         let read = files::read(key, &self.root, read_at);
-        let Some(repair) = Repair::of(key, &read, recover) else {
+        if !matches!(
+            (key, &read),
+            (StoreKey::Preferences | StoreKey::ScriptRuntimeSettings { .. }, Err(error))
+                if recover && error.is_malformed()
+        ) {
             return read;
-        };
+        }
         let path = key.path(&self.root);
         let _lock = if held.is_some() {
             None
@@ -2720,10 +2979,9 @@ impl Shared {
                 Err(error) => {
                     self.notice(
                         Level::Warn,
-                        format!(
-                            "local state: {}: its lock was not taken ({error:?}); it is left \
-                             as it is path={}",
-                            repair.unmade(),
+                        format_args!(
+                            "local state: preferences file is malformed but its lock was not \
+                             taken ({error:?}); it is left as it is path={}",
                             path.display()
                         ),
                     );
@@ -2731,129 +2989,26 @@ impl Shared {
                 }
             }
         };
-        let repaired = match repair {
-            Repair::Dedupe => self.dedupe_loadouts(key, &path),
-            Repair::Quarantine => self.quarantine_preferences(&path),
+        let repaired = match key {
+            StoreKey::ScriptRuntimeSettings { .. } => {
+                self.quarantine_script_runtime_settings(key, &path)
+            }
+            _ => self.quarantine_preferences(&path),
         };
         match repaired {
             Ok(()) => files::read(key, &self.root, read_at),
             Err(error) => {
                 self.notice(
                     Level::Warn,
-                    format!(
-                        "local state: {}: {error}; it is left as it is path={}",
-                        repair.unmade(),
+                    format_args!(
+                        "local state: preferences file is malformed but could not be moved aside: \
+                         {error}; it is left as it is path={}",
                         path.display()
                     ),
                 );
                 read
             }
         }
-    }
-
-    /// Under the loadouts file's lock: when `path` still holds rows that
-    /// share a name, rename them apart in one publication that loses
-    /// nothing (the one-time repair of a file an older editor saved with
-    /// two loadouts of one name; names key the rows, so until then no edit
-    /// of it names one row). The file's exact bytes are kept first in a new
-    /// `loadouts.json.duplicates-<time>` beside it, read back, flushed, and
-    /// its directory entry flushed. Then the same rows, each with its
-    /// content and in its place, are published with every later row of a
-    /// name renamed `<name> (2)`, `(3)`, … ([`files::rename_apart`]), only
-    /// while the file still holds the bytes kept, and the directory entry
-    /// is flushed. The operator is told (a warning naming the copy and each
-    /// rename) and the repair is audited (one info line). A failure before
-    /// the publication leaves the file as it is (a copy already made stays,
-    /// holding the file's exact bytes), and the next read tries again.
-    fn dedupe_loadouts(&self, key: &StoreKey, path: &Path) -> std::io::Result<()> {
-        let Some((text, mut rows)) = files::loadouts_sharing_names(path)? else {
-            // Repaired or removed meanwhile: read it as it is.
-            return Ok(());
-        };
-        let renamed = files::rename_apart(&mut rows);
-        let bytes = files::loadouts_bytes(&rows).map_err(std::io::Error::other)?;
-        if bytes.len() as u64 > files::MAX_LOADOUTS_BYTES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "renamed apart, its rows would take {} bytes, more than a loadouts file may \
-                     hold ({})",
-                    bytes.len(),
-                    files::MAX_LOADOUTS_BYTES
-                ),
-            ));
-        }
-        let quarantined = files::quarantine_copy(path, text.as_bytes(), "duplicates")?;
-        let kept_in = |error: std::io::Error, what: &str| {
-            std::io::Error::new(
-                error.kind(),
-                format!(
-                    "a copy is kept in {}, but {what}: {error}",
-                    quarantined.display()
-                ),
-            )
-        };
-        let dirs: Vec<PathBuf> = path.parent().map(Path::to_path_buf).into_iter().collect();
-        self.sync_dirs(&dirs).map_err(|error| {
-            kept_in(
-                error,
-                "its directory entry did not reach the disk, so the file was not replaced",
-            )
-        })?;
-        let kept = files::digest(text.as_bytes());
-        self.publish(path, &bytes, || {
-            if self.state.lock().abandoned {
-                return Err(std::io::Error::other(
-                    "the service passed its shutdown bound",
-                ));
-            }
-            if files::current_digest(key, &self.root)? == Some(kept) {
-                Ok(())
-            } else {
-                Err(std::io::Error::other(
-                    "the file changed while its loadouts were being renamed apart",
-                ))
-            }
-        })
-        .map_err(|error| kept_in(error, "the file was not replaced"))?;
-        let renames = renamed
-            .iter()
-            .map(|rename| format!("row {} {:?} → {:?}", rename.row + 1, rename.from, rename.to))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let told = format!(
-            "local state: loadouts file {} had loadouts that share a name; its bytes are kept in \
-             {}, and each later one was renamed, keeping its gear and its place: {renames}",
-            path.display(),
-            quarantined.display()
-        );
-        match self.sync_dirs(&dirs) {
-            Ok(()) => {
-                self.notice(Level::Warn, told);
-                self.notice(
-                    Level::Info,
-                    format!(
-                        "audit domain={} action=loadouts-dedupe path={} quarantined={} \
-                         renamed=[{renames}] at={}",
-                        LocalStateDomain::LoadoutsReferences,
-                        path.display(),
-                        quarantined.display(),
-                        DurableTimestamp::now().unix_seconds()
-                    ),
-                );
-            }
-            // The renamed rows are in place, and the copy is durable: a
-            // crash that loses this entry leaves the old file, and the next
-            // read renames it apart again.
-            Err(error) => self.notice(
-                Level::Warn,
-                format!(
-                    "{told}; but its directory entry did not reach the disk ({error}), so the \
-                     renames are not durable yet"
-                ),
-            ),
-        }
-        Ok(())
     }
 
     /// Under the preferences file's lock: if `path` still holds malformed
@@ -2896,7 +3051,7 @@ impl Shared {
         })?;
         self.notice(
             Level::Warn,
-            format!(
+            format_args!(
                 "local state: preferences file {} was not valid preferences JSON; its bytes are \
                  kept in {} and fresh preferences were started",
                 path.display(),
@@ -2905,7 +3060,7 @@ impl Shared {
         );
         self.notice(
             Level::Info,
-            format!(
+            format_args!(
                 "audit domain={} action=preferences-quarantine path={} quarantined={} at={}",
                 LocalStateDomain::Preferences,
                 path.display(),
@@ -2916,17 +3071,74 @@ impl Shared {
         Ok(())
     }
 
+    /// Under the runtime settings file's lock: retain malformed content
+    /// beside the file before starting the empty, identity-bound document.
+    fn quarantine_script_runtime_settings(
+        &self,
+        key: &StoreKey,
+        path: &Path,
+    ) -> std::io::Result<()> {
+        let Some(bytes) = files::corrupt_script_runtime_settings(path)? else {
+            return Ok(());
+        };
+        let quarantined = files::quarantine_copy(path, &bytes, "corrupt")?;
+        if let Some(dir) = path.parent() {
+            self.sync_dirs(&[dir.to_path_buf()])?;
+        }
+        let corrupt = files::digest(&bytes);
+        let fresh = files::script_runtime_settings_bytes(key, &[])?;
+        self.publish(path, &fresh, || {
+            let now = files::corrupt_script_runtime_settings(path)?;
+            if now.as_deref().map(files::digest) == Some(corrupt) {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "the file changed while it was being moved aside",
+                ))
+            }
+        })
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "a copy is kept in {}, but the file was not replaced: {error}",
+                    quarantined.display()
+                ),
+            )
+        })?;
+        self.notice(
+            Level::Warn,
+            format_args!(
+                "local state: runtime settings file {} was malformed; its bytes are kept in {} and \
+                 an empty settings map was started",
+                path.display(),
+                quarantined.display()
+            ),
+        );
+        self.notice(
+            Level::Info,
+            format_args!(
+                "audit domain={} action=script-runtime-settings-quarantine path={} quarantined={} at={}",
+                LocalStateDomain::ScriptRuntimeSettings,
+                path.display(),
+                quarantined.display(),
+                DurableTimestamp::now().unix_seconds()
+            ),
+        );
+        Ok(())
+    }
+
     /// Log one line of a repair (the operator's notice, the audit line, or
     /// why the repair could not be made), and hand it to a test's hook.
-    fn notice(&self, level: Level, line: String) {
-        host_log!(Category::Lifecycle, level, "{line}");
+    fn notice(&self, level: Level, line: std::fmt::Arguments<'_>) {
         #[cfg(test)]
-        {
-            let hook = self.state.lock().hooks.notice.clone();
-            if let Some(hook) = hook {
-                hook(level, &line);
-            }
-        }
+        let hook = self.state.lock().hooks.notice.clone();
+        emit_local_notice(
+            level,
+            line,
+            #[cfg(test)]
+            hook.as_ref(),
+        );
     }
 
     /// One write, as one transaction under the file's [`files::WriteLock`]:
@@ -3005,7 +3217,12 @@ impl Shared {
         // another writer left sharing a name are renamed apart first, so
         // this edit is never decided against them).
         let read_at = DurableTimestamp::now();
-        let read = self.read_repairing(key, read_at, false, Some(&guard));
+        let read = self.read_repairing(
+            key,
+            read_at,
+            matches!(key, StoreKey::ScriptRuntimeSettings { .. }),
+            Some(&guard),
+        );
         let decision = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
@@ -3395,46 +3612,6 @@ enum LastCheck {
     Io(std::io::Error),
 }
 
-/// What a read repairs, under the file's lock, rather than refuses
-/// ([`Shared::read_repairing`]).
-#[derive(Debug, Clone, Copy)]
-enum Repair {
-    /// Loadout rows share a name: they are renamed apart
-    /// ([`Shared::dedupe_loadouts`]), on every read.
-    Dedupe,
-    /// A malformed preferences file, read for a save: it is moved aside
-    /// and fresh preferences are started ([`Shared::quarantine_preferences`]).
-    Quarantine,
-}
-
-impl Repair {
-    /// The repair a read of `key` that found `read` calls for, if any.
-    fn of(
-        key: &StoreKey,
-        read: &Result<Option<ReadDocument>, ReadError>,
-        recover: bool,
-    ) -> Option<Self> {
-        match (key, read) {
-            (StoreKey::Loadouts, Err(ReadError::SharedNames { .. })) => Some(Repair::Dedupe),
-            (StoreKey::Preferences, Err(error)) if recover && error.is_malformed() => {
-                Some(Repair::Quarantine)
-            }
-            _ => None,
-        }
-    }
-
-    /// What the file holds and that the repair was not made, for the line
-    /// saying why.
-    fn unmade(self) -> &'static str {
-        match self {
-            Repair::Dedupe => {
-                "loadouts file has loadouts that share a name, but they could not be renamed apart"
-            }
-            Repair::Quarantine => "preferences file is malformed but could not be moved aside",
-        }
-    }
-}
-
 fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
     Settlement::Failed(ErrorCode::Failed {
         domain,
@@ -3457,8 +3634,13 @@ struct CachedDecision {
 
 impl CachedDecision {
     fn from_cached(cached: &Cached, domain: LocalStateDomain) -> Self {
-        let needs_snapshot = domain == LocalStateDomain::LoadoutsReferences
-            || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
+        // A settings write replaces one row of the file's rows, so it needs
+        // them all, as a loadout write does.
+        let needs_snapshot = matches!(
+            domain,
+            LocalStateDomain::LoadoutsReferences | LocalStateDomain::ScriptRuntimeSettings
+        ) || (domain == LocalStateDomain::Preferences
+            && cached.preferences.is_none());
         Self {
             version: cached.version,
             snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
@@ -3618,6 +3800,25 @@ fn decide(
                 CommitAction::PreferencesWrite,
                 Some(projection),
                 summary.map(AuditKind::Preferences),
+            )
+        }
+        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => {
+            let rows = cached
+                .snapshot
+                .as_ref()
+                .and_then(LeaseSnapshot::as_script_runtime_settings)
+                .unwrap_or(&[]);
+            let next =
+                files::apply_script_runtime_setting(rows, edit).map_err(Settlement::Failed)?;
+            let bytes = files::script_runtime_settings_bytes(key, &next)
+                .map_err(|_| schema_failure(domain))?;
+            (
+                bytes,
+                LeaseSnapshot::script_runtime_settings(next),
+                DurableTimestamp::now(),
+                CommitAction::ScriptRuntimeSettingsWrite,
+                None,
+                Some(AuditKind::Plain),
             )
         }
         WriteIntent::Port(DomainEdit::Knowledge(_)) => {
@@ -3784,8 +3985,17 @@ fn take_job(state: &mut State) -> Option<Job> {
         .map(|(key, _)| key.clone())?;
     let store = state.stores.get_mut(&key).expect("found above");
     let queued = store.queue.pop_front().expect("found above");
+    let setting = match &queued.intent {
+        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => Some(PendingRuntimeSetting {
+            namespace: edit.namespace().to_string(),
+            key: edit.key().to_string(),
+            raw: Arc::from(edit.raw()),
+        }),
+        _ => None,
+    };
     store.in_flight = Some(InFlight {
         terminal: queued.terminal(),
+        setting,
         publishing: false,
     });
     Some(Job::Write(key, queued))
@@ -3807,15 +4017,21 @@ fn empty_snapshot(key: &StoreKey) -> LeaseSnapshot {
         StoreKey::BankHint { .. } => {
             LeaseSnapshot::bank_hints(Vec::new()).expect("no rows meet the row rules")
         }
+        StoreKey::ScriptRuntimeSettings { .. } => {
+            LeaseSnapshot::script_runtime_settings(Vec::new())
+        }
     }
 }
 
-/// What an empty store's rows take as the service writes them: `[]` for
-/// loadouts, `{}` for preferences.
+/// What an empty store's rows take as the service writes them.
 fn empty_len(key: &StoreKey) -> usize {
     match key {
-        StoreKey::Loadouts | StoreKey::Preferences => 2,
+        StoreKey::Loadouts => 2,
+        StoreKey::Preferences => 2,
         StoreKey::BankHint { .. } => 0,
+        StoreKey::ScriptRuntimeSettings { .. } => files::script_runtime_settings_bytes(key, &[])
+            .expect("empty runtime settings are valid")
+            .len(),
     }
 }
 
@@ -3825,6 +4041,7 @@ const fn domain_index(domain: LocalStateDomain) -> usize {
         LocalStateDomain::BankHints => 1,
         LocalStateDomain::LoadoutsReferences => 2,
         LocalStateDomain::Knowledge => 3,
+        LocalStateDomain::ScriptRuntimeSettings => 4,
     }
 }
 

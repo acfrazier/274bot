@@ -1,10 +1,13 @@
-//! FlatBuffer-to-V8 snapshot materialization and helpers (feature `load` only).
+//! FlatBuffer-to-V8 snapshot materialization and helpers.
 //!
 //! Builds `__rs2b0t_host.snapshot` on the isolate thread from decoded
 //! FlatBuffers (delta merge, absent-vs-empty, object reuse). Also owns the
 //! small V8 property helpers and native-event batch materialization used by
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
+use crate::materialize::selected_facts_v8::client_adapter_v8::{
+    new_object, ClientAdapterObjectShape,
+};
 use flatbuffers::{ForwardsUOffset, Vector};
 use rustyscript::Runtime;
 
@@ -21,15 +24,15 @@ type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 /// old JSON blob. The object is built on the isolate thread directly
 /// from the buffer (v8 object construction — not `JSON.parse`): a wall
 /// of 50+ isolates never parses a JSON document per tick.
-pub(super) fn materialize_snapshot(
+pub(crate) fn materialize_snapshot(
     runtime: &mut Runtime,
     snap: &crate::wire::Snapshot<'_>,
     host_hold: bool,
 ) -> Result<(), String> {
-    super::entity_pages::ensure(runtime)?;
+    crate::materialize::entity_pages::ensure(runtime)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
-    let pages_state = super::entity_pages::state(&scope)
+    let pages_state = crate::materialize::entity_pages::state(&scope)
         .expect("entity page mapping installed before snapshot materialization");
     // Open the cached templates briefly; rows are instantiated from them
     // while no state borrow is held.
@@ -50,7 +53,7 @@ pub(super) fn materialize_snapshot(
         || snap.has_ground()
         || snap.has_self_slot()
     {
-        let mut generation = crate::scene_query::entity_generation();
+        let mut generation = crate::scene::scene_query::entity_generation();
         if !snap.has_npcs() {
             generation.npcs = None;
         }
@@ -73,10 +76,10 @@ pub(super) fn materialize_snapshot(
             .expect("self slot captures generation")
             .self_slot
     });
-    let mut staged_entity_pages = super::entity_pages::StagedEntityPages {
+    let mut staged_entity_pages = crate::materialize::entity_pages::StagedEntityPages {
         generation,
         self_slot,
-        ..super::entity_pages::StagedEntityPages::default()
+        ..crate::materialize::entity_pages::StagedEntityPages::default()
     };
     let global = context.open(&mut scope).global(&mut scope);
     let host_key = js_string(&mut scope, "__rs2b0t_host")?;
@@ -188,6 +191,35 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "bank_loaded", bank_loaded.into())?;
     } else if !had {
         set(&mut scope, obj, "bank_loaded", falsy)?;
+    }
+    if snap.has_inv_ready() {
+        let inv_ready = v8::Boolean::new(&mut scope, snap.inv_ready());
+        set(&mut scope, obj, "inv_ready", inv_ready.into())?;
+    } else if !had {
+        set(&mut scope, obj, "inv_ready", falsy)?;
+    }
+    if snap.has_stats_ready() {
+        let stats_ready = v8::Boolean::new(&mut scope, snap.stats_ready());
+        set(&mut scope, obj, "stats_ready", stats_ready.into())?;
+    } else if !had {
+        set(&mut scope, obj, "stats_ready", falsy)?;
+    }
+    if snap.has_bank_side_ready() {
+        let bank_side_ready = v8::Boolean::new(&mut scope, snap.bank_side_ready());
+        set(&mut scope, obj, "bank_side_ready", bank_side_ready.into())?;
+    } else if !had {
+        set(&mut scope, obj, "bank_side_ready", falsy)?;
+    }
+    if snap.has_guardian_active_event() {
+        let event = snap.guardian_active_event().unwrap_or("");
+        let value = if event.is_empty() {
+            none
+        } else {
+            js_string(&mut scope, event)?
+        };
+        set(&mut scope, obj, "guardian_active_event", value)?;
+    } else if !had {
+        set(&mut scope, obj, "guardian_active_event", none)?;
     }
     if snap.has_bank_generation() {
         let bank_generation = num(&mut scope, snap.bank_generation() as f64);
@@ -372,7 +404,7 @@ pub(super) fn materialize_snapshot(
                     3 => "fallback",
                     _ => "none",
                 },
-                "bank": crate::bank_select::selected(selection.bank_index),
+                "bank": crate::scene::bank_select::selected(selection.bank_index),
             })
         };
         let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value)
@@ -907,6 +939,10 @@ pub(super) fn materialize_snapshot(
             set(&mut scope, obj, "main_modal_texts", modal.into())?;
         }
     }
+    if let Some(facts) = snap.client_adapter() {
+        let facts = client_adapter_facts_object(&mut scope, facts)?;
+        set(&mut scope, obj, "client_adapter", facts)?;
+    }
     // The open puzzle board. A present table is the observation — including
     // the closed `{-1, 0, []}` object, which is NOT an omitted slot. An
     // omitted slot keeps the page's last board (delta keep); on a keyframe
@@ -967,6 +1003,20 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "combat", combat)?;
     } else if !had {
         set(&mut scope, obj, "combat", none)?;
+    }
+    if let Some(side_modal_id) = snap.side_modal_id() {
+        let side_modal_id = num(&mut scope, side_modal_id as f64);
+        set(&mut scope, obj, "side_modal_id", side_modal_id)?;
+    } else if !had {
+        let side_modal_id = num(&mut scope, -1.0);
+        set(&mut scope, obj, "side_modal_id", side_modal_id)?;
+    }
+    if let Some(taking_damage) = snap.taking_damage() {
+        let taking_damage = v8::Boolean::new(&mut scope, taking_damage);
+        set(&mut scope, obj, "taking_damage", taking_damage.into())?;
+    } else if !had {
+        let taking_damage = v8::Boolean::new(&mut scope, false);
+        set(&mut scope, obj, "taking_damage", taking_damage.into())?;
     }
     let snapshot = obj.into();
     set(&mut scope, host, "snapshot", snapshot)?;
@@ -1044,8 +1094,8 @@ pub(super) fn materialize_settings_bag(
     runtime: &mut Runtime,
     bag: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
-    crate::bank_select::settings(bag);
-    crate::duel::settings(bag);
+    crate::scene::bank_select::settings(bag);
+    crate::compat::duel::settings(bag);
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -1128,14 +1178,14 @@ fn json_object_without<'s>(
 
 fn native_event_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    ev: &crate::events::NativeEvent,
+    ev: &crate::scene::events::NativeEvent,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let wrapped = v8::Object::new(scope);
     let type_name = js_string(scope, ev.type_name())?;
     set(scope, wrapped, "type", type_name)?;
     let payload = v8::Object::new(scope);
     match ev {
-        crate::events::NativeEvent::ChatMessage {
+        crate::scene::events::NativeEvent::ChatMessage {
             type_,
             username,
             text,
@@ -1155,7 +1205,7 @@ fn native_event_object<'s>(
             let text_value = js_string(scope, text)?;
             set(scope, payload, "text", text_value)?;
         }
-        crate::events::NativeEvent::SkillXp {
+        crate::scene::events::NativeEvent::SkillXp {
             skill,
             name,
             xp,
@@ -1170,7 +1220,26 @@ fn native_event_object<'s>(
             let delta_v = num(scope, *delta as f64);
             set(scope, payload, "delta", delta_v)?;
         }
-        crate::events::NativeEvent::InventoryChanged {
+        crate::scene::events::NativeEvent::SkillLevel {
+            skill,
+            name,
+            level,
+            previous,
+        } => {
+            let skill_value = num(scope, *skill as f64);
+            set(scope, payload, "skill", skill_value)?;
+            let name_value = js_string(scope, name)?;
+            set(scope, payload, "name", name_value)?;
+            let level_value = num(scope, *level as f64);
+            set(scope, payload, "level", level_value)?;
+            let previous_value = num(scope, *previous as f64);
+            set(scope, payload, "previous", previous_value)?;
+        }
+        crate::scene::events::NativeEvent::ScriptFinish { reason } => {
+            let reason_value = js_string(scope, reason)?;
+            set(scope, payload, "reason", reason_value)?;
+        }
+        crate::scene::events::NativeEvent::InventoryChanged {
             slot,
             id,
             name,
@@ -1206,7 +1275,7 @@ fn native_event_object<'s>(
 
 pub(super) fn dispatch_native_events(
     runtime: &mut Runtime,
-    events: &[crate::events::NativeEvent],
+    events: &[crate::scene::events::NativeEvent],
 ) -> Result<(), String> {
     if events.is_empty() {
         return Ok(());
@@ -1232,7 +1301,7 @@ pub(super) fn dispatch_native_events(
     // — a flush that stalls must not grow the isolate heap without
     // bound. The oldest entries fall off first, matching the flush's
     // in-order drain.
-    super::lineage_v8::eval::<()>(
+    crate::materialize::lineage_v8::eval::<()>(
         runtime,
         "(() => {
     const b = globalThis.__rs2b0t_native_event_batch;
@@ -1280,6 +1349,15 @@ fn set<'s>(
     obj.set(scope, name.into(), value)
         .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
     Ok(())
+}
+fn set_i32<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    object: v8::Local<'s, v8::Object>,
+    key: &str,
+    value: i32,
+) -> Result<(), String> {
+    let value = num(scope, value as f64);
+    set(scope, object, key, value)
 }
 
 fn set_readonly<'s>(
@@ -1359,6 +1437,213 @@ fn row_array<'s, 'a>(
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
+}
+
+fn widget_fact_array<'s, 'a>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: TableVector<'a, crate::wire::WidgetFact<'a>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let array = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (index, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
+        let object = new_object(scope, ClientAdapterObjectShape::SnapshotWidgetRow)?;
+        for (key, value) in [
+            ("component_id", row.component_id()),
+            ("root_component_id", row.root_component_id()),
+            ("parent_id", row.parent_id()),
+            ("type_", row.component_type()),
+            ("button_type", row.button_type()),
+            ("client_code", row.client_code()),
+            ("x", row.x()),
+            ("y", row.y()),
+            ("width", row.width()),
+            ("height", row.height()),
+            ("model_type", row.model_type()),
+            ("model_id", row.model_id()),
+            ("script_opcode", row.script_opcode()),
+            ("script_varp", row.script_varp()),
+            ("script_value", row.script_value()),
+            ("colour", row.colour()),
+        ] {
+            let value = num(scope, value as f64);
+            set(scope, object, key, value)?;
+        }
+        let hidden = v8::Boolean::new(scope, row.hidden());
+        set(scope, object, "hidden", hidden.into())?;
+        let inventory_ready = v8::Boolean::new(scope, row.inventory_ready());
+        set(scope, object, "inventory_ready", inventory_ready.into())?;
+        for (key, value) in [
+            ("text", row.text()),
+            ("alternate_text", row.alternate_text()),
+            ("button_text", row.button_text()),
+            ("target_base", row.target_base()),
+        ] {
+            let value: v8::Local<v8::Value> = match value {
+                Some(value) => js_string(scope, value)?,
+                None => v8::null(scope).into(),
+            };
+            set(scope, object, key, value)?;
+        }
+        let items = row_array(scope, row.items())?;
+        set(scope, object, "items", items)?;
+        array
+            .set_index(scope, index as u32, object.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(array.into())
+}
+
+fn client_adapter_facts_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    facts: crate::wire::ClientAdapterFacts<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let object = new_object(scope, ClientAdapterObjectShape::SnapshotFacts)?;
+    let attached = v8::Boolean::new(scope, facts.attached());
+    set(scope, object, "attached", attached.into())?;
+    let base = new_object(scope, ClientAdapterObjectShape::MapBuildBase)?;
+    let base_x = num(scope, facts.map_build_base_x() as f64);
+    set(scope, base, "x", base_x)?;
+    let base_z = num(scope, facts.map_build_base_z() as f64);
+    set(scope, base, "z", base_z)?;
+    set(scope, object, "map_build_base", base.into())?;
+    let server_tile: v8::Local<v8::Value> = facts
+        .server_tile()
+        .map(|tile| tile_object(scope, &tile))
+        .transpose()?
+        .unwrap_or_else(|| v8::null(scope).into());
+    set(scope, object, "server_tile", server_tile)?;
+    let hint_tile_level = num(scope, facts.hint_tile_level() as f64);
+    set(scope, object, "hint_tile_level", hint_tile_level)?;
+    let bank_com_id = num(scope, facts.bank_com_id() as f64);
+    set(scope, object, "bank_com_id", bank_com_id)?;
+    let chat_continue_component_id = num(scope, facts.chat_continue_component_id() as f64);
+    set(
+        scope,
+        object,
+        "chat_continue_component_id",
+        chat_continue_component_id,
+    )?;
+    if let Some(pair) = facts.chat_modal_texts() {
+        let modal = new_object(scope, ClientAdapterObjectShape::SnapshotModalTexts)?;
+        let root = num(scope, pair.root() as f64);
+        set(scope, modal, "root", root)?;
+        let rows = pair.texts();
+        let texts = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+        for (index, text) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
+            let text = js_string(scope, text)?;
+            texts
+                .set_index(scope, index as u32, text)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        set(scope, modal, "texts", texts.into())?;
+        set(scope, object, "chat_modal_texts", modal.into())?;
+    }
+    let widgets = widget_fact_array(scope, facts.widgets())?;
+    set(scope, object, "widgets", widgets)?;
+    let player_count = num(scope, facts.player_count() as f64);
+    set(scope, object, "player_count", player_count)?;
+    let npc_count = num(scope, facts.npc_count() as f64);
+    set(scope, object, "npc_count", npc_count)?;
+    let run_on_com_id = num(scope, facts.run_on_com_id() as f64);
+    set(scope, object, "run_on_com_id", run_on_com_id)?;
+    let run_off_com_id = num(scope, facts.run_off_com_id() as f64);
+    set(scope, object, "run_off_com_id", run_off_com_id)?;
+    let login_message = js_string(scope, facts.login_message().unwrap_or_default())?;
+    set(scope, object, "login_message", login_message)?;
+    let entries = facts.menu_entries();
+    let menu_entries = v8::Array::new(
+        scope,
+        entries.as_ref().map_or(0, |entries| entries.len()) as i32,
+    );
+    for (index, entry) in entries
+        .into_iter()
+        .flat_map(|entries| entries.iter())
+        .enumerate()
+    {
+        let entry = js_string(scope, entry)?;
+        menu_entries
+            .set_index(scope, index as u32, entry)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    set(scope, object, "menu_entries", menu_entries.into())?;
+    let path = facts.last_walk_path_local();
+    let last_walk_path_local =
+        v8::Array::new(scope, path.as_ref().map_or(0, |path| path.len()) as i32);
+    for (index, point) in path.into_iter().flat_map(|path| path.iter()).enumerate() {
+        let point = num(scope, point as f64);
+        last_walk_path_local
+            .set_index(scope, index as u32, point)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    set(
+        scope,
+        object,
+        "last_walk_path_local",
+        last_walk_path_local.into(),
+    )?;
+    let session_generation = num(scope, facts.session_generation() as f64);
+    set(scope, object, "session_generation", session_generation)?;
+    let modal_close_generation = num(scope, facts.modal_close_generation() as f64);
+    set(
+        scope,
+        object,
+        "modal_close_generation",
+        modal_close_generation,
+    )?;
+    let projection_scene = facts
+        .projection_scene()
+        .map(|scene| projection_scene_object(scope, scene))
+        .transpose()?
+        .unwrap_or_else(|| v8::null(scope).into());
+    set(scope, object, "projection_scene", projection_scene)?;
+    Ok(object.into())
+}
+
+fn projection_scene_object<'s, 'a>(
+    scope: &mut v8::HandleScope<'s>,
+    scene: crate::wire::ProjectionScene<'a>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let object = new_object(scope, ClientAdapterObjectShape::SnapshotProjectionScene)?;
+    set_i32(scope, object, "level", scene.level())?;
+    set_i32(scope, object, "camera_x", scene.camera_x())?;
+    set_i32(scope, object, "camera_y", scene.camera_y())?;
+    set_i32(scope, object, "camera_z", scene.camera_z())?;
+    set_i32(scope, object, "sin_pitch", scene.sin_pitch())?;
+    set_i32(scope, object, "cos_pitch", scene.cos_pitch())?;
+    set_i32(scope, object, "sin_yaw", scene.sin_yaw())?;
+    set_i32(scope, object, "cos_yaw", scene.cos_yaw())?;
+    let heights = int32_array_view(scope, scene.heights())?;
+    set(scope, object, "heights", heights)?;
+    let heights_above = int32_array_view(scope, scene.heights_above())?;
+    set(scope, object, "heights_above", heights_above)?;
+    let link_below = uint8_array_view(scope, scene.link_below())?;
+    set(scope, object, "link_below", link_below)?;
+    let rows = scene.locs();
+    let locs = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
+    for (index, loc) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
+        let row = new_object(scope, ClientAdapterObjectShape::SnapshotProjectionLoc)?;
+        set_i32(scope, row, "id", loc.id())?;
+        let name = loc
+            .name()
+            .map(|name| js_string(scope, name))
+            .transpose()?
+            .unwrap_or_else(|| v8::null(scope).into());
+        set(scope, row, "name", name)?;
+        set_i32(scope, row, "rank", loc.rank())?;
+        set_i32(scope, row, "level", loc.level())?;
+        set_i32(scope, row, "min_tile_x", loc.min_tile_x())?;
+        set_i32(scope, row, "max_tile_x", loc.max_tile_x())?;
+        set_i32(scope, row, "min_tile_z", loc.min_tile_z())?;
+        set_i32(scope, row, "max_tile_z", loc.max_tile_z())?;
+        set_i32(scope, row, "scene_x", loc.scene_x())?;
+        set_i32(scope, row, "scene_z", loc.scene_z())?;
+        set_i32(scope, row, "half_width", loc.half_width())?;
+        set_i32(scope, row, "half_length", loc.half_length())?;
+        set_i32(scope, row, "top_height", loc.top_height())?;
+        locs.set_index(scope, index as u32, row.into())
+            .ok_or_else(|| "v8 projection loc set failed".to_string())?;
+    }
+    set(scope, object, "locs", locs.into())?;
+    Ok(object.into())
 }
 
 fn stat_array<'s, 'a>(
@@ -1461,6 +1746,60 @@ fn collision_from_parts<'s, 'a>(
     let flags_v = collision_flags_view(scope, view_flags)?;
     set(scope, o, "flags", flags_v)?;
     Ok(o.into())
+}
+
+fn int32_array_view<'s, 'a>(
+    scope: &mut v8::HandleScope<'s>,
+    values: Option<Vector<'a, i32>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let len = values.as_ref().map_or(0, |values| values.len());
+    let byte_len = len
+        .checked_mul(std::mem::size_of::<i32>())
+        .ok_or_else(|| "projection height byte length".to_string())?;
+    let buffer = v8::ArrayBuffer::new(scope, byte_len);
+    if let Some(values) = values {
+        if len > 0 {
+            let backing = buffer.get_backing_store();
+            let Some(ptr) = backing.data() else {
+                return Err("projection height backing store".to_string());
+            };
+            let dest = ptr.as_ptr() as *mut i32;
+            for (index, value) in values.iter().enumerate() {
+                // The V8 Int32Array uses native-endian elements.
+                // SAFETY: V8 allocated `len * size_of::<i32>()` bytes and
+                // the verified vector iterator yields exactly `len` values.
+                unsafe { dest.add(index).write_unaligned(value) };
+            }
+        }
+    }
+    let view = v8::Int32Array::new(scope, buffer, 0, len)
+        .ok_or_else(|| "projection heights Int32Array".to_string())?;
+    Ok(view.into())
+}
+
+fn uint8_array_view<'s, 'a>(
+    scope: &mut v8::HandleScope<'s>,
+    values: Option<Vector<'a, u8>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let len = values.as_ref().map_or(0, |values| values.len());
+    let buffer = v8::ArrayBuffer::new(scope, len);
+    if let Some(values) = values {
+        if len > 0 {
+            let backing = buffer.get_backing_store();
+            let Some(ptr) = backing.data() else {
+                return Err("projection link backing store".to_string());
+            };
+            let dest = ptr.as_ptr() as *mut u8;
+            for (index, value) in values.iter().enumerate() {
+                // SAFETY: the backing store has exactly `len` bytes and the
+                // verified vector provides exactly that many scalar values.
+                unsafe { dest.add(index).write(value) };
+            }
+        }
+    }
+    let view = v8::Uint8Array::new(scope, buffer, 0, len)
+        .ok_or_else(|| "projection link Uint8Array".to_string())?;
+    Ok(view.into())
 }
 
 fn collision_flags_view<'s>(
@@ -2105,11 +2444,11 @@ fn inspect_hop_array<'s, 'a>(
 mod tests {
     use crate::wire::generated::rs_2b_0t::isolate::{QuestStatusBuilder, SnapshotBuilder};
     use crate::wire::tests::empty_input;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, ItemRowInput, NativeFactsInput,
-        PuzzleBoardInput,
-    };
     use crate::{LoadIsolate, LoadShape};
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{ItemRowInput, NativeFactsInput, PuzzleBoardInput},
+    };
 
     fn spawn_isolate() -> LoadIsolate {
         LoadIsolate::spawn(

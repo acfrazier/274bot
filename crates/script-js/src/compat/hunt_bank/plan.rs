@@ -243,7 +243,8 @@ pub(super) fn wielded(obs: &BankObservation) -> Vec<String> {
 
 /// The spell's remaining per-cast rune costs with the worn staves.
 pub(super) fn cast_costs(proj: &BankProj, obs: &BankObservation) -> Option<Vec<NamedCount>> {
-    let costs = crate::supply_v2::selected_data()?.runes_per_cast(&proj.spell, &wielded(obs))?;
+    let costs =
+        crate::scene::supply_v2::selected_data()?.runes_per_cast(&proj.spell, &wielded(obs))?;
     Some(
         costs
             .into_iter()
@@ -286,7 +287,7 @@ pub(super) fn casts_left(proj: &BankProj, obs: &BankObservation) -> f64 {
 /// The site's escape teleport: its label, level and per-cast runes.
 pub(super) fn escape_fact(proj: &BankProj) -> Option<script::escape_runes::EscapeRunesFact> {
     script::escape_runes::escape_runes_for_optional(
-        crate::supply_v2::selected_data().as_deref(),
+        crate::scene::supply_v2::selected_data().as_deref(),
         &proj.escape_id,
     )
     .ok()

@@ -690,6 +690,32 @@ fn seat_mirror_cascade_revokes_each_descendant_wire_lease() {
     assert_eq!(seat.dropped(), 2);
 }
 
+/// N1 of `HOLD-MODEL-AB`: an owner whose interaction hold expired loses the
+/// rows that still wait in the seat, taken or not; another owner's row is
+/// dispatched.
+#[test]
+fn an_expired_hold_drops_only_its_owners_rows_in_custody() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    let mirror = |owner| EmissionSource::Mirror {
+        owner: id(owner),
+        parent: None,
+    };
+    seat.push(1, EmissionClass::Gameplay, mirror(2), None)
+        .unwrap();
+    seat.take();
+    seat.push(2, EmissionClass::Gameplay, mirror(2), None)
+        .unwrap();
+    seat.push(3, EmissionClass::Gameplay, mirror(3), None)
+        .unwrap();
+    seat.drop_expired_hold_rows(id(2));
+    let mut delivered = Vec::new();
+    seat.dispatch_into(&mut delivered);
+    seat.take();
+    seat.dispatch_into(&mut delivered);
+    assert_eq!(delivered, [3]);
+    assert_eq!(seat.dropped(), 2);
+}
+
 #[test]
 fn seat_mirror_revoke_level_retries_and_rejects_gaps_atomically() {
     let mut seat = GameplaySeat::<u32>::new(run());
@@ -1015,4 +1041,156 @@ fn native_prompt_arguments_have_a_retained_byte_bound_separate_from_handle_charg
         Err(SeatError::PromptTooLarge)
     );
     assert!(seat.prompt_payload(id(1)).is_none());
+}
+
+fn deposit_point() -> PromptPoint {
+    PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized synchronous prompt")
+}
+
+fn counters(seat: &GameplaySeat<u32>) -> (u64, u64, u64, u64) {
+    (
+        seat.answer_seq(),
+        seat.answer_dispatched(),
+        seat.terminal_dispatched(),
+        seat.result_seq(),
+    )
+}
+
+#[test]
+fn seat_counters_follow_each_publish_and_each_boundary() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    let point = deposit_point();
+    assert!(!seat.answer_page_owed());
+    start(&mut seat, 1, None, NativeKind::BankPlan);
+    assert_eq!(
+        seat.answer_seq(),
+        0,
+        "an admission is not an answer page change"
+    );
+
+    // A prompt, a consumed decision and a completion each raise it once.
+    seat.prompt_with_details(id(1), point, &[1]).unwrap();
+    assert_eq!(seat.answer_seq(), 1);
+    assert!(seat.answer_page_owed());
+    assert_eq!(
+        seat.decide_with_answer(id(1), DecisionSequence::FIRST, vec![9]),
+        SeatDecisionStatus::Consumed
+    );
+    assert_eq!(seat.answer_seq(), 2);
+    assert!(seat.has_untaken_answers());
+    assert_eq!(
+        seat.decide_with_answer(id(1), DecisionSequence::FIRST, vec![9]),
+        SeatDecisionStatus::Late,
+        "a replayed decision changes nothing"
+    );
+    assert_eq!(seat.answer_seq(), 2);
+    seat.take_answer(id(1)).unwrap();
+    assert_eq!(
+        seat.answer_seq(),
+        2,
+        "taking an answer is not a page change"
+    );
+    seat.complete(id(1), false).unwrap();
+    assert_eq!(counters(&seat), (3, 0, 0, 1));
+
+    // Every other way to publish a terminal moves it too.
+    start(&mut seat, 2, None, NativeKind::BankPlan);
+    seat.cancel(id(2), CallbackCancelReason::HookThrew).unwrap();
+    assert_eq!(
+        counters(&seat),
+        (4, 0, 0, 2),
+        "cancel(HookThrew) publishes Failed"
+    );
+    start(&mut seat, 3, None, NativeKind::BankPlan);
+    seat.cancel(id(3), CallbackCancelReason::ParentAborted)
+        .unwrap();
+    assert_eq!(
+        counters(&seat),
+        (5, 0, 0, 3),
+        "cancel(ParentAborted) revokes"
+    );
+    start(&mut seat, 4, None, NativeKind::Walk);
+    start(&mut seat, 5, Some(4), NativeKind::BankPlan);
+    seat.manual_walk(id(4)).unwrap();
+    assert_eq!(
+        counters(&seat),
+        (7, 0, 0, 5),
+        "a manual walk publishes the child's abort and the walk's Done"
+    );
+    start(&mut seat, 6, None, NativeKind::BankPlan);
+    seat.revoke(id(6), AbortReason::Superseded).unwrap();
+    assert_eq!(counters(&seat), (8, 0, 0, 6), "revoke publishes the abort");
+    // An admission that ends at once publishes a terminal without a live
+    // entry: a request cancelled before admission, and a refused one.
+    assert_eq!(
+        seat.start(stamp(20, None), NativeKind::BankPlan, true)
+            .unwrap(),
+        Admission::Cancelled
+    );
+    assert_eq!(counters(&seat), (9, 0, 0, 7), "a cancelled admission");
+    assert_eq!(
+        seat.start(stamp(21, Some(999)), NativeKind::BankPlan, false)
+            .unwrap(),
+        Admission::Refused(Refusal::ParentNotLive)
+    );
+    assert_eq!(counters(&seat), (10, 0, 0, 8), "a refused admission");
+    // Entry 7 stays live for the held checks below.
+    start(&mut seat, 7, None, NativeKind::BankPlan);
+
+    // The slot records what an accepted dispatch carried.
+    seat.mark_answer_dispatched(10, 8);
+    assert_eq!(counters(&seat), (10, 10, 8, 8));
+    assert!(!seat.answer_page_owed());
+
+    // A held seat refuses every producer, so nothing moves while it is held.
+    seat.hold(true);
+    assert_eq!(
+        seat.prompt_with_details(id(7), point, &[1]),
+        Err(SeatError::Held)
+    );
+    seat.complete(id(7), false).unwrap();
+    seat.cancel(id(7), CallbackCancelReason::HookThrew).unwrap();
+    seat.revoke(id(7), AbortReason::Superseded).unwrap();
+    seat.manual_walk(id(7)).unwrap();
+    assert_eq!(counters(&seat), (10, 10, 8, 8));
+    seat.hold(false);
+
+    // A kept reconnect keeps the counters and the result sequence.
+    seat.prompt_with_details(id(7), point, &[2]).unwrap();
+    let before = counters(&seat);
+    seat.reconnect(run().session + 1);
+    assert_eq!(counters(&seat), before);
+    assert!(seat.answer_page_owed());
+
+    // A reset owes nothing: the new result sequence restarts at 1, so no old
+    // stamp may qualify against the floor.
+    seat.reset(run());
+    assert!(!seat.answer_page_owed());
+    assert_eq!(
+        (
+            seat.answer_dispatched(),
+            seat.terminal_dispatched(),
+            seat.result_seq()
+        ),
+        (seat.answer_seq(), 0, 0)
+    );
+}
+
+/// The seat is boxed in the slot, so its three answer counters (24 B) and its
+/// receipt counts (three `u32`) are heap. Measured on a 64-bit target: 864 B,
+/// 32 B above the 832 B of `d65c6bdd8`. The row payload type does not move it.
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn gameplay_seat_size_is_pinned() {
+    assert_eq!(std::mem::size_of::<GameplaySeat<u32>>(), 864);
+    assert_eq!(
+        std::mem::size_of::<GameplaySeat<u32>>(),
+        std::mem::size_of::<GameplaySeat<u8>>()
+    );
 }

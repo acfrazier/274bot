@@ -4,12 +4,13 @@ use super::plan::{self, Counts};
 use super::*;
 use crate::bank::{self, BankStandAccess, PickKind};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
-use crate::native::walk::Walk;
 use crate::native::{
-    ActionContext, ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkReceipt,
-    WalkRequest,
+    ActionContext, ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest,
+    WalkRetryState,
 };
 use crate::native_bank::{BankMachine, BankRequest};
+use crate::quester::prereq::reach::{PrereqSelect, PrereqSelectOther};
+use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::NamedBankFacts;
 use api::selected::RunKey;
 use api::snapshot::ItemView;
@@ -17,12 +18,13 @@ use api::stock::Stock;
 use std::task::Poll;
 
 const MAX_OPEN_ATTEMPTS: u8 = 3;
-// AGENTS.md:131 retries a failed walk from the observed position and lets a
-// machine try another target; USER-0.2.3-GATHERER §4 requires a finite budget.
-// One request plus one recovery per walk identity, then at most two retries
-// across alternative banks, keeps a large bank roster bounded.
-const MAX_BANK_ACCESS_RETRIES: u8 = 2;
-const MAX_CLOSE_ATTEMPTS: u8 = 3;
+// AGENTS.md:131: an ordinary walk failure to the bank is information first. The
+// first recovery walks again from the observed position to the same stand; the
+// second picks again with the failed bank dropped where another is eligible. Two
+// is a policy bound, like the restart limit in the Gatherer; the engine states no
+// count. A large bank roster stays bounded by it.
+pub(crate) const MAX_ACCESS_RECOVERY_ACTIONS: u8 = 2;
+pub(crate) const MAX_CLOSE_ATTEMPTS: u8 = 3;
 const _: () = assert!(2 * MAX_MEMO <= u8::MAX as usize);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,8 +47,9 @@ enum Phase {
 enum Active {
     #[default]
     None,
-    Select(ActionHandle<bank::Select>),
-    Walk(ActionHandle<Walk>),
+    Select(PrereqSelect),
+    SelectOther(PrereqSelectOther),
+    Walk(PrereqWalk),
     Open(ActionHandle<bank::Open>),
     Deposit(ActionHandle<bank::Deposit>),
     Machine(ActionHandle<BankMachine>),
@@ -54,15 +57,34 @@ enum Active {
     Wear(ActionHandle<OneOp>),
 }
 
-/// Cold access-recovery state stays behind one lazy box so the shared owner
-/// keeps its inline budget when no bank walk fails.
+/// The Gatherer's bank-access recovery (AGENTS.md:131), kept behind one lazy
+/// box so the shared owner keeps its inline budget when no bank walk fails.
+/// `recovery` counts the two bounded actions; `avoid` names the bank whose
+/// access walk failed while the second action's pick is under way.
 #[derive(Default)]
-struct BankWalkState {
+struct AccessRecovery {
     recovery: ReturnStallRecovery,
     retry_after_tick: Option<u64>,
-    retries: u8,
-    excluded_banks: Option<Arc<[u16]>>,
-    last_failure: Option<Arc<str>>,
+    avoid: Option<u16>,
+    last_reason: Option<Arc<str>>,
+}
+
+impl AccessRecovery {
+    fn waiting(&self, tick: u64) -> bool {
+        self.recovery.pending() && self.retry_after_tick.is_some_and(|after| tick <= after)
+    }
+
+    fn action_submitted(&mut self) {
+        self.recovery.action_submitted();
+        self.retry_after_tick = None;
+    }
+
+    fn reset_after_arrival(&mut self) {
+        self.recovery.reset();
+        self.retry_after_tick = None;
+        self.avoid = None;
+        self.last_reason = None;
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -84,6 +106,7 @@ pub struct AcquireRun {
     required_bank_missing: bool,
     access: Option<Arc<BankStandAccess>>,
     target: Option<WorldTile>,
+    walk_retry: Option<WalkRetryState>,
     withdrawals: Option<Arc<[Withdrawal]>>,
     // Planned and post-purchase steps share one queue, bounded by 2 * MAX_MEMO.
     wears: Option<Box<[WearStep]>>,
@@ -100,6 +123,9 @@ pub struct AcquireRun {
     close_attempts: u8,
     deposit_done: bool,
     cancelled: bool,
+    interrupted: bool,
+    /// The interrupted transfer ended at its boundary; the owner takes this once.
+    interrupt_settled: bool,
     complete: bool,
     withdrew_any: bool,
     withdrawal_before: i64,
@@ -107,9 +133,8 @@ pub struct AcquireRun {
     kept_unbankable: bool,
     last_bank: Option<BankReceipt>,
     block: Option<Box<AcquireBlock>>,
-    /// Allocated only after an access walk fails; keeps recovery data out of
-    /// the often-retained AcquireRun owner.
-    bank_walk: Option<Box<BankWalkState>>,
+    /// The Gatherer's access recovery; absent for owners that bring their own.
+    access_recovery: Option<Box<AccessRecovery>>,
 }
 
 impl AcquireRun {
@@ -162,6 +187,7 @@ impl AcquireRun {
             required_bank_missing,
             access: None,
             target: None,
+            walk_retry: None,
             withdrawals: None,
             wears: None,
             purchases: None,
@@ -176,6 +202,8 @@ impl AcquireRun {
             close_attempts: 0,
             deposit_done: false,
             cancelled: false,
+            interrupted: false,
+            interrupt_settled: false,
             complete: true,
             withdrew_any: false,
             withdrawal_before: 0,
@@ -183,11 +211,35 @@ impl AcquireRun {
             kept_unbankable: false,
             last_bank: None,
             block,
-            bank_walk: None,
+            access_recovery: None,
         };
         let bank_work = run.install(plan);
         run.start_stage(bank_work, cx);
         run
+    }
+
+    /// Recover an ordinary access-walk failure as the Gatherer does: walk again
+    /// to the same stand, then pick again without the failed bank.
+    pub(crate) fn with_access_recovery(mut self) -> Self {
+        self.access_recovery = Some(Box::default());
+        self
+    }
+
+    /// Start the bank work from a fresh pick and access walk even when a bank
+    /// modal is already open: after a session change the old session's page is
+    /// stale, and the open that follows must be a real one.
+    pub(crate) fn with_fresh_access(mut self) -> Self {
+        if self.phase == Phase::Deposit {
+            self.phase = Phase::Select;
+            self.bank = None;
+        }
+        self
+    }
+
+    /// Use Quester's shared bounded retry for the bank access walk.
+    pub(crate) fn with_quester_walk_retries(mut self) -> Self {
+        self.walk_retry = Some(WalkRetryState::default());
+        self
     }
 
     pub fn poll(
@@ -218,60 +270,63 @@ impl AcquireRun {
                 match self.poll_active(tick) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(()))
+                        if self.interrupted && matches!(self.active, Active::None) =>
+                    {
+                        self.interrupted = false;
+                        self.interrupt_settled = true;
+                        return Poll::Pending;
+                    }
                     Poll::Ready(Ok(())) => {}
                 }
             }
             match self.phase {
                 Phase::Select => {
-                    if let Some(state) = self.bank_walk.as_mut() {
-                        if let Some(after) = state.retry_after_tick {
-                            if tick.cx.evidence().tick <= after {
-                                return Poll::Pending;
-                            }
-                        }
+                    if self
+                        .access_recovery
+                        .as_ref()
+                        .is_some_and(|state| state.waiting(tick.cx.evidence().tick))
+                    {
+                        return Poll::Pending;
                     }
                     if !tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
                     }
                     let Some(from) = tick.cx.snapshot().here() else {
-                        return Poll::Ready(Err(self.attach_last_bank_walk(
+                        return Poll::Ready(Err(self.attach_last_access_reason(
                             ActionError::Unavailable(Arc::from(
                                 "player position unavailable for bank selection",
                             )),
                         )));
                     };
-                    let excluded_banks = self
-                        .bank_walk
-                        .as_ref()
-                        .and_then(|state| state.excluded_banks.clone());
-                    let handle = tick
-                        .actions
-                        .begin::<bank::Select>(
-                            bank::SelectArgs {
-                                facts: Arc::clone(&self.banks),
-                                from: from.value,
-                                preferences: self.request.bank.preferences,
-                                options: self.request.walk,
-                                explicit: self.explicit.clone(),
-                                excluded_banks,
-                                allow_air_fallback: false,
+                    let args = bank::SelectArgs {
+                        facts: Arc::clone(&self.banks),
+                        from: from.value,
+                        preferences: self.request.bank.preferences,
+                        options: self.request.walk,
+                        explicit: self.explicit.clone(),
+                        allow_air_fallback: false,
+                    };
+                    if let Some(avoid) = self.access_recovery.as_ref().and_then(|state| state.avoid)
+                    {
+                        self.active = Active::SelectOther(PrereqSelectOther::begin(
+                            bank::SelectOtherArgs {
+                                select: args,
+                                avoid,
                             },
+                            tick.actions,
                             &mut tick.cx,
-                        )
-                        .map_err(|error| self.attach_last_bank_walk(error))?;
-                    if let Some(state) = self.bank_walk.as_mut() {
-                        if state.retry_after_tick.is_some()
-                            && !state.recovery.pending()
-                            && tick.cx.evidence().tick
-                                > state.retry_after_tick.expect("checked retry tick")
-                        {
-                            state.retry_after_tick = None;
-                        }
+                        )?);
+                    } else {
+                        self.active =
+                            Active::Select(PrereqSelect::begin(args, tick.actions, &mut tick.cx)?);
                     }
-                    self.active = Active::Select(handle);
                 }
                 Phase::Walk => {
                     let Some(target) = self.target else {
+                        if let Some(retry) = self.walk_retry.as_mut() {
+                            retry.reset();
+                        }
                         self.phase = Phase::Open;
                         continue;
                     };
@@ -281,49 +336,81 @@ impl AcquireRun {
                         .here()
                         .is_some_and(|here| here.value == target)
                     {
+                        if let Some(retry) = self.walk_retry.as_mut() {
+                            retry.reset();
+                        }
                         self.phase = Phase::Open;
                         continue;
                     }
-                    if let Some(state) = self.bank_walk.as_mut() {
-                        if let Some(after) = state.retry_after_tick {
-                            if tick.cx.evidence().tick <= after {
-                                return Poll::Pending;
-                            }
-                        }
+                    let now = tick.cx.evidence().tick;
+                    if self
+                        .walk_retry
+                        .as_ref()
+                        .is_some_and(|retry| retry.waiting_for_next_tick(now))
+                        || self
+                            .access_recovery
+                            .as_ref()
+                            .is_some_and(|state| state.waiting(now))
+                    {
+                        return Poll::Pending;
                     }
                     if !tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
                     }
                     let retrying = self
-                        .bank_walk
+                        .walk_retry
                         .as_ref()
-                        .is_some_and(|state| state.recovery.pending());
-                    let handle = tick
-                        .actions
-                        .begin::<Walk>(
-                            WalkRequest {
-                                target,
-                                candidate_goals: None,
-                                loc_id: None,
-                                radius: 0,
-                                arrival: nav_planner::contract::ArrivalKind::Reach,
-                                options: self.request.walk,
-                                required_after: tick.cx.evidence(),
-                                evidence: None,
-                                cross: Box::default(),
-                                protect: false,
-                                food_guard: false,
-                                allow: Default::default(),
-                            },
-                            &mut tick.cx,
-                        )
-                        .map_err(|error| self.attach_last_bank_walk(error))?;
-                    if retrying {
-                        if let Some(state) = self.bank_walk.as_mut() {
-                            state.recovery.action_submitted();
-                            state.retry_after_tick = None;
-                            state.retries = state.retries.saturating_add(1);
+                        .is_some_and(|retry| retry.pending())
+                        || self
+                            .access_recovery
+                            .as_ref()
+                            .is_some_and(|state| state.recovery.pending());
+                    let required_after = if retrying {
+                        tick.cx.evidence()
+                    } else {
+                        self.request.required_after
+                    };
+                    let handle = match PrereqWalk::begin(
+                        WalkRequest {
+                            target,
+                            candidate_goals: None,
+                            loc_id: None,
+                            radius: 0,
+                            arrival: nav_planner::contract::ArrivalKind::Reach,
+                            options: self.request.walk,
+                            required_after,
+                            evidence: None,
+                            cross: Box::default(),
+                            avoid: Box::new([]),
+                            protect: false,
+                            food_guard: false,
+                            cure_guard: false,
+                            allow: Default::default(),
+                        },
+                        tick.actions,
+                        &mut tick.cx,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(ActionError::BudgetExhausted) => {
+                            if let Some(retry) = self.walk_retry.as_mut() {
+                                retry.defer_until_next_tick(now);
+                                return Poll::Pending;
+                            }
+                            if let Some(state) = self.access_recovery.as_mut() {
+                                state.retry_after_tick = Some(now);
+                                return Poll::Pending;
+                            }
+                            return Poll::Ready(Err(ActionError::BudgetExhausted));
                         }
+                        Err(error) => {
+                            return Poll::Ready(Err(self.attach_last_access_reason(error)));
+                        }
+                    };
+                    if let Some(state) = self.access_recovery.as_mut() {
+                        state.action_submitted();
+                    }
+                    if let Some(retry) = self.walk_retry.as_mut() {
+                        retry.action_submitted();
                     }
                     self.active = Active::Walk(handle);
                 }
@@ -332,9 +419,19 @@ impl AcquireRun {
                         return Poll::Pending;
                     }
                     if self.open_attempts == MAX_OPEN_ATTEMPTS {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank-unavailable: bank did not open after 3 attempts",
-                        ))));
+                        // The owner with its own recovery (the Gatherer) keeps the
+                        // last reason a retried step recorded.
+                        let message = match self
+                            .access_recovery
+                            .as_ref()
+                            .and_then(|state| state.last_reason.as_deref())
+                        {
+                            Some(reason) => Arc::from(format!(
+                                "bank-unavailable: bank did not open after 3 attempts; last reason: {reason}"
+                            )),
+                            None => Arc::from("bank-unavailable: bank did not open after 3 attempts"),
+                        };
+                        return Poll::Ready(Err(ActionError::Failed(message)));
                     }
                     let Some(access) = &self.access else {
                         return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
@@ -358,8 +455,8 @@ impl AcquireRun {
                     if !tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
                     }
-                    let selected = api::game_data::for_revision(tick.cx.pin().revision)
-                        .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+                    let selected = api::game_data::for_revision(tick.cx.revision())
+                        .map_err(|error| ActionError::Unavailable(Arc::from(error.to_string())))?;
                     match self.request.deposit.as_ref().expect("checked deposit") {
                         DepositSpec::Ids { products, keep } => {
                             if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -662,8 +759,9 @@ impl AcquireRun {
     pub fn cancel(&mut self, actions: &mut NativeActions) {
         match std::mem::take(&mut self.active) {
             Active::None => {}
-            Active::Select(handle) => actions.cancel(handle),
-            Active::Walk(handle) => actions.cancel(handle),
+            Active::Select(mut select) => select.cancel(),
+            Active::SelectOther(mut select) => select.cancel(),
+            Active::Walk(mut walk) => walk.cancel(),
             Active::Open(handle) => actions.cancel(handle),
             Active::Deposit(handle) => actions.cancel(handle),
             Active::Machine(handle) => actions.cancel(handle),
@@ -676,6 +774,46 @@ impl AcquireRun {
         self.shop = None;
         self.phase = Phase::Done;
         self.cancelled = true;
+        self.interrupted = false;
+    }
+
+    pub fn transfer_in_flight(&self) -> bool {
+        match &self.active {
+            Active::Deposit(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            Active::Machine(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// The prerequisite grants the bank pick was first requested with.
+    #[cfg(test)]
+    pub(crate) fn original_allow(&self) -> Option<crate::native::PrereqAllow> {
+        match &self.active {
+            Active::Select(select) => select.original_allow(),
+            _ => None,
+        }
+    }
+
+    /// Whether an interrupted transfer has ended at its boundary since the
+    /// last call. The owner decides what follows (the survival click).
+    pub(crate) fn take_interrupt_settled(&mut self) -> bool {
+        std::mem::take(&mut self.interrupt_settled)
+    }
+
+    pub fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if !self.transfer_in_flight() {
+            return;
+        }
+        match &self.active {
+            Active::Deposit(handle) => actions.interrupt(handle),
+            Active::Machine(handle) => actions.interrupt(handle),
+            _ => return,
+        }
+        self.interrupted = true;
     }
 
     fn install(&mut self, mut plan: AcquirePlan) -> bool {
@@ -790,60 +928,120 @@ impl AcquireRun {
         Poll::Ready(Err(error))
     }
 
-    fn bank_walk_failure(&mut self, receipt: &WalkReceipt, now: u64) -> Result<(), ActionError> {
-        let detail = receipt.failure_detail_or_fallback();
-        let failed_index = self
-            .bank
-            .and_then(|bank| {
+    /// An ordinary walk failure at the bank is information first. The first
+    /// recovery walks again from the observed position to the same stand; the
+    /// second picks again with the failed bank dropped where another is
+    /// eligible. Each keeps the receipt's detail as the last reason, so the
+    /// terminal failure after the budget is spent names the last receipt.
+    /// Returns whether a recovery action was admitted.
+    fn recover_access_walk(&mut self, receipt: &crate::native::WalkReceipt, now: u64) -> bool {
+        let Some(state) = self.access_recovery.as_mut() else {
+            return false;
+        };
+        let reason = receipt.failure_detail_or_fallback();
+        state.last_reason = Some(Arc::clone(&reason));
+        if !state
+            .recovery
+            .observe_failure(&receipt.end, MAX_ACCESS_RECOVERY_ACTIONS)
+        {
+            return false;
+        }
+        let attempt = state.recovery.actions().saturating_add(1);
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "gatherer-bank-access-recovery attempt={attempt}/{MAX_ACCESS_RECOVERY_ACTIONS} action={} reason={reason}",
+            if attempt == 1 { "replan" } else { "reselect" },
+        );
+        state.retry_after_tick = Some(now);
+        if attempt > 1 {
+            let failed = self.bank.and_then(|bank| {
                 self.banks
                     .banks()
                     .iter()
                     .position(|candidate| candidate.tile == bank.tile)
-            })
-            .and_then(|index| u16::try_from(index).ok());
-        let Some(failed_index) = failed_index.filter(|_| self.explicit.is_none()) else {
-            return Err(ActionError::Blocked(detail));
-        };
-        let state = self
-            .bank_walk
-            .get_or_insert_with(|| Box::new(BankWalkState::default()));
-        state.last_failure = Some(detail.clone());
-        let previous = state.excluded_banks.as_deref().unwrap_or(&[]);
-        if previous.contains(&failed_index) {
-            return Err(ActionError::Blocked(detail));
+                    .and_then(|index| u16::try_from(index).ok())
+            });
+            if let Some(state) = self.access_recovery.as_mut() {
+                state.avoid = failed;
+            }
+            self.bank = None;
+            self.pick_kind = None;
+            self.access = None;
+            self.target = None;
+            self.phase = Phase::Select;
+        } else {
+            // Walk again to the same stand: keep the selected bank and access.
+            self.phase = Phase::Walk;
         }
-        let mut excluded = Vec::with_capacity(previous.len() + 1);
-        excluded.extend_from_slice(previous);
-        excluded.push(failed_index);
-        state.excluded_banks = Some(Arc::from(excluded));
-        state.recovery.reset();
-        state.retry_after_tick = Some(now);
-        self.bank = None;
-        self.pick_kind = None;
-        self.access = None;
-        self.target = None;
-        self.phase = Phase::Select;
+        true
+    }
+
+    /// The pick settled: record the bank, its stand and its access, or end the
+    /// run when no bank is eligible.
+    fn settle_pick(&mut self, selected: bank::SelectedBank) -> Result<(), ActionError> {
+        if selected.kind == PickKind::NoCandidate {
+            if let Some(state) = self.access_recovery.as_mut() {
+                if state.avoid.take().is_some() {
+                    // The banks left after dropping the one that refused the
+                    // walk have no route from here.
+                    self.phase = Phase::Select;
+                    return Ok(());
+                }
+            }
+            return Err(self.no_bank_candidate(None));
+        }
+        let access = selected.access.ok_or_else(|| {
+            self.attach_last_access_reason(ActionError::Unavailable(Arc::from(
+                "selected bank has no access stand",
+            )))
+        })?;
+        self.bank = Some(
+            *self
+                .banks
+                .banks()
+                .get(usize::from(selected.bank_index))
+                .ok_or(ActionError::Stale)?,
+        );
+        self.target = Some(selected.access_tile);
+        self.pick_kind = Some(selected.kind);
+        self.access = Some(access);
+        if let Some(state) = self.access_recovery.as_mut() {
+            state.avoid = None;
+        }
+        self.phase = Phase::Walk;
         Ok(())
     }
 
-    fn no_bank_candidate(&self) -> ActionError {
-        match self
-            .bank_walk
-            .as_ref()
-            .and_then(|state| state.last_failure.as_ref())
-        {
-            Some(detail) => ActionError::Blocked(Arc::from(format!(
-                "no eligible bank after access walk failure: {detail}"
-            ))),
-            None => ActionError::Unavailable(Arc::from("no eligible bank")),
+    /// No bank is eligible. The Gatherer (which brings its own access
+    /// recovery) reports the typed receipt's detail and the last access-walk
+    /// failure; every other owner keeps the stable terminal outcome.
+    fn no_bank_candidate(&self, detail: Option<Arc<str>>) -> ActionError {
+        let Some(state) = self.access_recovery.as_ref() else {
+            return ActionError::Unavailable(Arc::from("no eligible bank"));
+        };
+        let mut message =
+            detail.map_or_else(|| String::from("no eligible bank"), |d| d.to_string());
+        if let Some(reason) = state.last_reason.as_deref() {
+            message.push_str("; last reason: ");
+            message.push_str(reason);
         }
+        ActionError::Blocked(Arc::from(message))
     }
 
-    fn attach_last_bank_walk(&self, error: ActionError) -> ActionError {
-        let Some(detail) = self
-            .bank_walk
+    /// The last access-walk failure's reason, kept by the owner across a
+    /// session change that cancels this run.
+    pub(crate) fn last_access_reason(&self) -> Option<Arc<str>> {
+        self.access_recovery
             .as_ref()
-            .and_then(|state| state.last_failure.as_ref())
+            .and_then(|state| state.last_reason.clone())
+    }
+
+    fn attach_last_access_reason(&self, error: ActionError) -> ActionError {
+        let Some(detail) = self
+            .access_recovery
+            .as_ref()
+            .and_then(|state| state.last_reason.as_ref())
         else {
             return error;
         };
@@ -864,70 +1062,71 @@ impl AcquireRun {
     fn poll_active(&mut self, tick: &mut NativeTick<'_>) -> Poll<Result<(), ActionError>> {
         match std::mem::take(&mut self.active) {
             Active::None => {}
-            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Select(handle),
+            Active::Select(mut select) => {
+                let no_candidate = select
+                    .inspect_in(&mut tick.cx, |select, cx| select.no_candidate(cx))
+                    .unwrap_or(false);
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::Select(select),
+                    Poll::Ready(Err(ActionError::Failed(detail))) if no_candidate => {
+                        // Only the typed NoCandidate receipt keeps Acquire's
+                        // stable terminal contract; unrelated failures propagate.
+                        return Poll::Ready(Err(self.no_bank_candidate(Some(detail))));
+                    }
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(self.attach_last_access_reason(error)));
+                    }
+                    Poll::Ready(Ok(selected)) => self.settle_pick(selected)?,
+                }
+            }
+            Active::SelectOther(mut select) => {
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::SelectOther(select),
+                    Poll::Ready(Err(ActionError::Failed(_))) => {
+                        // The banks left after dropping the one that refused the
+                        // walk have no route from here: pick again with that bank
+                        // allowed, as the first recovery would.
+                        if let Some(state) = self.access_recovery.as_mut() {
+                            state.avoid = None;
+                        }
+                        self.phase = Phase::Select;
+                    }
+                    Poll::Ready(Err(error)) => {
+                        return Poll::Ready(Err(self.attach_last_access_reason(error)));
+                    }
+                    Poll::Ready(Ok(selected)) => self.settle_pick(selected)?,
+                }
+            }
+            Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Err(error)) => {
-                    return Poll::Ready(Err(self.attach_last_bank_walk(error)));
-                }
-                Poll::Ready(Ok(selected)) => {
-                    if selected.kind == PickKind::NoCandidate {
-                        return Poll::Ready(Err(self.no_bank_candidate()));
-                    }
-                    let access = selected.access.ok_or_else(|| {
-                        self.attach_last_bank_walk(ActionError::Unavailable(Arc::from(
-                            "selected bank has no access stand",
-                        )))
-                    })?;
-                    self.bank = Some(
-                        *self
-                            .banks
-                            .banks()
-                            .get(usize::from(selected.bank_index))
-                            .ok_or(ActionError::Stale)?,
-                    );
-                    self.target = Some(selected.access_tile);
-                    self.pick_kind = Some(selected.kind);
-                    self.access = Some(access);
-                    if let Some(state) = self.bank_walk.as_mut() {
-                        state.recovery.reset();
-                        state.retry_after_tick = None;
-                    }
-                    self.phase = Phase::Walk;
-                }
-            },
-            Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Walk(handle),
-                Poll::Ready(Err(error)) => {
-                    return Poll::Ready(Err(self.attach_last_bank_walk(error)));
-                }
-                Poll::Ready(Ok(receipt))
-                    if matches!(&receipt.end, crate::native::WalkEnd::Arrived) =>
-                {
-                    if let Some(state) = self.bank_walk.as_mut() {
-                        state.recovery.reset();
-                        state.retry_after_tick = None;
-                        state.last_failure = None;
-                    }
-                    self.phase = Phase::Open;
+                    return Poll::Ready(Err(self.attach_last_access_reason(error)));
                 }
                 Poll::Ready(Ok(receipt)) => {
-                    if !ReturnStallRecovery::receipt_retryable(&receipt) {
-                        return Poll::Ready(Err(receipt
-                            .into_arrival()
-                            .expect_err("non-arrival is an error")));
-                    }
                     let now = tick.cx.evidence().tick;
-                    let state = self
-                        .bank_walk
-                        .get_or_insert_with(|| Box::new(BankWalkState::default()));
-                    state.last_failure = Some(receipt.failure_detail_or_fallback());
-                    if state.retries < MAX_BANK_ACCESS_RETRIES
-                        && state.recovery.observe_receipt(&receipt)
+                    if self
+                        .walk_retry
+                        .as_mut()
+                        .is_some_and(|retry| retry.observe_approach_failure(&receipt, now))
                     {
-                        state.retry_after_tick = Some(now);
-                    } else if let Err(error) = self.bank_walk_failure(&receipt, now) {
-                        return Poll::Ready(Err(error));
+                        self.phase = Phase::Walk;
+                        return Poll::Ready(Ok(()));
                     }
+                    if !matches!(&receipt.end, crate::native::WalkEnd::Arrived)
+                        && self.recover_access_walk(&receipt, now)
+                    {
+                        return Poll::Ready(Ok(()));
+                    }
+                    if let Err(error) = receipt.into_arrival() {
+                        return Poll::Ready(Err(self.attach_last_access_reason(error)));
+                    }
+                    if let Some(retry) = self.walk_retry.as_mut() {
+                        retry.reset();
+                    }
+                    if let Some(state) = self.access_recovery.as_mut() {
+                        state.reset_after_arrival();
+                    }
+                    self.phase = Phase::Open;
                 }
             },
             Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -940,12 +1139,16 @@ impl AcquireRun {
                             "bank did not open" | "bank item table unavailable"
                         ) =>
                 {
+                    if let Some(state) = self.access_recovery.as_mut() {
+                        state.last_reason = Some(message);
+                    }
                     self.phase = Phase::Open
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
             },
             Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Deposit(handle),
+                Poll::Ready(_) if self.interrupted => {}
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(deposited)) => {
                     self.deposited = self.deposited.saturating_add(deposited);
@@ -955,6 +1158,7 @@ impl AcquireRun {
             },
             Active::Machine(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Machine(handle),
+                Poll::Ready(_) if self.interrupted => {}
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     self.complete &= receipt.complete;
@@ -1017,6 +1221,16 @@ pub(crate) fn plan_current(
     plan_frame(request, cx, bank_open(cx))
 }
 
+/// Plan from the pack and the bank memory alone, whatever the bank modal
+/// shows: for the first acquisition after a session change, whose open page
+/// (if any) belongs to the old session.
+pub(crate) fn plan_fresh(
+    request: &AcquireRequest,
+    cx: &ActionContext<'_>,
+) -> Result<AcquireVerdict, ActionError> {
+    plan_frame(request, cx, false)
+}
+
 /// A parked consumer reads only observed inventory and session bank memory.
 /// This query neither loads content nor creates another plan.
 pub(crate) fn resolved_current(
@@ -1039,8 +1253,8 @@ fn plan_frame(
     live: bool,
 ) -> Result<AcquireVerdict, ActionError> {
     let snapshot = cx.snapshot();
-    let data = api::game_data::for_revision(cx.pin().revision)
-        .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+    let data = api::game_data::for_revision(cx.revision())
+        .map_err(|error| ActionError::Unavailable(Arc::from(error.to_string())))?;
     let world = WorldFacts {
         data: Some(&data),
         members: snapshot.world().is_some_and(|world| world.value.members),
@@ -1063,7 +1277,7 @@ fn plan_frame(
     }
 }
 
-fn bank_open(cx: &ActionContext<'_>) -> bool {
+pub(crate) fn bank_open(cx: &ActionContext<'_>) -> bool {
     cx.snapshot()
         .bank_session()
         .is_some_and(|session| session.value.open)

@@ -2,7 +2,9 @@ pub(crate) mod acquire_key;
 pub(crate) mod actor_observation;
 pub(crate) mod bank;
 pub(crate) mod cell;
+pub(crate) mod client_377;
 pub(crate) mod clue;
+pub(crate) mod cook_377;
 
 pub(crate) mod boat_fare;
 pub(crate) mod combat;
@@ -25,12 +27,14 @@ pub(crate) mod retreat_spot;
 pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
+pub(crate) mod survival_need;
 pub(crate) mod walk_spot;
 
 pub(crate) use acquire_key::acquire_key_v2_scenario;
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use bank::bank_v2_scenario;
 pub(crate) use cell::cell_v2_scenario;
+pub(crate) use client_377::client_377_scenario;
 pub(crate) use clue::{
     sherlock_coord_scenario, sherlock_dig_scenario, sherlock_guardian_scenario,
     sherlock_search_scenario, sherlock_talk_scenario,
@@ -48,6 +52,7 @@ pub(crate) use guardian_events::{
     guardian_skill_tree_spirit_scenario, guardian_skill_watchman_scenario,
     guardian_skill_whirlpool_scenario, guardian_skill_zombie_scenario,
 };
+pub(crate) use survival_need::survival_need_scenario;
 
 pub(crate) use boat_fare::{
     boat_fare_far_start_v1_scenario, boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario,

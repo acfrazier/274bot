@@ -176,8 +176,13 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Vampire Slayer",
         profile: TestProfile::Base40,
     },
-    // PATHS-OVERNIGHT folder Paths. Base40 until the operator names Base60
+    // PATHS-OVERNIGHT folder Paths. Base40 unless the operator names Base60
     // or a recorded live run establishes the need.
+    QuestFixtureProfile {
+        quest: "arthur",
+        display: "Merlin's Crystal",
+        profile: TestProfile::Base40,
+    },
     QuestFixtureProfile {
         quest: "cog",
         display: "Clock Tower",
@@ -261,6 +266,11 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
     QuestFixtureProfile {
         quest: "totem",
         display: "Tribal Totem",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "itexam",
+        display: "Digsite Quest",
         profile: TestProfile::Base40,
     },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
@@ -540,14 +550,38 @@ impl QuesterSeed {
     /// Call immediately before the harness emits Start. A stale, higher
     /// stat or a missing/refused kit cannot turn into invented TestedStats.
     pub fn observe_start(&self, snapshot: &GameSnapshot) -> Result<Value, String> {
-        validate_start_seed(
+        validate_start_seed_with(
             snapshot,
             &self.stats,
             &self.expected_inventory,
             &self.expected_equipment,
+            false,
         )?;
         validate_start_stand(snapshot.tile(), self.stand)?;
-        let (x, z, level) = snapshot.tile().expect("validated fixture stand");
+        Ok(self.start_receipt(snapshot))
+    }
+
+    /// [`Self::observe_start`] for a cell whose Start tile is inside an
+    /// aggressive NPC's hunt range: a hit that landed first may leave the
+    /// hitpoints below the seeded level. Every other stat, the carried items
+    /// and the worn kit are checked exactly as in `observe_start`. The tile is
+    /// not checked here; the caller states how far the fixture may have moved.
+    pub fn observe_start_after_hit(&self, snapshot: &GameSnapshot) -> Result<Value, String> {
+        validate_start_seed_with(
+            snapshot,
+            &self.stats,
+            &self.expected_inventory,
+            &self.expected_equipment,
+            true,
+        )?;
+        if snapshot.tile().is_none() {
+            return Err("fixture Start observed no local tile".into());
+        }
+        Ok(self.start_receipt(snapshot))
+    }
+
+    fn start_receipt(&self, snapshot: &GameSnapshot) -> Value {
+        let (x, z, level) = snapshot.tile().expect("validated fixture tile");
         let observed: Vec<_> = self
             .stats
             .iter()
@@ -560,9 +594,9 @@ impl QuesterSeed {
                 json!({"skill": minimum.skill, "base": stat.base, "effective": stat.effective})
             })
             .collect();
-        Ok(json!({"profile": self.profile, "stats": observed,
+        json!({"profile": self.profile, "stats": observed,
             "loadout": self.loadout, "inventory": self.expected_inventory,
-            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}}))
+            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}})
     }
 }
 
@@ -576,11 +610,24 @@ fn validate_start_stand(tile: Option<(i32, i32, i32)>, stand: WorldTile) -> Resu
     Ok(())
 }
 
+/// The Hitpoints skill index (`stats_for` keys it as `3`).
+const HITPOINTS_SKILL: u8 = 3;
+
 fn validate_start_seed(
     snapshot: &GameSnapshot,
     stats: &[SkillMinimum],
     inventory: &[(i32, i32)],
     equipment: &[i32],
+) -> Result<(), String> {
+    validate_start_seed_with(snapshot, stats, inventory, equipment, false)
+}
+
+fn validate_start_seed_with(
+    snapshot: &GameSnapshot,
+    stats: &[SkillMinimum],
+    inventory: &[(i32, i32)],
+    equipment: &[i32],
+    hitpoints_may_be_hurt: bool,
 ) -> Result<(), String> {
     if !snapshot.ingame() || snapshot.scene_state() != 2 {
         return Err("fixture Start needs ingame && scene_state == 2".into());
@@ -591,7 +638,12 @@ fn validate_start_seed(
             .iter()
             .find(|stat| stat.index == i32::from(minimum.skill))
             .ok_or_else(|| format!("fixture stat {} is unobserved", minimum.skill))?;
-        if stat.base != i32::from(minimum.level) || stat.effective != i32::from(minimum.level) {
+        let hurt_only = hitpoints_may_be_hurt
+            && minimum.skill == HITPOINTS_SKILL
+            && stat.effective <= i32::from(minimum.level);
+        if stat.base != i32::from(minimum.level)
+            || (stat.effective != i32::from(minimum.level) && !hurt_only)
+        {
             return Err(format!(
                 "fixture stat {} expected {}, observed base {} effective {}",
                 minimum.skill, minimum.level, stat.base, stat.effective
@@ -700,19 +752,13 @@ pub fn quester_stage_with_seeds(
     build_quest_fixture(request, role, stage_varp, seed_vars)
 }
 
-/// Build the same single-account Base40 fixture for headed and headless
-/// Path runs. `stage: None` starts from a clean quest account; an explicit
-/// stage uses the shared stage-seeding builder.
+/// Build a single-account fixture using the quest's declared qualification
+/// profile for headed and headless Path runs. `stage: None` starts from a clean
+/// quest account; an explicit stage uses the shared stage-seeding builder.
 pub fn build_quester_path_fixture(
     request: QuesterPathFixture<'_>,
 ) -> Result<QuesterFixture, String> {
     let row = fixture_row(request.path.id.0.as_ref())?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!(
-            "{} does not have a Base40 qualification profile",
-            request.path.id.0
-        ));
-    }
     if row.display != request.quest_display {
         return Err(format!(
             "{} fixture display {:?} differs from requested {:?}",
@@ -1133,8 +1179,24 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
         name: "relog after permanent quest stage and loadout seed",
         kind: StepKind::Relog,
         wait: Wait {
-            arm: Proof::SideTabAvailable { index: 3 },
+            arm: Proof::IngameScene2,
             budget_ticks: 600,
+        },
+    });
+    // The fixture's final relog can reset tutorial to 1 again. The shared
+    // seed already reseeded it before this login, so require a fresh reply.
+    steps.push(Step {
+        name: "reseed tutorial after the fixture relog",
+        kind: StepKind::Repeat {
+            send: Box::new(|client, _| {
+                api::interact::cheat(client, crate::tutorial::TUTORIAL_SETVAR);
+                api::interact::cheat(client, crate::tutorial::TUTORIAL_GETVAR);
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::FreshTutorial,
+            budget_ticks: 200,
         },
     });
     let teleport = api::interact::tele_args(stand.level, stand.x, stand.z);
@@ -1254,6 +1316,25 @@ pub fn reload_quester_path_source(
     let previous = registry::source();
     registry::set_source(source.clone());
     let loaded = (|| {
+        let nav = if source.enabled {
+            std::env::var_os("WORLD_NAV_PACK")
+                .or_else(|| std::env::var_os("NAV_PACK"))
+                .map(|pack| {
+                    let pack = PathBuf::from(pack);
+                    let bytes = std::fs::read(&pack).map_err(|error| {
+                        format!("read navigation pack {}: {error}", pack.display())
+                    })?;
+                    let world =
+                        nav_planner::world::NavWorld::from_bytes(&bytes).map_err(|error| {
+                            format!("load navigation pack {}: {error}", pack.display())
+                        })?;
+                    nav_planner::contract::NavLease::wrap(std::sync::Arc::new(world))
+                        .map_err(|error| format!("bind navigation catalog: {error:?}"))
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let selected = preparation::submit(
             PreparationKind::Catalogue,
             api::identity::Scope::Process,
@@ -1287,6 +1368,7 @@ pub fn reload_quester_path_source(
                     match RegistryPreparation::from_source_without_catalog(
                         preparation_source.clone(),
                         std::sync::Arc::clone(&data),
+                        nav.clone(),
                     ) {
                         Ok(candidate) => preparation = Some(candidate),
                         Err(error) => {
@@ -1447,7 +1529,8 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
     let (path, _) = load_quester_path_document(&quest)?;
     let row = fixture_row(&quest)?;
     let start = quester_path_start_anchor(&path)?;
-    let selected = api::game_data::for_revision(ClientRevision::R289)?;
+    let selected =
+        api::game_data::for_revision(ClientRevision::R289).map_err(|error| error.to_string())?;
 
     let seeds = std::env::var_os("QUESTER_SEEDS")
         .map(|path| {
@@ -1458,7 +1541,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
         })
         .transpose()?;
     if let Some(mode) = seeds.as_ref().and_then(|seeds| seeds.mode.as_deref()) {
-        if !matches!(mode, "stage" | "clean") {
+        if !matches!(mode, "stage" | "clean" | "path_terminal") {
             return Err(format!("unknown smoke mode {mode:?}"));
         }
     }
@@ -1574,6 +1657,9 @@ mod tests {
 
     #[test]
     fn quester_fast_settings_add_confirmation_energy_and_teardown() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scenario = fixture(&document()).unwrap().scenario;
         let original_steps = scenario.steps.len();
         apply_quester_fast_settings(
@@ -1596,6 +1682,9 @@ mod tests {
 
     #[test]
     fn registered_scenarios_request_no_world_speed_by_default() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         fn default_quester_path() -> Scenario {
             let path = raw_cook();
             let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -1622,9 +1711,15 @@ mod tests {
         }
 
         for &name in crate::catalog::registered_name_refs() {
-            // The runtime-selected factory needs an id, so use its default fixture.
+            // The runtime-selected factories need env inputs, so use
+            // their default fixtures.
             let scenario = if name == "quester_path" {
                 default_quester_path()
+            } else if name == "quest_watch_seed" {
+                crate::quest_watch::seed_scenario_for_test()
+            } else if name == "quest_watch_speed" {
+                crate::quest_watch::build_speed_scenario(600)
+                    .expect("default speed scenario builds")
             } else {
                 crate::get(name).unwrap_or_else(|| panic!("{name} is registered"))
             };
@@ -1695,6 +1790,9 @@ mod tests {
 
     #[test]
     fn authored_stage_profile_and_kit_are_seeded_only_before_start() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let fixture = fixture(&document()).unwrap();
         assert!(fixture
             .seed_commands
@@ -1747,7 +1845,10 @@ mod tests {
     }
 
     #[test]
-    fn relog_precedes_the_proved_authored_stand() {
+    fn final_relog_reseeds_tutorial_before_proved_authored_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let fixture = fixture(&document()).unwrap();
         let relog = fixture
             .scenario
@@ -1755,8 +1856,17 @@ mod tests {
             .iter()
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
+        assert_eq!(fixture.scenario.steps[relog].wait.arm, Proof::IngameScene2);
+        assert!(matches!(
+            fixture.scenario.steps[relog + 1].kind,
+            StepKind::Repeat { .. }
+        ));
         assert_eq!(
             fixture.scenario.steps[relog + 1].wait.arm,
+            Proof::FreshTutorial
+        );
+        assert_eq!(
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: 3209,
                 z: 3215,
@@ -1771,6 +1881,9 @@ mod tests {
 
     #[test]
     fn display_named_path_kits_seed_aliases_and_merge_alias_extras() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut path = document();
         path.quest.as_mut().unwrap().loadouts.insert(
             "display".into(),
@@ -1814,6 +1927,9 @@ mod tests {
 
     #[test]
     fn a_missing_stage_hint_never_seeds_zero() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut path = document();
         path.roles[0].progress.as_mut().unwrap().rules.clear();
         assert!(fixture(&path).err().unwrap().contains("no varp hint"));
@@ -1844,6 +1960,9 @@ mod tests {
 
     #[test]
     fn unknown_profile_and_loadout_fail_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert!(fixture_profile("not_a_quest").is_err());
         let mut path = document();
         path.quest.as_mut().unwrap().loadouts.insert(
@@ -1912,6 +2031,42 @@ mod tests {
         assert!(validate_start_seed(&snapshot, &expected, &[(995, 1000)], &[]).is_err());
     }
 
+    /// A hit that lands before Start may lower Hitpoints and nothing else: the
+    /// tolerant gate accepts hurt Hitpoints only, and the exact gate refuses it.
+    #[test]
+    fn hurt_gate_accepts_lowered_hitpoints_and_no_other_drift() {
+        use api::snapshot::StatView;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let expected = [
+            SkillMinimum {
+                skill: 0,
+                level: 40,
+            },
+            SkillMinimum {
+                skill: HITPOINTS_SKILL,
+                level: 40,
+            },
+        ];
+        let stat = |index, base, effective| StatView {
+            index,
+            name: Skill::names[index as usize].into(),
+            effective,
+            base,
+            xp: 0,
+            used: true,
+        };
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 40, 31)]);
+        assert!(validate_start_seed(&snapshot, &expected, &[], &[]).is_err());
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_ok());
+        snapshot.seed_stats(vec![stat(0, 40, 39), stat(3, 40, 31)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_err());
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 41, 41)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_err());
+        snapshot.seed_stats(vec![stat(0, 40, 40), stat(3, 40, 40)]);
+        assert!(validate_start_seed_with(&snapshot, &expected, &[], &[], true).is_ok());
+    }
+
     #[test]
     fn profiles_have_unique_quests_and_operator_hard_floor() {
         let mut ids = std::collections::HashSet::new();
@@ -1930,6 +2085,9 @@ mod tests {
 
     #[test]
     fn card_fixture_reuses_the_profile_without_a_synthetic_quest_identity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let identity = selected
             .quest_identity()
@@ -2020,6 +2178,9 @@ mod tests {
 
     #[test]
     fn hint_less_stage_builds_with_one_explicit_operator_seed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The released Cook Path carries no progress varp hints.
         let path = raw_cook();
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -2042,7 +2203,7 @@ mod tests {
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: 3209,
                 z: 3215,
@@ -2053,6 +2214,9 @@ mod tests {
 
     #[test]
     fn hint_less_stage_without_an_explicit_seed_still_fails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let path = raw_cook();
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let identity = selected
@@ -2070,6 +2234,9 @@ mod tests {
 
     #[test]
     fn contradictory_explicit_stage_seeds_fail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let path = raw_cook();
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let identity = selected
@@ -2092,6 +2259,9 @@ mod tests {
 
     #[test]
     fn headed_path_fixture_uses_start_anchor_and_dynamic_quest_settings() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let path = raw_cook();
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let start = quester_path_start_anchor(&path).unwrap();
@@ -2149,7 +2319,7 @@ mod tests {
             .unwrap();
         assert!(setup < relog);
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: stand.x,
                 z: stand.z,

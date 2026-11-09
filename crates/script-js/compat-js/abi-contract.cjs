@@ -105,12 +105,19 @@ const MODULE_RULES = [
     ['api/chatbox/', { id: 'chatbox', nav: false }],
     ['api/market/', { id: 'market', nav: false }],
     ['api/loadout/', { id: 'loadouts', nav: false }],
+    ['client/shell/Skill.js', { id: 'client-adapter', nav: false }],
+    ['client/config/worlds.js', { id: 'client-adapter', nav: false }],
     ['adapter/', { id: 'client-adapter', nav: false }],
     ['geometry/', { id: 'world-primitives', nav: false }],
     ['data/cowKillerLocations.js', { id: 'cow', nav: false }],
     ['data/miningRocks.js', { id: 'mining', nav: false }],
     ['data/pickpocketTargets.js', { id: 'thieving', nav: true }],
     ['data/woodcuttingLocations.js', { id: 'woodcutting', nav: false }],
+    ['data/miningLocations.js', { id: 'mining', nav: false }],
+    ['data/gatheringLocations.js', { id: 'gathering', nav: false }],
+    ['data/fishingMethods.js', { id: 'fishing', nav: false }],
+    ['data/fishingLocations.js', { id: 'fishing', nav: false }],
+    ['data/cookingRanges.js', { id: 'cooking', nav: false }],
     ['data/runeCraftLocations.js', { id: 'runecrafting', nav: false }],
     ['data/cookLocations.js', { id: 'cooking', nav: false }],
     ['data/spelldb.js', { id: 'catalog-data', nav: false }],
@@ -124,7 +131,10 @@ const MODULE_RULES = [
     ['input/', { id: 'input', nav: false }],
     ['event/', { id: 'walking', nav: true }],
     ['shim/gathering_locations.js', { id: 'gathering', nav: false }],
+    ['shim/fishing_gear.js', { id: 'fishing', nav: false }],
     ['shim/', { id: 'compat-runtime', nav: false }],
+    ['api/map/WalkDestinations.js', { id: 'walking', nav: true }],
+    ['api/map/regions.js', { id: 'walking', nav: true }],
 ];
 
 
@@ -351,7 +361,7 @@ const NAV_IMPORT_NAMES = new Set([
     'DirectNavigator', 'Navigator', 'PathFinder', 'Reach',
     'Reachability', 'Traversal', 'Walk', 'WalkExecutor', 'Walker',
 ]);
-const NAV_RUST_USE = /\b(?:crate::walk::|native::walk::|walk::|crate::reach_entity::|reach_entity::|NpcReach\b|nav_planner::|InteractReq::WalkTo\b)/;
+const NAV_RUST_USE = /\b(?:crate::compat::walk::|native::walk::|walk::|crate::compat::reach_entity::|reach_entity::|NpcReach\b|nav_planner::|InteractReq::WalkTo\b)/;
 
 function hasRuntimeModuleBinding(node) {
     if (ts.isImportDeclaration(node)) {
@@ -852,7 +862,7 @@ function runtimeExports(source, fileName) {
     return names;
 }
 
-function rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies) {
+function rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies, generatedIndex) {
     const source = parseSource(rootSource, 'declared_surface.js');
     const moduleShims = new Map(registry.map(entry => [entry.module, entry.shim]));
     const sourceByName = new Map();
@@ -935,6 +945,35 @@ function rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFam
         } else if (ts.isVariableStatement(statement) && exported(statement)) {
             for (const declaration of statement.declarationList.declarations) {
                 if (ts.isIdentifier(declaration.name)) addDirect(declaration.name.text, 'direct-value');
+            }
+        }
+    }
+    const generated = parseSource(generatedIndex, 'generated-index.d.ts');
+    for (const statement of generated.statements) {
+        if (!ts.isModuleDeclaration(statement) || nodeName(statement.name, generated) !== '@rs2b0t/api') continue;
+        if (!statement.body || !ts.isModuleBlock(statement.body)) fail('Malformed @rs2b0t/api declaration module');
+        for (const member of statement.body.statements) {
+            if (!ts.isExportDeclaration(member) || !member.isTypeOnly || !member.exportClause || !ts.isNamedExports(member.exportClause) ||
+                !member.moduleSpecifier || !ts.isStringLiteralLike(member.moduleSpecifier)) continue;
+            const module = member.moduleSpecifier.text.replace(/^\*/, '');
+            const shim = moduleShims.get(module);
+            if (!shim) fail(`Compatibility type map points to unregistered module ${module}`);
+            const policy = classifyModule(module, navFamilies);
+            for (const specifier of member.exportClause.elements) {
+                const publicName = specifier.name.text;
+                if (byPublicName.has(publicName)) continue;
+                const sourceName = (specifier.propertyName || specifier.name).text;
+                add({
+                    public_name: publicName,
+                    source_name: sourceName,
+                    module,
+                    family_id: policy.id,
+                    shim,
+                    nav_consuming: policy.nav,
+                    source_modules: [module],
+                    is_alias: publicName !== sourceName,
+                    mapping_kind: 'type-re-export',
+                });
             }
         }
     }
@@ -1202,7 +1241,7 @@ function buildArtifacts({
     for (const entry of registry) {
         if (!typedModuleNames.has(entry.module)) fail(`Served ABI module has no typed declaration: ${entry.module}`);
     }
-    const nameMap = rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies);
+    const nameMap = rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies, currentIndex);
     const sourceRuntimeNames = runtimeExports(frozenRuntimeIndex, 'packages/rs2b0t-api/index.js');
     const sourceRecordNames = new Set(sourceRecords.filter(record => record.runtime).map(record => record.name));
     for (const name of sourceRuntimeNames) {

@@ -1,7 +1,7 @@
 //! JavaScript cards and the run that carries their isolate and wire state.
 
-use super::isolate::{GameplayFactory, LoadIsolate, Ready};
-use super::{ApiFamily, LoadShape};
+use crate::library::shape::{ApiFamily, LoadShape};
+use crate::runtime::isolate::{GameplayFactory, LoadIsolate, Ready};
 use crate::wire::{IsolateBuf, SnapshotFingerprint};
 use api::identity::ExecutionId;
 use script::interact::{InteractReq, QueuedInteract};
@@ -11,9 +11,9 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 use script::native::SettingsBag;
 use script::paint::ScriptPaint;
 use script::surface::{
-    PostedSnapshotFacts, RouteInspectIdentities, ScriptStopReceipt, SurfaceCard, SurfaceError,
-    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart,
-    TickOutcome,
+    PostedSnapshotFacts, RouteInspectIdentities, ScriptRuntimeContext, ScriptStopReceipt,
+    SurfaceCard, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
+    SurfaceRun, SurfaceStart, TickOutcome,
 };
 use std::any::Any;
 use std::sync::{mpsc::Sender, Arc};
@@ -22,6 +22,7 @@ use std::time::Instant;
 /// Frozen JavaScript inputs retained by the slot across run restarts.
 #[derive(Debug)]
 pub struct JsStartCard {
+    pub card_name: Arc<str>,
     pub source: Arc<str>,
     pub shape: LoadShape,
     pub siblings: Arc<[(String, String)]>,
@@ -48,8 +49,44 @@ impl SurfaceCard for JsStartCard {
 
 /// Creates gameplay isolates for JavaScript cards.
 #[derive(Default)]
-pub struct JsSurfaceFactory {
-    gameplay: GameplayFactory,
+pub struct JsSurfaceFactory;
+
+impl JsSurfaceFactory {
+    fn spawn_inner(
+        &self,
+        start: &SurfaceStart,
+        execution: ExecutionId,
+        recovery_hints: Arc<RecoveryHintsCell>,
+        local_state: Option<Arc<script::local_state::SlotState>>,
+    ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
+        let card = start
+            .card
+            .as_any()
+            .downcast_ref::<JsStartCard>()
+            .ok_or(SurfaceError::ForeignCard(SurfaceKind::Js))?;
+        let isolate = GameplayFactory::spawn_with_content_and_state(
+            card.source.to_string(),
+            card.card_name.clone(),
+            card.shape,
+            card.siblings.iter().cloned().collect(),
+            start.game_data.clone(),
+            Arc::clone(&start.named_banks),
+            Arc::clone(&start.wilderness_rules),
+            Some(execution),
+            local_state,
+        )
+        .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
+        isolate.post_loadouts(&start.loadouts);
+        isolate.post_recovery_hints(recovery_hints);
+        if let Some(bag) = start.settings_bag.as_deref() {
+            isolate.post_settings_bag(bag);
+        }
+        Ok(Box::new(JsSurfaceRun {
+            isolate,
+            ipc: IsolateBuf::new(),
+            last_snapshot: None,
+        }))
+    }
 }
 
 impl SurfaceFactory for JsSurfaceFactory {
@@ -63,32 +100,17 @@ impl SurfaceFactory for JsSurfaceFactory {
         execution: ExecutionId,
         recovery_hints: Arc<RecoveryHintsCell>,
     ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
-        let card = start
-            .card
-            .as_any()
-            .downcast_ref::<JsStartCard>()
-            .ok_or(SurfaceError::ForeignCard(SurfaceKind::Js))?;
-        let isolate = self
-            .gameplay
-            .spawn_with_content(
-                card.source.to_string(),
-                card.shape,
-                card.siblings.iter().cloned().collect(),
-                start.game_data.clone(),
-                Arc::clone(&start.named_banks),
-                Some(execution),
-            )
-            .map_err(|error| SurfaceError::Spawn(error.to_string()))?;
-        isolate.post_loadouts(&start.loadouts);
-        isolate.post_recovery_hints(recovery_hints);
-        if let Some(bag) = start.settings_bag.as_deref() {
-            isolate.post_settings_bag(bag);
-        }
-        Ok(Box::new(JsSurfaceRun {
-            isolate,
-            ipc: IsolateBuf::new(),
-            last_snapshot: None,
-        }))
+        self.spawn_inner(start, execution, recovery_hints, None)
+    }
+
+    fn spawn_with_state(
+        &self,
+        start: &SurfaceStart,
+        execution: ExecutionId,
+        recovery_hints: Arc<RecoveryHintsCell>,
+        local_state: Option<Arc<script::local_state::SlotState>>,
+    ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
+        self.spawn_inner(start, execution, recovery_hints, local_state)
     }
 }
 
@@ -104,6 +126,12 @@ impl JsSurfaceRun {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_onstop_timeout_for_test(&mut self, timeout: std::time::Duration) {
         self.isolate.set_onstop_timeout_for_test(timeout);
+    }
+
+    /// The run's isolate, for tests that drive the slot's production queue.
+    #[cfg(test)]
+    pub(crate) fn isolate_for_test(&self) -> &LoadIsolate {
+        &self.isolate
     }
 
     fn post_encoded_snapshot(
@@ -153,6 +181,25 @@ pub fn post_snapshot_delta_pages_for_test(
     .expect("active surface run")
 }
 
+/// Run `f` against the real isolate of a slot's JavaScript surface run. Seat
+/// page tests use it to block the isolate thread, fill its queue and count
+/// the dispatches that executed.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn with_isolate_for_test<R>(
+    slot: &mut script::SlotScript,
+    f: impl FnOnce(&LoadIsolate) -> R,
+) -> R {
+    slot.with_surface_run_for_test(|run| {
+        let run = run
+            .as_any_mut()
+            .downcast_mut::<JsSurfaceRun>()
+            .expect("JavaScript surface run");
+        f(&run.isolate)
+    })
+    .expect("active surface run")
+}
+
 impl SurfaceRun for JsSurfaceRun {
     fn poll_ready(&self) -> SurfaceReady {
         match self.isolate.poll_ready() {
@@ -164,6 +211,9 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn generation(&self) -> u64 {
         self.isolate.generation()
+    }
+    fn bind_runtime_context(&mut self, context: Arc<ScriptRuntimeContext>) {
+        self.isolate.bind_runtime_context(context);
     }
 
     fn execution_active(&self) -> bool {
@@ -194,6 +244,12 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn resume(&self) {
         self.isolate.resume();
+    }
+    fn begin_client_frame(&mut self) -> Option<Arc<dyn script::surface::ClientFrameDispatch>> {
+        self.isolate.begin_client_frame()
+    }
+    fn loc_projection_wanted(&self) -> bool {
+        self.isolate.loc_projection_wanted()
     }
 
     fn stop(self: Box<Self>, done: Sender<Vec<String>>) {
@@ -301,6 +357,11 @@ impl SurfaceRun for JsSurfaceRun {
         );
     }
 
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        self.isolate
+            .on_seat_page_at(snap_tick, input_identity, release_floor)
+    }
+
     fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.isolate.drain_interacts_stamped()
     }
@@ -359,6 +420,14 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn journal_paint_hidden(&self, now: Instant) -> bool {
         self.isolate.compat_journal_paint_hidden(now)
+    }
+
+    fn journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
+        self.isolate.compat_journal_wait(now)
+    }
+
+    fn expired_hold_owners(&self, now: Instant) -> [Option<api::identity::RequestId>; 2] {
+        self.isolate.compat_journal_expired_owners(now)
     }
 
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
@@ -436,16 +505,16 @@ pub(crate) mod tests {
     use std::time::Duration;
 
     fn run(source: &str) -> JsSurfaceRun {
-        let isolate = GameplayFactory
-            .spawn_with_content(
-                source.into(),
-                LoadShape::NativeTick,
-                Vec::new(),
-                None,
-                Arc::default(),
-                None,
-            )
-            .expect("gameplay isolate");
+        let isolate = GameplayFactory::spawn_with_content(
+            source.into(),
+            LoadShape::NativeTick,
+            Vec::new(),
+            None,
+            Arc::default(),
+            script::surface::no_wilderness(),
+            None,
+        )
+        .expect("gameplay isolate");
         isolate.post_loadouts(&[]);
         isolate.post_recovery_hints(Arc::new(RecoveryHintsCell::new()));
         let run = JsSurfaceRun {

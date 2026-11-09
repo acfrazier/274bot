@@ -1,13 +1,15 @@
-//! Portable isolate tests for native skill.xp / inventory.changed delivery.
+//! Portable isolate tests for native script event delivery.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
-    SnapshotInput, StatInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, ItemRowInput, ReachViewInput, SnapshotInput, StatInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_delta},
+};
 
 fn spawn_ready(source: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
     let iso = LoadIsolate::spawn(source, shape, siblings).unwrap();
@@ -161,7 +163,7 @@ fn spawn_listeners() -> LoadIsolate {
 fn examplebot_source() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ExampleBot.ts");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let pin = script_js::js_cache::JsCache::origin_sha(&bytes);
+    let pin = script_js::library::js_cache::JsCache::origin_sha(&bytes);
     assert_eq!(
         pin, "8e8e27cd9c2e57cd6478132e4bfaf910678664898db44915acc08ffc501c0973",
         "tracked ExampleBot fixture drifted from rs2b0t 96410ec5 script-template"
@@ -383,8 +385,128 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1");
     assert_eq!(probe_i64(&iso, "globalThis.__xp2||0"), 112);
     assert_eq!(iso.probe("__inv").unwrap(), serde_json::Value::Bool(true));
-    iso.on_game_tick(3);
+    let logs = iso.drain_logs();
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("[rs2b0t] listener error: xp-boom"))
+            .count(),
+        1,
+        "one host log line per throwing listener: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn script_finish_event_is_request_finish_only() {
+    let request_src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('script.finish', event => { globalThis.__finishReason = event.reason; });
+    }
+    onStop() {
+        this.log(`finish:${globalThis.__finishReason}`);
+    }
+    loop() {
+        if (globalThis.__rs2b0t_host.tick === 2) {
+            this.requestFinish('finished by request');
+        }
+    }
+}
+"#;
+    let iso = spawn_ready(request_src.to_string(), LoadShape::CompatClass, vec![]);
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert!(iso.probe("1").is_ok(), "first tick should remain active");
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut logs = Vec::new();
+    while !iso.stopped() && Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        iso.stopped(),
+        "requestFinish did not stop the isolate: {logs:?}"
+    );
+    logs.extend(iso.join());
+    assert!(
+        logs.iter().any(|line| line == "finish:finished by request"),
+        "requestFinish did not dispatch script.finish: {logs:?}"
+    );
+
+    let stop_src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('script.finish', event => { globalThis.__finishReason = event.reason; });
+    }
+    onStop() {
+        this.log(`finish:${globalThis.__finishReason}`);
+    }
+    loop() {
+        if (globalThis.__rs2b0t_host.tick === 2) {
+            ScriptRunner.stop('finished by script');
+        }
+    }
+}
+"#;
+    let iso = spawn_ready(stop_src.to_string(), LoadShape::CompatClass, vec![]);
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert!(iso.probe("1").is_ok(), "first tick should remain active");
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut logs = Vec::new();
+    while !iso.stopped() && Instant::now() < deadline {
+        logs.extend(iso.drain_logs());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        iso.stopped(),
+        "ScriptRunner.stop did not stop the isolate: {logs:?}"
+    );
+    logs.extend(iso.join());
+    assert!(
+        logs.iter().any(|line| line == "finish:undefined"),
+        "ScriptRunner.stop unexpectedly dispatched script.finish: {logs:?}"
+    );
+}
+
+#[test]
+fn skill_level_event_uses_posted_snapshot_state() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('skill.level', event => { globalThis.__levelEvent = event; });
+    }
+    loop() {}
+}
+"#;
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
+    let stats0 = [prayer(100)];
+    let mut snap = base_snapshot();
+    snap.stats = &stats0;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
     let _ = iso.probe("1");
+
+    let stats1 = [StatInput {
+        index: 5,
+        name: "prayer",
+        xp: 200,
+        base: 3,
+        effective: 3,
+    }];
+    snap.stats = &stats1;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1");
+    assert_eq!(
+        iso.probe("globalThis.__levelEvent").unwrap(),
+        serde_json::json!({"skill": 5, "name": "prayer", "level": 3, "previous": 2})
+    );
     iso.join();
 }
 

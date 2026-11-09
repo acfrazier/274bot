@@ -315,3 +315,211 @@ pub(crate) fn booth_approach_by(
         dest,
     })
 }
+
+/// Engine `ReachStrategy.exitStrategy` family for a packed loc shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocReachStrategy {
+    /// Shapes 0..=3 and 9: wall.
+    Wall,
+    /// Shapes 4..=8: wall decoration.
+    WallDecor,
+    /// Shapes 10, 11, and 22: rotated footprint.
+    Footprint,
+    /// Roofs and other shapes the engine does not interact through.
+    Unsupported,
+}
+
+/// Classify a loc shape into the engine reach family.
+pub fn loc_reach_strategy(shape: u8) -> LocReachStrategy {
+    match shape {
+        0..=3 | 9 => LocReachStrategy::Wall,
+        4..=8 => LocReachStrategy::WallDecor,
+        10 | 11 | 22 => LocReachStrategy::Footprint,
+        _ => LocReachStrategy::Unsupported,
+    }
+}
+
+/// Inputs for [`loc_can_operate`].
+pub struct LocOperateQuery {
+    pub origin: WorldTile,
+    pub from: WorldTile,
+    pub shape: u8,
+    pub angle: u8,
+    pub width: i32,
+    pub length: i32,
+    pub force_approach: i32,
+    /// Collision word of the stand tile (`from`): the client `CollisionFlag`
+    /// layout, so `PL_WALK_*` and `W_*` masks read it directly.
+    pub flags: i32,
+}
+
+/// Whether `query.from` can operate the placed loc using the engine size-1
+/// strategy. `None` is unsupported geometry.
+pub fn loc_can_operate(query: LocOperateQuery) -> Option<bool> {
+    if query.from.level != query.origin.level {
+        return Some(false);
+    }
+    match loc_reach_strategy(query.shape) {
+        LocReachStrategy::Unsupported => None,
+        LocReachStrategy::Footprint => {
+            let approach = LocApproach::from_loc_def(
+                query.width,
+                query.length,
+                i32::from(query.angle),
+                query.force_approach,
+            )?;
+            Some(approach.can_operate(query.origin, query.from, query.flags))
+        }
+        LocReachStrategy::Wall => Some(wall_can_operate(
+            query.origin,
+            query.from,
+            query.shape,
+            query.angle,
+            query.flags,
+        )),
+        LocReachStrategy::WallDecor => Some(wall_decor_can_operate(
+            query.origin,
+            query.from,
+            query.shape,
+            query.angle,
+            query.flags,
+        )),
+    }
+}
+
+/// One neighbour of the placed origin: `(dx, dz, mask)` of the stand tile
+/// relative to the origin. The stand is legal when `flags & mask` is clear;
+/// mask `0` means the neighbour needs no flag test.
+type ReachSide = (i32, i32, i32);
+
+/// Engine `ReachStrategy.reachWall1` (`ReachStrategy.ts:98-173`): the
+/// stand-tile neighbours of a size-1 wall. The engine masks `BLOCK_NORTH`,
+/// `BLOCK_EAST`, `BLOCK_SOUTH` and `BLOCK_WEST` are the client `PL_WALK_S`,
+/// `PL_WALK_W`, `PL_WALK_N` and `PL_WALK_E` (same wall bit, same `LOC`
+/// bit). Shapes 1 and 3 (diagonal and square corners) have no branch in the
+/// engine: only the origin tile reaches them.
+fn wall_sides(shape: u8, angle: u8) -> &'static [ReachSide] {
+    const S: i32 = CollisionFlag::PL_WALK_S;
+    const W: i32 = CollisionFlag::PL_WALK_W;
+    const N: i32 = CollisionFlag::PL_WALK_N;
+    const E: i32 = CollisionFlag::PL_WALK_E;
+    match (shape, angle) {
+        (0, 0) => &[(-1, 0, 0), (0, 1, S), (0, -1, N)],
+        (0, 1) => &[(0, 1, 0), (-1, 0, E), (1, 0, W)],
+        (0, 2) => &[(1, 0, 0), (0, 1, S), (0, -1, N)],
+        (0, 3) => &[(0, -1, 0), (-1, 0, E), (1, 0, W)],
+        (2, 0) => &[(-1, 0, 0), (0, 1, 0), (1, 0, W), (0, -1, N)],
+        (2, 1) => &[(-1, 0, E), (0, 1, 0), (1, 0, 0), (0, -1, N)],
+        (2, 2) => &[(-1, 0, E), (0, 1, S), (1, 0, 0), (0, -1, 0)],
+        (2, 3) => &[(-1, 0, 0), (0, 1, S), (1, 0, W), (0, -1, 0)],
+        (9, _) => &[
+            (0, 1, CollisionFlag::W_S),
+            (0, -1, CollisionFlag::W_N),
+            (-1, 0, CollisionFlag::W_E),
+            (1, 0, CollisionFlag::W_W),
+        ],
+        _ => &[],
+    }
+}
+
+/// Engine `ReachStrategy.reachWallDecor1` (`ReachStrategy.ts:254-280`). Shapes
+/// 4 and 5 (straight decorations) have no branch: only the origin tile
+/// reaches them. Shapes 6 and 7 test two tiles chosen by the rotation, shape
+/// 7 after `alteredRotation` (`angle + 2`). Shape 8 tests all four sides.
+fn wall_decor_sides(shape: u8, angle: u8) -> &'static [ReachSide] {
+    const NORTH_SIDE: i32 = CollisionFlag::W_N;
+    const EAST_SIDE: i32 = CollisionFlag::W_E;
+    const SOUTH_SIDE: i32 = CollisionFlag::W_S;
+    const WEST_SIDE: i32 = CollisionFlag::W_W;
+    let angle = if shape == 7 { (angle + 2) & 3 } else { angle };
+    match (shape, angle) {
+        (6 | 7, 0) => &[(1, 0, WEST_SIDE), (0, -1, NORTH_SIDE)],
+        (6 | 7, 1) => &[(-1, 0, EAST_SIDE), (0, -1, NORTH_SIDE)],
+        (6 | 7, 2) => &[(-1, 0, EAST_SIDE), (0, 1, SOUTH_SIDE)],
+        (6 | 7, 3) => &[(1, 0, WEST_SIDE), (0, 1, SOUTH_SIDE)],
+        (8, _) => &[
+            (0, 1, SOUTH_SIDE),
+            (0, -1, NORTH_SIDE),
+            (-1, 0, EAST_SIDE),
+            (1, 0, WEST_SIDE),
+        ],
+        _ => &[],
+    }
+}
+
+fn sides_allow(sides: &[ReachSide], origin: WorldTile, from: WorldTile, flags: i32) -> bool {
+    if from == origin {
+        return true;
+    }
+    let dx = from.x - origin.x;
+    let dz = from.z - origin.z;
+    sides
+        .iter()
+        .any(|&(sx, sz, mask)| sx == dx && sz == dz && flags & mask == CollisionFlag::_OPEN)
+}
+
+fn wall_can_operate(origin: WorldTile, from: WorldTile, shape: u8, angle: u8, flags: i32) -> bool {
+    sides_allow(wall_sides(shape, angle), origin, from, flags)
+}
+
+fn wall_decor_can_operate(
+    origin: WorldTile,
+    from: WorldTile,
+    shape: u8,
+    angle: u8,
+    flags: i32,
+) -> bool {
+    sides_allow(wall_decor_sides(shape, angle), origin, from, flags)
+}
+
+/// Candidate tiles to test for a size-1 interaction, including the origin.
+pub fn loc_candidate_stands(
+    origin: WorldTile,
+    shape: u8,
+    angle: u8,
+    width: i32,
+    length: i32,
+) -> Option<Vec<WorldTile>> {
+    match loc_reach_strategy(shape) {
+        LocReachStrategy::Unsupported => None,
+        LocReachStrategy::Footprint => {
+            let approach = LocApproach::from_loc_def(width, length, i32::from(angle), 0)?;
+            let max_x = origin.x + i32::from(approach.width);
+            let max_z = origin.z + i32::from(approach.length);
+            let mut tiles = Vec::new();
+            for x in (origin.x - 1)..=max_x {
+                for z in (origin.z - 1)..=max_z {
+                    tiles.push(WorldTile {
+                        x,
+                        z,
+                        level: origin.level,
+                    });
+                }
+            }
+            Some(tiles)
+        }
+        LocReachStrategy::Wall | LocReachStrategy::WallDecor => Some(vec![
+            origin,
+            WorldTile {
+                x: origin.x - 1,
+                z: origin.z,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x + 1,
+                z: origin.z,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x,
+                z: origin.z - 1,
+                level: origin.level,
+            },
+            WorldTile {
+                x: origin.x,
+                z: origin.z + 1,
+                level: origin.level,
+            },
+        ]),
+    }
+}

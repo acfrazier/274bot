@@ -395,6 +395,7 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
         );
         let first = world.shop_keeper_facts().expect("bound shop keepers");
         let expected: usize = api::shop_facts::keepers(&data)
+            .expect("generated shop facts")
             .map(|keeper| {
                 data.npc_placements()
                     .expect("selected NPC placements")

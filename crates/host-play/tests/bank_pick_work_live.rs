@@ -5,7 +5,7 @@
 #![cfg(all(feature = "live-harness", feature = "test-support"))]
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and Engine A on 127.0.0.1:44594/1080"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and GATHERER_GAME_PORT/GATHERER_HTTP_PORT naming a local 289 engine (Engine A 44594/1080 by default)"]
 fn live_ten_guest_shared_bank_pick_full_retry_burst() {
     host_play::bank_npc_live::live_ten_guest_shared_bank_pick_full_retry_burst();
 }

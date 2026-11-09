@@ -3,7 +3,7 @@
 //! Fire after posted snapshot+tick and before onStart/loop, or before parked
 //! settle. Pause/hold/generation skip do not fire.
 
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -151,7 +151,7 @@ fn add_tick_listener_on_start_does_not_fail() {
     assert_eq!(
         fires(&iso),
         0,
-        "start tick fires before onStart; Set is empty"
+        "start tick fires before onStart; native event registry is empty"
     );
     iso.join();
 }
@@ -302,7 +302,11 @@ export default class T extends LoopingBot {
     let iso = spawn(src);
     post_tick(&iso, 1, false);
     post_tick(&iso, 2, false);
-    assert_eq!(fires(&iso), 1, "Set dedup: same function fires once");
+    assert_eq!(
+        fires(&iso),
+        1,
+        "native event registry deduplicates callbacks"
+    );
     iso.join();
 }
 
@@ -343,7 +347,7 @@ fn isolates_do_not_share_tick_listeners() {
     post_tick(&iso_b, 1, false);
     post_tick(&iso_a, 2, false);
     assert_eq!(fires(&iso_a), 1);
-    assert_eq!(fires(&iso_b), 0, "module Set is per isolate");
+    assert_eq!(fires(&iso_b), 0, "event registries are per isolate");
     post_tick(&iso_b, 2, false);
     assert_eq!(fires(&iso_b), 1);
     iso_a.join();

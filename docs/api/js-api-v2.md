@@ -254,9 +254,9 @@ Example: `crates/script-js/examples/supply_helpers_v2.ts`.
 
 ## Gather query helpers
 
-Three sync `HelperResult` methods over the selected pin's typed gathering
-catalog (the checked `gathering.json` family: woodcutting, mining and fishing
-methods, their targets, products, tools, consumed bait, requirements and world
+Three sync `HelperResult` methods over the selected revision's typed gathering
+catalog (the `gathering.json` family: woodcutting, mining and fishing methods,
+their targets, products, tools, consumed bait, requirements and world
 placements). They are not Promises, not `request()` ops, and they do not push
 `h.interact`. `bestAxe` and `bestPickaxe` are not `NativeApi` members
 (`api.bestAxe` is `undefined`); the rs2b0t `Tools` exports of those names are
@@ -268,11 +268,10 @@ separate native calls for compat scripts.
 | `gatherResource({ name })` | `{ rows }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-resource` |
 | `gatherPlacements({ resource, region, limit, after? })` | `{ rows, truncated, next, resource_ids, qualification, gaps? }` | `invalid-args`, `missing-region`, `missing-selected-data`, `family-unavailable:gather_placements`, `unknown-resource` |
 
-The catalog is prepared once per selected pin the first time a helper needs
-it, shared with every other holder, and released after its last holder. An
-unbound pin, or a family whose bytes, manifest digest, extractor schema or
-identities do not match the pin, is `family-unavailable:*` and is never an
-empty list.
+The catalog is prepared once per selected revision when a helper first needs
+it. The process shares it with every other holder until the last holder
+releases it. An absent family returns `family-unavailable:*`; malformed
+schema or structure reports a data error instead of an empty list.
 
 A method row is one tree kind, one rock kind or one fishing option of one spot
 type (`fishing.freshfish.op1` is Lure, `.op3` is Bait). It carries `id`,
@@ -291,7 +290,7 @@ content value and the source-derived tick bounds.
 `gatherMethods()` and `gatherMethods({})` omit the skill. Accepted skills, after
 trim and ASCII case-fold, are only `woodcutting`, `mining`, and `fishing`. A
 skill filter keeps the woodcutting, mining, fishing content order and does not
-filter coverage. `coverage` is the loaded pin's full gap list, beside `rows`:
+filter coverage. `coverage` is the loaded catalog's full gap list, beside `rows`:
 one entry per incomplete method cell and one per entity content could not
 classify (`class: 'unclassified'`, with the content reason such as
 `custom-handler`). `gatherResource` matches `resources` (trim, ASCII
@@ -411,7 +410,7 @@ takes the native default. Field names in errors are these keys.
 
 | Key | Meaning |
 | --- | --- |
-| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }` (below) |
+| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }`, `{ player }` (below) |
 | `pick` | npc targets: `nearest` (default), `random` or `lowestHealth` |
 | `notTargetingOthers` | npc targets: skip npcs already fighting another player (default `true`) |
 | `area` | one `SceneRegionInput` box or 1..16 boxes a target must stand in |
@@ -427,6 +426,7 @@ takes the native default. Field names in errors are these keys.
 | `potions` | let the bot drink potions (default `true`) |
 | `retaliate` | the game's Auto Retaliate setting during the fight (default `true`) |
 | `budgetTicks` | fight budget, 1..65535 game ticks (default 1500); the fight settles `budget` |
+| `pvp` | `{ player }` targets: your opt-in to start the fight (default `false`); the operator's `pvp.start_fights` setting also opts in (below) |
 
 **Target.** `{ npc: 'cow' }` takes a selected npc config name; a name that is
 not a config name is matched against display names (ASCII case-insensitive),
@@ -438,6 +438,24 @@ the host; an unknown name is `done{end:'refused', reason:
 'invalid-setting:target:unknown-npc'}`, an npc with no Attack option is
 `invalid-setting:target:unattackable`, an unknown spell
 `invalid-setting:spells:unknown-spell`.
+
+**Player targets.** `{ player: 'bob' }` starts a fight with the named player
+(the name as the game shows it, matched exactly). The game allows player
+combat only in the Wilderness (level 1 or more for both players, and the
+Wilderness level at least the combat-level difference) and in a Duel Arena
+fight pen. Starting such a fight needs one opt-in: `pvp: true` on the request,
+or the operator's global setting "Start fights with players"
+(`pvp.start_fights`, off by default, in both the panel and the TUI). Without
+either, the session ends `refused` with
+`invalid-setting:target:pvp-not-allowed`. A refusal of the zone or the player
+ends the same way before any fight, with `invalid-setting:target:<code>`, where
+`<code>` is `pvp-no-attack-op`, `pvp-outside-wilderness`,
+`pvp-opponent-outside`, `pvp-level-range` or `pvp-challenge-area`. The attack
+verb is the one the game gives the player: `Attack` in the Wilderness and
+`Fight` in a duel. Fighting back needs no opt-in: `{ attackers: 'players' }`
+and the bot's defence against a player who attacks it never read `pvp` or the
+global setting, and a bot always defends itself. The setting is read once, when
+the fight begins; changing it during a fight does not end that fight.
 
 **Prayer.** Combat waits for one complete observation of all prayer rows,
 and any prayer already on then is the user's: the bot never clicks it off,
@@ -498,10 +516,15 @@ The terminal is the nested `value` of the `done` envelope:
   (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
   `prep-failed:<weapon|shield|ammo|staff|arm>`,
   `prep-readiness:combat-root-missing`, `prep-readiness:combat-root-wrong`,
-  `prep-readiness:style-echo-missing`, `unresponsive`, ...), the
+  `prep-readiness:style-echo-missing`, `unresponsive`, `single-way-blocked`
+  (single-way combat refused the attack on an NPC in three 8-tick windows in
+  a row with no confirmed hit on the target in between),
+  `pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>`
+  (a player fight the game or the zone stopped mid-fight), ...), the
   engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,
   `damageTaken`, `food`, `prayerDoses`, `boostDoses`, `antifireDoses`,
-  `protectSwitches`).
+  `protectSwitches`) and `pvpSource` (`request`, `global` or `both`: what
+  opted in to a fight started with a player; `null` for every other fight).
 - `stopped`: `api.combat.stop()` ended it.
 - `interrupted` with `cause`: `pause` (operator Pause; the session settles
   after Resume), `died` (the host saw the death before Combat did; a death
@@ -577,26 +600,17 @@ journal read only when the colour is in-progress and the released Path
 has journal rules. Like the rest of `NativeApi`, these are host verbs;
 frozen rs2b0t signatures are irrelevant to them.
 
-The shared Quester release index holds twenty-five revision-289 Paths, in
-release order: Cook's Assistant (`cook`), Sheep Shearer (`sheep`), Rune
-Mysteries (`runemysteries`), Romeo & Juliet (`romeojuliet`), Imp Catcher
-(`imp`), Vampire Slayer (`vampire`), Doric's Quest (`doric`), Goblin Diplomacy
-(`gobdip`), Witch's Potion (`hetty`), Prince Ali Rescue (`prince`), Pirate's
-Treasure (`hunt`), Demon Slayer (`demon`), The Knight's Sword (`squire`), Death
-Plateau (`death`), The Tourist Trap (`desertrescue`), Priest in Peril
-(`priestperil`), Clock Tower (`cog`), Monk's Friend (`drunkmonk`), Hazeel Cult
-(`hazeelcult`), Plague City (`elena`), and the five untested draft guides
-Druidic Ritual (`druid`), Gertrude's Cat (`fluffs`), Jungle Potion
-(`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). Each
-row's `draft` is `true` for those five and `false` for the twenty released
-Paths. Haunted Mine, which this server can't run,
-has no Path and is not a row. Each row's `stages` comes from that Path's colour
-mapping and journal rules. Cook and Imp Catcher are colour-only
-(`journal: false`); the rest have journal rules (`journal: true`). For example,
-Romeo & Juliet includes the six journal stages `romeojuliet:10` through
-`romeojuliet:60`, plus its not-started and complete stages (`romeojuliet:0` and
-`romeojuliet:100`).
-Stages are returned in ascending numeric stage order.
+The shared Quester index retains qualified and drafted revision-289 Paths.
+Only rows explicitly marked `qualified` can start in a release build.
+Currently, The Restless Ghost (`priest`) is qualified. Each API row reports its
+authored `draft` status. A row's presence does not grant Start permission.
+Haunted Mine has no runnable Path and is not an API row.
+Each row's `stages` comes from that Path's authored role sequences.
+`journal` reports whether the Path has journal rules.
+Stages are listed role by role in the guide's role order. Within a role,
+stages with a numeric suffix (`romeojuliet:10`) come first in ascending order,
+then named stages (`itexam:stamping`, `itexam:find`) in authored sequence
+order.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -728,9 +742,9 @@ and `bank_v2.ts`.
 
 ## Quest query helpers
 
-Two sync `HelperResult` methods over the selected pin's quest-identity family.
-They are not Promises, not `request()` ops, and they do not read varp 101.
-Both methods read `quest_identity` only. There is no second writer field.
+Two sync `HelperResult` methods over the selected revision's quest-identity
+facts. They are not Promises, not `request()` ops, and they do not read varp
+101. Both methods read `quest_identity` only. There is no second writer field.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -799,8 +813,8 @@ normal view returns. No additional script action or snapshot field is needed.
 ## Clue helpers
 
 Five sync `HelperResult` fact reads and one owned session with a synchronous
-`begin` plus one awaited `run`. `row` and `heldStep` read the selected pin's
-landed trail membership family; `packPlan` is pure slot arithmetic over the
+`begin` plus one awaited `run`. `row` and `heldStep` read the selected revision's
+landed trail membership facts; `packPlan` is pure slot arithmetic over the
 caller's own numbers and reads nothing at all; `hardKit` is a pure hard-clue kit
 status over the caller's own facts and reads nothing at all; `keep` is the pure
 bank-stop keep predicate over the caller's own names and reads nothing at all.

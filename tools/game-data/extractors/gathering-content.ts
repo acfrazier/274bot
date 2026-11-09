@@ -1,8 +1,8 @@
-// Content indexes for the gathering family. Reads only the pinned content tree (`scripts`, `pack`, `maps`);
+// Content indexes for the gathering family. Reads only the local content tree (`scripts`, `pack`, `maps`);
 // never the engine, never the network. Every fact carries a content-relative source span.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseMapsquarePath, parsePack, placementMapInputs, requireGatherText } from './common.ts';
+import { parseMapsquarePath, parsePack, placementMapFiles, requireGatherText } from './common.ts';
 
 /** One physical line range in a content file (1-based, inclusive). */
 export type Span = { file: string; first: number; last: number };
@@ -152,6 +152,60 @@ export function stripComment(line: string) {
     return line;
 }
 
+/** Remove comments outside quoted strings, preserving physical line positions. */
+export function stripComments(text: string) {
+    let out = '';
+    let string = false;
+    let escaped = false;
+    let lineComment = false;
+    let blockComment = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i]!;
+        const next = text[i + 1];
+        if (lineComment) {
+            if (c === '\n') {
+                lineComment = false;
+                out += c;
+            } else {
+                out += ' ';
+            }
+            continue;
+        }
+        if (blockComment) {
+            if (c === '*' && next === '/') {
+                out += '  ';
+                i++;
+                blockComment = false;
+            } else {
+                out += c === '\n' ? '\n' : ' ';
+            }
+            continue;
+        }
+        if (string) {
+            out += c;
+            if (escaped) escaped = false;
+            else if (c === '\\') escaped = true;
+            else if (c === '"') string = false;
+            continue;
+        }
+        if (c === '"') {
+            string = true;
+            out += c;
+        } else if (c === '/' && next === '/') {
+            lineComment = true;
+            out += '  ';
+            i++;
+        } else if (c === '/' && next === '*') {
+            blockComment = true;
+            out += '  ';
+            i++;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 export type SectionIndex = { get(name: string): Section | undefined; all(): Section[]; duplicates(): string[] };
 
 function indexSections(sections: Section[]): SectionIndex {
@@ -172,7 +226,7 @@ function indexSections(sections: Section[]): SectionIndex {
 /** One pass over the content tree: packs, config sections, constants, enums and script headers. */
 export type ContentIndex = {
     root: string;
-    packs: { loc: Map<string, number>; npc: Map<string, number>; obj: Map<string, number> };
+    packs: { loc: Map<string, number>; npc: Map<string, number>; obj: Map<string, number>; seq: Map<string, number> };
     loc: SectionIndex;
     npc: SectionIndex;
     obj: SectionIndex;
@@ -193,6 +247,7 @@ export function indexContent(content: string): ContentIndex {
         loc: parsePack(requireGatherText(content, 'pack/loc.pack')),
         npc: parsePack(requireGatherText(content, 'pack/npc.pack')),
         obj: parsePack(requireGatherText(content, 'pack/obj.pack')),
+        seq: parsePack(requireGatherText(content, 'pack/seq.pack')),
     };
     for (const [name, pack] of Object.entries(packs)) if (pack.size === 0) throw new Error(`pack/${name}.pack: required file missing ids`);
     const texts = new Map<string, string>();
@@ -228,7 +283,7 @@ export function indexContent(content: string): ContentIndex {
         headers,
         blocks: (file) => blockCache.get(file) ?? blockCache.set(file, parseRs2Blocks(file, text(file))).get(file)!,
         text,
-        maps: () => (mapList ??= placementMapInputs(content).map((input) => ({ path: input.path, ...parseMapsquarePath(input.path) }))),
+        maps: () => (mapList ??= placementMapFiles(content).map((path) => ({ path, ...parseMapsquarePath(path) }))),
     };
 }
 

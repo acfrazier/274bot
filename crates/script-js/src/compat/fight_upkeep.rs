@@ -1,7 +1,7 @@
 //! Rust-owned `buryOneInFight`, the `fight-bury` [`crate::machine`] family.
 //!
 //! Frozen `api/combat/fightUpkeep.ts:24-37`: skip the tick our swing began
-//! (`:25`, the module `AttackClock` of [`crate::attack_clock`]: the
+//! (`:25`, the module `AttackClock` of [`crate::scene::attack_clock`]: the
 //! tick-costing bury would stall the attack), take the first
 //! backpack row named `boneName` (`:28`), press its `Bury` op (`:33`, the
 //! `InvItem.interact` op-list match of `api/inventory/Inventory.ts:45-56`),
@@ -10,8 +10,8 @@
 //! JavaScript starts one row and awaits its boolean.
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, ItemRow, Scene};
-use script::shim::InteractReq;
+use crate::scene::observed::{self, ItemRow, Scene};
+use script::interact::InteractReq;
 use serde::Deserialize;
 
 /// Frozen `BURY_CONFIRM_TICKS`.
@@ -59,7 +59,7 @@ impl Family for BuryInFight {
     type Output = bool;
 
     fn begin(args: BuryArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        if crate::attack_clock::swing_started_this_tick() {
+        if crate::scene::attack_clock::swing_started_this_tick() {
             return Begin::Done(false);
         }
         observed::with(|scene| {

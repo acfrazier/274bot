@@ -1,0 +1,14 @@
+{
+  "stage": "romeojuliet:0",
+  "stand": [
+    3211,
+    3425,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}

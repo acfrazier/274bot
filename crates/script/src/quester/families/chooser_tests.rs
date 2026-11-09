@@ -135,6 +135,9 @@ fn milk_fixture(cx: &CompileContext<'_>, player: WorldTile) -> (GameSnapshot, Ar
 
 #[test]
 fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let player = tile(3222, 3300);
     let decoy_at = tile(3224, 3300);
     let reachable_at = tile(3222, 3305);
@@ -176,6 +179,9 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
 
 #[test]
 fn cant_reach_egg_repicks_the_other_egg_instead_of_hunting_doors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     let mut first = ground();
     first.tile = tile(3226, 3301);
@@ -224,6 +230,9 @@ fn cant_reach_egg_repicks_the_other_egg_instead_of_hunting_doors() {
 
 #[test]
 fn stale_cow_chase_repicks_the_live_reachable_cow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -263,6 +272,9 @@ fn stale_cow_chase_repicks_the_live_reachable_cow() {
 
 #[test]
 fn cow_behind_the_field_fence_is_not_milked_across_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -294,6 +306,9 @@ fn cow_behind_the_field_fence_is_not_milked_across_it() {
 
 #[test]
 fn cant_reach_message_repicks_another_cow_immediately() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -339,6 +354,9 @@ fn cant_reach_message_repicks_another_cow_immediately() {
 
 #[test]
 fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let anchor = tile(3155, 3300);
     let far = {
         let mut wheat = loc(313, "Wheat", "Pick");
@@ -414,6 +432,9 @@ fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
 
 #[test]
 fn alternating_reachability_stops_after_the_bound_not_the_settle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -482,5 +503,69 @@ fn alternating_reachability_stops_after_the_bound_not_the_settle() {
             "alternating reachability must stop after the 6 re-picks, not run to the settle, got {walks} distinct walks: {:?}",
             describe(&ledger)
         );
+    });
+}
+
+#[test]
+fn use_on_npc_alternatives_rank_all_placed_types_and_keep_exact_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let sheep_id = resolve_npc(cx, "sheepunsheered").unwrap();
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "bucket_empty",
+                "target": {"npc": ["cow", "sheepunsheered"]},
+                "anchor": {"tile": [player.x, player.z, 0], "source": "unit fixture"},
+                "radius": 4,
+                "product": "bucket_milk"
+            })),
+            cx,
+        )
+        .unwrap();
+        for (id, name) in [(cow_id, "Cow"), (sheep_id, "Sheep")] {
+            let (mut snapshot, _) = milk_fixture(cx, player);
+            let mut selected = cow(id, 2, tile(3251, 3280), player);
+            selected.name = Some(name.into());
+            selected.size = 1;
+            let mut decoy = selected.clone();
+            decoy.index = 1;
+            decoy.r#type = Some(usize::MAX);
+            snapshot.seed_npcs(vec![decoy, selected]);
+            let view = flood_view(tile(3238, 3268), 24, &[], player);
+            let mut ledger = None;
+            let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(
+                    last_effect(&ledger),
+                    HostEffect::Interaction(InteractReq::UseOn {
+                        index: Some(2), target_name: Some(target), ..
+                    }) if target == name
+                ),
+                "every authored type is eligible, but a same-name decoy is not: {}",
+                describe(&ledger)
+            );
+        }
+        for targets in [
+            serde_json::json!([]),
+            serde_json::json!(["cow", "unknown_npc"]),
+        ] {
+            assert!(compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "bucket_empty", "target": {"npc": targets}
+                })),
+                cx,
+            )
+            .is_err());
+        }
     });
 }

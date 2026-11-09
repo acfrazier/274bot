@@ -5,18 +5,24 @@ use std::sync::Arc;
 mod bank_slot;
 use bank_slot::BankSlot;
 
-use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{bank_catalog, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use nav_planner::named_banks::resolve;
 use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
-use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
 };
+use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script_js::LoadShape;
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_bank_catalog.rs"]
+mod local_bank_catalog;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
@@ -111,9 +117,11 @@ export default class T extends LoopingBot { loop() {} }
 
 fn catalog() -> NamedBankFacts {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    resolve(BANK_CATALOG, &data.bank_placements().unwrap().rows, |_| {
-        true
-    })
+    resolve(
+        bank_catalog().expect("local bank catalog"),
+        &data.bank_placements().unwrap().rows,
+        |_| true,
+    )
 }
 
 fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
@@ -138,6 +146,11 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
 
 #[test]
 fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let mut iso = spawn(PROBE, catalog());
     post(&mut iso, 67, &[]);
     assert_eq!(
@@ -180,6 +193,11 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
 
 #[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let mut iso = spawn(PROBE, catalog());
     post(&mut iso, 1, &[]);
     assert_ne!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
@@ -195,6 +213,10 @@ fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
 
 #[test]
 fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut a = spawn(
         PROBE,
         NamedBankFacts::from_banks(vec![
@@ -239,14 +261,19 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
     b.stop();
 }
 
-/// A selected identity controls opening until native facts prove loaded stock.
+/// A selected bank controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
-    use script_js::wire::{ChatOptionInput, ItemRowInput, SceneEntityInput};
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
+    use script::native::snapshot_source::{ChatOptionInput, ItemRowInput, SceneEntityInput};
 
     for (call, after) in [
         ("Banking.open()", 0),
-        ("Bank.openNearestWorld()", 0),
+        ("openClueBank()", 0),
         (
             "Banking.bankNearest({deposit: () => false, afterDeposit() { globalThis.__after++; }})",
             1,
@@ -256,6 +283,7 @@ fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
             r#"
 import {{ Bank }} from '../../api/bank/Bank.js';
 import {{ Banking }} from '../../api/bank/Banking.js';
+import {{ openClueBank }} from '../../api/ai/clues/bankAccess.js';
 globalThis.__after = 0; globalThis.__ok = null;
 export default class T extends LoopingBot {{
     async loop() {{
@@ -334,7 +362,7 @@ export default class T extends LoopingBot {{
                     tick: 2,
                     sequence: 2,
                 },
-                selected: selected.clone(),
+                outcome: script::native_bank::BankPickOutcome::Selected(selected.clone()),
             },
         );
         snapshot.tick = 2;
@@ -353,7 +381,7 @@ export default class T extends LoopingBot {{
                     tick: 3,
                     sequence: 3,
                 },
-                selected,
+                outcome: script::native_bank::BankPickOutcome::Selected(selected),
             },
         );
         snapshot.tick = 3;
@@ -382,6 +410,7 @@ export default class T extends LoopingBot {{
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
         );
 

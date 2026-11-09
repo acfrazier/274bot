@@ -6,7 +6,9 @@
 use super::callback_v8::{self as cb, Flow, JsResult};
 use rustyscript::Runtime;
 use script::gather_locations::{
-    self, Axis, Resolution, Resolver, DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE,
+    self, Axis, Resolution, Resolver, AUTO_LEGACY, DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP,
+    DEFAULT_CAMP_RADIUS, DEFAULT_CHASE_RADIUS, MAP_SQUARE, NONE_LEGACY, USE_CLOSEST,
+    USE_CUSTOM_POSITION, USE_START_POSITION,
 };
 use std::ops::ControlFlow;
 
@@ -17,8 +19,17 @@ const SAME_MAP_SQUARE: i32 = 3;
 const LOCATION_OPTIONS: i32 = 4;
 const BOOTH_FIELDS: i32 = 5;
 const RESOLVE: i32 = 6;
+const USE_CLOSEST_OP: i32 = 7;
+const USE_START_POSITION_OP: i32 = 8;
+const USE_CUSTOM_POSITION_OP: i32 = 9;
+const AUTO_LEGACY_OP: i32 = 10;
+const NONE_LEGACY_OP: i32 = 11;
+const DEFAULT_CAMP_RADIUS_OP: i32 = 12;
+const DEFAULT_CHASE_RADIUS_OP: i32 = 13;
+const RESOLVE_CAMP_RADIUS: i32 = 14;
+const RESOLVE_CHASE_RADIUS: i32 = 15;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_gathering_locations", gathering_callback)
 }
 
@@ -50,8 +61,41 @@ fn dispatch<'s>(
         LOCATION_OPTIONS => location_options(scope, args.get(1)),
         BOOTH_FIELDS => booth_fields(scope, args.get(1)),
         RESOLVE => resolve_gathering_location(scope, args.get(1), args.get(2), args.get(3)),
+        USE_CLOSEST_OP => Ok(cb::string(scope, USE_CLOSEST)),
+        USE_START_POSITION_OP => Ok(cb::string(scope, USE_START_POSITION)),
+        USE_CUSTOM_POSITION_OP => Ok(cb::string(scope, USE_CUSTOM_POSITION)),
+        AUTO_LEGACY_OP => Ok(cb::string(scope, AUTO_LEGACY)),
+        NONE_LEGACY_OP => Ok(cb::string(scope, NONE_LEGACY)),
+        DEFAULT_CAMP_RADIUS_OP => Ok(cb::num(scope, DEFAULT_CAMP_RADIUS)),
+        DEFAULT_CHASE_RADIUS_OP => Ok(cb::num(scope, DEFAULT_CHASE_RADIUS)),
+        RESOLVE_CAMP_RADIUS | RESOLVE_CHASE_RADIUS => {
+            resolve_radius(scope, args.get(1), args.get(2))
+        }
         _ => Err(cb::not_impl(scope, "gathering location helper")),
     }
+}
+
+/// Frozen `resolveCampRadius` / `resolveChaseRadius` (`gatheringLocations.ts:55-63`):
+/// `Math.max(2, Math.floor(raw))` where `raw` is the input when `input != null && Number.isFinite(input)`
+/// (a finite primitive number) and otherwise the fallback, converted as `Math.floor` converts it.
+fn resolve_radius<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    input: v8::Local<'s, v8::Value>,
+    fallback: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let finite = input
+        .is_number()
+        .then(|| input.number_value(scope))
+        .flatten()
+        .filter(|value| value.is_finite());
+    let fallback = match finite {
+        Some(_) => 0.0,
+        None => cb::number(scope, fallback)?,
+    };
+    Ok(cb::num(
+        scope,
+        gather_locations::resolve_radius(finite, fallback),
+    ))
 }
 
 /// Frozen `sameMapSquare`: strict level equality, then floor-divided x and z
@@ -400,7 +444,7 @@ globalThis.checkGathering = () => {
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

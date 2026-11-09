@@ -1963,6 +1963,10 @@ mod tests {
     /// ends it (the paths `app.rs` runs for a hit).
     #[test]
     fn clicked_paint_controls_pause_resume_and_stop_the_displayed_run() {
+        #[cfg(not(feature = "js"))]
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
@@ -2897,6 +2901,10 @@ mod tests {
     /// focus moved to bob before the click was applied.
     #[test]
     fn a_paint_control_captured_for_one_profile_never_controls_the_new_focus() {
+        #[cfg(not(feature = "js"))]
+        if !api::test_support::game_data_available() {
+            return;
+        }
         #[cfg(feature = "js")]
         let mut s = helper_session(&["alice", "bob"]);
         #[cfg(not(feature = "js"))]

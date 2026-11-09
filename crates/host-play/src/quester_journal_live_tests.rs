@@ -1341,7 +1341,19 @@ fn wait_until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
 }
 
 fn wait_relogged(play: &super::Play, state: &Arc<Mutex<SetupState>>) {
+    // The fixture logs its scriptless bot out to bind its side tabs; the
+    // approved scriptless policy then parks it, so post the operator's
+    // explicit Login once after that logout.
+    let mut login_posted = false;
     wait_until("live account relog", Duration::from_secs(90), || {
+        if !login_posted && state.lock().expect("setup state").logout_sent {
+            login_posted = true;
+            for status in play.statuses() {
+                if let Some(arm) = play.arm(&status.username) {
+                    arm.arm_explicit_login();
+                }
+            }
+        }
         state.lock().expect("setup state").relog_ready
             && play
                 .statuses()
@@ -1471,6 +1483,7 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                 terminal: *stage == "rm:6",
                 order: script::quester::path::SequenceOrder::Authored,
                 recovery_entry: None,
+                cross: Vec::new(),
                 steps: Vec::new(),
             };
             if !sequence.terminal {

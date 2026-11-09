@@ -34,6 +34,9 @@ fn compile(args: Value) -> Result<(), CompileError> {
 
 #[test]
 fn quest_thieve_compiles_selected_man_workmen_and_prison_guards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for npc in [
         "man",
         "digworkman1",
@@ -52,6 +55,9 @@ fn quest_thieve_compiles_selected_man_workmen_and_prison_guards() {
 
 #[test]
 fn quest_thieve_rejects_unknown_targets_and_invalid_inventory_goals() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for args in [
         json!({"target":{"npc":"unknown quest workman"},"until":{"obj":"coins","qty":1}}),
         json!({"target":{"npc":"man"},"until":{"obj":{"id":-1},"qty":1}}),
@@ -65,6 +71,9 @@ fn quest_thieve_rejects_unknown_targets_and_invalid_inventory_goals() {
 
 #[test]
 fn quest_thieve_uses_the_shared_provenance_anchor_and_finite_authored_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile(json!({
         "target":{"npc":"man"},
         "until":{"obj":"coins","qty":1},

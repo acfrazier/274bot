@@ -27,13 +27,13 @@ use client::client::Client;
 use host::{FrameBuf, Pump};
 use parking_lot::Mutex;
 use scenario::{self, Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
+use script::interact::InteractReq;
 use script::native::walk::Walk;
 use script::native::{
     ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
     ScriptFlow, WalkEnd,
 };
 use script::quester::families::reach::walk_request;
-use script::shim::InteractReq;
 use script::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -317,6 +317,7 @@ fn fixture(data: &SelectedGameData, keepers: &ShopKeeperFacts) -> Result<Fixture
     let coins = item_fact(data, COINS_ALIAS)?;
     let keeper = content_keeper(keepers, KEEPER_CONFIG)?;
     let vendor = api::shop_facts::vendor_by_keeper_config(data, KEEPER_CONFIG, feather.id)
+        .map_err(|error| format!("shop facts: {error:?}"))?
         .ok_or_else(|| {
             "pinned Gerrant shop facts do not sell the selected feather item".to_owned()
         })?;

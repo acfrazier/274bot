@@ -55,14 +55,16 @@ mod tests {
     const CASKET: i32 = 3531;
     const CLUE: i32 = 3554;
 
-    fn facts(rev: ClientRevision) -> std::sync::Arc<crate::game_data::SelectedGameData> {
-        crate::game_data::for_revision(rev).expect("selected data")
+    fn facts(rev: ClientRevision) -> Option<std::sync::Arc<crate::game_data::SelectedGameData>> {
+        crate::game_data::test_data(rev)
     }
 
     #[test]
     fn identify_step_takes_a_casket_that_is_later_in_the_pack() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
-            let data = facts(rev);
+            let Some(data) = facts(rev) else {
+                return;
+            };
             let trails = data.trails();
             let page = [(CLUE, 1), (CASKET, 1)];
             let row = identify_step(&page, trails).expect("casket");
@@ -80,7 +82,9 @@ mod tests {
     fn identify_step_uses_posted_order_not_table_order() {
         // 3531 sorts before 3554 and follows 2714 in the table: the first held
         // casket on the page wins even when a later casket is the lower id.
-        let data = facts(ClientRevision::R274);
+        let Some(data) = facts(ClientRevision::R274) else {
+            return;
+        };
         let trails = data.trails();
         let page = [(999_999, 1), (CASKET, 1), (2714, 1)];
         assert_eq!(identify_step(&page, trails).expect("casket").id, CASKET);
@@ -91,7 +95,9 @@ mod tests {
 
     #[test]
     fn identify_step_skips_unheld_and_non_membership_pairs() {
-        let data = facts(ClientRevision::R274);
+        let Some(data) = facts(ClientRevision::R274) else {
+            return;
+        };
         let trails = data.trails().expect("trails");
         // Zero and negative counts are not held, so the pair after them wins.
         for count in [0, -1] {
@@ -131,7 +137,9 @@ mod tests {
     #[test]
     fn identify_step_returns_the_landed_row_for_the_constrained_clue() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
-            let data = facts(rev);
+            let Some(data) = facts(rev) else {
+                return;
+            };
             let row = identify_step(&[(CLUE, 1)], data.trails()).expect("clue");
             assert_eq!(row.id, CLUE, "{rev:?}");
             assert_eq!(row.alias, "trail_clue_hard_sextant028", "{rev:?}");

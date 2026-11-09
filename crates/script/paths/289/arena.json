@@ -1,0 +1,914 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "arena",
+  "display_name": "Fight Arena",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 5,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:khazard_helmet",
+      "obj:khazard_platemail",
+      "obj:khazard_cellkeys",
+      "obj:khali_brew"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:arena",
+      "progress": {
+        "colour": {
+          "not_started": "arena:0",
+          "in_progress": "arena:1",
+          "complete": "arena:14"
+        },
+        "rules": [
+          {
+            "stage": "arena:12",
+            "all": [
+              "i should go and tell",
+              "lady servil",
+              "the good news"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 12
+          },
+          {
+            "stage": "arena:11",
+            "all": [
+              "wants to kill me himself"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 11
+          },
+          {
+            "stage": "arena:10",
+            "all": [
+              "ordered",
+              "me to fight his pet"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          },
+          {
+            "stage": "arena:9",
+            "all": [
+              "i'm going to have to fight in the arena"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 9
+          },
+          {
+            "stage": "arena:8",
+            "all": [
+              "i should talk to",
+              "jeremy",
+              "in the"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 8
+          },
+          {
+            "stage": "arena:6",
+            "all": [
+              "i need to protect",
+              "jeremy and his father"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 6
+          },
+          {
+            "stage": "arena:5",
+            "all": [
+              "now i've got the keys"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "arena:3",
+            "all": [
+              "one of the guards told me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          },
+          {
+            "stage": "arena:2",
+            "all": [
+              "luckily i found some"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "arena:1",
+            "all": [
+              "i should go to the",
+              "fight arena",
+              "try to find her family"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "arena:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-fight-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy provisions before the arena sequence: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
+            {
+              "id": "pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick extra provisions before the chained fights: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+            },
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "lady_servil",
+                "anchor": {
+                  "tile": [
+                    2566,
+                    3199,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8430; content/pack/npc.pack:265"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Can I help you?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/lady_servil.rs2:27-43; content/maps/m40_49.jm2:8430.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "open-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "arena_guard_chest_shut"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2613,
+                    3189,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:6401; content/pack/loc.pack:76"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "arena_guard_chest_open"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "arena_guard_chest_open"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:1-3; content/maps/m40_49.jm2:6401.",
+              "advances": false
+            },
+            {
+              "id": "search-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "arena_guard_chest_open"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2613,
+                    3189,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:6401; content/pack/loc.pack:76"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:5-30.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "wear-khazard_helmet",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "khazard_helmet"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_helmet"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_helmet"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:56-60; scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105."
+            },
+            {
+              "id": "wear-khazard_platemail",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "khazard_platemail"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_platemail"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_platemail"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:56-60; scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105."
+            },
+            {
+              "id": "learn-brew",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "arena_guard2",
+                "anchor": {
+                  "tile": [
+                    2615,
+                    3141,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8468; content/pack/npc.pack:255"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105; content/maps/m40_49.jm2:8468.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "wear-khazard_helmet-stage-3",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "khazard_helmet"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_helmet"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_helmet"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:56-60; scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105."
+            },
+            {
+              "id": "wear-khazard_platemail-stage-3",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "khazard_platemail"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_platemail"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "khazard_platemail"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:56-60; scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105."
+            },
+            {
+              "id": "buy-brew",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "khazard_barman",
+                "anchor": {
+                  "tile": [
+                    2566,
+                    3140,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8429; content/pack/npc.pack:260"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'd like a Khali brew please."
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "khali_brew"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "khali_brew"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/khazard_barman.rs2:6-8,28-38; content/maps/m40_49.jm2:8429.",
+              "advances": false
+            },
+            {
+              "id": "give-brew",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "arena_guard2",
+                "anchor": {
+                  "tile": [
+                    2615,
+                    3141,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8468; content/pack/npc.pack:255"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:5"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/khazard_guard.rs2:86-92,110-125.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "free-jeremy",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "khazard_cellkeys",
+                "target": {
+                  "loc": "arena_jeremydoor"
+                },
+                "anchor": {
+                  "tile": [
+                    2617,
+                    3167,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:6573; content/pack/loc.pack:81"
+                },
+                "radius": 6,
+                "dialogue": "continue"
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:6"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:77-89; scripts/quests/quest_arena/scripts/jeremy_servil.rs2:57-93.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fight-ogre",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "arena_ogre",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2602,
+                    3154,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8454; scripts/quests/quest_arena/scripts/quest_arena.rs2:140-174"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 12,
+                  "auto_retaliate": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:8",
+                      "arena:9"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/khazard_ogre.rs2:1-20; scripts/quests/quest_arena/scripts/jeremy_servil.rs2:95-145.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "speak-jeremy-after-ogre",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "jeremy_servil_arena",
+                "anchor": {
+                  "tile": [
+                    2602,
+                    3154,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8454"
+                },
+                "leash": 14,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:9"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/jeremy_servil.rs2:45-49; scripts/quests/quest_arena/scripts/general_khazard.rs2:35-52.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:9",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "leave-jail",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "hengrad",
+                "anchor": {
+                  "tile": [
+                    2598,
+                    3142,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8450"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2602,
+                      3156,
+                      0
+                    ],
+                    "radius": 8
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2602,
+                      3156,
+                      0
+                    ],
+                    "radius": 8
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/hengrad.rs2:1-70; content/maps/m40_49.jm2:8450.",
+              "advances": false
+            },
+            {
+              "id": "fight-scorpion",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "arena_scorpion",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2602,
+                    3154,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8454; scripts/quests/quest_arena/scripts/quest_arena.rs2:140-174"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 12,
+                  "auto_retaliate": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:10",
+                      "arena:11",
+                      "arena:12"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/khazard_scorpion.rs2:1-20; scripts/quests/quest_arena/scripts/quest_arena.rs2:193-228.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fight-bouncer",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "arena_bouncer",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2602,
+                    3154,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8454; scripts/quests/quest_arena/scripts/quest_arena.rs2:140-174"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 12,
+                  "auto_retaliate": true
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:11",
+                      "arena:12"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/bouncer.rs2:1-21; scripts/quests/quest_arena/scripts/general_khazard.rs2:81-103.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:11",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "release-servils",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "jeremy_servil_arena",
+                "anchor": {
+                  "tile": [
+                    2602,
+                    3154,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8454; scripts/quests/quest_arena/scripts/quest_arena.rs2:140-174"
+                },
+                "leash": 14,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "any": [
+                      "arena:12"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/jeremy_servil.rs2:35-38; scripts/quests/quest_arena/scripts/general_khazard.rs2:93-103.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:12",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "finish",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "lady_servil",
+                "anchor": {
+                  "tile": [
+                    2566,
+                    3199,
+                    0
+                  ],
+                  "source": "content/maps/m40_49.jm2:8430; content/pack/npc.pack:265"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "arena",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_arena/scripts/lady_servil.rs2:8-13; scripts/quests/quest_arena/scripts/quest_arena.rs2:267-274.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "arena:14",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

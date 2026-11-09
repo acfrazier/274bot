@@ -91,6 +91,7 @@ fn npc_bump_copies_list_once_then_idempotent() {
     assert_eq!(snap.npcs().len(), 1);
     assert_eq!(snap.npcs()[0].index, 7);
     assert_eq!(snap.npcs()[0].x, 100);
+    assert_eq!(snap.gens().npc_info, c.gens.npc_info);
 
     let ptr = snap.npcs().as_ptr();
     assert!(!snap.rebuild_family(&c, Family::Npc));
@@ -1051,6 +1052,21 @@ fn stat_view_rebuild_reads_full_skills() {
     assert!(stats[20].used);
     assert_eq!(snap.runenergy(), 20);
     assert!(!snap.rebuild_family(&c, Family::Stat));
+}
+
+/// Aggregate stat-family changes cannot prove that each skill was updated in
+/// the current session: that generation also advances for runenergy/weight,
+/// while the client keeps its stat table across logout.
+#[test]
+fn stats_ready_stays_false_without_per_skill_session_receipts() {
+    let mut c = client_with_npc();
+    c.gens.session = 2;
+    c.stat_base_level.fill(1);
+    c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::Stat));
+    assert!(!snap.stats_ready());
 }
 
 /// An npc rebuild copies the full actor view: tile, distance, anims,
@@ -2841,6 +2857,129 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert!(!snap.trade().my_offer_stopped);
     assert!(snap.trade().their_offer_stopped);
     assert_eq!(snap.trade().session_generation, 7);
+}
+
+/// The engine stops the offer containers at the mutual accept and fills the
+/// confirm lists (`trade.rs2:80-86`, `:111-145`; ids from `interface.pack`
+/// 3543, 3539, 3533, 3540). The confirm view decodes them only while the confirm
+/// screen is the open main modal and allocates nothing otherwise.
+#[test]
+fn trade_confirm_lists_decode_only_while_the_confirm_screen_is_open() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 5, "Lobster");
+    plant_obj(&mut c, 6, "Bones");
+    for (id, layer, r#type) in [
+        (3415, 3323, ComponentType::TYPE_INV),
+        (3416, 3323, ComponentType::TYPE_INV),
+        (3542, 3443, ComponentType::TYPE_INV_TEXT),
+        (3538, 3443, ComponentType::TYPE_INV_TEXT),
+        (3532, 3443, ComponentType::TYPE_INV_TEXT),
+        (3539, 3443, ComponentType::TYPE_INV_TEXT),
+    ] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: layer,
+                r#type,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                link_obj_type: Some(vec![0, 0]),
+                link_obj_number: Some(vec![0, 0]),
+                ..Default::default()
+            },
+        );
+    }
+    let full = |c: &mut Client, com: u16, stored: u16, count: u8| {
+        let [hi, lo] = com.to_be_bytes();
+        let [shi, slo] = stored.to_be_bytes();
+        let mut packet = Packet::new(vec![hi, lo, 1, shi, slo, count]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut packet);
+    };
+    let stop = |c: &mut Client, com: u16| {
+        let mut packet = Packet::new(com.to_be_bytes().to_vec());
+        c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut packet);
+    };
+
+    let mut open = Packet::new(vec![12, 251]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+    full(&mut c, 3415, 4, 1);
+    full(&mut c, 3416, 6, 3);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert!(snap.trade().offer_open);
+    assert!(
+        snap.trade().confirm.is_none(),
+        "no confirm screen, no lists"
+    );
+    assert_eq!(snap.trade().my_offer.len(), 1);
+
+    // `trade.rs2:80-86` stops the offers, `:119-145` fills the confirm lists
+    // (own offer under 14 rows in inv1, the counterpart's 14 or more in
+    // otherinv2), `:147` opens the confirm screen.
+    stop(&mut c, 3415);
+    stop(&mut c, 3416);
+    full(&mut c, 3542, 4, 2);
+    full(&mut c, 3539, 6, 3);
+    let mut confirm_open = Packet::new(vec![13, 115]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut confirm_open);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    let trade = snap.trade();
+    assert!(trade.confirm_open && !trade.offer_open);
+    assert!(
+        trade.my_offer.is_empty() && trade.their_offer.is_empty(),
+        "the client empties a stopped container"
+    );
+    assert!(trade.my_offer_stopped && trade.their_offer_stopped);
+    let lists = trade.confirm.as_deref().expect("confirm lists");
+    assert_eq!(lists.mine.len(), 1);
+    assert_eq!(lists.mine[0].def.id, 3);
+    assert_eq!(lists.mine[0].count, 2);
+    assert_eq!(lists.mine[0].container, ItemContainer::TradeMyOffer);
+    assert_eq!(lists.mine[0].action_family, ItemActionFamily::None);
+    assert!(lists.mine[0].actions.is_empty());
+    assert_eq!(lists.theirs.len(), 1);
+    assert_eq!(lists.theirs[0].def.id, 5);
+    assert_eq!(lists.theirs[0].count, 3);
+    assert_eq!(lists.theirs[0].container, ItemContainer::TradeTheirOffer);
+
+    // Nothing moved: the cached view is kept, so a quiet tick allocates nothing.
+    assert!(!snap.rebuild_family(&c, Family::Trade));
+
+    // Both lists of one side add up (the engine fills exactly one).
+    full(&mut c, 3538, 7, 1);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    let lists = snap.trade().confirm.as_deref().expect("confirm lists");
+    assert_eq!(lists.mine.len(), 2);
+
+    // `[if_close,tradeconfirm]` stops the lists (`trade.rs2:279-283`) and the
+    // screen closes: no confirm view remains.
+    for com in [3542, 3538, 3532, 3539] {
+        stop(&mut c, com);
+    }
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_CLOSE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert!(!snap.trade().confirm_open);
+    assert!(snap.trade().confirm.is_none());
+}
+
+#[test]
+fn trade_view_pays_one_pointer_for_the_confirm_lists() {
+    // The confirm lists add one `Option<Box<_>>` (+8 B) to the 176 B view: a bot
+    // that is not at the confirm screen holds no list and no heap for it.
+    assert_eq!(std::mem::size_of::<api::snapshot::TradeView>(), 184);
+    assert_eq!(
+        std::mem::size_of::<Option<Box<api::snapshot::TradeConfirmView>>>(),
+        8
+    );
 }
 
 /// Native trade controls are a rectangle and a separate, non-clickable text
@@ -5721,4 +5860,133 @@ fn session_ready_world_uses_current_build_without_waiting_for_world_packet() {
     client.map_build_base_x = 3256;
     snapshot.rebuild(&client);
     assert_eq!(snapshot.world().map_base_x, 3256);
+}
+
+/// A local animation instruction (the defend animation of a melee or ranged
+/// attack) moves the local attack marks, also when it repeats the sequence,
+/// and a read with none leaves them equal (`api::snapshot::AttackMarks`). The
+/// instruction is a real `PLAYER_INFO` ANIM mask.
+#[test]
+fn local_attack_marks_move_with_a_local_animation_instruction() {
+    let mut client = Client::new_with_revision(cfg(), client::client::ClientRevision::R289);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.self_slot = 4;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    let mut snapshot = GameSnapshot::new();
+    let send_animation = |client: &mut Client| {
+        // Local mask-only (1/00), zero old players, 2047 new-player sentinel;
+        // ANIM mask 0x2, sequence 929, zero delay.
+        let bytes = vec![0x80, 0x1f, 0xfc, 2, 3, 0xa1, 0];
+        client.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes);
+        packet.set_frame_end(client.psize as usize);
+        client.handle_packet(client::io::ServerProt289::PLAYER_INFO, &mut packet);
+    };
+    send_animation(&mut client);
+    snapshot.rebuild(&client);
+    let base = snapshot.local_attack_marks().expect("local marks");
+    snapshot.rebuild(&client);
+    assert!(
+        !snapshot.local_attack_marks().unwrap().after(base),
+        "a quiet read has no new mark"
+    );
+    send_animation(&mut client);
+    snapshot.rebuild(&client);
+    assert!(
+        snapshot.local_attack_marks().unwrap().after(base),
+        "the same sequence again is a new instruction"
+    );
+}
+
+/// A spot animation (a magic hit or a splash), a hitmark of any kind (poison
+/// included) and a projectile aimed at the local player each move the local
+/// attack marks; a projectile that landed or that targets someone else does not.
+#[test]
+fn local_attack_marks_move_with_each_other_mark_the_client_receives() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.self_slot = 4;
+    client.loop_cycle = 1000;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3400;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let marks = |snapshot: &GameSnapshot| snapshot.local_attack_marks().expect("local marks");
+
+    let base = marks(&snapshot);
+    snapshot.rebuild(&client);
+    assert!(
+        !marks(&snapshot).after(base),
+        "a quiet read has no new mark"
+    );
+
+    // A spot animation with no hit.
+    let base = marks(&snapshot);
+    let local = client.local_player.as_mut().unwrap();
+    local.entity.spotanim_id = 85;
+    local.entity.spotanim_last_cycle = 1092;
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    snapshot.rebuild(&client);
+    assert!(marks(&snapshot).after(base), "a spot animation");
+
+    // A hitmark of any kind, poison included.
+    for kind in [0, 1, 2] {
+        let base = marks(&snapshot);
+        let entity = &mut client.local_player.as_mut().unwrap().entity;
+        entity.damage_values[0] = i32::from(kind == 1);
+        entity.damage_types[0] = kind;
+        entity.damage_cycles[0] = client.loop_cycle + 70;
+        snapshot.rebuild(&client);
+        assert!(marks(&snapshot).after(base), "a hitmark of kind {kind}");
+        client.loop_cycle += 40;
+    }
+
+    // A projectile aimed at the local player (slot 4), then its landing.
+    let base = marks(&snapshot);
+    let projectile = |target, t1| {
+        ClientProj::new(
+            77,
+            1,
+            12 * 128 + 64,
+            0,
+            34 * 128 + 64,
+            t1,
+            t1 + 40,
+            0,
+            0,
+            target,
+            0,
+        )
+    };
+    client
+        .projectiles
+        .push(projectile(-5, client.loop_cycle + 32));
+    snapshot.rebuild(&client);
+    assert!(
+        marks(&snapshot).after(base),
+        "a projectile aimed at the player"
+    );
+    let in_flight = marks(&snapshot);
+    client.projectiles.clear();
+    snapshot.rebuild(&client);
+    assert!(
+        !marks(&snapshot).after(in_flight),
+        "a projectile that landed is not a new mark"
+    );
+
+    // A projectile aimed at someone else is not an attack on the player.
+    let base = marks(&snapshot);
+    client
+        .projectiles
+        .push(projectile(-2, client.loop_cycle + 32));
+    snapshot.rebuild(&client);
+    assert!(!marks(&snapshot).after(base));
+
+    client.ingame = false;
+    snapshot.rebuild(&client);
+    assert!(snapshot.local_attack_marks().is_none());
 }

@@ -6,11 +6,15 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use script::shim::InteractReq;
-use script_js::wire::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use common::{ingame_snapshot, post_snapshot_input};
 
 #[path = "common/bank_slot.rs"]
@@ -108,6 +112,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn a_bank_walk_across_a_reconnect_goes_on_to_open_the_bank() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -126,8 +134,8 @@ export default class T extends LoopingBot {
 }
 "#;
     use api::snapshot::{GameSnapshot, SceneView, WorldTile};
+    use script::native::snapshot_source::NativeFactsInput;
     use script::native::HostEffect;
-    use script_js::wire::NativeFactsInput;
 
     fn bank_tick(slot: &mut bank_slot::BankSlot, snap: &SnapshotInput<'_>) {
         slot.tick_from_input(snap.tick, snap, NativeFactsInput::default());
@@ -195,6 +203,7 @@ export default class T extends LoopingBot {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
     snap.here = Some(tile(3230, 3230));
@@ -267,8 +276,12 @@ export default class T extends LoopingBot {
 
 #[test]
 fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
+    use script::native::snapshot_source::{ItemRowInput, NativeFactsInput};
     use script::native::{HostEffect, InteractionReceipt};
-    use script_js::wire::{ItemRowInput, NativeFactsInput};
 
     for (call, terminal_value) in [
         ("Bank.deposit('Bones')", serde_json::json!(false)),
@@ -389,6 +402,10 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn non_kept_reset_aborts_bank_opening_and_settles_its_promise_once() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     use script::native::HostEffect;
 
     let source = r#"

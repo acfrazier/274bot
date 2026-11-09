@@ -6,8 +6,8 @@ use api::interact::Driver;
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
 use client::client::Client;
 use client::io::ClientProt289;
+use script::interact::InteractReq;
 use script::native::{HostAuthority, NativePhase, ScriptStatus, StatusValue};
-use script::shim::InteractReq;
 use serde_json::{json, Value};
 
 static CAPTURES: LazyLock<Mutex<HashMap<String, Arc<Mutex<CombatCapture>>>>> =
@@ -389,6 +389,7 @@ pub(crate) fn record_walk(
             "radius": request.radius,
             "protect": request.protect,
             "food_guard": request.food_guard,
+            "cure_guard": request.cure_guard,
             "allow": {
                 "prayer": request.allow.prayer,
                 "food": request.allow.food,
@@ -583,6 +584,7 @@ fn interaction_value(request: &InteractReq, snapshot: &GameSnapshot) -> Value {
             z,
             level,
             index,
+            target_id,
         } => json!({
             "op": "use-widget-on",
             "component_id": component_id,
@@ -592,6 +594,7 @@ fn interaction_value(request: &InteractReq, snapshot: &GameSnapshot) -> Value {
             "z": z,
             "level": level,
             "index": index,
+            "target_id": target_id,
         }),
         InteractReq::Wear { name } => json!({"op": "wear", "name": name}),
         InteractReq::SetRetaliate { on } => json!({"op": "set-retaliate", "on": on}),

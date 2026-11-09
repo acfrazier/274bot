@@ -44,11 +44,12 @@ The **Fleet** button opens the wide view: the toolbar over a table with one
 row per profile. A profile that is not loaded reads `not loaded`. A click
 on a loaded bot's name focuses it. A click on its tick box only marks it.
 
-**Load order** is the saved order. Drag a row's name onto another row to
-change it. Profiles that are not loaded also sit in the rail, in a folded
-**Not loaded** group. Tick them there and press **Log in** to load and log
-them in. **Load all** in the **Profiles** window loads every profile, and
-only shows while **MultiBox** is on.
+**Load order** is the saved order, shared by the Fleet and the **Profiles**
+window. Drag a row's name onto another row in either list to change it (in
+the TUI, use **Alt-Up** and **Alt-Down**). Profiles that are not loaded also
+sit in the rail, in a folded **Not loaded** group. Tick them there and press
+**Log in** to load and log them in. **Load all** in the **Profiles** window
+loads every profile, and only shows while **MultiBox** is on.
 
 ## See many bots at once
 

@@ -267,6 +267,7 @@ fn fixture(
         (case == Case::Harpoon || case == Case::NoCoins).then_some(HARRY_CATHERBY),
     )?;
     let vendor = api::shop_facts::vendor_by_keeper_config(data, case.keeper(), tool.id)
+        .map_err(|error| format!("shop facts: {error:?}"))?
         .ok_or_else(|| format!("pinned {} shop has no {} row", case.keeper(), tool.alias))?;
     if vendor.keeper_id != keeper.id || vendor.keeper_name != keeper.name {
         return Err(format!(
@@ -617,7 +618,6 @@ impl Script for BankPrimer {
                         },
                         options: WalkOptions::default(),
                         explicit: Some(Arc::clone(&self.bank_name)),
-                        excluded_banks: None,
                         allow_air_fallback: false,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
@@ -1388,6 +1388,7 @@ fn park_observation_collects_play_facts_before_locking_trace() {
         },
         card: script::CompiledId("test"),
         phase: NativePhase::Blocked,
+        survival: Default::default(),
         active_settings: 1,
         pending_settings: None,
         fields: Arc::from([]),
@@ -1529,6 +1530,7 @@ fn nearest_vendor_line(
     banked: i32,
 ) -> String {
     let vendors = api::shop_facts::vendors_for(data, item_id)
+        .expect("generated shop facts")
         .filter(|vendor| members || !vendor.item.members)
         .collect::<Vec<_>>();
     if vendors.is_empty() {

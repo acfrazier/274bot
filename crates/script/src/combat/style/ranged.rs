@@ -19,16 +19,25 @@ pub fn thrown(weapon: &RangedWeaponFact) -> bool {
 }
 
 pub fn accepts(tables: &CombatTables, weapon: &RangedWeaponFact, ammo: i32) -> bool {
+    ammo_levelrequire(tables, weapon, ammo).is_some()
+}
+
+/// The `levelrequire` of `ammo` when `weapon` accepts it (a thrown weapon is its
+/// own ammunition and carries its own level), else `None`.
+pub fn ammo_levelrequire(
+    tables: &CombatTables,
+    weapon: &RangedWeaponFact,
+    ammo: i32,
+) -> Option<u8> {
     if thrown(weapon) {
-        return ammo == weapon.obj_id;
+        return (ammo == weapon.obj_id).then_some(weapon.levelrequire);
     }
     let rows = tables.selected().ranged_ammo();
     rows.binary_search_by_key(&ammo, |row| row.obj_id)
         .ok()
-        .is_some_and(|index| {
-            let ammo = &rows[index];
-            ammo.family == weapon.ammo_family && ammo.levelrequire <= weapon.levelrequire
-        })
+        .map(|index| &rows[index])
+        .filter(|row| row.family == weapon.ammo_family && row.levelrequire <= weapon.levelrequire)
+        .map(|row| row.levelrequire)
 }
 
 pub fn rate(base: u8, mode: RangedMode) -> u8 {

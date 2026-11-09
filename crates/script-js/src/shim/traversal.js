@@ -1,5 +1,6 @@
 import { snap, proxy, notImpl, runMachine } from '../../shim/_kernel.js';
 import { Sustain } from '../sustain/Sustain.js';
+const walkApi = globalThis.rustyscript.functions.__rs2b0t_walk_api;
 
 const whole = (value) => (typeof value === 'number' ? { value: Math.floor(value) } : null);
 const count = (value) => (Array.isArray(value) ? value.length : 0);
@@ -23,6 +24,12 @@ async function walkWorld(tile, opts = {}) {
             ...(timeoutMs ? { timeoutMs: timeoutMs.value } : {}),
             ...(typeof opts.useTeleportCatalog === 'boolean'
                 ? { useTeleportCatalog: opts.useTeleportCatalog }
+                : {}),
+            ...(typeof opts.allowPrereqDialogue === 'boolean'
+                ? { allowPrereqDialogue: opts.allowPrereqDialogue }
+                : {}),
+            ...(typeof opts.allowQuestStart === 'boolean'
+                ? { allowQuestStart: opts.allowQuestStart }
                 : {}),
             policy: {
                 ...(typeof policy.useTeleports === 'boolean' ? { useTeleports: policy.useTeleports } : {}),
@@ -62,11 +69,20 @@ export const Traversal = proxy('Traversal', {
                     ...(typeof opts.timeoutMs === 'number'
                         ? { timeoutMs: Math.floor(opts.timeoutMs) }
                         : {}),
+                    ...(typeof opts.maxBudget === 'number'
+                        ? { maxBudget: Math.floor(opts.maxBudget) }
+                        : {}),
                     ...(typeof opts.sceneRadius === 'number'
                         ? { sceneRadius: Math.floor(opts.sceneRadius) }
                         : {}),
                     ...(typeof opts.useTeleportCatalog === 'boolean'
                         ? { useTeleportCatalog: opts.useTeleportCatalog }
+                        : {}),
+                    ...(typeof opts.allowPrereqDialogue === 'boolean'
+                        ? { allowPrereqDialogue: opts.allowPrereqDialogue }
+                        : {}),
+                    ...(typeof opts.allowQuestStart === 'boolean'
+                        ? { allowQuestStart: opts.allowQuestStart }
                         : {}),
                     policy: {
                         ...(typeof policy.useTeleports === 'boolean'
@@ -90,13 +106,13 @@ export const Traversal = proxy('Traversal', {
         // NavWorld already binds at template/Play construction.
     },
     remaining() {
-        throw notImpl('Traversal.remaining');
+        return walkApi('remaining');
     },
     teleportsEnabled() {
         return snap().teleports_enabled === true;
     },
     requestRepath(_reason) {
-        throw notImpl('Traversal.requestRepath');
+        walkApi('request-repath');
     },
     get pureWalk() {
         return NAV_PURE_WALK;

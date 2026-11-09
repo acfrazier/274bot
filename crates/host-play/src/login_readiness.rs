@@ -482,6 +482,9 @@ mod tests {
 
     #[test]
     fn pause_and_stop_are_not_resumed_by_settlement() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut paused = SlotScript::new();
         paused
             .start_test_script(Box::new(NoopScript), None)

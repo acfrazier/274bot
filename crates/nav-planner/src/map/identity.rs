@@ -106,19 +106,6 @@ impl CatalogueIdentity {
             self.policy,
         )))
     }
-    /// Cheap merged-view identity; changing routing or services never changes art.
-    /// SHA256("274bot.map.merge\0" || catalogue_key || nav || presence:u8 || [pois]).
-    pub fn merged_key(self, nav: Digest, pois: Option<Digest>) -> Result<Digest, MapError> {
-        let mut h = Sha256::new();
-        h.update(b"274bot.map.merge\0");
-        h.update(self.key()?.0 .0);
-        h.update(nav.0);
-        h.update([u8::from(pois.is_some())]);
-        if let Some(pois) = pois {
-            h.update(pois.0);
-        }
-        Ok(Digest(h.finalize().into()))
-    }
 }
 
 fn key(domain: &[u8], revision: u16, schema: u16, content: Digest, policy: Digest) -> Digest {

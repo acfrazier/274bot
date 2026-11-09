@@ -8,8 +8,12 @@ use rustyscript::Runtime;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use super::shape::LoadShape;
+use crate::library::shape::LoadShape;
 
+#[path = "bindings/event_callbacks.rs"]
+pub(crate) mod event_callbacks;
+#[path = "bindings/tree_bot.rs"]
+pub(crate) mod tree_bot;
 /// Monotonic clock backing the prelude's `performance.now()` shim
 /// (rustyscript's default extensions define no `performance`). First
 /// call anchors at isolate-thread start.
@@ -58,7 +62,7 @@ fn facing_player(value: Option<&serde_json::Value>) -> bool {
 /// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
 /// canonical style, anything else is itself (trimmed, lowercased).
 fn style_token(style: &str) -> String {
-    super::combat_style_v8::melee_style(style)
+    crate::materialize::combat_style_v8::melee_style(style)
         .map_or_else(|| style.trim().to_ascii_lowercase(), str::to_string)
 }
 
@@ -69,12 +73,12 @@ fn style_token(style: &str) -> String {
 /// shim only passes the script's token.
 fn resolve_combat_style(style: &str) -> serde_json::Value {
     let requested = style_token(style);
-    crate::observed::with(|scene| {
+    crate::scene::observed::with(|scene| {
         let Some(rows) = scene.latest().combat_styles() else {
             return serde_json::Value::Null;
         };
         let mut seen: Vec<i32> = Vec::new();
-        let mut modes: Vec<(&crate::observed::ButtonRow, &'static str)> = Vec::new();
+        let mut modes: Vec<(&crate::scene::observed::ButtonRow, &'static str)> = Vec::new();
         for row in rows {
             let Some(effective) = interface_style(&row.label) else {
                 continue;
@@ -107,7 +111,7 @@ fn resolve_combat_style(style: &str) -> serde_json::Value {
 
 /// Frozen `resolveCombatStyle(style, offeredModes)` (`CombatStyle.ts:82-107`):
 /// use the first valid requested mode, otherwise the last defensive mode.
-pub(super) fn resolve_combat_style_modes(
+pub(crate) fn resolve_combat_style_modes(
     style: &str,
     offered_modes: &serde_json::Value,
 ) -> serde_json::Value {
@@ -155,12 +159,12 @@ pub(super) fn resolve_combat_style_modes(
 /// The posted magic-tab button whose label names `spell`, else `-1`. The
 /// magic tab posts one row per target button; the component id is Rust's, not
 /// a JS row scan.
-fn posted_spell_button_com(spell: &str) -> i32 {
+pub(crate) fn posted_spell_button_com(spell: &str) -> i32 {
     let wanted = spell.trim().to_ascii_lowercase();
     if wanted.is_empty() {
         return -1;
     }
-    crate::observed::with(|scene| {
+    crate::scene::observed::with(|scene| {
         scene
             .latest()
             .spell_buttons()
@@ -196,6 +200,10 @@ fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
 /// `@rs2b0t/api` bundle resolve to our modules; an import that does
 /// not name a shim module (e.g. `../../api/bank/Banking.js` before
 /// its task) fails the load honestly.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "runtime wiring takes the isolate's per-run inputs"
+)]
 pub(super) fn wire_runtime(
     runtime: &mut Runtime,
     source: &str,
@@ -203,14 +211,19 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    card_name: &str,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
     }
     let source = crate::shim::remap_catalog_imports(source);
-    let family = match super::shape::parse_declared_api_version(&source) {
-        Ok(Some(2)) => super::shape::ApiFamily::V2,
-        _ => super::shape::ApiFamily::Unversioned,
+    let family = match crate::library::shape::parse_declared_api_version(&source) {
+        Ok(Some(2)) => crate::library::shape::ApiFamily::V2,
+        _ => crate::library::shape::ApiFamily::Unversioned,
     };
     runtime
         .register_function(
@@ -253,7 +266,7 @@ pub(super) fn wire_runtime(
                 Ok(serde_json::Value::Bool(i32::try_from(id).ok().is_some_and(
                     |id| {
                         api::content::matches_common_bank_loot(
-                            crate::supply_v2::random_event_casket_id(),
+                            crate::scene::supply_v2::random_event_casket_id(),
                             name,
                             id,
                         )
@@ -275,12 +288,13 @@ pub(super) fn wire_runtime(
                         .and_then(serde_json::Value::as_f64)
                         .unwrap_or(f64::NAN)
                 };
-                let Some(strategy) = crate::periodic_bank::parse_bank_strategy_token(strategy)
+                let Some(strategy) =
+                    crate::compat::periodic_bank::parse_bank_strategy_token(strategy)
                 else {
                     return Ok(serde_json::Value::Bool(false));
                 };
                 Ok(serde_json::Value::Bool(
-                    crate::periodic_bank::should_bank_now(
+                    crate::compat::periodic_bank::should_bank_now(
                         strategy,
                         number("lootCount"),
                         number("itemsThreshold"),
@@ -303,7 +317,7 @@ pub(super) fn wire_runtime(
                     .unwrap_or(-1);
                 Ok(serde_json::Value::Bool(
                     api::content::is_disposable_gather_junk(
-                        crate::supply_v2::random_event_casket_id(),
+                        crate::scene::supply_v2::random_event_casket_id(),
                         name,
                         id,
                     ),
@@ -325,16 +339,55 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register BroadcastChannel codec: {e}"))?;
     runtime
         .register_function("__rs2b0t_inspect", |args: &[serde_json::Value]| {
-            Ok(crate::inspect_wait::dispatch(
+            Ok(crate::scene::inspect_wait::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
         })
         .map_err(|e| format!("register inspect: {e}"))?;
     runtime
+        .register_function("__rs2b0t_walk_api", move |args: &[serde_json::Value]| {
+            let op = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            match op {
+                "resolve-destination" => {
+                    let index = args
+                        .get(1)
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(script::native::walk::resolve_destination)
+                        .and_then(|resolved| {
+                            script::native::walk::walk_destinations()
+                                .iter()
+                                .position(|destination| std::ptr::eq(destination, resolved))
+                        });
+                    Ok(serde_json::json!(index))
+                }
+                "wilderness-level-at" => {
+                    let level =
+                        json_tile(args.get(1)).map_or(0, |tile| wilderness_rules.level(tile));
+                    Ok(serde_json::json!(level))
+                }
+                "in-ess-mine" => Ok(serde_json::json!(json_i32(args.get(1))
+                    .zip(json_i32(args.get(2)))
+                    .is_some_and(|(x, z)| script::native::walk::in_ess_mine(x, z)))),
+                "remaining" => Ok(serde_json::json!(crate::scene::walk_wait::remaining())),
+                "request-repath" => {
+                    crate::scene::walk_wait::request_repath();
+                    Ok(serde_json::Value::Null)
+                }
+                "last-outcome" => Ok(serde_json::json!(crate::compat::walk::last_outcome())),
+                _ => Err(rustyscript::Error::Runtime(format!(
+                    "unsupported walking API operation: {op}"
+                ))),
+            }
+        })
+        .map_err(|e| format!("register walking API: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_selected_loadout",
             |args: &[serde_json::Value]| {
-                super::loadout_v8::selected_compat(
+                crate::materialize::loadout_v8::selected_compat(
                     args.first().and_then(|v| v.as_str()).unwrap_or(""),
                 )
                 .map_err(rustyscript::Error::Runtime)
@@ -397,7 +450,7 @@ pub(super) fn wire_runtime(
                         "combatKeepNames requires selected game data".to_string(),
                     )
                 })?;
-                let options = crate::keep_list::from_args(args);
+                let options = crate::compat::keep_list::from_args(args);
                 Ok(serde_json::json!(script::keep_list::combat_keep_names(
                     data, &options
                 )))
@@ -485,6 +538,7 @@ pub(super) fn wire_runtime(
             Ok(serde_json::json!(facing_player(args.first())))
         })
         .map_err(|e| format!("register player face helper: {e}"))?;
+    crate::materialize::step_off_candidates_v8::install(runtime)?;
     runtime
         .register_function(
             "__rs2b0t_parse_interface_combat_style",
@@ -507,12 +561,12 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register offered combat style resolver: {e}"))?;
-    crate::shop::configure(game_data.clone());
-    crate::supply_v2::configure(game_data.clone());
-    crate::duel::configure(game_data.as_deref());
+    crate::compat::shop::configure(game_data.clone());
+    crate::scene::supply_v2::configure(game_data.clone());
+    crate::compat::duel::configure(game_data.as_deref());
     runtime
         .register_function("__rs2b0t_duel", |args: &[serde_json::Value]| {
-            Ok(crate::duel::dispatch(
+            Ok(crate::compat::duel::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
         })
@@ -520,7 +574,7 @@ pub(super) fn wire_runtime(
     let selected_autocast = game_data.clone();
     runtime
         .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
-            Ok(crate::autocast::dispatch(
+            Ok(crate::compat::autocast::dispatch(
                 selected_autocast.as_deref(),
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
@@ -529,7 +583,7 @@ pub(super) fn wire_runtime(
     let selected_prayer = game_data.clone();
     runtime
         .register_function("__rs2b0t_prayer", move |args: &[serde_json::Value]| {
-            Ok(crate::prayer::dispatch(
+            Ok(crate::compat::prayer::dispatch(
                 selected_prayer.as_deref(),
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
@@ -538,7 +592,7 @@ pub(super) fn wire_runtime(
     let selected_special = game_data.clone();
     runtime
         .register_function("__rs2b0t_special", move |args: &[serde_json::Value]| {
-            Ok(crate::special::dispatch(
+            Ok(crate::compat::special::dispatch(
                 selected_special.as_deref(),
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
@@ -546,7 +600,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register special: {e}"))?;
     runtime
         .register_function("__rs2b0t_quest_journal", |args: &[serde_json::Value]| {
-            Ok(crate::quest_journal::dispatch(
+            Ok(crate::compat::quest_journal::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
         })
@@ -554,7 +608,7 @@ pub(super) fn wire_runtime(
     let selected_clue = game_data.clone();
     runtime
         .register_function("__rs2b0t_clue", move |args: &[serde_json::Value]| {
-            Ok(crate::clue::dispatch(
+            Ok(crate::compat::clue::dispatch(
                 selected_clue.as_deref(),
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
@@ -562,7 +616,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register clue: {e}"))?;
     runtime
         .register_function("__rs2b0t_clue_paint", |_args: &[serde_json::Value]| {
-            Ok(crate::clue::dispatch(
+            Ok(crate::compat::clue::dispatch(
                 None,
                 &serde_json::json!({ "op": "paint" }),
             ))
@@ -570,7 +624,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register clue paint: {e}"))?;
     runtime
         .register_function("__rs2b0t_fire", move |args: &[serde_json::Value]| {
-            Ok(crate::fire::dispatch(
+            Ok(crate::compat::fire::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
         })
@@ -726,78 +780,94 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register canvas onpaint done: {e}"))?;
-    super::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
+    event_callbacks::install(runtime, frame_interest)
+        .map_err(|error| format!("event callbacks: {error}"))?;
+    tree_bot::install(runtime).map_err(|error| format!("tree bot: {error}"))?;
+    crate::materialize::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
-    super::lineage_v8::eval::<()>(runtime, INTERACT_CAPTURE_SCRIPT)
+    crate::materialize::lineage_v8::eval::<()>(runtime, INTERACT_CAPTURE_SCRIPT)
         .map_err(|e| format!("interact capture: {e}"))?;
-    super::run_policy_v8::install(runtime).map_err(|e| format!("run-policy v8: {e}"))?;
+    crate::materialize::run_policy_v8::install(runtime)
+        .map_err(|e| format!("run-policy v8: {e}"))?;
     super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
-    super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
-    super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
-    super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
-    super::rune_routes_v8::install(runtime).map_err(|e| format!("rune routes v8: {e}"))?;
-    super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
-    super::progress_methods_v8::install(runtime)
+    crate::materialize::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
+    crate::materialize::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
+    crate::materialize::selected_facts_v8::install(runtime, loc_projection_interest)
+        .map_err(|e| format!("selected facts v8: {e}"))?;
+    crate::materialize::rune_routes_v8::install(runtime)
+        .map_err(|e| format!("rune routes v8: {e}"))?;
+    crate::materialize::gather_methods_v8::install(runtime)
+        .map_err(|e| format!("gather methods v8: {e}"))?;
+    crate::materialize::progress_methods_v8::install(runtime)
         .map_err(|e| format!("progress methods v8: {e}"))?;
-    super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
-    super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
-    super::clue_logic_v8::install(runtime).map_err(|e| format!("clue logic v8: {e}"))?;
-    super::clue_pack_v8::install(runtime).map_err(|e| format!("clue pack v8: {e}"))?;
-    super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
-    crate::line_of_sight_v8::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
-    super::scene_v8::install(runtime).map_err(|e| format!("scene v8: {e}"))?;
-    super::area::install(runtime).map_err(|e| format!("area: {e}"))?;
-    super::distance::install(runtime).map_err(|e| format!("distance: {e}"))?;
-    super::reach_query::install(runtime).map_err(|e| format!("reach query: {e}"))?;
-    super::melee_weapons_v8::install(runtime).map_err(|e| format!("melee weapons v8: {e}"))?;
-    super::partner_trade_v8::install(runtime).map_err(|e| format!("partner trade v8: {e}"))?;
-    super::canvas_tape::install(runtime).map_err(|e| format!("canvas tape: {e}"))?;
-    super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
-    super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
-    super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
-    super::entities_v8::install(runtime).map_err(|e| format!("entities v8: {e}"))?;
-    super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
-    super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
-    super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
-    super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
-    super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
-    super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
-    super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;
-    super::cake_stall_v8::install(runtime).map_err(|e| format!("cake stall v8: {e}"))?;
-    super::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
-    super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
-    super::walk_opening_v8::install(runtime).map_err(|e| format!("walk opening v8: {e}"))?;
-    super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
-    super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
-    crate::bank_select::install(std::sync::Arc::clone(&named_banks));
-    super::bank_locations_v8::install(runtime)?;
-    super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
-    super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
-    super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
-    let content = format!(
-        "globalThis.__rs2b0t_host.content = {};",
-        crate::shim::content_json(game_data.as_deref())
-    );
-    super::lineage_v8::eval::<()>(runtime, content.as_str())
+    crate::materialize::quest_facts_v8::install(runtime)
+        .map_err(|e| format!("quest facts v8: {e}"))?;
+    crate::materialize::clue_facts_v8::install(runtime)
+        .map_err(|e| format!("clue facts v8: {e}"))?;
+    crate::materialize::clue_logic_v8::install(runtime)
+        .map_err(|e| format!("clue logic v8: {e}"))?;
+    crate::materialize::clue_pack_v8::install(runtime).map_err(|e| format!("clue pack v8: {e}"))?;
+    crate::materialize::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
+    crate::materialize::line_of_sight::install(runtime)
+        .map_err(|e| format!("line of sight: {e}"))?;
+    crate::materialize::scene_v8::install(runtime).map_err(|e| format!("scene v8: {e}"))?;
+    crate::materialize::area::install(runtime).map_err(|e| format!("area: {e}"))?;
+    crate::materialize::distance::install(runtime).map_err(|e| format!("distance: {e}"))?;
+    crate::materialize::reach_query::install(runtime).map_err(|e| format!("reach query: {e}"))?;
+    crate::materialize::melee_weapons_v8::install(runtime)
+        .map_err(|e| format!("melee weapons v8: {e}"))?;
+    crate::materialize::partner_trade_v8::install(runtime)
+        .map_err(|e| format!("partner trade v8: {e}"))?;
+    crate::materialize::canvas_tape::install(runtime).map_err(|e| format!("canvas tape: {e}"))?;
+    crate::materialize::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
+    crate::materialize::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
+    crate::materialize::callback_v8::install_ops(runtime)
+        .map_err(|e| format!("callback ops: {e}"))?;
+    crate::materialize::entities_v8::install(runtime).map_err(|e| format!("entities v8: {e}"))?;
+    crate::materialize::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
+    crate::materialize::gathering_v8::install(runtime)
+        .map_err(|e| format!("gathering locations v8: {e}"))?;
+    crate::materialize::gather_catalog_v8::install(runtime)
+        .map_err(|e| format!("gather catalog v8: {e}"))?;
+    crate::materialize::walk_destinations_v8::install(runtime)
+        .map_err(|e| format!("walk destinations v8: {e}"))?;
+    crate::materialize::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
+    crate::materialize::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
+    crate::materialize::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
+    crate::materialize::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
+    crate::materialize::boost_potions_v8::install(runtime)
+        .map_err(|e| format!("boost potions v8: {e}"))?;
+    crate::materialize::cake_stall_v8::install(runtime)
+        .map_err(|e| format!("cake stall v8: {e}"))?;
+    crate::materialize::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
+    crate::materialize::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
+    crate::materialize::walk_opening_v8::install(runtime)
+        .map_err(|e| format!("walk opening v8: {e}"))?;
+    crate::materialize::combat_style_v8::install(runtime)
+        .map_err(|e| format!("combat style v8: {e}"))?;
+    crate::materialize::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
+    crate::scene::bank_select::install(std::sync::Arc::clone(&named_banks));
+    crate::materialize::bank_locations_v8::install(runtime)?;
+    crate::materialize::bank_tasks_v8::install(runtime)
+        .map_err(|e| format!("bank tasks v8: {e}"))?;
+    crate::materialize::bank_backpack_v8::install(runtime)
+        .map_err(|e| format!("bank backpack v8: {e}"))?;
+    crate::materialize::bank_quest_junk_v8::install(runtime)
+        .map_err(|e| format!("bank quest junk v8: {e}"))?;
+    crate::materialize::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
+    crate::materialize::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
+    crate::runtime::lifecycle_v8::install(runtime, local_state)
+        .map_err(|e| format!("runtime lifecycle v8: {e}"))?;
+    crate::runtime::activity_v8::install(runtime).map_err(|e| format!("activity v8: {e}"))?;
+    let content_json =
+        crate::shim::content_json(game_data.as_deref()).map_err(|e| format!("content: {e:?}"))?;
+    let content = format!("globalThis.__rs2b0t_host.content = {content_json};");
+    crate::materialize::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
-    let main = match shape {
-        LoadShape::NativeTick if family == super::shape::ApiFamily::V2 => {
-            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
-        }
-        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
-        LoadShape::CompatDefineBot => rustyscript::Module::new(
-            crate::shim::MAIN_MODULE,
-            format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
-        ),
-        LoadShape::CompatClass => rustyscript::Module::new(
-            crate::shim::MAIN_MODULE,
-            format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
-        ),
-        LoadShape::Reject => unreachable!("rejected above"),
-    };
-    // Side modules load in order, so the shim modules (which the bot
-    // imports) must precede the bot's own module.
+    let main = main_module(shape, family);
+    // Side modules load in order, so the shim modules (which the bot imports)
+    // must precede the bot's own module.
     let mut side = crate::shim::shim_modules();
     let siblings: Vec<(String, String)> = siblings
         .iter()
@@ -807,11 +877,29 @@ pub(super) fn wire_runtime(
         side.push(rustyscript::Module::new(url, src));
     }
     side.push(bot);
+    // Keep gated modules if the bot, its siblings, or the shape main module
+    // imports them. The main module is analyzed as a root but is not supplied
+    // to `load_modules`, which loads it separately.
+    side.push(rustyscript::Module::new(
+        crate::shim::MAIN_MODULE,
+        main.contents(),
+    ));
+    crate::shim::filter_gated_modules_for_card(
+        &mut side,
+        siblings
+            .iter()
+            .map(|(url, _)| url.as_str())
+            .chain(std::iter::once(crate::shim::BOT_MODULE))
+            .chain(std::iter::once(crate::shim::MAIN_MODULE)),
+        card_name,
+    );
+    side.pop();
     let side: Vec<&rustyscript::Module> = side.iter().collect();
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces
     // here, before any tick runs.
-    super::lineage_v8::load_modules(runtime, &main, side).map_err(|e| format!("load: {e}"))?;
+    crate::materialize::lineage_v8::load_modules(runtime, &main, side)
+        .map_err(|e| format!("load: {e}"))?;
     Ok(())
 }
 
@@ -964,7 +1052,7 @@ const OPTIONAL = {
   'open-stand': ['name','stand_op','choose'],
   'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
-  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
+  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id','max_expansions'],
 };
 const host = globalThis.__rs2b0t_seat_host;
 const snapshotRootCache = new WeakMap();
@@ -1101,6 +1189,7 @@ const api = {
       allow_bank_fetch: o.allow_bank_fetch === true,
       avoid: o.avoid || [],
       request_id: token,
+      max_expansions: o.max_expansions === undefined ? o.maxExpansions : o.max_expansions,
     });
     return token;
   },
@@ -1636,6 +1725,42 @@ const __rs2b0t_invoke = async (method) => {
         return String((e && e.message) || e);
     }
 };
+const __rs2b0t_invoke_sync = (method) => {
+    try {
+        if (inst && typeof inst[method] === 'function') inst[method]();
+        return null;
+    } catch (e) {
+        return String((e && e.message) || e);
+    }
+};
 globalThis.__rs2b0t_compat_on_start = () => __rs2b0t_invoke('onStart');
 globalThis.__rs2b0t_compat_loop = () => __rs2b0t_invoke('loop');
+globalThis.__rs2b0t_compat_on_pause = () => __rs2b0t_invoke_sync('onPause');
+globalThis.__rs2b0t_compat_on_resume = () => __rs2b0t_invoke_sync('onResume');
 "#;
+fn main_module(shape: LoadShape, family: crate::library::shape::ApiFamily) -> rustyscript::Module {
+    match shape {
+        LoadShape::NativeTick if family == crate::library::shape::ApiFamily::V2 => {
+            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
+        }
+        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
+        LoadShape::CompatDefineBot => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::CompatClass => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::Reject => unreachable!("rejected above"),
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn main_module_for_import_gate_test(
+    shape: LoadShape,
+    family: crate::library::shape::ApiFamily,
+) -> rustyscript::Module {
+    main_module(shape, family)
+}

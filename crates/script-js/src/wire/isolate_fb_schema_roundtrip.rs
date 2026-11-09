@@ -158,9 +158,9 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
     assert_eq!(projectile.spotanim(), 2_737);
     assert_eq!(projectile.target_player_index(), Some(4));
 
-    crate::observed::on_reset();
-    crate::observed::apply(&snapshot);
-    crate::observed::with(|scene| {
+    crate::scene::observed::on_reset();
+    crate::scene::observed::apply(&snapshot);
+    crate::scene::observed::with(|scene| {
         let rows = scene
             .latest()
             .projectiles()
@@ -169,7 +169,7 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
         assert_eq!(rows[0].spotanim, 2_737);
         assert_eq!(rows[0].target_player_index, Some(4));
     });
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 
     let booth = snapshot.booths().expect("posted booth").get(0);
     assert_eq!((booth.x(), booth.z(), booth.level()), (3_209, 3_211, 0));
@@ -266,13 +266,13 @@ fn absent_quest_status_defaults_to_unknown() {
         .get(0);
     assert_eq!(row.status(), None, "fixture omits the status slot");
 
-    crate::observed::on_reset();
-    crate::observed::apply(&snapshot);
-    let observed_status = crate::observed::with(|scene| match scene.latest().quest_statuses() {
-        Some(crate::observed::QuestTab::Bound(rows)) => rows[0].status.to_string(),
+    crate::scene::observed::on_reset();
+    crate::scene::observed::apply(&snapshot);
+    let observed_status = crate::scene::observed::with(|scene| match scene.latest().quest_statuses() {
+        Some(crate::scene::observed::QuestTab::Bound(rows)) => rows[0].status.to_string(),
         _ => panic!("quest statuses were not applied"),
     });
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     assert_eq!(observed_status, "unknown");
 }
 
@@ -310,10 +310,10 @@ fn older_snapshot_without_side_modal_id_reads_absent() {
 
     let snapshot = decode_snapshot(b.finished_data()).expect("older snapshot verifies");
     assert!(!snapshot.has_side_modal_id());
-    assert_eq!(snapshot.side_modal_id(), -1);
-    crate::observed::on_reset();
-    crate::observed::apply(&snapshot);
-    let posted = crate::observed::with(|scene| {
+    assert_eq!(snapshot.side_modal_id(), None);
+    crate::scene::observed::on_reset();
+    crate::scene::observed::apply(&snapshot);
+    let posted = crate::scene::observed::with(|scene| {
         let session = scene.since_login();
         script::bank::ops::side_observation(
             session.bank_open().unwrap_or(false),
@@ -322,7 +322,7 @@ fn older_snapshot_without_side_modal_id_reads_absent() {
         )
         .is_some()
     });
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     assert!(!posted, "an old buffer's side is not posted");
     assert_eq!(
         Snapshot::VT_SIDE_MODAL_ID,

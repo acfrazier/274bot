@@ -1187,7 +1187,7 @@ fn max_shop_quote(
     members: bool,
     units: i32,
 ) -> i64 {
-    shop_facts::vendors_for(data, item)
+    vendors_for(data, item)
         .filter(|fact| vendor_eligible(fact, members))
         .map(|fact| two_chunk_fact_quote(&fact, units))
         .max()
@@ -1265,7 +1265,7 @@ fn exact_harpoon_coin_shortage_keeps_the_typed_park() {
 fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
-    assert!(shop_facts::vendors_for(&data, mithril_axe).next().is_none());
+    assert!(vendors_for(&data, mithril_axe).next().is_none());
     let request = shop_request(
         vec![
             need(
@@ -1317,8 +1317,7 @@ fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
 fn shop_membership_excludes_members_items_on_free_worlds() {
     let data = pinned_shop_data();
     let papyrus = shop_item_id(&data, "papyrus");
-    let fact =
-        shop_facts::vendor_by_keeper_config(&data, "aemad", papyrus).expect("pinned papyrus");
+    let fact = vendor_by_keeper_config(&data, "aemad", papyrus).expect("pinned papyrus");
     assert!(fact.item.members);
     let request = shop_request(
         vec![need(
@@ -1381,8 +1380,8 @@ fn shop_tier_falls_back_from_unstocked_best_item_to_stocked_lower_tier() {
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
-    assert!(shop_facts::vendors_for(&data, mithril_axe).next().is_none());
-    assert!(shop_facts::vendors_for(&data, iron_axe).next().is_some());
+    assert!(vendors_for(&data, mithril_axe).next().is_none());
+    assert!(vendors_for(&data, iron_axe).next().is_some());
     let request = shop_request(
         vec![tier_need(
             mithril_axe,
@@ -1405,8 +1404,8 @@ fn shop_tier_skips_an_unaffordable_best_price_for_a_wearable_lower_tier() {
     let data = pinned_shop_data();
     let steel_axe = shop_item_id(&data, "steel_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
-    let steel = shop_facts::vendor_by_keeper_config(&data, "bob", steel_axe).unwrap();
-    let iron = shop_facts::vendor_by_keeper_config(&data, "bob", iron_axe).unwrap();
+    let steel = vendor_by_keeper_config(&data, "bob", steel_axe).unwrap();
+    let iron = vendor_by_keeper_config(&data, "bob", iron_axe).unwrap();
     let steel_price = shop_facts::quote(steel.record, steel.item, 1, steel.item.baseline);
     let iron_price = shop_facts::quote(iron.record, iron.item, 1, iron.item.baseline);
     assert!(iron_price < 100 && steel_price > 100);
@@ -1633,8 +1632,8 @@ fn shop_reserve_sums_the_maximum_quote_for_two_needs() {
 fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
-    let fact = shop_facts::vendor_by_keeper_config(&data, "bob", bronze_axe)
-        .expect("pinned Bob bronze axe stock");
+    let fact =
+        vendor_by_keeper_config(&data, "bob", bronze_axe).expect("pinned Bob bronze axe stock");
     let units = 3;
     let baseline = fact.item.baseline;
     let baseline_quote = shop_facts::quote(fact.record, fact.item, units, baseline);
@@ -1706,8 +1705,8 @@ fn shop_pack_only_coin_policy_never_withdraws_coins() {
 fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
-    let fact = shop_facts::vendor_by_keeper_config(&data, "bob", bronze_axe)
-        .expect("pinned Bob bronze axe stock");
+    let fact =
+        vendor_by_keeper_config(&data, "bob", bronze_axe).expect("pinned Bob bronze axe stock");
     let reserve = two_chunk_fact_quote(&fact, 1);
     let purchase_need = need(
         bronze_axe,
@@ -1812,8 +1811,8 @@ fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
         }
     );
 
-    let gerrant = shop_facts::vendor_by_keeper_config(&data, "gerrant", bait)
-        .expect("pinned Gerrant fishing bait stock");
+    let gerrant =
+        vendor_by_keeper_config(&data, "gerrant", bait).expect("pinned Gerrant fishing bait stock");
     let reserve = two_chunk_fact_quote(&gerrant, 2);
     assert!(reserve > minimum_quote);
     let coins = [(COINS, minimum_quote as i32)];
@@ -1864,7 +1863,7 @@ fn shop_unknown_and_hint_coin_banks_request_verification() {
 fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
     let data = pinned_shop_data();
     let iron_axe = shop_item_id(&data, "iron_axe");
-    let vendors: Vec<_> = shop_facts::vendors_for(&data, iron_axe)
+    let vendors: Vec<_> = vendors_for(&data, iron_axe)
         .filter(|fact| vendor_eligible(fact, false))
         .collect();
     assert!(vendors.len() > 1);
@@ -1910,7 +1909,7 @@ fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
 fn nearest_pre_walk_message_names_all_eligible_vendors_and_price_range() {
     let data = pinned_shop_data();
     let iron_axe = shop_item_id(&data, "iron_axe");
-    let vendors: Vec<_> = shop_facts::vendors_for(&data, iron_axe)
+    let vendors: Vec<_> = vendors_for(&data, iron_axe)
         .filter(|fact| vendor_eligible(fact, false))
         .collect();
     assert!(vendors.len() > 1);

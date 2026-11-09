@@ -3689,6 +3689,13 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
                     break;
                 }
             };
+            for actor in &mut state.actors {
+                if actor.relogger.take_relog_login() {
+                    if let Some(arm) = play.arm(&actor.account) {
+                        arm.arm_explicit_login();
+                    }
+                }
+            }
             state.start_if_ready(&start_handle);
             if let Some(error) = state.error.clone() {
                 runtime_error = Some(error);
@@ -8467,7 +8474,20 @@ mod tests {
 
     #[test]
     fn ordinary_catalog_banks_allow_default_booth_access() {
-        let definition = api::named_banks::BANK_CATALOG
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/bank-catalog.json"
+            ),
+            "named bank catalogue for Grinch access tests",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let catalog = api::named_banks::bank_catalog().expect("prepared bank catalogue");
+        let definition = catalog
             .iter()
             .find(|definition| definition.name == "Varrock West")
             .unwrap();
@@ -8476,7 +8496,7 @@ mod tests {
         assert!(definition.npc.is_none());
         assert!(ordinary_bank(definition));
         for name in ["Fishing Guild", "Canifis", "Mage Arena"] {
-            let restricted = api::named_banks::BANK_CATALOG
+            let restricted = catalog
                 .iter()
                 .find(|definition| definition.name == name)
                 .unwrap();
@@ -8486,8 +8506,21 @@ mod tests {
 
     #[test]
     fn ordinary_catalog_banks_reject_actual_access_overrides() {
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/bank-catalog.json"
+            ),
+            "named bank catalogue for Grinch access tests",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let catalog = api::named_banks::bank_catalog().expect("prepared bank catalogue");
         for name in ["Shantay Pass", "Duel Arena"] {
-            let definition = api::named_banks::BANK_CATALOG
+            let definition = catalog
                 .iter()
                 .find(|definition| definition.name == name)
                 .unwrap();
@@ -9361,6 +9394,9 @@ mod tests {
 
     #[test]
     fn competitor_observes_ground_updates_between_player_info_edges() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let mut actor = ActorState::new(
             ActorRole::Competitor,
@@ -9477,6 +9513,9 @@ mod tests {
 
     #[test]
     fn player_info_is_captured_during_a_held_tutorial_relog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         for role in [ActorRole::Main, ActorRole::Competitor] {
             let mut actor = ActorState::new(role, "receiver".into(), Vec::new(), false, Vec::new());

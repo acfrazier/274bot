@@ -6,11 +6,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script_js::wire::{encode_snapshot_with_native, ItemRowInput, NativeFactsInput};
 use script_js::{transpile_ts, LoadIsolate, LoadShape, Ready};
 use serde_json::json;
+use {
+    script::native::snapshot_source::{ItemRowInput, NativeFactsInput},
+    script_js::wire::encode_snapshot_with_native,
+};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_bank_catalog.rs"]
+mod local_bank_catalog;
+#[path = "common/local_fact_catalogs.rs"]
+mod local_fact_catalogs;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const FROZEN_TESTS: &str = "upstream/2de6bb23";
 const TEST_MODULE_PREFIX: &str = "/rs2b0t/upstream/2de6bb23/test";
@@ -63,7 +74,8 @@ export default class UpstreamTier1 extends LoopingBot {{
     )
 }
 fn catalog_bank_facts() -> Arc<api::named_banks::NamedBankFacts> {
-    let banks = api::named_banks::BANK_CATALOG
+    let banks = api::named_banks::bank_catalog()
+        .expect("local bank catalog")
         .iter()
         .map(|definition| api::named_banks::NamedBank {
             name: definition.name,
@@ -104,14 +116,14 @@ fn run_upstream_file(
             return serde_json::json!({ "file": file, "stage": "read", "error": error.to_string() })
         }
     };
-    run_upstream_source(&file, &source, harness, game_data, bank_facts)
+    run_upstream_source(&file, &source, harness, Some(game_data), bank_facts)
 }
 
 fn run_upstream_source(
     file: &str,
     source: &str,
     harness: &str,
-    game_data: Arc<api::game_data::SelectedGameData>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     bank_facts: Arc<api::named_banks::NamedBankFacts>,
 ) -> serde_json::Value {
     let js = match transpile_ts(source) {
@@ -133,7 +145,7 @@ fn run_upstream_source(
         bot_source(&url),
         LoadShape::CompatClass,
         siblings,
-        Some(game_data),
+        game_data,
         bank_facts,
     ) {
         Ok(isolate) => isolate,
@@ -231,8 +243,6 @@ fn outcome_manifest_entry(result: &serde_json::Value) -> serde_json::Value {
 #[test]
 fn upstream_harness_fails_cases_when_nested_before_each_throws() {
     let harness = include_str!("upstream/harness/bun_test.js");
-    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
-        .expect("R289 selected game data");
     let source = r#"
 import { beforeEach, describe, test } from 'bun:test';
 describe('outer', () => {
@@ -244,8 +254,8 @@ describe('outer', () => {
         "harness/hook-probe.test.ts",
         source,
         harness,
-        game_data,
-        catalog_bank_facts(),
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
     );
     assert_eq!(result["stage"], "ran", "{result}");
     let cases = result["cases"].as_array().expect("registered test cases");
@@ -261,6 +271,11 @@ describe('outer', () => {
 
 #[test]
 fn upstream_tier1_runs_unmodified_sources_in_load() {
+    if !crate::local_game_data::local_game_data_available(289)
+        || !crate::local_fact_catalogs::local_fact_catalogs_available()
+    {
+        return;
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join(FROZEN_TESTS);
@@ -374,6 +389,11 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
 
 #[test]
 fn refrozen_runtime_members_load_and_refuse_by_name() {
+    if !crate::local_game_data::local_game_data_available(289)
+        || !crate::local_fact_catalogs::local_fact_catalogs_available()
+    {
+        return;
+    }
     let ts = r#"
 import { InvItem as ModuleInvItem } from '#/bot/api/inventory/Inventory.js';
 import { isEdibleFood as foodIsEdible } from '#/bot/api/combat/food.js';
@@ -405,22 +425,21 @@ import { bestHeldToolNames, surplusHeldToolNames } from '#/bot/api/acquisition/T
 import { resolveBankOpenRoute, NEARBY_BANK_RADIUS } from '#/bot/api/bank/Banking.js';
 import { RANDOM_EVENT_CASKET_ID as bankRulesCasket } from '#/bot/api/bank/bankRules.js';
 import { parseTradePartnerHeader } from '#/bot/api/trade/Trade.js';
-import { tradeScreenState, stableClosedPoll } from '#/bot/api/trade/drivePartnerTrade.js';
 import { shopOpBatch, SELL_STACK_STEP } from '#/bot/api/shop/Shop.js';
 import { resolveCombatStyle, parseInterfaceCombatStyle, CombatStyleController } from '#/bot/api/combat/CombatStyle.js';
 import { QUEST_ROCK_TYPES, GAS_ROCK_TICKS, BROKEN_PICKAXE } from '#/bot/data/miningRocks.js';
 import { AUTO_CHOOSE_COM, AUTO_TOGGLE_COM } from '#/bot/api/combat/CombatStyleLogic.js';
 import { wrapText } from '#/bot/paint/paintLogic.js';
 import { parseBurnMode, logsForTree, firemakingLevelForLogs, resolveFireSpot, nearestFireSpot, expandLocalFirePlot, runWest, shouldBurnFullLoad, BURN_MODE_OPTIONS } from '#/bot/api/firemaking/Firemaking.js';
-import { nearestWalkableBank, nearestWalkableBankAsync, bankCostForFinder, bankCostForNavigator, bankDistance } from '#/bot/api/bank/BankLocations.js';
+import { bankDistance } from '#/bot/api/bank/BankLocations.js';
 import { NAV_PURE_WALK, NAV_WITH_TELES } from '#/bot/api/walking/Traversal.js';
 import { worthStocking, buildCatalog, searchCatalog, resolveByName, resetLiveCatalog } from '#/bot/api/market/catalog.js';
+import { shouldWalkHomeToGatherAnchor, shouldSoftHomeFromGatherMiss } from '#/bot/api/tasks/Anchor.js';
 import { COIN_FLOAT, PROVISION_BANK } from '#/bot/api/ai/quests/engine/QuestEngine.js';
 import { suspectOrder, ARHEIN, GUARD_START, GUARD_HANDIN, SALESMAN, SUSPECTS, MURDER_EVIDENCE, MURDER_OBJ } from '#/bot/api/ai/quests/defs/murder/areas.js';
 import { tilesTo, trailWalkOpts, TRACE_STORAGE_KEY } from '#/bot/api/ai/clues/ClueExecutor.js';
 import { trailKit, nextCoordTool, extraItemShop, gateItemShop, SPADE_SPAWNS, PROFESSOR, MURPHY, KOJO, KOJO_EXIT } from '#/bot/api/ai/clues/data/toolAcquire.js';
 import { pickByLine, isUnderground, needsHop } from '#/bot/api/ai/quests/exec/primitives.js';
-import { resolveLoopCadence, BranchTask, LeafTask } from '#/bot/api/bot/Bot.js';
 import * as clientAdapterExports from '#/bot/adapter/ClientAdapter.js';
 import * as woodcuttingExports from '#/bot/data/woodcuttingLocations.js';
 import * as settingsExports from '#/bot/runtime/Settings.js';
@@ -558,6 +577,28 @@ check(
 );
 check(objCatalog.find((item) => item.id === 1321)?.equippable === true, 'bronze scimitar worn model is missing');
 check(reader.objCatalog() === objCatalog, 'reader.objCatalog rebuilt its selected records');
+const mapleWorn = resolveByName(selectedCatalog, 'maple longbow').map((item) => item.id);
+const mapleUnstrung = resolveByName(selectedCatalog, 'maple longbow u').map((item) => item.id);
+check(
+    mapleWorn.join(',') === '851' &&
+        mapleUnstrung.join(',') === '62' &&
+        resolveByName(selectedCatalog, '#851').map((item) => item.id).join(',') === '851' &&
+        resolveByName(selectedCatalog, 'maple', { exactOnly: true }).length === 0,
+    'resolveByName collision, id, or exact-only behavior mismatch'
+);
+check(
+    !shouldWalkHomeToGatherAnchor(null) &&
+        !shouldWalkHomeToGatherAnchor(8) &&
+        shouldWalkHomeToGatherAnchor(8.01) &&
+        shouldWalkHomeToGatherAnchor(12, 11.9) &&
+        !shouldWalkHomeToGatherAnchor(12, 12) &&
+        !shouldSoftHomeFromGatherMiss(null) &&
+        !shouldSoftHomeFromGatherMiss(28) &&
+        shouldSoftHomeFromGatherMiss(28.01) &&
+        !shouldSoftHomeFromGatherMiss(20, 12) &&
+        shouldSoftHomeFromGatherMiss(22.01, 22.9),
+    'gather anchor threshold behavior mismatch'
+);
 const chatHistoryProbe = gameMessagesExports.GameMessages;
 check(chatHistoryProbe.reset() === undefined && chatHistoryProbe.recent().length === 0, 'GameMessages.reset did not clear history');
 check(chatHistoryProbe.record('line') === undefined, 'GameMessages.record must return void');
@@ -595,61 +636,57 @@ await refuses('PROFESSOR', () => PROFESSOR.npc);
 await refuses('MURPHY', () => MURPHY.npc);
 await refuses('KOJO', () => KOJO.npc);
 await refuses('KOJO_EXIT', () => KOJO_EXIT.x);
-await refuses('invalidateLocSnapshots', () => clientAdapterExports.invalidateLocSnapshots());
-await refuses('detach', () => clientAdapterExports.detach());
-await refuses('activeStatsReady', () => clientAdapterExports.activeStatsReady());
-await refuses('currentLoginStatsReady', () => clientAdapterExports.currentLoginStatsReady());
-await refuses('locHullHeight', () => clientAdapterExports.locHullHeight());
-await refuses('resolveLocModelExtents', () => clientAdapterExports.resolveLocModelExtents());
-await refuses('attach', () => clientAdapterExports.attach());
-await refuses('setPacketListener', () => clientAdapterExports.setPacketListener());
-await refuses('resetObjCatalog', () => clientAdapterExports.resetObjCatalog());
-await refuses('readRetaliateControls', () => clientAdapterExports.readRetaliateControls());
-await refuses('readModalButtons', () => clientAdapterExports.readModalButtons());
-await refuses('readSelectButtonLabelsByVarp', () => clientAdapterExports.readSelectButtonLabelsByVarp());
-await refuses('combatShowingThreshold', () => clientAdapterExports.combatShowingThreshold());
-await refuses('WELCOME_SCREEN', () => Number(clientAdapterExports.WELCOME_SCREEN));
-await refuses('resolveWoodcuttingLocation', () => woodcuttingExports.resolveWoodcuttingLocation());
-await refuses('WOODCUTTING_LOCATIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATIONS));
-await refuses('WOODCUTTING_LOCATION_OPTIONS', () => Number(woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS));
-await refuses('settingOptionLabel', () => settingsExports.settingOptionLabel());
-await refuses('GLOBAL_SETTINGS_CORE', () => Number(settingsExports.GLOBAL_SETTINGS_CORE));
-await refuses('NAV_SETTINGS', () => Number(settingsExports.NAV_SETTINGS));
-await refuses('GLOBAL_SETTINGS', () => Number(settingsExports.GLOBAL_SETTINGS));
-await refuses('MAP_PICKER_SETTINGS_NS', () => Number(settingsExports.MAP_PICKER_SETTINGS_NS));
-await refuses('MAP_PICKER_SETTINGS', () => Number(settingsExports.MAP_PICKER_SETTINGS));
-await refuses('LOADOUT_SETTINGS_NS', () => Number(settingsExports.LOADOUT_SETTINGS_NS));
-await refuses('LOADOUT_SETTINGS', () => Number(settingsExports.LOADOUT_SETTINGS));
-await refuses('PRICE_BOOK_SETTINGS_NS', () => Number(settingsExports.PRICE_BOOK_SETTINGS_NS));
-await refuses('PRICE_BOOK_SETTINGS', () => Number(settingsExports.PRICE_BOOK_SETTINGS));
-await refuses('resolveRunPolicy', () => runManagerExports.resolveRunPolicy());
-await refuses('shouldEnableRun', () => runManagerExports.shouldEnableRun());
-await refuses('loopReadyOrDetached', () => scriptRunnerExports.loopReadyOrDetached());
-await refuses('stopReasonOf', () => scriptRunnerExports.stopReasonOf());
+const removedClientAdapterMembers = [
+    'invalidateLocSnapshots',
+    'detach',
+    'activeStatsReady',
+    'currentLoginStatsReady',
+    'locHullHeight',
+    'resolveLocModelExtents',
+    'attach',
+    'setPacketListener',
+    'resetObjCatalog',
+    'readRetaliateControls',
+    'readModalButtons',
+    'readSelectButtonLabelsByVarp',
+    'combatShowingThreshold',
+    'WELCOME_SCREEN',
+];
+check(
+    removedClientAdapterMembers.every((member) => !(member in clientAdapterExports)),
+    'removed private ClientAdapter refusals remain exported',
+);
+check(
+    typeof reader.retaliateControls === 'function' &&
+        typeof reader.modals === 'function' &&
+        typeof reader.selectButtonLabelsByVarp === 'function' &&
+        typeof reader.objCatalog === 'function',
+    'supported ClientAdapter reader siblings are missing',
+);
+check(
+    woodcuttingExports.WOODCUTTING_LOCATIONS.length === 14 &&
+        woodcuttingExports.WOODCUTTING_LOCATION_OPTIONS[5] === woodcuttingExports.WOODCUTTING_LOCATIONS[0].name &&
+        woodcuttingExports.resolveWoodcuttingLocation('Use Start Position', { x: 0, z: 0, level: 0 }) === null,
+    'the woodcutting location exports are served natively'
+);
 await refuses('BotHostImpl', () => new botHostExports.BotHostImpl());
 await refuses('PaintFrame', () => new paintExports.PaintFrame());
 await refuses('resolveDock', () => paintLogicExports.resolveDock());
 await refuses('toCanvasPoint', () => paintLogicExports.toCanvasPoint());
 await refuses('cycleOption', () => paintLogicExports.cycleOption());
 await refuses('hitRegion', () => paintLogicExports.hitRegion());
-await refuses('clipText', () => paintLogicExports.clipText());
 await refuses('paintCols', () => paintLogicExports.paintCols(100, 8, 7));
 await refuses('cellWidths', () => paintLogicExports.cellWidths(100, [1, 2]));
 await refuses('gridRows', () => paintLogicExports.gridRows(5, 2));
 await refuses('listScroll', () => paintLogicExports.listScroll(10, 4, { offset: 0, manual: false, focus: 0 }, 1, 0));
-await refuses('paintClip', () => paintLogicExports.paintClip('some text'));
-await refuses('gatherPaintAccent', () => paintLogicExports.gatherPaintAccent('fish'));
 await refuses('stripSegments', () => paintLogicExports.stripSegments(100, [], 20, 8));
 await refuses('railRows', () => paintLogicExports.railRows(100, 3));
 await refuses('statColumns', () => paintLogicExports.statColumns(100, 10, 8, 2));
 await refuses('PaintState.reset', () => paintLogicExports.PaintState.prototype.reset.call({}));
-await refuses('PaintState', () => new paintLogicExports.PaintState());
-await refuses('paintState', () => Number(paintLogicExports.paintState));
 await refuses('WHEEL_ROWS', () => Number(paintLogicExports.WHEEL_ROWS));
 check(typeof TRACE_STORAGE_KEY === 'string', 'clue trace key export missing');
 check(typeof RANGING_POTION === 'object', 'ranging potion descriptor is not loadable');
 check(typeof RETALIATE_VARP === 'number', 'RETALIATE_VARP export missing');
-check(typeof resolveLoopCadence === 'function', 'resolveLoopCadence export missing');
 check(typeof parseBurnMode === 'function' && typeof logsForTree === 'function' && typeof firemakingLevelForLogs === 'function' && typeof resolveFireSpot === 'function' && typeof nearestFireSpot === 'function' && typeof expandLocalFirePlot === 'function' && typeof runWest === 'function' && typeof shouldBurnFullLoad === 'function', 'firemaking helper exports missing');
 check(
     parseBurnMode('  CHOP THEN BURN ') === 'chop-then-burn' && parseBurnMode('Off') === 'off',
@@ -710,7 +747,7 @@ check(
         !shouldBurnFullLoad('chop-then-burn', true, 28, false),
     'full-load burn gate mismatch'
 );
-check(typeof nearestWalkableBank === 'function' && typeof nearestWalkableBankAsync === 'function' && typeof bankCostForFinder === 'function' && typeof bankCostForNavigator === 'function' && typeof bankDistance === 'function', 'bank location helper exports missing');
+check(typeof bankDistance === 'function', 'bank location helper exports missing');
 check(typeof tilesTo === 'function' && typeof trailWalkOpts === 'function' && typeof trailKit === 'function' && typeof nextCoordTool === 'function' && typeof extraItemShop === 'function' && typeof gateItemShop === 'function', 'clue helper exports missing');
 check(typeof worthStocking === 'function' && typeof buildCatalog === 'function' && typeof searchCatalog === 'function' && typeof resolveByName === 'function' && typeof resetLiveCatalog === 'function', 'catalog helper exports missing');
 check(
@@ -771,13 +808,12 @@ check(
         }) === 'nearest-fallback',
     'root bank helper exports mismatch'
 );
+// Upstream `rs2b0t/src/bot/api/trade/drivePartnerTrade.ts:77-90` reads the live screen;
+// `GatheringBotTasks.ts:482,557` call it without a state argument.
 const tradeState = globalThis.__rs2b0t_partner_trade;
 check(
-    tradeState('tradeScreenState', { trade_offer_open: false, trade_confirm_open: false }) === 'closed' &&
-        tradeState('tradeScreenState', { trade_offer_open: false, trade_confirm_open: true }) === 'confirm' &&
-        tradeState('tradeScreenState', { trade_offer_open: true, trade_confirm_open: false }) === 'offer' &&
-        tradeState('tradeScreenState', { trade_offer_open: true, trade_confirm_open: true }) === 'offer',
-    'trade screen state precedence mismatch'
+    tradeState('tradeScreenState') === 'closed',
+    'trade screen state readback mismatch'
 );
 const buyOps = [null, 'Value', 'Buy 1', 'Buy 5', 'Buy 10'];
 check(
@@ -839,25 +875,12 @@ await refuses('Fight.hasChaseTarget', () => Fight.prototype.hasChaseTarget.call(
 await refuses('ClueDuelSearch.constructor', () => new ClueDuelSearch());
 await refuses('ClueDuelSearch.tick', () => ClueDuelSearch.prototype.tick.call({}));
 await refuses('resetClueDuelSearch', () => resetClueDuelSearch());
-await refuses('stableClosedPoll', () => stableClosedPoll());
-await refuses('nearestWalkableBank', () => nearestWalkableBank());
-await refuses('nearestWalkableBankAsync', () => nearestWalkableBankAsync());
-await refuses('bankCostForFinder', () => bankCostForFinder());
-await refuses('bankCostForNavigator', () => bankCostForNavigator());
 await refuses('buildCatalog', () => buildCatalog());
 await refuses('searchCatalog', () => searchCatalog());
-await refuses('resolveByName', () => resolveByName());
 await refuses('resetLiveCatalog', () => resetLiveCatalog());
 await refuses('trailWalkOpts', () => trailWalkOpts());
 await refuses('extraItemShop', () => extraItemShop('Rope'));
 await refuses('gateItemShop', () => gateItemShop('Shantay pass'));
-await refuses('resolveLoopCadence', () => resolveLoopCadence());
-await refuses('BranchTask.constructor', () => new BranchTask());
-await refuses('BranchTask.validate', () => BranchTask.prototype.validate.call({}));
-await refuses('BranchTask.success', () => BranchTask.prototype.success.call({}));
-await refuses('BranchTask.failure', () => BranchTask.prototype.failure.call({}));
-await refuses('LeafTask.constructor', () => new LeafTask());
-await refuses('LeafTask.execute', () => LeafTask.prototype.execute.call({}));
 export default class RefreezeProbe extends LoopingBot { loop() {} }
 "#;
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -873,6 +896,7 @@ export default class RefreezeProbe extends LoopingBot { loop() {} }
     let isolate = LoadIsolate::spawn_with_game_data(js, LoadShape::CompatClass, vec![], game_data)
         .expect("spawn refreeze probe with selected game data");
     let ready = wait_ready(&isolate);
+    assert!(ready.is_ok(), "initial readiness: {ready:?}");
     let inventory_rows = [ItemRowInput {
         name: Some("Shark"),
         id: 385,

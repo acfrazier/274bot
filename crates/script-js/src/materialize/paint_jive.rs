@@ -48,7 +48,7 @@ struct LevelRow {
     cells: [String; 3],
 }
 
-pub(super) fn reset() {
+pub(crate) fn reset() {
     STATE.with(|s| {
         let mut st = s.borrow_mut();
         st.baselines.clear();
@@ -56,7 +56,7 @@ pub(super) fn reset() {
     });
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -275,10 +275,10 @@ fn frame_plan<'s>(
     let status = js_obj_opt_string(scope, cfg, "status").unwrap_or_default();
     let pages = js_obj_string_array(scope, cfg, "pages")?;
     let sections = js_obj_string_array(scope, cfg, "sections")?;
-    let page = super::paint_chrome::strip_select(&key, &pages);
+    let page = super::paint_chrome::strip_select(scope, &key, &pages)?;
     let rail_on = pages.first().is_some_and(|first| *first == page);
     let section = if rail_on {
-        super::paint_chrome::rail_select(&key, &sections)
+        super::paint_chrome::rail_select(scope, &key, &sections)?
     } else {
         String::new()
     };

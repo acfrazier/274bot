@@ -673,6 +673,8 @@ pub struct SlotDetail {
     /// `(hold)` while the slot holds on it and `(off)` when the profile
     /// toggle is off (detection still runs).
     random: Option<String>,
+    /// Latest typed survival decision from the slot's native runner.
+    survival: script::survival::SurvivalReport,
     /// The profile's last successful script assignment (display name).
     card: Option<String>,
     /// Only focused detail retains the richer native output; fleet rows stay scalar.
@@ -696,6 +698,7 @@ impl SlotDetail {
         self.modal = source.modal;
         self.welcome.clone_from(&source.welcome);
         self.random.clone_from(&source.random);
+        self.survival = source.survival;
         self.card.clone_from(&source.card);
         self.native_status.clone_from(&source.native_status);
         self.walk_risk.clone_from(&source.walk_risk);
@@ -764,6 +767,11 @@ impl SlotDetail {
         self.random.as_deref()
     }
 
+    /// The latest non-empty survival decision, if one is active.
+    pub fn survival(&self) -> Option<script::survival::SurvivalReport> {
+        (self.survival.decision != script::survival::Decision::None).then_some(self.survival)
+    }
+
     /// The profile's last successful script assignment (display name).
     pub fn card(&self) -> Option<&str> {
         self.card.as_deref()
@@ -821,11 +829,15 @@ impl SlotDetail {
     pub fn set_manual_walk_risk(&mut self, reason: Option<Arc<str>>) {
         self.manual_walk_risk = reason;
     }
+    /// Set the typed survival report (test fixtures).
+    pub fn set_survival(&mut self, survival: script::survival::SurvivalReport) {
+        self.survival = survival;
+    }
 }
 
 impl SlotDetail {
-    /// The retained native status of the focused slot; `None` for a slot
-    /// that runs no native script.
+    /// The focused slot's native status, including its last status after the run ends.
+    /// Returns `None` when the slot has no native status to retain.
     pub fn native_status(&self) -> Option<StatusView<'_>> {
         self.native_status.as_deref().map(StatusView::new)
     }
@@ -1437,6 +1449,13 @@ fn update_detail(
     scratch.clear();
     let random = status.is_some_and(|s| write_random(scratch, &s.random));
     changed |= set_text(&mut detail.random, random.then_some(scratch.as_str()));
+    let survival = status.map_or_else(script::survival::SurvivalReport::default, |status| {
+        status.survival
+    });
+    if detail.survival != survival {
+        detail.survival = survival;
+        changed = true;
+    }
     changed |= set_text(&mut detail.card, card.filter(|c| !c.is_empty()));
     changed
 }
@@ -1471,6 +1490,15 @@ fn write_state(
                     out,
                     "logged out (repeat guard: {count} unexpected logouts in {window_seconds}s; Log in to retry)"
                 );
+            }
+            Some(host_play::LoginLatchReason::IdleLogout) => {
+                out.push_str("logged out: idle logout by the server (Log in to connect)");
+            }
+            Some(host_play::LoginLatchReason::ServerLogout) => {
+                out.push_str("logged out by the server (Log in to connect)");
+            }
+            Some(host_play::LoginLatchReason::IdleDisconnect) => {
+                out.push_str("logged out: disconnected while idle (Log in to connect)");
             }
             _ => out.push_str("logged out (Log in to connect)"),
         },

@@ -1,5 +1,5 @@
 // Declared JS catalog ABI (rs2b0t-api index.d.ts names). Not the Rust host ABI.
-use script_js::declared_abi::{
+use script_js::tooling::declared_abi::{
     declared_surface_path, fixture_path, load_fixture, parse_index_dts, render_declared_surface,
     write_declared_surface, write_fixture, DeclaredKind,
 };
@@ -46,15 +46,37 @@ fn parse_index_dts_names_only_skips_types_and_internal() {
     let fun = got.iter().find(|e| e.name == "withdrawOp").unwrap();
     assert_eq!(fun.kind, DeclaredKind::Function);
 }
+fn abstract_declared_members() -> std::collections::HashSet<(String, String)> {
+    use script_js::tooling::compat_dts::CompatExport;
 
-/// Every fixture export is on `@rs2b0t/api` and every listed member is
-/// present (`in` / typeof function). Missing members that throw `not impl`
-/// from the Proxy get-trap fail this test; calling a stub is not required.
+    let authored =
+        script_js::tooling::compat_dts::load_authored_dts().expect("generated compat declarations");
+    let mut abstract_members = std::collections::HashSet::new();
+    for module in authored.modules {
+        for export in module.exports {
+            let CompatExport::Class { name, members, .. } = export else {
+                continue;
+            };
+            for member in members {
+                if member.is_abstract {
+                    abstract_members.insert((name.clone(), member.name));
+                }
+            }
+        }
+    }
+    abstract_members
+}
+
+/// Every fixture export is on `@rs2b0t/api` and every concrete member is
+/// loadable. Abstract subclass hooks are type-only on their base classes.
+/// Missing members that throw `not impl` from the Proxy get trap fail here.
+/// Calling a stub is not required.
 #[test]
 fn declared_abi_members_are_loadable() {
     use script_js::{LoadIsolate, LoadShape};
 
     let fixture = load_fixture().expect("js_declared_abi.json");
+    let abstract_members = abstract_declared_members();
     let mut body = String::from(
         r#"
 import * as api from '@rs2b0t/api';
@@ -110,6 +132,9 @@ export default class T extends LoopingBot {
             }
             DeclaredKind::Object | DeclaredKind::Class => {
                 for m in &exp.members {
+                    if abstract_members.contains(&(name.to_owned(), m.to_owned())) {
+                        continue;
+                    }
                     body.push_str(&format!("        checkMember({name:?}, _{name}, {m:?});\n"));
                 }
             }
@@ -224,7 +249,7 @@ fn regen_js_declared_abi() {
         "wrote {} exports to {} and {}",
         exports.len(),
         fixture_path().display(),
-        script_js::declared_abi::declared_surface_path().display()
+        script_js::tooling::declared_abi::declared_surface_path().display()
     );
 }
 
@@ -236,7 +261,6 @@ fn declared_stubs_throw_on_use() {
 
     let src = r#"
 import * as api from '@rs2b0t/api';
-import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
         const use = async (fn) => {
@@ -249,12 +273,10 @@ export default class T extends LoopingBot {
         };
         globalThis.__gatheringMapSquare = api.MAP_SQUARE;
         globalThis.__probe = await Promise.all([
-            use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
-            use(() => api.FISHING_LOCATIONS.length),
-            use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
+            use(() => Object.prototype.toString.call(api.GERRANT_VENDOR)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
-            use(() => bankPace()),
+            use(() => api.coinsToWithdraw()),
         ]);
 }
 }
@@ -271,7 +293,7 @@ export default class T extends LoopingBot {
     let rows = probe.as_array().cloned().unwrap_or_default();
     assert_eq!(
         rows.len(),
-        6,
+        4,
         "every remaining stub use must be probed: {probe:?}"
     );
     for (i, row) in rows.iter().enumerate() {
@@ -281,10 +303,10 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
-    let bank_pace = rows[5].as_str().unwrap_or("");
+    let unimplemented = rows[3].as_str().unwrap_or("");
     assert!(
-        bank_pace.contains("not impl: bankPace"),
-        "unimplemented call must name bankPace, got {bank_pace:?}"
+        unimplemented.contains("not impl: coinsToWithdraw"),
+        "unimplemented call must name coinsToWithdraw, got {unimplemented:?}"
     );
 }
 
@@ -424,7 +446,7 @@ fn overlay_runtime_citations_are_current() {
 }
 
 #[test]
-fn unconditional_refusals_have_never_overlays() {
+fn unconditional_refusals_use_compat_surface_policy() {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let entries = compat_overlay_entries(&workspace);
     let mut files = Vec::new();
@@ -475,8 +497,8 @@ fn unconditional_refusals_have_never_overlays() {
                 assert!(
                     matching
                         .into_iter()
-                        .any(|entry| entry["operation"] == "not-impl"),
-                    "refused function {relative}:{symbol} lacks a not-impl overlay"
+                        .all(|entry| entry["operation"] != "not-impl"),
+                    "refused function {relative}:{symbol} must not have a not-impl overlay"
                 );
             }
         }
@@ -620,7 +642,7 @@ fn declared_surface_matches_generator() {
     let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
     assert!(
         actual == expected,
-        "{} is stale; run: cargo test -p script --test declared_abi \
+        "{} is stale; run: cargo test -p script-js --test declared_abi \
          regen_declared_surface_from_fixture -- --ignored",
         path.display()
     );
@@ -670,6 +692,9 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
         .as_array()
         .expect("compatibility name maps")
     {
+        if row["mapping_kind"] == "type-re-export" {
+            continue;
+        }
         let name = row["public_name"].as_str().expect("public name");
         assert!(
             export_names.insert(name),

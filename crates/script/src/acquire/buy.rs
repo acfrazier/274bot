@@ -4,11 +4,11 @@
 //! the outstanding button on the same connection; its fresh page includes
 //! the final pack state before another button is admitted.
 
+use crate::interact::InteractReq;
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{ActionContext, ActionError, NativeMachine, WalkRetryState};
 use crate::quester::families::reach::walk_request;
 use crate::reach_route;
-use crate::shim::InteractReq;
 use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use api::selected::RunKey;
 use std::sync::Arc;
@@ -29,6 +29,18 @@ use std::task::Poll;
 ///
 /// This count can request a roundtrip, but can never settle a purchase.
 pub const BUY_REPLY_TICKS: u64 = 2;
+
+/// The Buy button batch for `remaining` wanted units against `stock` on the
+/// page: the shop's Buy 10 and Buy 5 buttons while both still fit, else Buy 1.
+pub(crate) fn buy_chunk(remaining: f64, stock: i32) -> i32 {
+    if remaining >= 10.0 && stock >= 10 {
+        10
+    } else if remaining >= 5.0 && stock >= 5 {
+        5
+    } else {
+        1
+    }
+}
 
 /// The three refusal lines emitted by `shop.rs2:69–90`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,7 +273,10 @@ enum ClosePurpose {
 enum Phase {
     Close(ClosePurpose, CloseWait),
     Open,
-    Walk(Box<Walk>),
+    Walk(Box<Walk>, api::WorldTile),
+    /// A failed approach eligible for the shared bounded next-tick retry,
+    /// replanned from the observed position.
+    RetryWalk(api::WorldTile),
     /// An unanswered opening Trade must produce its page before a retry
     /// closes it. Only a fresh engine rejection can end it without a page.
     DrainTrade(CloseWait),
@@ -284,6 +299,7 @@ pub struct BuyMachine {
     cancelled: bool,
     phase: Phase,
     open: OpenCore,
+    walk_retry: WalkRetryState,
     opening_trade: Option<OpeningTrade>,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
@@ -324,6 +340,7 @@ impl NativeMachine for BuyMachine {
             cancelled: false,
             phase,
             open: OpenCore::default(),
+            walk_retry: WalkRetryState::default(),
             opening_trade: None,
             keeper_index: None,
             pending: None,
@@ -418,12 +435,45 @@ impl NativeMachine for BuyMachine {
                         return Poll::Pending;
                     }
                 }
-                Phase::Walk(walk) => {
-                    let arrived = match walk.poll(cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Ok(receipt)) => receipt.into_arrival().is_ok(),
-                        Poll::Ready(Err(_)) => false,
+                Phase::RetryWalk(target) => {
+                    let target = *target;
+                    let tick = cx.evidence().tick;
+                    if self.walk_retry.waiting_for_next_tick(tick) {
+                        return Poll::Pending;
+                    }
+                    let walk = match crate::native::defer_budget(Walk::begin(
+                        walk_request(target, 1, None, cx.evidence()),
+                        cx,
+                    )) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(walk)) => walk,
                     };
+                    self.walk_retry.action_submitted();
+                    self.phase = Phase::Walk(Box::new(walk), target);
+                    return Poll::Pending;
+                }
+                Phase::Walk(walk, target) => {
+                    let target = *target;
+                    let receipt = match walk.poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Ok(receipt)) => Some(receipt),
+                        Poll::Ready(Err(_)) => None,
+                    };
+                    if receipt.as_ref().is_some_and(|receipt| {
+                        self.walk_retry
+                            .observe_approach_failure(receipt, cx.evidence().tick)
+                    }) {
+                        self.phase = Phase::RetryWalk(target);
+                        return Poll::Pending;
+                    }
+                    let arrived = receipt.is_some_and(|receipt| receipt.into_arrival().is_ok());
+                    if arrived {
+                        self.walk_retry.reset();
+                    }
                     let facts = self.open_facts(cx);
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
@@ -498,14 +548,7 @@ impl NativeMachine for BuyMachine {
                         continue;
                     };
                     self.stock = row.count;
-                    let remaining = self.request.qty - self.held;
-                    let chunk = if remaining >= 10 && row.count >= 10 {
-                        10
-                    } else if remaining >= 5 && row.count >= 5 {
-                        5
-                    } else {
-                        1
-                    };
+                    let chunk = buy_chunk(f64::from(self.request.qty - self.held), row.count);
                     let (id, slot, component) = (row.def.id, row.slot, row.component_id);
                     let closes_at = shop.value.server_closes;
                     let stock_before = row.count;
@@ -592,7 +635,7 @@ impl NativeMachine for BuyMachine {
 
     fn cancel(&mut self) {
         self.cancelled = true;
-        if let Phase::Walk(walk) = &mut self.phase {
+        if let Phase::Walk(walk, _) = &mut self.phase {
             walk.cancel();
         }
         self.pending = None;
@@ -802,7 +845,8 @@ impl BuyMachine {
             }
             Decision::Walk(tile) => {
                 let walk = Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)?;
-                self.phase = Phase::Walk(Box::new(walk));
+                self.walk_retry.action_submitted();
+                self.phase = Phase::Walk(Box::new(walk), tile);
                 Poll::Ready(Ok(false))
             }
         }

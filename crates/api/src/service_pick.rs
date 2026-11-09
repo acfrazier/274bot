@@ -109,7 +109,7 @@ impl ResolvedShopKeeper {
 
 /// Resolved pinned shop placements, bound once per revision-specific nav world.
 ///
-/// `data/shops/keepers.npc` joins keeper configs to the selected NPC type and
+/// The generated shop records join keeper configs to the selected NPC type and
 /// every selected `npc_placements` occurrence. All bots borrow this owner's
 /// rows; a pick neither copies the rows nor rebuilds their access rings.
 #[derive(Debug, Default)]
@@ -139,21 +139,24 @@ impl ShopKeeperFacts {
             .npc_placements()
             .map_or(&[][..], |facts| facts.rows.as_slice());
         let source = || {
-            shop_facts::keepers(data).flat_map(move |keeper| {
-                placements
-                    .iter()
-                    .filter(move |placement| placement.npc_id == keeper.keeper_id)
-                    .map(move |placement| {
-                        (
-                            keeper,
-                            WorldTile {
-                                x: placement.x,
-                                z: placement.z,
-                                level: placement.plane,
-                            },
-                        )
-                    })
-            })
+            shop_facts::keepers(data)
+                .into_iter()
+                .flatten()
+                .flat_map(move |keeper| {
+                    placements
+                        .iter()
+                        .filter(move |placement| placement.npc_id == keeper.keeper_id)
+                        .map(move |placement| {
+                            (
+                                keeper,
+                                WorldTile {
+                                    x: placement.x,
+                                    z: placement.z,
+                                    level: placement.plane,
+                                },
+                            )
+                        })
+                })
         };
         let count = source().count();
         assert!(count <= usize::from(u16::MAX), "pinned keeper row domain");
@@ -179,7 +182,7 @@ impl ShopKeeperFacts {
 
     /// Borrow rows stocking this selected item and permitted on this world.
     ///
-    /// Stock and membership come from pinned `data/shops/*.inv` joined to the
+    /// Stock and membership come from the generated shop records joined to the
     /// selected item rows. Empty nav access excludes a placement. Account-area
     /// gates remain the caller's filter before collecting a routed index list.
     pub fn candidates_for<'a>(
@@ -217,6 +220,7 @@ mod tests {
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = crate::game_data::for_revision(revision).expect("selected content");
             let keeper = shop_facts::keepers(&data)
+                .expect("generated shop facts")
                 .find(|keeper| keeper.keeper_config == "harry")
                 .expect("pinned Harry");
             let facts = ShopKeeperFacts::from_rows(

@@ -35,6 +35,10 @@ pub enum TargetSpec {
     Ids(Box<[i32]>),
     /// Whoever is already attacking the player.
     Attackers { npcs: bool, players: bool },
+    /// One named player to fight (the name as the game shows it). Starting
+    /// the fight needs `pvp: true` or the operator's `pvp.start_fights`
+    /// setting; the game allows it only in the Wilderness and a duel pen.
+    Player(Arc<str>),
 }
 
 /// One validated `api.combat.fight` request. Defaults are the native
@@ -58,6 +62,8 @@ pub struct CombatSessionRequest {
     pub potions: bool,
     pub retaliate: bool,
     pub budget_ticks: u16,
+    /// The script's opt-in to start a fight with `TargetSpec::Player`.
+    pub pvp: bool,
 }
 
 impl Default for CombatSessionRequest {
@@ -83,6 +89,7 @@ impl Default for CombatSessionRequest {
             potions: true,
             retaliate: native.retaliate,
             budget_ticks: native.budget_ticks,
+            pvp: false,
         }
     }
 }
@@ -104,6 +111,7 @@ const KEYS: &[&str] = &[
     "potions",
     "retaliate",
     "budgetTicks",
+    "pvp",
 ];
 
 /// A malformed or invalid native combat-session request.
@@ -192,7 +200,7 @@ fn target(value: &Value) -> Result<TargetSpec, CombatRequestError> {
     };
     if object
         .keys()
-        .any(|key| !matches!(key.as_str(), "npc" | "npcId" | "attackers"))
+        .any(|key| !matches!(key.as_str(), "npc" | "npcId" | "attackers" | "player"))
     {
         return Err(CombatRequestError::InvalidSettings);
     }
@@ -225,6 +233,16 @@ fn target(value: &Value) -> Result<TargetSpec, CombatRequestError> {
             ids.push(id);
         }
         return Ok(TargetSpec::Ids(ids.into_boxed_slice()));
+    }
+    if let Some(value) = object.get("player") {
+        let name = text(value)?.trim();
+        if name.is_empty() {
+            return Err(setting("target", "empty"));
+        }
+        if name.len() > MAX_NAME_BYTES {
+            return Err(setting("target", "too-long"));
+        }
+        return Ok(TargetSpec::Player(Arc::from(name)));
     }
     let attackers = object.get("attackers").expect("one known key");
     let (npcs, players) = match text(attackers)? {
@@ -303,7 +321,7 @@ impl CombatSessionRequest {
                 _ => return Err(setting("style", "unsupported")),
             };
         }
-        let npc_target = !matches!(request.target, TargetSpec::Attackers { .. });
+        let npc_target = matches!(request.target, TargetSpec::Names(_) | TargetSpec::Ids(_));
         if let Some(value) = get("pick") {
             request.pick = match text(value)? {
                 "nearest" => Pick::Nearest,
@@ -402,6 +420,9 @@ impl CombatSessionRequest {
                 .filter(|ticks| *ticks != 0)
                 .ok_or_else(|| setting("budgetTicks", "out-of-range"))?;
         }
+        if let Some(value) = get("pvp") {
+            request.pvp = boolean(value)?;
+        }
         Ok(request)
     }
 
@@ -429,6 +450,7 @@ impl CombatSessionRequest {
                         .enumerate()
                         .all(|(index, id)| *id >= 0 && !ids[..index].contains(id))
             }
+            TargetSpec::Player(name) => !name.trim().is_empty() && name.len() <= MAX_NAME_BYTES,
             TargetSpec::Attackers { npcs, players } => *npcs || *players,
         };
         if !target_ok {
@@ -494,6 +516,9 @@ impl CombatSessionRequest {
                 npcs: *npcs,
                 players: *players,
             },
+            TargetSpec::Player(name) => Target::Player {
+                name: Arc::clone(name),
+            },
         };
         let spells = match &self.spells {
             None => None,
@@ -546,6 +571,7 @@ impl CombatSessionRequest {
                 ..Allowances::default()
             },
             retaliate: self.retaliate,
+            pvp: self.pvp,
             ..CombatRequest::default()
         })
     }
@@ -674,6 +700,8 @@ fn abort_reason(reason: AbortReason) -> &'static str {
             "prep-readiness:style-echo-missing"
         }
         AbortReason::Unresponsive => "unresponsive",
+        AbortReason::SingleWayBlocked => "single-way-blocked",
+        AbortReason::PvpRefused(refusal) => refusal.code(),
     }
 }
 
@@ -693,6 +721,9 @@ pub struct CombatSummary {
     pub boost_doses: u8,
     pub antifire_doses: u8,
     pub protect_switches: u8,
+    /// Which source authorised the start of a fight with a player; `None` for
+    /// every fight that did not start one (an npc, or self-defence).
+    pub pvp_source: Option<crate::combat::PvpSource>,
 }
 
 impl From<&CombatReport> for CombatSummary {
@@ -719,6 +750,7 @@ impl From<&CombatReport> for CombatSummary {
             boost_doses: report.boost_doses,
             antifire_doses: report.antifire_doses,
             protect_switches: report.protect_switches,
+            pvp_source: report.pvp_source,
         }
     }
 }
@@ -794,6 +826,7 @@ impl From<CombatEnd> for Value {
                     "boostDoses": report.boost_doses,
                     "antifireDoses": report.antifire_doses,
                     "protectSwitches": report.protect_switches,
+                    "pvpSource": report.pvp_source.map(crate::combat::PvpSource::as_str),
                 },
             }),
             CombatEnd::Stopped { token } => serde_json::json!({
@@ -1033,6 +1066,9 @@ mod tests {
 
     #[test]
     fn names_resolve_against_selected_content() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let cow = tables.selected().npc_by_config("cow").unwrap().id;
         let native = decode(json!({ "target": { "npc": "cow" } }))
@@ -1097,6 +1133,9 @@ mod tests {
 
     #[test]
     fn every_request_field_reaches_the_native_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let native = decode(json!({
             "target": { "npc": "cow" },
@@ -1186,6 +1225,12 @@ mod tests {
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
+            pvp_blocked: 0,
+            pvp_source: None,
+            kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         let summary = CombatSummary::from(&report);
         assert_eq!(summary.end, ReportEnd::Aborted);
@@ -1201,7 +1246,8 @@ mod tests {
                 "report": {
                     "end": "aborted", "reason": "prep-failed:ammo", "npcType": 81,
                     "ticks": 12, "swings": 4, "casts": 0, "damageTaken": 2, "food": 1,
-                    "prayerDoses": 0, "boostDoses": 0, "antifireDoses": 0, "protectSwitches": 1
+                    "prayerDoses": 0, "boostDoses": 0, "antifireDoses": 0, "protectSwitches": 1,
+                    "pvpSource": null
                 }
             })
         );
@@ -1225,6 +1271,11 @@ mod tests {
                 Some(expected)
             );
         }
+        report.end = crate::combat::CombatEnd::Aborted(AbortReason::SingleWayBlocked);
+        assert_eq!(
+            CombatSummary::from(&report).reason.as_deref(),
+            Some("single-way-blocked")
+        );
 
         report.end = crate::combat::CombatEnd::Killed;
         let summary = CombatSummary::from(&report);
@@ -1260,5 +1311,99 @@ mod tests {
     fn request_and_terminal_stay_compact() {
         assert!(std::mem::size_of::<CombatSessionRequest>() <= 96);
         assert!(std::mem::size_of::<CombatEnd>() <= 64);
+    }
+
+    #[test]
+    fn case2_a_named_player_target_and_the_pvp_key_decode_and_reach_the_native_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let tables = tables();
+        assert!(KEYS.contains(&"pvp"));
+        // The request never decides the opt-in: `check()` accepts it, and the
+        // native machine's `begin` applies the one predicate.
+        let without = decode(json!({ "target": { "player": " bob " } })).unwrap();
+        assert_eq!(without.target, TargetSpec::Player(Arc::from("bob")));
+        assert!(!without.pvp);
+        assert_eq!(without.check(), Ok(()));
+        let native = without.resolve(&tables).unwrap();
+        assert!(matches!(&native.target, Target::Player { name } if name.as_ref() == "bob"));
+        assert!(!native.pvp);
+        let with = decode(json!({ "target": { "player": "bob" }, "pvp": true })).unwrap();
+        assert!(with.pvp && with.resolve(&tables).unwrap().pvp);
+        // Fighting back needs no pvp field and stays the default target shape.
+        let back = decode(json!({ "target": { "attackers": "any" } })).unwrap();
+        assert_eq!(back.check(), Ok(()));
+        assert!(!back.pvp);
+    }
+
+    #[test]
+    fn case2_player_target_refusals_keep_the_gather_vocabulary() {
+        for (input, expected) in [
+            (
+                json!({ "target": { "player": "" } }),
+                "invalid-setting:target:empty",
+            ),
+            (
+                json!({ "target": { "player": "x".repeat(MAX_NAME_BYTES + 1) } }),
+                "invalid-setting:target:too-long",
+            ),
+            (json!({ "target": { "player": 7 } }), "invalid-settings"),
+            (
+                json!({ "target": { "player": "bob", "npc": "cow" } }),
+                "invalid-setting:target:ambiguous",
+            ),
+            (
+                json!({ "target": { "player": "bob" }, "pick": "nearest" }),
+                "invalid-setting:pick:requires-npc-target",
+            ),
+            (
+                json!({ "target": { "player": "bob" }, "pvp": "yes" }),
+                "invalid-settings",
+            ),
+        ] {
+            assert_eq!(
+                decode(input.clone()).err().as_deref(),
+                Some(expected),
+                "{input}"
+            );
+        }
+        let valid = decode(json!({ "target": { "player": "bob" } })).unwrap();
+        for forged in [
+            TargetSpec::Player(Arc::from("")),
+            TargetSpec::Player(Arc::from(" ")),
+            TargetSpec::Player(Arc::from("x".repeat(MAX_NAME_BYTES + 1))),
+        ] {
+            let forged = CombatSessionRequest {
+                target: forged,
+                ..valid.clone()
+            };
+            assert_eq!(forged.check(), Err(setting("target", "invalid")));
+        }
+    }
+
+    #[test]
+    fn a_pvp_refusal_reaches_the_script_as_an_invalid_setting_code() {
+        use crate::combat::PvpRefusal;
+        for refusal in [
+            PvpRefusal::NotOptedIn,
+            PvpRefusal::NoAttackOp,
+            PvpRefusal::OutsideWilderness,
+            PvpRefusal::OpponentOutside,
+            PvpRefusal::LevelRange {
+                wilderness: 1,
+                difference: 12,
+            },
+            PvpRefusal::ChallengeArea,
+            PvpRefusal::NotOpponent,
+            PvpRefusal::DuelNotStarted,
+        ] {
+            assert_eq!(refusal.code(), refusal.to_string());
+            assert_eq!(
+                abort_reason(AbortReason::PvpRefused(refusal)),
+                refusal.code()
+            );
+        }
+        assert_eq!(PvpRefusal::NotOptedIn.code(), "pvp-not-allowed");
     }
 }

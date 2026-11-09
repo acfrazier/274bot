@@ -19,6 +19,45 @@ ownership, prefer the tracked suite entrypoint
 record — not automatic script qualification. Captures that require human
 readback stay `pending_visual_review`; raw failures stay preserved.
 
+## Revision 377 Cook's Assistant (Route A)
+
+The `cook_377` scenario is a bespoke Fairy Ring content check. It does not
+establish historical accuracy and does not change the production revision.
+It starts with an untouched quest, zero quest points and zero Cooking XP.
+The only seeds bypass this account's tutorial and teleport its position for
+commutes. Each commute has a `SEED position:` step label. No ingredient,
+mill variable, quest stage, XP or quest point is seeded.
+
+The cell talks to the Cook, takes the kitchen pot, farm egg and bucket,
+uses the bucket on the dairy cow, picks wheat, climbs both mill ladders,
+fills and operates the hopper, descends and empties the flour bin. It
+hands in through the Cook's dialogue. Read-only `getvar` replies prove
+server `cookquest=0→1→2`, `qp=0→1` and the mill writes. These steps are
+labelled `SERVER READBACK`; the Cook quest variable is not transmitted
+as a client varp. Client-visible checks require the red→yellow→green
+quest-list row, the quest-point display, completion interface, exactly
+300 Cooking XP gained from zero, and consumed ingredients.
+A refused or unavailable interaction fails its named step. The cell does
+not replace an unavailable action with a state seed.
+
+Revision-377 loc observations resolve morph forms only for name, description
+and actions. Size, oriented footprint, collision flags, active status,
+force-approach, animation ID and map icons remain those of the placed base
+config, even when its selected form is absent. This follows Java 377's
+separate menu/Examine and placement/routing paths; 274/289 are unchanged.
+
+The ignored `cook::cook_377_route_a` test in `revision_377_live` runs this
+registered scenario through the host pump and selected 377 client. Supply
+the resource variables listed in that test's parent module, `LIVE=1`,
+`BOT_LIVE_NAME_PREFIX` (1–4 characters), and an absolute `ROUTE_A_EVIDENCE_DIR`. Run it
+through `isohome` with
+`cargo test -p host-play --features live-harness,test-support,debug-catalog --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1`.
+Each fresh account produces a JSONL trace with seed labels, server
+readbacks, step names, dialogue, inventory, quest-list colours,
+transmitted quest-point total, completion-interface reward text and Cooking XP.
+The mainland fixture includes a clean relog to unlock the quest tab,
+as in the TS runner. Neither the cell nor the fixture changes world speed.
+
 ## Live entry points
 
 Live cells need a local engine and cache, run one at a time
@@ -249,6 +288,46 @@ content) is needed by:
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
 these lists in step with what the cells send.
 
+## Clean logout after live proof
+
+The TUI live runner and the shared Quester runner (including Entrana and timed
+jail) acknowledge script Stop before requesting logout. Their shared
+`scenario::teardown::CombatLogout` helper acts only after that point.
+
+A fresh exact system message, `You can't log out until 10 seconds after the end
+of combat.`, permits one ordinary `::tele` of only the fixture account to
+`3220,3220,0`. No NPC, HP, inventory, world state or proof result is changed.
+A stale message, player chat or a different logout refusal does not permit it.
+The helper obeys normal cheat admission; refusal fails teardown.
+
+The fixture must observe the account at that tile, then observe 16 more game
+ticks before another logout request. R289 content sets this lockout in
+`content/scripts/login_logout/logout.rs2:26-30`; NPC hits renew it in
+`content/scripts/skill_combat/scripts/player/auto_retaliate.rs2:1-7`, even after
+the bot script stops. Render polls and elapsed wall time do not count as game
+ticks. The existing 30-second teardown deadline is not extended.
+
+This is post-proof fixture cleanup, not an in-script combat escape. Quester's
+cell actor is frozen before Stop, and its receipt records the combat refusal,
+account-only teleport and safe-tile arrival tick separately from quest proof.
+Interactive Stop and logout do not use this helper.
+
+## M4 unattackable-target escape fixture
+
+The host-play M4 cell starts its account at `3110,3346,0`, outside the natural
+tree's one-tile hunt range. It preserves the exact Start baseline: eight of
+30 Hitpoints, one Prayer and four lobsters. It seeds no antipoison and uses
+no cure gate. The tree uses ordinary melee crush damage, not poison.
+
+The authored approach targets `3108,3346,0` with radius one. Its stage declares
+`nasty_tree@3108,3346,0` in `cross`, because this test deliberately enters the
+tree's hunt range. Quester forbids undeclared danger crossings. The declared
+zone permits this route without changing admission policy or poison facts.
+The harness compiles the Path against the selected navigation world's zone
+catalog, so the compiler validates that declaration before account creation.
+The bot must perform the approach after Start, observe the unattackable
+attacker, abort combat and walk out.
+
 ## Random-event Guardian cells
 
 `guardian_event_*` (the eight general events, `::macro_event 1`–`8`) and
@@ -349,26 +428,24 @@ inventory tab to become available.
 ```sh
 ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \
   isohome target/release/tui-play --profile local-289 \
-  --nav-pack <274bot-289-v17.navpack> --nav-flags <274bot-289-v17.navflags> \
+  --nav-pack <target/local-data/nav/289/274bot.navpack> \
+  --nav-flags <target/local-data/nav/289/274bot.navflags> \
   --catalog <rs2b0t> --live script_guardian_skill_river_troll
 ```
 
 ## Running a scenario
 
 Start the local engine for the profile under test and provide its client
-cache. Application builds already bake and stage nav for the selected
-**build-time** revision (`BOT_NAV_REVISION`, default **289**) next to the
-binary, so ordinary WalkTo needs no manual pack step. Use `nav-pack` only for
-deliberate custom-input bakes. `RS2B0T` (or `--catalog DIR`) names the
-external catalog checkout for scenarios that start a catalog script:
+cache. Before a product build, generate game data and navigation from your own
+engine and content checkouts with `python tools/local-data/build.py`. The host
+build stages existing local payloads; `BOT_NAV_BUILD=skip` stages none.
+`NAV_PACK` and `--nav-pack` select runtime overrides. `RS2B0T` (or `--catalog
+DIR`) names the external catalog checkout for scenarios that start a catalog
+script:
 
 ```sh
 export ENGINE_DIR=/absolute/path/to/engine
 export RS2B0T=/absolute/path/to/catalog
-# optional custom bake (not required for default bundled nav):
-# export NAV_PACK=/absolute/output/274bot.navpack
-# export NAV_FLAGS=/absolute/output/274bot.navflags
-# cargo run --locked --release -p nav-bake --bin nav-pack
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
@@ -406,7 +483,7 @@ it cannot register.
 Match `--profile` and the engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`).
 
-The nav pack is format v17 (magic `274V`); `decode` rejects v16 and older as
+The nav pack is format v18 (magic `274V`); `decode` rejects v17 and older as
 `BadVersion`. A new executable does not rewrite an existing override pack, so
 rebake override packs with `nav-pack` after updating.
 
@@ -701,6 +778,47 @@ Sequence, Stop/restart and death assertions belong to the live cell. Additional
 bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
 never into the gameplay proof. Shared world entities must remain real content.
 
+## Revision-377 combat, Survival and clue cells
+
+The ignored `revision_377_live::machines` cells use the same production
+template and resource inputs as the revision-377 Gatherer cells below.
+Run with `BOT_LIVE_NAME_PREFIX=f377` through `isohome`.
+Set an absolute `MACHINES_377_EVIDENCE_DIR`.
+Use `machines_377_` with `--ignored --nocapture --test-threads=1`.
+Enable `debug-catalog,live-harness,test-support`. Clue cells also require `js`.
+
+Each cell uses a fresh account and the normal mainland logout/login.
+All account fixtures finish before the native machine starts:
+
+- Route admission receives five cooked chompy foods and Hitpoints 40.
+  Capture must retain all five foods without missing facts.
+  An advisory must retain a known assessment with those foods.
+  A native walk must then arrive at (3218,3245,0).
+  This food is absent from the legacy revision-289 combat table.
+- Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
+  sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
+  The native Combat action must report a kill and a swing.
+  Combat XP must increase. Native Reach waits for the death drop, then takes
+  a new cowhide.
+- Survival eating receives Hitpoints 15, takes 12 HP of pre-Start damage
+  through the supported `~hit` fixture, and receives five lobsters.
+  Poison severity 50 supplies the poison line before Start.
+  Cure policy remains `never`. A native food-guarded walk must move, consume
+  food, and increase observed HP.
+- Survival cure receives Hitpoints 40, five lobsters, and one single-dose
+  antipoison. Poison severity 50 supplies the poison line before Start.
+  A native food-guarded walk must move and produce the drink message,
+  dose-to-vial inventory change, and owner-observed immunity.
+- Sherlock receives one selected Hans clue, either easy `simple005` or hard
+  `riddle012`. Its handoff must remove that clue and produce another clue or
+  casket. This does not qualify the rest of the generated trail.
+  The cell installs the canonical `script-js` card slice, as the host binary does.
+
+The cells seed no scene entities, loot, replacement clues or post-Start actions.
+They capture prepared and result frames from the real client renderer.
+These finite witnesses do not establish general combat safety, every cure,
+search/dig clues, or complete treasure trails.
+
 ## Gatherer live cells
 
 Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
@@ -755,6 +873,173 @@ Idle/Failed owner with three fresh quiet game ticks. Cleanup can retire the
 completed request ID to zero while all route work is inactive; any later
 nonzero request fails the check. Missing permission, tile or navigation
 evidence also fails. Neither fixture seeds resources or changes the safety gate.
+
+### Bank closure observations
+
+The bank lifecycle cells require an observed open-to-closed bank modal transition.
+Both observations must belong to the same login session and be in-game frames.
+An offline frame discards the pending open observation.
+An initially closed modal, a sent close request or a status message does not prove closure.
+The observer therefore does not depend on sampling the transient bank-close status message.
+Deposit conservation, withdrawal, return, fresh yield and XP requirements remain unchanged.
+Bank disposition does not require the separate Power disposal witness.
+
+### Knife-arm latency and qualification cells
+
+The ignored `gatherer_tick_live` tests in `gatherer_live.rs` use Engine L,
+game `127.0.0.1:47594` and assets `127.0.0.1:3080`. Set `LIVE=1`, `BOT_CPU=1`,
+`GATHERER_GAME_PORT=47594`, `GATHERER_HTTP_PORT=3080`, and a
+`BOT_LIVE_NAME_PREFIX` of one to four characters. The selected local profile
+must observe a members world. Do not change the engine tick or shared resources.
+
+Set the absolute engine, navigation and catalog paths above. Set
+`GATHERER_TICK_EVIDENCE` to a new absolute JSON filename, not a directory.
+Each cell refuses to overwrite evidence and logs out its account on failure.
+
+```sh
+cargo test -p host-play --no-default-features --features live-harness,test-support \
+  --test gatherer_live -- --ignored --exact gatherer_tick_live::probe_tick_landing --nocapture
+```
+
+The probe requires at least 300 completed cycles and real Fishing XP.
+It records all six verdict families, fresh animation serials, first-seen chat
+polls, inventory counts, host dispatch receipts and actual encoded packets.
+It does not impose a verified-fraction gate. The external verdict script
+derives that fraction from the probe before qualification starts.
+
+Three clocks are recorded separately. Frame windows and `native_dispatch_tick`
+use Play's native completion clock. `client_snapshot_tick` is the
+session-relative `GameSnapshot::tick()`. Each API receipt's `dispatch_tick`
+is the raw Client `PLAYER_INFO` generation, `snapshot.gens().player_info`,
+which the Client input observer also publishes. The API requires that raw
+generation to match both the context stamp and input lineage. Its live-owner
+callback separately fences the run, session and request. Do not substitute
+either other clock or a calculated offset for any of these checks.
+
+Then run `gatherer_fly_tick`, `gatherer_net_tick`, `gatherer_mine_iron_tick`,
+`gatherer_oak_tick` and `gatherer_tick_refused_rune` in the same module.
+Use a new evidence filename for each cell. The first four require at least
+60 completed cycles and real skill XP. The rune-pickaxe cell requires
+`Knife (off: no-gain)` and continued native Mining XP. Net qualification counts
+the observed opener/click cadence, not an invented roll animation. Its allowed
+Fletching-loss count and verified-fraction threshold must be fixed from the
+probe before the net cell runs.
+
+The iron cell seeds Mining 21, the selected mithril pickaxe's use minimum
+(`gathering.json:21132-21135`), rather than the design's Mining 15. This is an
+approved acceptance correction. It keeps the real iron rocks, mithril tool,
+60-cycle gate and replacement-rock handoff. Its oracle uses no Mining-15
+success probability; it checks measured cycles, XP and actual target changes.
+
+Player stands differ from fixed resource tiles. The river fixture starts at
+2503,3498 beside the real `loc_2027` at 2504,3498. The oak fixture starts at
+3016,3170 beside the tree at 3017,3170. Offline checks require standable tiles
+in the reviewed navigation pack. Setup uses `interact::tele_args` and then
+checks the actual tile, stats, items and loaded resource before Start.
+The net player starts at 3267,3149, north of the authored NPC 330 spawn at
+3267,3148. Mining starts at 3284,3368 beside the authored eastern iron rocks,
+with nearby copper rocks for the separate engine cases.
+
+### Knife-arm engine cases
+
+`crates/host-play/tests/tick_engine.rs` runs the native Gatherer through Play's
+operator Start path and the real encrypted Client driver. It requires both
+`live-harness` and `test-support`. These bounded cases are assigned Engine T on
+aubaine, game `127.0.0.1:48594`, assets `127.0.0.1:4080`, with the exact account
+prefix `tmx`. They do not use Engine L. Main alone starts, stops or patches T.
+
+Set `LIVE=1`, `BOT_LIVE_NAME_PREFIX=tmx`, absolute `GATHERER_ENGINE_DIR`,
+`GATHERER_NAV_PACK`, `GATHERER_CATALOG_ROOT`, `LIVE_EVIDENCE_DIR` and
+`TICK_ENGINE_PACKET_LOG`. The packet log is
+`/Volumes/dev-scratch/engines/lostcity-289-t/runtime/logs/packet-outcomes.jsonl`.
+Use a disposable HOME and the normal isolated-home runner. For example, after
+setting those inputs:
+
+```sh
+cargo test -p host-play --features live-harness,test-support --test tick_engine \
+  tick_engine_clean_continuing_river -- --ignored --exact --test-threads=1 --nocapture
+```
+
+The cases cover clean continuing and ending arms, the three distinct late
+histories, two copper histories, preflight target removal, Make without its
+click, two lone-opener histories, and members-only refusal on a free world.
+The suffix-drop case forwards the opener and Make, drops the remaining byte
+suffix, then requires an unknown-opcode refusal and a `read_eof` reconnect to a
+new Ready session. It does not require an old-session roll after EOF.
+The ending-net case observes twenty cycles. The free-world case requires
+Engine T's real `engine/data/config/world.json` to set `node.members=false`.
+The selected local profile must bind that guarded file; a client-side override
+cannot replace the engine mode. Only Main may prepare and restore that phase.
+
+The test-only hooks hold or split encoded transport, drop a suffix after
+`IF_BUTTON`, cancel a real request after an encoded prefix, remove a target from
+the dispatch snapshot, or suppress the snapshot's open-chat observation. They
+do not inject products, XP, animation signals or successful receipts.
+Non-`test-support` builds have neither the mutable snapshot variant nor these
+dispatch hooks.
+
+Each case writes the receipt and actual-wire streams, per-frame signals,
+status, transport history and account-filtered engine packet outcomes to its
+own evidence directory. Except for the suffix-drop case, the engine log's
+decoded relevant opcode order must match the Client's encoded stream. The
+suffix-drop case verifies the complete proxy byte accounting, accepted opener
+and Make, and the first post-drop unknown-opcode refusal; it records the
+client-session, slot-stream and host-log lifecycle through reconnect and Ready.
+Missing, incomplete or gapped engine records fail the case. The engine tick and
+Client observation tick are separate clocks. `handler_accepted` and
+`charged_user_event` report handler and event accounting; `outcome` separately
+records script acceptance, suspension or refusal. A true handler result can
+still have a refused script outcome. The printed accepted event counts use
+`charged_user_event`, not the outcome string. An `ENGINE_PACKET_LOG_FAILED`
+sink error invalidates the run.
+
+Signal assertions retain the packet-position intervals from the tick-manipulation
+facts, section 1.5. A chat line first seen at a wake of `t` belongs to `t + 1`;
+at an edge it is bounded to `[t, t + 1]`. A fresh inbound `IF_CLOSE` count is
+exact at a wake and bounded to `[t - 1, t]` at an edge. Retained counts prove no
+new close. A chat-only close does not require a main-modal transition stamp.
+
+Ordinary checked Interact clicks do not have ordered-dispatch receipts. Their
+actual `MOVE_OPCLICK`/resource-op pair must come from one Client frame; the
+independent engine stream still proves server handling. Three foreign events
+use the real Client's same-tile walk encoder, not paths into neighboring water.
+The net fixture finishes a real path to the currently observed ordinary spot
+before Start. The copper stand is adjacent to its authored rock. Case budgets,
+including the free-world refusal window, start at the actual Knife dispatch.
+
+All fixtures seed only the tested account before Start. Shared spots, rocks and
+trees remain real content. Each case stops the script and logs out its account,
+including on assertion failure.
+
+### Revision 377
+
+The ignored `revision_377_live::gatherer` cells run the native Gatherer through
+the canonical revision-377 production template. They select generated methods
+and named sites rather than the older live harness's revision-289 profile.
+The cells chop normal trees near Lumbridge and net shrimp at Draynor.
+Both use the selected Draynor bank, return to the resource area, and require
+fresh yield after the return. Lumbridge has no named bank in this data.
+The current selected placements do not provide a Lumbridge-swamp shrimp site.
+
+Run these cells through `isohome` with `LIVE=1`, an owned
+`BOT_LIVE_NAME_PREFIX`, and absolute `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`,
+`CLIENT_UNPACK_DIR`, `NAV_PACK`, and `NAV_FLAGS` paths.
+Set `GATHERER_377_EVIDENCE_DIR` to the evidence output directory.
+Use the test filter `gatherer_377_` with `--ignored --nocapture --test-threads=1`.
+Keep `TMPDIR` and the isolated home outside the operator's normal home.
+
+The fixture makes the mainland hop, then logs out and back in before preparing tools.
+Each fresh account receives one inventory tool and skill level 40 before Start.
+Fishing also receives Defence 60 and waits for combat level 18 in the live
+appearance. This exceeds the selected Draynor wizard zone's combat cap of 14.
+Danger-zone permission remains disabled.
+The fixture clears its inventory, equipment and bank, then positions the player.
+It never seeds resources, NPCs, booths, proof products or post-Start XP.
+The proof requires an observed empty bank page, at least 27 deposited products,
+a completed native trip, and renewed gathering with the tool retained.
+Fishing also requires banked shrimp, not only anchovies.
+The real client renderer records prepared, banked and returned frames with
+snapshot sidecars. These finite cases do not establish every site's access.
 
 ### Target switching
 
@@ -968,7 +1253,7 @@ PNG with a matching JSON/Core record in a per-run capture folder under
 `$LIVE_EVIDENCE_DIR`; inspect that image alongside the receipt before
 accepting the live proof. The final receipt's `tile` is normalized to
 `local_player.tile`. An explicit navigation pack must have its
-`.navpack.json`, `.navreach`, `.navflags`, `.navcanlight` and `.navpois` files
+`.navreach`, `.navflags`, `.navcanlight` and `.navpois` files
 beside it.
 
 The ignored offline replay `replay_walk_guard_w1_retained_receipts` applies
@@ -1084,7 +1369,7 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128. The two native-trade scenarios also accept the paired pilot N=2. Accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
 | `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
@@ -1100,6 +1385,17 @@ without starting the catalog script. `active` starts the scenario's native or
 catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
+
+### Diagnostic logging
+
+Active and lifecycle memory benchmarks use the ordinary catalog scenarios.
+Unsupported scenario names fail startup; there are no candidate-only aliases.
+
+Fatal memory TUI errors use `host_log!` and its central password redaction.
+Their error text and exit code are unchanged. In-process allocation, layout,
+V8 shape and heap-bound tests remain separate from lab process-memory results.
+
+### Common workload phase gates
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
 for two seconds. A ready pulse before the mainland-hop reload does not latch.
@@ -1294,13 +1590,10 @@ not apply (a headless `tui-play` has no adapter or panel frames):
   `adapter_selections` counting how many times the panel selected one (more than
   one means the GPU stack was rebuilt). It is recorded once, in the run metadata,
   without `BOT_DEBUG` and without a log line.
-- `game_data`: the profile's generated-facts trust decision with its reason:
-  `attached`, or withheld because the selection is `unsupported-server`, the
-  cache does not match the generated asset (`cache-identity`), or a pinned
-  generator source failed verification (`source-rejected`, with how many of the
-  inputs failed and the first failures by root, pinned path and kind). Facts are
-  withheld exactly as before; only the cause is recorded, and the same cause is
-  logged once at warn level when a profile is bound for play.
+- `game_data`: whether generated facts were attached for the selected supported
+  revision. Only an unsupported selection withholds them
+  (`unsupported-server`). Cache-identity and source-audit reasons are no longer
+  part of this status.
 - Startup timeline, in seconds from the process entry the frontend `main`
   recorded: `startup_window_created_s`, `startup_gpu_ready_s`,
   `startup_first_render_s`, `startup_first_frame_presented_s` (the first

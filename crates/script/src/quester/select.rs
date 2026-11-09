@@ -209,8 +209,10 @@ mod tests {
 
     #[test]
     fn any_empty_selects_and_unknown_skip_waits_on_empty_snapshot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
-        let pin = data.selected_pin().unwrap();
         let quests = quests(&data);
         let document = decode_cook().unwrap();
         let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
@@ -220,17 +222,20 @@ mod tests {
         let mut ledger = None;
         let mut budget = TickBudget::default();
         let cx = ActionContext {
+            stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence: stamp(),
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: view,
             retained: &mut retained,
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             shop_keepers: None,
+            wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -271,6 +276,9 @@ mod tests {
 
     #[test]
     fn romeo_known_empty_bank_advances_to_missing_item_acquisition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let document =
@@ -327,12 +335,14 @@ mod tests {
 
     #[test]
     fn rune_stage_one_selects_talisman_recovery_and_package_steps_in_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let compiled = path(RUNE_MYSTERIES_JSON, &data, &quests);
         let pending = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::True, None),
@@ -394,7 +404,6 @@ mod tests {
         let package = inventory_snapshot(&data, &[("research_package", 1)]);
         let package_pending = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::False, None),
@@ -415,7 +424,6 @@ mod tests {
 
         let package_delivered = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::False, None),
@@ -462,12 +470,14 @@ mod tests {
 
     #[test]
     fn sheep_partial_products_use_journal_remaining_count_and_keep_full_supply_recoverable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let compiled = path(SHEEP_JSON, &data, &quests);
         let sequence_progress = progress_for_stage(
             &compiled,
-            &data,
             "sheep:1",
             &[("sheep:balls_to_go", Truth::True, Some(12))],
         );
@@ -602,11 +612,17 @@ mod tests {
 
     #[test]
     fn nearest_uses_authored_approach_for_talk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family("talk", serde_json::json!({"npc": "cook"}));
     }
 
     #[test]
     fn nearest_uses_authored_approach_for_interact() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family(
             "interact",
             serde_json::json!({
@@ -622,6 +638,9 @@ mod tests {
 
     #[test]
     fn nearest_uses_authored_approach_for_use_on() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family(
             "use_on",
             serde_json::json!({
@@ -637,6 +656,9 @@ mod tests {
 
     #[test]
     fn monk_friends_cave_side_boundary_selects_blanket_instead_of_rewalking_ladder() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _home = crate::IsolatedEnv::enter("monk-friends-select");
         let data = selected();
         crate::quester::compile::prepare_for_test({
@@ -647,7 +669,17 @@ mod tests {
         let quests = quests(&data);
         let document: PathDocument =
             serde_json::from_slice(path_bytes("drunkmonk").expect("released Path")).unwrap();
-        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        // Stage 10 declares its cave zones, so the compile needs the real zone catalog
+        // (the same NAV_PACK gate as the other real-pack tests; unset skips).
+        if std::env::var_os("NAV_PACK").is_none() {
+            return;
+        }
+        let lease = crate::gatherer::select::tests::test_real_nav_lease();
+        let zones = lease.zones().expect("real 289 zone catalog");
+        let compiled = crate::quester::compile::compile_uncached_for_test_with_zones(
+            &document, &data, &quests, zones,
+        )
+        .unwrap();
         let mut snapshot = inventory_snapshot(&data, &[]);
         snapshot.seed_local_player(crate::quester::families::tests::local_player(
             api::WorldTile {
@@ -667,6 +699,9 @@ mod tests {
 
     #[test]
     fn gertrude_yard_cursor_does_not_reselect_earlier_walks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let document: PathDocument =
@@ -695,6 +730,9 @@ mod tests {
 
     #[test]
     fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::ActionError;
         use crate::quester::compile::{PredicatePlan, StepContext, StepPlan, StepRun};
         struct Skip(Truth);
@@ -721,10 +759,13 @@ mod tests {
             loadout: None,
             tactic: None,
             advances: false,
+            attempt_budget: None,
             skip_if: Arc::new(Skip(Truth::False)),
             skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),
             plan: Arc::new(Anchor(api::WorldTile { x, z, level: 0 })),
+            hazard: None,
+            hazard_source: None,
         };
         let data = selected();
         let quests = quests(&data);
@@ -810,6 +851,9 @@ mod tests {
 
     #[test]
     fn ordered_sequence_selects_from_the_cursor_and_jumps_proven_skips() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();
@@ -859,6 +903,9 @@ mod tests {
 
     #[test]
     fn authored_sequence_ignores_the_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();
@@ -889,6 +936,9 @@ mod tests {
     /// the hall step does not exist).
     #[test]
     fn totem_combo_door_steps_are_side_aware() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();
@@ -937,7 +987,6 @@ mod tests {
         ] {
             let progress = [progress_for_stage(
                 &compiled,
-                &data,
                 "totem:4",
                 &[("combo", Truth::True, None)],
             )];
@@ -988,7 +1037,6 @@ mod tests {
         ] {
             let progress = [progress_for_stage(
                 &compiled,
-                &data,
                 "totem:4",
                 &[("combo", combo, None)],
             )];

@@ -46,8 +46,8 @@ pub(super) struct BoatRoute {
     varp_req: Option<(i32, i32)>,
 }
 
-/// The 2004 boat journeys: `~set_sail(` landings from area scripts, NPC
-/// tiles from jm2, and disembark locs from `gangplank.loc` / loc.pack.
+/// The legacy 274/289 boat journeys: `~set_sail(` landings from area scripts,
+/// NPC tiles from jm2, and disembark locs from `gangplank.loc` / loc.pack.
 /// The two Entrana board planks are included below; the other four board
 /// planks are intentionally out of scope, not treated as movement refusals.
 pub(super) const GANGPLANK_TICKS: i32 = 2;
@@ -349,25 +349,132 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
     },
 ];
 
-/// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
-/// journey (NPC tile → `set_sail` deck), plus loc-backed gangplank crossings.
-/// Kind is Ladder: these are level-changing loc ops, not NPCs.
+// Content: `monk_of_entrana.rs2:26-50` rejects every listed category from
+// inventory and worn gear, except `cannon_parts`, which it checks in inventory.
+const ENTRANA_RESTRICTED_CATEGORIES: &[&str] = &[
+    "armour_hands",
+    "weapon_staff",
+    "armour_helmet",
+    "armour_body",
+    "armour_legs",
+    "armour_shield",
+    "armour_cape",
+    "armour_godcape",
+    "weapon_slash",
+    "weapon_blunt",
+    "weapon_stab",
+    "weapon_crossbow",
+    "weapon_axe",
+    "weapon_pickaxe",
+    "weapon_javelin",
+    "weapon_2h_sword",
+    "weapon_spear",
+    "weapon_spiked",
+    "weapon_thrown",
+    "weapon_scythe",
+    "weapon_bow",
+    "weapon_claws",
+    "weapon_polearm",
+    "cannon_parts",
+];
+
+fn entrana_restrictions(data: &api::game_data::SelectedGameData) -> (Vec<i32>, Vec<i32>) {
+    let mut forbidden_held = Vec::new();
+    let mut forbidden_worn = Vec::new();
+    for item in data.items() {
+        let Some(category) = item.category.as_deref() else {
+            continue;
+        };
+        if ENTRANA_RESTRICTED_CATEGORIES.contains(&category) {
+            forbidden_held.push(item.id);
+            if category != "cannon_parts" {
+                forbidden_worn.push(item.id);
+            }
+        }
+    }
+    forbidden_held.sort_unstable();
+    forbidden_held.dedup();
+    forbidden_worn.sort_unstable();
+    forbidden_worn.dedup();
+    (forbidden_held, forbidden_worn)
+}
+
+const ENTRANA_SAIL_NPC: i32 = 657;
+
+/// Revision 377 resolves each dock NPC from the selected maps. The legacy
+/// origin identifies only the dock's mapsquare and plane, never a fallback.
+/// All candidates must select this journey under the script's spawn rule;
+/// choose the lexicographically first proven spawn, independent of map order.
+/// Legacy revisions retain their exact route table.
+fn boat_start_377(
+    route: &BoatRoute,
+    positions: &HashMap<i32, Vec<NpcPlacement>>,
+) -> Option<WorldTile> {
+    let candidates = positions.get(&route.npc)?.iter().filter(|spawn| {
+        spawn.level == route.at.level
+            && spawn.x.div_euclid(64) == route.at.x.div_euclid(64)
+            && spawn.z.div_euclid(64) == route.at.z.div_euclid(64)
+    });
+    let mut selected = None;
+    for spawn in candidates {
+        // customs_officer.rs2:82 selects Ardougne iff coordx(npc_coord)
+        // < 2815; fare and delay are identical on both branches. The other
+        // curated handlers do not branch on the NPC's spawn coordinate.
+        let matches_trip = match route.npc {
+            380 => match (route.to.x, route.to.z, route.to.level) {
+                (2683, 3268, 1) => spawn.x < 2815,
+                (3032, 3217, 1) => spawn.x >= 2815,
+                _ => false,
+            },
+            378 | 381 | 518 | 657 | 658 => true,
+            _ => false,
+        };
+        if !matches_trip {
+            return None;
+        }
+        let tile = (spawn.x, spawn.z, spawn.level);
+        selected = Some(selected.map_or(tile, |previous| std::cmp::min(previous, tile)));
+    }
+    selected.map(|(x, z, level)| WorldTile { x, z, level })
+}
+
+/// One `Talk-to` edge per admitted journey, plus loc-backed gangplanks.
 pub(super) fn boat_edges(
+    content_root: &Path,
     graph: &mut TransportGraph,
     gates: &ObservableGates,
     audit: &mut VarpGateAudit,
+    game_data: Option<&api::game_data::SelectedGameData>,
+    skipped: &mut HashMap<&'static str, usize>,
 ) {
+    let positions = game_data
+        .filter(|data| data.revision() == 377)
+        .map(|_| npc_positions(content_root));
     for r in BOAT_ROUTES {
+        let at = if let Some(positions) = &positions {
+            let Some(at) = boat_start_377(r, positions) else {
+                bump(skipped, "boat_missing_or_ambiguous_npc_spawn", 1);
+                continue;
+            };
+            at
+        } else {
+            r.at
+        };
+        let (forbidden_held, forbidden_worn) = if r.npc == ENTRANA_SAIL_NPC {
+            game_data.map(entrana_restrictions).unwrap_or_default()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         gates.admit_edge(
             graph,
             TransportEdge {
                 takeoff: None,
                 worn_all_req: Vec::new(),
-                forbidden_held: Vec::new(),
-                forbidden_worn: Vec::new(),
+                forbidden_held,
+                forbidden_worn,
                 kind: TransportKind::Boat,
                 player_delta: None,
-                at: r.at,
+                at,
                 to: r.to,
                 loc_id: r.npc,
                 option: 1,
@@ -403,9 +510,10 @@ pub(super) fn boat_edges(
 // Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
 // ---------------------------------------------------------------------------
 
-/// Hajedy's content has a Zombie Queen completion gate; Vigroy's does not.
-/// Ordering matches the planner's canonical Shilo cart journey slice.
-const CART_REQUIRES_ZOMBIE_QUEEN: [bool; 2] = [true, false];
+/// Hajedy (`pack/npc.pack` id 510). His cart requires Shilo Village complete.
+/// Vigroy (511) has no journal gate. Identify the gated row by NPC id, not
+/// table position.
+const HAJEDY_NPC_ID: i32 = 510;
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
@@ -414,13 +522,8 @@ pub(super) fn cart_edges(
     zombie_queen_name: Option<&str>,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    assert_eq!(
-        SHILO_CART_ROUTES.len(),
-        CART_REQUIRES_ZOMBIE_QUEEN.len(),
-        "every planner cart route must have its bake-time quest policy"
-    );
-    for (r, requires_zombie_queen) in SHILO_CART_ROUTES.iter().zip(CART_REQUIRES_ZOMBIE_QUEEN) {
-        let quest_req = if requires_zombie_queen {
+    for r in SHILO_CART_ROUTES {
+        let quest_req = if r.npc_id() == HAJEDY_NPC_ID {
             let Some(name) = zombie_queen_name else {
                 bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
                 continue;

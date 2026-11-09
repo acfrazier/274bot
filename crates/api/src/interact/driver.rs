@@ -118,6 +118,17 @@ pub trait Driver {
         forceapproach: i32,
         r#type: i32,
     ) -> bool;
+    /// Emit the already-validated cardinal step after opening a door, without
+    /// consulting local collision before the server's door update arrives.
+    /// Revision 377 requires the native client's encoder; unbound drivers deny.
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return false;
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
+    }
     /// The route origin tile (local player), in the client's build-area
     /// (scene-relative) space, as `route_x[0]`/`route_z[0]`.
     fn local_route(&self) -> Option<(i32, i32)>;
@@ -133,6 +144,11 @@ pub trait Driver {
     /// Emit one typed packet using this driver's bound revision.
     /// Required in every build, including opt-in test recorders.
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError>;
+    /// Encode and send a typed MESSAGE_PUBLIC action. The default refuses;
+    /// the real Client implementation uses `prot::Send::message_public`.
+    fn send_public_message(&mut self, _text: &str) -> bool {
+        false
+    }
     /// Complete observation of the previous producer's packet without writing bytes.
     /// Call before changing input lineage or measuring a new row's commits.
     /// Recording drivers have no deferred packet observation.
@@ -284,6 +300,15 @@ impl Driver for Client {
         )
     }
 
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return self.write_pending_door_step_377(x, z);
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
+    }
+
     fn local_route(&self) -> Option<(i32, i32)> {
         self.local_player
             .as_ref()
@@ -322,6 +347,11 @@ impl Driver for Client {
         #[cfg(not(feature = "test-support"))]
         packet.write_for_revision(self.revision(), &mut self.out)
     }
+    fn send_public_message(&mut self, text: &str) -> bool {
+        Send::message_public(0, 0, text)
+            .and_then(|packet| self.send_packet(&packet))
+            .is_ok()
+    }
     fn finish_pending_packet(&mut self) {
         self.out.finish_packet();
     }
@@ -337,6 +367,7 @@ impl Driver for Client {
         let Some(bytes) = self.out.data().get(checkpoint.start..self.out.pos) else {
             return false;
         };
+        let revision = Client::revision(self);
         let mut cursor = 0;
         while cursor < bytes.len() {
             let random = checkpoint
@@ -345,22 +376,10 @@ impl Driver for Client {
                 .map_or(0, |cipher| cipher.next_int());
             let opcode = bytes[cursor].wrapping_sub(random as u8);
             cursor += 1;
-            let row = crate::prot::LEGAL_SEND
-                .iter()
-                .map(|row| {
-                    client::io::map_client_prot(
-                        Client::revision(self),
-                        client::io::ClientProt {
-                            id: row.id,
-                            length: row.length,
-                        },
-                    )
-                })
-                .find(|row| row.id == i32::from(opcode));
-            let Some(row) = row else {
+            let Some(metadata) = crate::prot::packet_metadata(revision, opcode) else {
                 return false;
             };
-            let length = match row.length {
+            let length = match metadata.length {
                 length if length >= 0 => length as usize,
                 -1 => {
                     let Some(&length) = bytes.get(cursor) else {
@@ -368,6 +387,21 @@ impl Driver for Client {
                     };
                     cursor += 1;
                     usize::from(length)
+                }
+                -2 => {
+                    let Some(end) = cursor.checked_add(2).filter(|&end| end <= bytes.len()) else {
+                        return false;
+                    };
+                    let length =
+                        usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
+                    if crate::prot::PacketLength::VarShort
+                        .validate(length)
+                        .is_err()
+                    {
+                        return false;
+                    }
+                    cursor = end;
+                    length
                 }
                 _ => return false,
             };
@@ -573,6 +607,16 @@ pub const MAXME_SETSTATS: &[&str] = &[
 
 pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> client::CheatSend {
     driver.send_cheat(cmd)
+}
+
+/// Send a cheat the operator typed. A command the client accepted counts as
+/// input, as a typed chat line does in the Java client (its key events reset
+/// the idle counter), so the bot does not idle out under an operator who is
+/// working it. Host bookkeeping cheats use [`cheat`]: they are not input.
+pub fn operator_cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> client::CheatSend {
+    let sent = driver.send_cheat(cmd);
+    mark_input_activity(driver, sent.is_sent());
+    sent
 }
 
 /// Whether this driver has profile admission. Connection state remains a

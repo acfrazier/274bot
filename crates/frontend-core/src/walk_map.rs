@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav_planner::map::formats::{ClientPois, ServiceIdentity};
+use nav_planner::contract::PackId;
+use nav_planner::map::formats::{ClientPois, ServicePois};
 use nav_planner::map::identity::{CatalogueIdentity, Digest};
 use nav_planner::map::poi::{Eligibility, PoiKind, PoiRecord};
 use nav_planner::map::{MapError, Text};
@@ -24,7 +25,7 @@ use crate::launch::BoundProfile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkMapContext {
     focus: Option<host_play::walk_map::FocusToken>,
-    nav: Digest,
+    nav: PackId,
     overlay: Option<Digest>,
     generation: u64,
 }
@@ -49,7 +50,7 @@ impl WalkMapContext {
     }
 
     /// Bind a map view without a slot focus, for catalogue-only browsing.
-    pub fn browsing(nav: Digest, overlay: Option<Digest>, generation: u64) -> Self {
+    pub fn browsing(nav: PackId, overlay: Option<Digest>, generation: u64) -> Self {
         Self {
             focus: None,
             nav,
@@ -58,8 +59,8 @@ impl WalkMapContext {
         }
     }
 
-    /// Navigation identity bound to this map.
-    pub fn nav_identity(self) -> Digest {
+    /// Ownership key for the navigation world bound to this map.
+    pub fn nav_pack_id(self) -> PackId {
         self.nav
     }
 
@@ -101,6 +102,7 @@ pub enum WalkActionErrorKind {
     Stale,
     NoNavigation,
     NoPath,
+    SearchIncomplete,
     BlockedByZones,
     InsufficientItems,
     RiskRefused,
@@ -137,6 +139,7 @@ impl WalkActionError {
             E::Stale => WalkActionErrorKind::Stale,
             E::NoNavigation => WalkActionErrorKind::NoNavigation,
             E::NoPath => WalkActionErrorKind::NoPath,
+            E::SearchIncomplete { .. } => WalkActionErrorKind::SearchIncomplete,
             E::BlockedByZones { .. } => WalkActionErrorKind::BlockedByZones,
             E::InsufficientItems { .. } => WalkActionErrorKind::InsufficientItems,
             E::RiskRefused { .. } => WalkActionErrorKind::RiskRefused,
@@ -158,6 +161,7 @@ impl WalkActionError {
         use host_play::walk_map::ActionError as E;
         match &self.0 {
             E::BlockedByZones { detail } => detail.as_deref(),
+            E::SearchIncomplete { detail } => Some(detail),
             E::InsufficientItems { detail } | E::RiskRefused { detail, .. } => Some(detail),
             _ => None,
         }
@@ -459,22 +463,16 @@ impl WalkMap {
     }
 }
 
-/// Authenticated navpois input. Bytes are decoded and identity checked before
-/// a catalogue can retain the document.
-pub struct WalkServices(host_play::walk_map::AuthenticatedServices);
+/// Decoded navpois records retained by a map catalogue.
+pub struct WalkServices(Arc<ServicePois>);
 
 impl WalkServices {
-    pub fn decode(
-        bytes: &[u8],
-        expected: ServiceIdentity,
-        digest: Digest,
-    ) -> Result<Self, MapError> {
-        host_play::walk_map::AuthenticatedServices::decode(bytes, expected, digest).map(Self)
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
+        ServicePois::decode_navpois(bytes).map(Arc::new).map(Self)
     }
 }
 
-/// A shared indexed map catalogue. The host-owned world and authenticated
-/// source documents remain shared rather than being copied into the UI.
+/// A shared indexed map catalogue. The world and source documents remain shared.
 pub struct WalkCatalogue(host_play::walk_map::Catalogue);
 
 impl WalkCatalogue {
@@ -482,14 +480,12 @@ impl WalkCatalogue {
     pub fn new(
         world: Arc<NavWorld>,
         identity: CatalogueIdentity,
-        nav: Digest,
         client: Option<Arc<ClientPois>>,
         services: Option<WalkServices>,
     ) -> Result<Self, MapError> {
         host_play::walk_map::Catalogue::new(
             world,
             identity,
-            nav,
             client,
             services.map(|services| services.0),
         )
@@ -502,16 +498,10 @@ impl WalkCatalogue {
         ready: Arc<WalkReadyCatalogue>,
     ) -> Result<(Self, bool), WalkMapCacheError> {
         let identity = ready.identity();
-        let nav = profile
-            .host()
-            .nav_identity()
-            .and_then(|identity| Digest::from_hex(&identity.nav_sha256).ok())
-            .ok_or_else(|| WalkMapCacheError::message("map catalogue has no nav identity"))?;
-        let services = host_play::load_navpois(profile.host(), identity.content, nav);
+        let services = host_play::load_navpois(profile.host());
         let catalogue = host_play::walk_map::Catalogue::from_ready(
             world,
             identity,
-            nav,
             Some(Arc::clone(&ready.0)),
             services,
         )
@@ -541,8 +531,8 @@ impl WalkCatalogue {
     pub fn identity(&self) -> CatalogueIdentity {
         self.0.identity()
     }
-    pub fn nav_identity(&self) -> Digest {
-        self.0.nav_identity()
+    pub fn nav_pack_id(&self) -> PackId {
+        self.0.nav_pack_id()
     }
     pub fn key(&self) -> Digest {
         self.0.key()
@@ -818,11 +808,6 @@ impl WalkMapCacheError {
     }
     pub(crate) fn map_error(error: MapError) -> Self {
         Self(Box::new(host_play::map_cache::MapCacheError::Map(error)))
-    }
-    pub(crate) fn message(message: &'static str) -> Self {
-        Self(Box::new(host_play::map_cache::MapCacheError::Message(
-            message.into(),
-        )))
     }
 }
 
@@ -1266,4 +1251,21 @@ pub fn default_walk_nav_flags_path() -> PathBuf {
 /// Reap cache workers after all map-demand leases have been released.
 pub fn reap_walk_map_demand() {
     host_play::reap_map_demand();
+}
+#[cfg(test)]
+mod tests {
+    use super::{WalkActionError, WalkActionErrorKind};
+    use host_play::walk_map::ActionError;
+
+    #[test]
+    fn incomplete_search_has_a_distinct_frontend_kind_and_detail() {
+        let detail = "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)";
+        let error = WalkActionError::from_host(ActionError::SearchIncomplete {
+            detail: detail.to_owned(),
+        });
+
+        assert_eq!(error.kind(), WalkActionErrorKind::SearchIncomplete);
+        assert_eq!(error.short(), "route search incomplete");
+        assert_eq!(error.detail(), Some(detail));
+    }
 }

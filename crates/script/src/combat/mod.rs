@@ -9,6 +9,7 @@
 //! attempts at most four reachable nearby pickups of the selected ammunition.
 mod arbiter;
 pub mod arm;
+pub mod cast_npc;
 pub mod frame;
 pub mod guard;
 mod machine;
@@ -25,8 +26,9 @@ pub mod style {
     pub mod melee;
     pub mod ranged;
 }
+pub use cast_npc::CastNpc;
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
-pub use machine::Combat;
+pub use machine::{Combat, SwitchCause, SwitchState};
 pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};
 pub use prayer::{
     begin_clear_owned_prayers, ClearPrayers, ClearPrayersArgs, Hygiene, PrayerSweepReport,
@@ -34,7 +36,9 @@ pub use prayer::{
 };
 pub use request::*;
 pub use risk::{RiskInput, RouteAssessment};
-pub use select::{facts, ident, retaliate, taken_by_another};
+pub use select::{
+    attack_label, facts, ident, pvp_initiation_allowed, retaliate, taken_by_another, PvpSource,
+};
 pub use tables::CombatTables;
 pub use threats::{HitOnset, HitOnsets, Threat, ThreatSet};
 /// `%option_nodef`: zero means auto-retaliation is on.

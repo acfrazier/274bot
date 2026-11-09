@@ -146,7 +146,7 @@ impl Play {
                 xp,
                 false,
                 true,
-                &[script::shim::InteractReq::NoteProgress],
+                &[script::interact::InteractReq::NoteProgress],
             );
             // Evaluate the aged clock before live movement can restamp it.
             // Sample the real isolate callback; production still owns ArmWalk.
@@ -156,7 +156,7 @@ impl Play {
                 xp,
                 false,
                 true,
-                &[script::shim::InteractReq::LoopSettled],
+                &[script::interact::InteractReq::LoopSettled],
             );
             if action == script::WatchdogAction::RequestAnchor {
                 slot.request_recovery_anchor();

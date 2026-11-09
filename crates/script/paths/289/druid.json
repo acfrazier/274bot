@@ -1132,9 +1132,16 @@
             2896,
             9835,
             0
+          ],
+          [
+            2889,
+            9830,
+            2889,
+            9831,
+            0
           ]
         ],
-        "source": "A defs/druidicritual.ts:186-188"
+        "source": "A defs/druidicritual.ts:186-188; C doors/scripts/open_and_close_double_doors.rs2:91-108; QUEST-S2/live/druid-run9-20261029T025200Z/test.log:3502-3511 and 05-end-fail.json:69-73"
       }
     },
     "tools": [
@@ -2186,7 +2193,7 @@
                     9831,
                     0
                   ],
-                  "source": "A defs/druidicritual.ts:73-75; C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-20"
+                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-23: each open wakes the north suit, then the south suit, before opening the door; authored order repeats this step after combat"
                 },
                 "radius": 5,
                 "settle_ms": 30000
@@ -2300,7 +2307,7 @@
                     9831,
                     0
                   ],
-                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-20"
+                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:5-19: each present suit becomes an NPC on a separate open"
                 },
                 "loadout": "melee",
                 "lost_radius": 12,
@@ -2316,13 +2323,26 @@
                 }
               },
               "skip_if": {
-                "Fact": {
-                  "kind": "npc_absent",
-                  "version": 1,
-                  "args": {
-                    "npc": "suit_of_armour"
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "npc_absent",
+                      "version": 1,
+                      "args": {
+                        "npc": "suit_of_armour"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "cauldron_room"
+                      }
+                    }
                   }
-                }
+                ]
               },
               "settle": {
                 "Fact": {
@@ -2330,46 +2350,6 @@
                   "version": 1,
                   "args": {
                     "npc": "suit_of_armour"
-                  }
-                }
-              }
-            },
-            {
-              "id": "open-prison-door-after-suit",
-              "kind": "interact",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "target": {
-                  "name": "Prison door"
-                },
-                "op": "Open",
-                "anchor": {
-                  "tile": [
-                    2888,
-                    9831,
-                    0
-                  ],
-                  "source": "C areas/area_taverly/dungeon/scripts/prison_doors.rs2:1-23"
-                },
-                "radius": 5,
-                "settle_ms": 30000
-              },
-              "skip_if": {
-                "Fact": {
-                  "kind": "in_area",
-                  "version": 1,
-                  "args": {
-                    "area": "cauldron_room"
-                  }
-                }
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "in_area",
-                  "version": 1,
-                  "args": {
-                    "area": "cauldron_room"
                   }
                 }
               }

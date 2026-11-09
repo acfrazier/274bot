@@ -7,10 +7,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub use script::card::ScriptSel;
-
-use crate::js_cache::{CacheMeta, JsCache};
-use crate::rs2b0t_registry::ScriptSource;
+use crate::library::js_cache::{CacheMeta, JsCache};
+use script::card::ScriptSource;
 
 /// Existing source bound applied to operator-loaded script bodies.
 pub(crate) const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
@@ -367,7 +365,7 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
 /// declarations are skipped: the transpiled module never loads them.
 pub fn scan_import_specifiers(source: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for import in crate::module_imports::module_imports(source) {
+    for import in crate::library::module_imports::module_imports(source) {
         if !import.is_runtime() {
             continue;
         }
@@ -468,14 +466,14 @@ fn is_scripts_sibling_specifier(spec: &str) -> bool {
     )
 }
 
-/// First import specifier in `source` that is not remapped / same-folder / `@rs2b0t/api`.
+/// Find the first import that the generic loader cannot resolve.
 pub fn first_unloadable_specifier(source: &str) -> Option<String> {
     scan_import_specifiers(source)
         .into_iter()
         .find(|s| !specifier_is_ok(s))
 }
 
-/// Card-level scan: the origin, then same-folder sibling origins that exist.
+/// Card-level scan: the origin, then each supported sibling origin that exists.
 pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<String> {
     if let Some(spec) = first_unloadable_specifier(origin) {
         return Some(spec);
@@ -506,8 +504,7 @@ pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<Strin
     None
 }
 
-/// Map a `./Foo.js` import from [`BOT_MODULE`] to the synthetic module URL
-/// rustyscript resolves.
+/// Map a supported same-folder or scripts-sibling import to its synthetic URL.
 pub fn sibling_module_url(import_rel: &str) -> Option<String> {
     if let Some(name) = import_rel.strip_prefix("./") {
         if name.contains("..") || name.contains('/') || name.contains('\\') {
@@ -522,8 +519,7 @@ pub fn sibling_module_url(import_rel: &str) -> Option<String> {
     None
 }
 
-/// Resolve a same-folder `./Foo.js` import beside `card_path`, or a
-/// `../Other/File.js` import under the parent `scripts/` folder.
+/// Resolve a same-folder import or a scripts sibling.
 pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf> {
     if let Some(rel) = import_rel.strip_prefix("./") {
         if rel.contains("..") {
@@ -753,10 +749,8 @@ impl FirstUnloadableWork {
                 import_index: 0,
             });
         }
-        let imports = scan_same_folder_js_imports(origin)
-            .into_iter()
-            .chain(scan_scripts_sibling_js_imports(origin))
-            .collect();
+        let mut imports = scan_same_folder_js_imports(origin);
+        imports.extend(scan_scripts_sibling_js_imports(origin));
         Ok(Self {
             result: None,
             graph: Some(PreparationSiblingWork::new(
@@ -1097,11 +1091,6 @@ pub(super) fn catalog_unloadable(
     scanned: Option<String>,
 ) -> Option<String> {
     if source == ScriptSource::Catalog {
-        if name == "BankSorter" {
-            return Some(
-                "dim: BankSorter is unavailable until native bank sorting is implemented".into(),
-            );
-        }
         if name == "EssMiner" {
             return Some(
                 "dim: EssMiner is unavailable until the native Gatherer replaces it".into(),
@@ -1148,6 +1137,75 @@ pub(super) fn catalog_defect_reason(
 mod tests {
     use super::*;
     use script::identity::{card_identity_id, file_identity};
+
+    /// `WalkDestinations` is a served compatibility module (wave 3 walking),
+    /// so WalkTo's `../../api/map/WalkDestinations.js` import resolves to the
+    /// shim for every card and the upstream file is never loaded as a sibling
+    /// (a sibling at the same URL would register the module twice).
+    #[test]
+    fn walk_destinations_import_resolves_to_the_shim_not_a_sibling() {
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        const IMPORT: &str = "../../api/map/WalkDestinations.js";
+
+        let root =
+            std::env::temp_dir().join(format!("274bot-walk-to-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let _cleanup = RemoveOnDrop(root.clone());
+        let bot_dir = root.join("src/bot");
+        let card_dir = bot_dir.join("scripts/WalkToBot");
+        let map_dir = bot_dir.join("api/map");
+        std::fs::create_dir_all(&card_dir).unwrap();
+        std::fs::create_dir_all(&map_dir).unwrap();
+
+        let card_path = card_dir.join("WalkToBot.ts");
+        let logic_path = card_dir.join("WalkToLogic.ts");
+        let origin = r#"import { resolveDestination } from '../../api/map/WalkDestinations.js';
+import './WalkToLogic.js';
+export default class WalkToBot extends TaskBot {}"#;
+        let logic = r#"import { resolveDestination } from '../../api/map/WalkDestinations.js';
+export const target = resolveDestination('Lumbridge');"#;
+        std::fs::write(&card_path, origin).unwrap();
+        std::fs::write(&logic_path, logic).unwrap();
+        std::fs::write(
+            map_dir.join("WalkDestinations.ts"),
+            "export const WALK_OPTIONS = [];",
+        )
+        .unwrap();
+
+        assert_eq!(first_unloadable_specifier(origin), None);
+        assert_eq!(first_unloadable_for_card(origin, &card_path), None);
+        assert_eq!(
+            first_unloadable_for_card_bounded(origin, &card_path, MAX_PREPARATION_SOURCE_BYTES)
+                .unwrap(),
+            None
+        );
+        assert!(sibling_module_url(IMPORT).is_none());
+        assert!(resolve_sibling_path(&card_dir, IMPORT).is_none());
+
+        let cache = JsCache::new(root.join("cache"));
+        let siblings = resolve_sibling_modules(
+            &card_path,
+            origin,
+            &cache,
+            CacheMeta {
+                kind: script::card::ScriptKind::Compat,
+                source: ScriptSource::File,
+                shape: None,
+                api_family: Some("v1".into()),
+            },
+        )
+        .unwrap();
+        let urls: Vec<_> = siblings.iter().map(|(url, _)| url.as_str()).collect();
+        assert_eq!(urls, ["/rs2b0t/bot/scripts/bot/WalkToLogic.js"]);
+        assert!(!collect_raw_sibling_hashes(&card_path, origin)
+            .iter()
+            .any(|(relative, _)| relative == IMPORT));
+    }
 
     #[test]
     fn live_file_fixture_path_still_only_tradebot() {

@@ -12,7 +12,7 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use parking_lot::RwLock;
 
-use super::{abort_script_walk, route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
+use super::{route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -96,7 +96,7 @@ fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile 
 }
 
 fn route_exclusions(
-    avoid: Vec<script::shim::InspectAvoidWire>,
+    avoid: Vec<script::interact::InspectAvoidWire>,
     cross: Vec<String>,
 ) -> ScriptRouteExclusions {
     ScriptRouteExclusions {
@@ -106,34 +106,88 @@ fn route_exclusions(
     }
 }
 
-/// Same request after a reconnect carry was re-armed: preserve the frozen
-/// request and avoid recording its game action twice.
+/// Preserve a live compat owner until the replacement is accepted. The host
+/// publishes one outer terminal before it releases that owner's seat.
+pub(crate) fn retire_logical_walk(
+    slot: Option<&mut script::SlotScript>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    request_id: Option<u64>,
+    end: script::native::WalkEnd,
+) -> bool {
+    if request_id == Some(0) {
+        return false;
+    }
+    let mut navs = navs.lock().unwrap();
+    let Some(bot) = navs.get_mut(name) else {
+        return false;
+    };
+    let compat_id = match request_id {
+        Some(request_id) => bot
+            .compat_walk_request_id()
+            .filter(|live| *live == request_id),
+        None => bot.compat_walk_request_id(),
+    };
+    if let Some(request_id) = compat_id {
+        let Some(slot) = slot else {
+            return false;
+        };
+        slot.abort_compat_walk(request_id);
+        if let Some((run, terminal_request_id, result)) = slot.take_compat_walk_terminal() {
+            if terminal_request_id.get() != request_id || bot.compat_walk_run() != Some(run) {
+                return false;
+            }
+            let (terminal_end, detail) = match result {
+                Ok(receipt) => {
+                    let detail = receipt.failure_detail();
+                    (receipt.end, detail)
+                }
+                Err(error) => {
+                    let terminal_end = match &error {
+                        script::native::ActionError::Cancelled => {
+                            script::native::WalkEnd::Cancelled
+                        }
+                        script::native::ActionError::UserInput => {
+                            script::native::WalkEnd::UserInput
+                        }
+                        _ => script::native::WalkEnd::Failed,
+                    };
+                    (terminal_end, Some(Arc::from(error.to_string())))
+                }
+            };
+            if !bot.complete_compat_walk(request_id, terminal_end, detail) {
+                return false;
+            }
+            slot.finish_compat_walk(request_id);
+            return true;
+        }
+        if !bot.complete_compat_walk(request_id, end, None) {
+            return false;
+        }
+        slot.finish_compat_walk(request_id);
+        return true;
+    }
+    if request_id.is_some_and(|request_id| bot.walk_request_id != request_id) {
+        return false;
+    }
+    super::script_walk::abort_walk_on_bot_with_end(bot, end);
+    true
+}
+
+/// Same compat identity and route after a reconnect carry was re-armed.
 fn already_following(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: u64,
     key: (WorldTile, i32, bool, bool, bool),
     exclusions: &ScriptRouteExclusions,
-    compat_tile_intent: bool,
 ) -> bool {
     request_id != 0
-        && navs.lock().unwrap().get(name).is_some_and(|bot| {
-            bot.walk_request_id == request_id
-                && bot.requested_route.is_some_and(
-                    |(to, radius, teleports, wilderness, bank_fetch, _)| {
-                        (to, radius, teleports, wilderness, bank_fetch) == key
-                    },
-                )
-                && bot.route_compat_tile_intent == compat_tile_intent
-                && bot.requested_exclusions.as_deref().map_or(
-                    exclusions.avoid_wire.is_empty() && exclusions.cross.is_empty(),
-                    |requested| {
-                        requested.avoid_wire == exclusions.avoid_wire
-                            && requested.cross == exclusions.cross
-                    },
-                )
-                && bot.script_walk_armed()
-        })
+        && navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|bot| bot.compat_walk_is_following(request_id, key, exclusions))
 }
 
 /// Note one game request host-play dispatched for `slot`'s script. The
@@ -172,10 +226,11 @@ pub(crate) fn dispatch_script_interact(
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     name: &str,
-    reqs: Vec<script::shim::InteractReq>,
+    reqs: Vec<script::interact::InteractReq>,
 ) -> bool {
     let bank = RwLock::new(BankMemory::default());
     bank.write().track(snapshot, 0);
+    let state = state.map(Arc::new);
     dispatch_script_interact_cached_scoped(
         driver,
         &InteractContext {
@@ -193,6 +248,7 @@ pub(crate) fn dispatch_script_interact(
             cache: &None,
             obj_names_arc: &None,
         },
+        None,
         reqs,
     )
 }
@@ -250,8 +306,9 @@ pub(crate) fn dispatch_native_bank_deposit(
 pub(crate) struct OrderedDispatchContext<'a> {
     pub snapshot: &'a GameSnapshot,
     pub selected: Option<&'a api::game_data::SelectedGameData>,
-    pub tick: u64,
     pub input: Option<&'a host::SlotInput>,
+    /// Derived by the host from the exact active compiled Gatherer run, never the payload.
+    pub builtin_gatherer_knife: bool,
 }
 
 /// Dispatch both sealed modes through the same API planner and encrypted sink.
@@ -267,6 +324,10 @@ pub(crate) fn dispatch_native_server_ordered(
     };
     use script::surface::ServerOrderedPayload;
 
+    // Dispatch uses the raw Client PLAYER_INFO generation shared by the snapshot
+    // and input observer. The session-relative snapshot tick and Play's native
+    // completion tick are separate clocks, including after relogs.
+    let dispatch_tick = context.snapshot.gens().player_info;
     let request_id = authority.request_id().get();
     let row_count = match envelope.payload() {
         ServerOrderedPayload::Content(request) => request.row_count(),
@@ -275,7 +336,7 @@ pub(crate) fn dispatch_native_server_ordered(
     let Some(input) = context.input else {
         return ServerOrderedDispatch::refused(
             request_id,
-            context.tick,
+            dispatch_tick,
             row_count,
             0,
             ServerOrderedError::ObservationUnavailable,
@@ -297,45 +358,53 @@ pub(crate) fn dispatch_native_server_ordered(
             let Some(selected) = context.selected else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
                 );
             };
-            let Ok(pin) = selected.selected_pin() else {
+            let Ok(catalog) = selected.server_ordered_catalog() else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
-                    row_count,
-                    0,
-                    ServerOrderedError::ContractUnavailable,
-                );
-            };
-            let Ok(catalog) = selected.server_ordered_catalog(&pin) else {
-                return ServerOrderedDispatch::refused(
-                    request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
                 );
             };
             let _lineage = input.input_lineage(InputLineage::ContentRequest(request_id));
-            ServerOrderedInputs::dispatch(
-                catalog,
-                &pin,
-                context.snapshot,
-                driver,
-                request,
-                ServerOrderedDispatchContext {
-                    request_id,
-                    dispatch_tick: context.tick,
-                    input: observed,
-                    debug: None,
-                    authority: &mut live,
-                },
-            )
+            let dispatch_context = ServerOrderedDispatchContext {
+                request_id,
+                dispatch_tick,
+                input: observed,
+                debug: None,
+                authority: &mut live,
+            };
+            if context.builtin_gatherer_knife
+                && matches!(
+                    request,
+                    api::interact::server_ordered::ServerOrderedRequest::KnifeArm { .. }
+                )
+            {
+                ServerOrderedInputs::dispatch_builtin_gatherer_knife(
+                    catalog,
+                    driver.revision(),
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            } else {
+                ServerOrderedInputs::dispatch(
+                    catalog,
+                    driver.revision(),
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            }
         }
         ServerOrderedPayload::Advanced(operations) => {
             let _lineage = input.input_lineage(InputLineage::AdvancedRequest(request_id));
@@ -345,7 +414,7 @@ pub(crate) fn dispatch_native_server_ordered(
                 operations,
                 ServerOrderedDispatchContext {
                     request_id,
-                    dispatch_tick: context.tick,
+                    dispatch_tick,
                     input: observed,
                     debug: envelope.debug_catalog(),
                     authority: &mut live,
@@ -375,8 +444,9 @@ pub(crate) fn dispatch_script_interact_cached<R>(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
 ) -> bool
 where
-    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+    R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
+    let state = state.map(Arc::new);
     dispatch_script_interact_cached_scoped(
         driver,
         &InteractContext {
@@ -392,16 +462,16 @@ where
             cache: &cache,
             obj_names_arc: &obj_names_arc,
         },
+        None,
         reqs,
     )
 }
 
-/// The slot context of one interaction dispatch pass. An observe pass makes
-/// it once and every dispatch in that pass reads it; the driver stays a
-/// separate argument because the pass also writes through it between
-/// dispatches. `state` borrows the frame's gating facts: only an arm that
-/// queues work (walk, bank selection, route inspection) copies them, and the
-/// queued request keeps that copy of this frame.
+/// The slot context at one interaction dispatch boundary. Dispatches borrow the
+/// same frame's gating facts; the snapshot borrow is confined to that dispatch
+/// so test-only ordered hooks can mutate it between requests. The driver stays
+/// separate because the pass also writes through it. Only an arm that
+/// queues work takes a shared `Arc` handle at the event boundary.
 #[derive(Clone, Copy)]
 pub(crate) struct InteractContext<'a> {
     pub(crate) snapshot: &'a GameSnapshot,
@@ -409,7 +479,7 @@ pub(crate) struct InteractContext<'a> {
     pub(crate) here: Option<(i32, i32, i32)>,
     pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
     pub(crate) world: &'a Option<Arc<NavWorld>>,
-    pub(crate) state: Option<&'a WorldState>,
+    pub(crate) state: Option<&'a Arc<WorldState>>,
     pub(crate) bank: Option<&'a RwLock<BankMemory>>,
     pub(crate) name: &'a str,
     pub(crate) compatibility_scope: Option<api::identity::Scope>,
@@ -420,13 +490,14 @@ pub(crate) struct InteractContext<'a> {
 pub(crate) fn dispatch_script_interact_cached_scoped<R>(
     driver: &mut dyn Driver,
     context: &InteractContext<'_>,
+    mut owner_slot: Option<&mut script::SlotScript>,
     reqs: R,
 ) -> bool
 where
-    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+    R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
     use api::interact::{ActionSpec, OpTarget, SendResult};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     let InteractContext {
         snapshot,
         obj_names,
@@ -502,7 +573,13 @@ where
                     // The interaction supersedes any earlier scripted walk.
                     // Cancel after validation/dispatch only: rejected or
                     // malformed requests must not disturb an armed route.
-                    abort_script_walk(navs, name);
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
                 }
                 wrote |= accepted;
             }
@@ -568,7 +645,13 @@ where
                     // The interaction supersedes any earlier scripted walk.
                     // Cancel after validation/dispatch only: rejected or
                     // malformed requests must not disturb an armed route.
-                    abort_script_walk(navs, slot);
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        slot,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
                 }
                 wrote |= accepted;
             }
@@ -579,6 +662,8 @@ where
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
+                allow_prereq_dialogue,
+                allow_quest_start,
                 request_id,
                 avoid,
                 cross,
@@ -604,9 +689,31 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions, false) {
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
+                if navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+                {
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
+                }
+                let prereq_allow = (request_id != 0).then(|| {
+                    super::walk_permissions::compiled_prereq_allow(
+                        navs,
+                        slot,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                    )
+                });
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -619,6 +726,19 @@ where
                     snapshot, x, z, level, opts, request_id, exclusions,
                 );
                 if queued {
+                    if let Some(prereq_allow) = prereq_allow {
+                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                            bot.retain_compat_walk(
+                                request_id,
+                                script::native::WalkOptions {
+                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
+                                    allow_quest_start: allow_quest_start.into(),
+                                    ..Default::default()
+                                },
+                                prereq_allow,
+                            );
+                        }
+                    }
                     record_script_act(
                         navs,
                         slot,
@@ -644,6 +764,8 @@ where
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
+                allow_prereq_dialogue,
+                allow_quest_start,
                 request_id,
                 avoid,
                 cross,
@@ -669,9 +791,31 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions, compat_tile_intent) {
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
+                if navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+                {
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
+                }
+                let prereq_allow = (request_id != 0).then(|| {
+                    super::walk_permissions::compiled_prereq_allow(
+                        navs,
+                        slot,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                    )
+                });
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -692,6 +836,19 @@ where
                     exclusions,
                 );
                 if queued {
+                    if let Some(prereq_allow) = prereq_allow {
+                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                            bot.retain_compat_walk(
+                                request_id,
+                                script::native::WalkOptions {
+                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
+                                    allow_quest_start: allow_quest_start.into(),
+                                    ..Default::default()
+                                },
+                                prereq_allow,
+                            );
+                        }
+                    }
                     record_script_act(
                         navs,
                         slot,
@@ -710,17 +867,13 @@ where
             }
             // Not a game packet: the follow stops, nothing is written.
             InteractReq::AbortWalk { request_id } => {
-                // Only the walk the machine itself armed; a later walk has
-                // replaced it and is not the machine's to stop.
-                let owned = request_id != 0
-                    && navs
-                        .lock()
-                        .unwrap()
-                        .get(name)
-                        .is_some_and(|bot| bot.walk_request_id == request_id);
-                if owned {
-                    abort_script_walk(navs, name);
-                }
+                retire_logical_walk(
+                    owner_slot.as_deref_mut(),
+                    navs,
+                    name,
+                    Some(request_id),
+                    script::native::WalkEnd::Cancelled,
+                );
             }
             InteractReq::WalkNearestBank => {
                 if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
@@ -730,6 +883,7 @@ where
                         scope,
                         world,
                         state,
+                        snapshot,
                         WorldTile { x, z, level },
                         snapshot
                             .stats()
@@ -768,6 +922,7 @@ where
                 avoid,
                 cross,
                 request_id,
+                max_expansions,
             } => {
                 let from = WorldTile {
                     x: from_x,
@@ -776,7 +931,7 @@ where
                 };
                 let to = WorldTile { x, z, level };
                 let empty_state = WorldState::empty();
-                let route_state = state.unwrap_or(&empty_state);
+                let route_state = state.map(Arc::as_ref).unwrap_or(&empty_state);
                 let opts = super::walk_permissions::compiled_options(
                     navs,
                     name,
@@ -811,7 +966,7 @@ where
                     }
                     None => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
-                route_inspect::queue_inspect(
+                route_inspect::queue_inspect_shared(
                     navs,
                     name,
                     world,
@@ -828,6 +983,7 @@ where
                         zones,
                         avoid: rects,
                         request_id,
+                        max_expansions,
                         invalid_args,
                     },
                 );
@@ -971,6 +1127,30 @@ where
                     {
                         wrote |= matches!(
                             ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
+            InteractReq::BankDrag {
+                id,
+                slot,
+                component,
+                target_slot,
+                insert,
+                bank_generation,
+            } => {
+                // The exact posted bank row in the same bank session; the
+                // api re-checks the grid and the target slot before sending.
+                if snapshot.bank_component_id() >= 0
+                    && snapshot.bank_loaded()
+                    && snapshot.bank_session_generation() == bank_generation
+                {
+                    if let Some(item) = snapshot.bank().iter().find(|item| {
+                        item.def.id == id && item.slot == slot && item.component_id == component
+                    }) {
+                        wrote |= matches!(
+                            ix.drag_bank_item(item, target_slot, insert),
                             SendResult::Sent { .. }
                         );
                     }
@@ -1207,6 +1387,7 @@ where
                         z,
                         level,
                         index,
+                        None,
                     ) {
                         let on_loc = match &target {
                             OpTarget::Loc(loc) => {
@@ -1240,6 +1421,7 @@ where
                 z,
                 level,
                 index,
+                target_id,
             } => {
                 let ctx = api::snapshot::ReadContext::new(snapshot);
                 if let Some(widget) = ctx.component(component_id) {
@@ -1254,11 +1436,15 @@ where
                         z,
                         level,
                         index,
+                        target_id,
                     ) {
                         wrote |=
                             matches!(ix.use_widget_on(widget, target), SendResult::Sent { .. });
                     }
                 }
+            }
+            InteractReq::SayPublic { text } => {
+                wrote |= matches!(ix.say_public(&text), SendResult::Sent { .. });
             }
             InteractReq::ContinueDialog { component_id } => {
                 wrote |= matches!(ix.continue_dialog(component_id), SendResult::Sent { .. });
@@ -1436,8 +1622,9 @@ where
             | InteractReq::GatherStop { .. }
             | InteractReq::CombatFight { .. }
             | InteractReq::CombatStop { .. }
+            | InteractReq::CastNpc { .. }
             | InteractReq::ProgressRead { .. } => {
-                // Host-local controls are consumed by the slot before game
+                // Host-local controls and typed native starts are consumed by the slot before game
                 // dispatch; none can authorize a Driver packet here.
             }
             InteractReq::NoteProgress
@@ -1546,11 +1733,32 @@ fn resolve_op_target<'a>(
     z: i32,
     level: i32,
     index: Option<i32>,
+    target_id: Option<i32>,
 ) -> Option<api::interact::OpTarget<'a>> {
     use api::interact::OpTarget;
     match kind {
+        "npc" if target_id.is_some() => {
+            let wanted_type = usize::try_from(target_id?).ok()?;
+            let wanted_index = usize::try_from(index?).ok()?;
+            snapshot
+                .npcs()
+                .iter()
+                .find(|npc| {
+                    npc.index == wanted_index
+                        && npc.r#type == Some(wanted_type)
+                        && npc.network.x == x
+                        && npc.network.z == z
+                        && npc.network.level == level
+                        && target_name.is_none_or(|wanted| {
+                            npc.name
+                                .as_deref()
+                                .is_some_and(|name| name.eq_ignore_ascii_case(wanted))
+                        })
+                })
+                .map(OpTarget::Npc)
+        }
         "npc" => {
-            let wanted = target_name.map(|n| n.to_lowercase());
+            let wanted = target_name.map(str::to_lowercase);
             snapshot
                 .npcs()
                 .iter()
@@ -1687,6 +1895,7 @@ mod ground_use_target_tests {
             tile.z,
             tile.level,
             None,
+            None,
         );
         assert!(matches!(target, Some(OpTarget::GroundItem(item)) if item.def.id == 11));
         assert!(
@@ -1700,6 +1909,7 @@ mod ground_use_target_tests {
                 tile.x,
                 tile.z,
                 tile.level,
+                None,
                 None,
             )
             .is_none(),

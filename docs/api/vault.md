@@ -165,6 +165,7 @@ from it, whatever its size claimed.
 | --- | --- |
 | username, password | a vault profile; the password goes only into the encrypted vault |
 | world (1–3) | the profile's world (`wN`), used when the server's world list offers it |
+| the file's profile order | new profiles take the end of the saved **Load order** in the file's sequence (into an empty vault, that sequence is the order); a profile already in the vault keeps its place, overwritten or skipped |
 | tab, tab list, active tab | not imported: 274bot has no profile tabs or groups |
 | selected script | the profile's script, when your registered rs2b0t catalog has a script of that name that can run; a dimmed or unknown script is reported |
 | script parameters (`set:<Script>:<key>`) | that script's per-profile parameters, read the way rs2b0t reads them: numbers and tile coordinates with JavaScript's `Number()` (so `0x10` is 16 and an empty value is 0), then limited to the parameter's range; options matched without case. A parameter the catalog script doesn't have, or a value rs2b0t would have replaced with the default, is reported |

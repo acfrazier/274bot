@@ -123,6 +123,7 @@ impl PaintRig {
             None,
             None,
             None,
+            None,
             #[cfg(feature = "js")]
             None,
             #[cfg(feature = "js")]
@@ -142,6 +143,9 @@ impl PaintRig {
 
 #[test]
 fn journal_paint_lease_survives_hold_and_clears_on_stop_without_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = PaintRig::new();
     assert!(
         rig.observe(1, true, true, false),
@@ -160,6 +164,9 @@ fn journal_paint_lease_survives_hold_and_clears_on_stop_without_tick() {
 
 #[test]
 fn journal_paint_restores_after_forced_error_and_disconnect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = PaintRig::new();
     assert!(rig.observe(1, true, true, false));
     rig.fail.store(true, Ordering::Release);

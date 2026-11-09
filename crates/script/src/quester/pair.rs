@@ -2,7 +2,7 @@
 use super::compile::{StepOutcome, StepPlan};
 use crate::native::ActionError;
 use api::quest_progress::EvidenceStamp;
-use api::selected::{FactKey, Knowledge, RunKey, SelectedPin};
+use api::selected::{FactKey, Knowledge, RunKey};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, task::Poll, time::Instant};
 
@@ -82,7 +82,6 @@ pub struct PairSettings {
 /// One current Quester incarnation. No snapshot/world or credentials are retained.
 pub struct PairRegistration {
     pub run: RunKey,
-    pub pin: Arc<SelectedPin>,
     pub settings: Option<PairSettings>,
     pub ready: bool,
     pub evidence: EvidenceStamp,

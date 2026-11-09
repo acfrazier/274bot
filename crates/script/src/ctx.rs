@@ -52,12 +52,21 @@ pub struct CompiledTick<'a> {
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav_planner::contract::CollisionView<'a>>,
+    /// This frame borrows the pack lease. Off-pump Path compilation clones it.
+    pub nav: Option<&'a nav_planner::contract::NavLease>,
     /// Lazy, read-only danger admission for compiled target selection.
     /// Missing navigation data is not permission to start a new walk.
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
     /// Revision-bound keeper placements and validated access, borrowed from
     /// the shared navigation world. Only an active vendor pick clones its Arc.
     pub shop_keepers: Option<&'a std::sync::Arc<api::service_pick::ShopKeeperFacts>>,
+    /// The Wilderness levels of the selected pack, borrowed from the host's
+    /// nav world. `None` in a bare ctx or when the host has no nav pack; the
+    /// combat zone gate then reads every tile as outside.
+    pub wilderness: Option<&'a dyn crate::native::WildernessLevels>,
+    /// The operator's global PvP setting, read from the host's cached
+    /// preferences. `None` when the host has no ready preferences.
+    pub pvp_globals: Option<crate::native::PvpGlobals>,
     /// The actual owner-held session gate. The host borrows it from
     /// `SlotArm.lifecycle` for a live compiled callback; bare contexts use
     /// `None`, and the isolate path does not read it.
@@ -205,7 +214,7 @@ impl ScriptCtx<'_> {
     }
 }
 
-/// Test-only drivers and local asset resolution for this crate and dependent fixtures.
+/// Test-only drivers for this crate and dependent fixtures.
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_support {
     use api::interact::Driver;
@@ -265,47 +274,6 @@ pub mod test_support {
         fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
             true
         }
-    }
-
-    /// Resolve a local-only test asset, skipping on GitHub-hosted CI when absent.
-    ///
-    /// Covers the real nav pack (`NAV_PACK`), a decoded cache snapshot
-    /// (`BOT_NAV_SNAPSHOT_ROOT`), and engine content (`ENGINE_DIR` and friends):
-    /// pass the env var, its local default (or `""` to require the env var),
-    /// and a short asset label. Returns the existing path. When the path is
-    /// missing, prints `skipped on hosted CI: needs <asset>` and returns `None`
-    /// on hosted CI (`GITHUB_ACTIONS=true`); elsewhere it panics with which env
-    /// var or path to set so local runs and the nightly keep running.
-    pub fn local_asset_path(
-        env_var: &str,
-        default_path: &str,
-        asset: &str,
-    ) -> Option<std::path::PathBuf> {
-        let path = std::env::var_os(env_var)
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .or_else(|| (!default_path.is_empty()).then(|| std::path::PathBuf::from(default_path)));
-        let Some(path) = path else {
-            if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
-                eprintln!("skipped on hosted CI: needs {asset} (set {env_var})");
-                return None;
-            }
-            panic!("missing {asset}: set {env_var} to a local {asset}");
-        };
-        if path.exists() {
-            return Some(path);
-        }
-        if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
-            eprintln!(
-                "skipped on hosted CI: needs {asset} (missing {}; set {env_var})",
-                path.display()
-            );
-            return None;
-        }
-        panic!(
-            "missing {asset} at {}: set {env_var} to a local {asset}",
-            path.display()
-        );
     }
 }
 

@@ -54,11 +54,14 @@ use host::Pump;
 use host_play::evidence_writer::{
     EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
 };
-use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate, SlotArm};
 #[cfg(feature = "live-harness")]
 use scenario::{RunnerStatus, ScenarioRunner};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
+#[cfg(all(feature = "live-harness", feature = "test-support"))]
+#[path = "support/gatherer_tick_live.rs"]
+mod gatherer_tick_live;
 
 const PREP_DEADLINE: Duration = Duration::from_secs(180);
 const POWER_DEADLINE: Duration = Duration::from_secs(1800);
@@ -252,6 +255,7 @@ impl Cell {
                 "gatherer_pause_resume_other_plane_live"
             }
             (Self::Woodcutting, LiveCase::ReconnectReturn) => "gatherer_reconnect_return_live",
+            (Self::Woodcutting, LiveCase::BankTripRelog) => "gatherer_bank_trip_relog_live",
             (Self::Woodcutting, LiveCase::RandomEvent) => "gatherer_random",
             (Self::Woodcutting, LiveCase::MazeRandom) => "gatherer_maze_random",
             (Self::Woodcutting, LiveCase::DeathReturn) => "gatherer_death_return",
@@ -287,7 +291,7 @@ impl Cell {
             LiveCase::CoinRunes | LiveCase::CoinRunesEmpty => "GATHERER_COIN_RUNES_TILE",
             LiveCase::PowerToBank => "GATHERER_POWER_TO_BANK_TILE",
             LiveCase::PauseResumeOtherPlane => "GATHERER_RETURN_PAUSE_TILE",
-            LiveCase::ReconnectReturn => "GATHERER_RECONNECT_RETURN_TILE",
+            LiveCase::ReconnectReturn | LiveCase::BankTripRelog => "GATHERER_RECONNECT_RETURN_TILE",
             LiveCase::GasHazard => "GATHERER_GAS_TILE",
             LiveCase::OakNoPlacementArea => "GATHERER_WC_NO_PLACEMENT_TILE",
             LiveCase::RandomEvent | LiveCase::MazeRandom => "GATHERER_WC_TILE",
@@ -382,7 +386,8 @@ impl Cell {
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
-                | LiveCase::ReconnectReturn,
+                | LiveCase::ReconnectReturn
+                | LiveCase::BankTripRelog,
             ) => 15,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 20,
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => 45,
@@ -427,7 +432,8 @@ impl Cell {
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
-                | LiveCase::ReconnectReturn,
+                | LiveCase::ReconnectReturn
+                | LiveCase::BankTripRelog,
             ) => &[1521],
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => &[TROUT_ID, SALMON_ID],
             (Self::Fishing, LiveCase::FishHarpoonBank | LiveCase::FishHarpoonBankAuto) => {
@@ -462,6 +468,7 @@ impl Cell {
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
+                    | LiveCase::BankTripRelog
                     | LiveCase::DeathReturn
                     | LiveCase::DeathRespawnRegion
                     | LiveCase::DeathNoStock
@@ -518,7 +525,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::PauseResumeOtherPlane) => {
                 Some("GATHERER_RETURN_PAUSE_LEVEL")
             }
-            (Self::Woodcutting, LiveCase::ReconnectReturn) => {
+            (Self::Woodcutting, LiveCase::ReconnectReturn | LiveCase::BankTripRelog) => {
                 Some("GATHERER_RECONNECT_RETURN_LEVEL")
             }
             (Self::Woodcutting, _) => Some("GATHERER_WC_LEVEL"),
@@ -553,7 +560,8 @@ impl Cell {
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
-                | LiveCase::ReconnectReturn,
+                | LiveCase::ReconnectReturn
+                | LiveCase::BankTripRelog,
             ) => std::env::var("GATHERER_WC_BANK_TOOL")
                 .unwrap_or_else(|_| self.default_tool_alias(case).into()),
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => {
@@ -592,7 +600,8 @@ impl Cell {
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
-                | LiveCase::ReconnectReturn,
+                | LiveCase::ReconnectReturn
+                | LiveCase::BankTripRelog,
             ) => Some("GATHERER_WC_BANK_TOOL_ID"),
             (Self::Woodcutting, LiveCase::BankCostSeersMaple) => None,
             (Self::Woodcutting, LiveCase::CoinRunes | LiveCase::CoinRunesEmpty) => {
@@ -686,6 +695,7 @@ impl Cell {
                     | LiveCase::FishBankSoak
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
+                    | LiveCase::BankTripRelog
             ) {
                 "Bank"
             } else {
@@ -709,6 +719,7 @@ impl Cell {
                 | LiveCase::PowerToBank
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn
+                | LiveCase::BankTripRelog
                 | LiveCase::DeathReturn
                 | LiveCase::DeathRespawnRegion
                 | LiveCase::DeathNoStock
@@ -893,6 +904,10 @@ enum LiveCase {
     PowerToBank,
     PauseResumeOtherPlane,
     ReconnectReturn,
+    /// A bank trip whose connection is cut at an exact trip step
+    /// (`GATHERER_RELOG_STEP`, `GATHERER_RELOG_FAULT`): the trip must restart
+    /// in the new session and finish without a new Start.
+    BankTripRelog,
     MazeRandom,
 }
 
@@ -939,6 +954,7 @@ impl LiveCase {
             Self::PowerToBank => "power-to-bank",
             Self::PauseResumeOtherPlane => "pause-resume-other-plane",
             Self::ReconnectReturn => "reconnect-return",
+            Self::BankTripRelog => "bank-trip-relog",
             Self::MazeRandom => "maze-random",
         }
     }
@@ -971,6 +987,7 @@ impl LiveCase {
                 | Self::CoinRunesEmpty
                 | Self::PauseResumeOtherPlane
                 | Self::ReconnectReturn
+                | Self::BankTripRelog
         )
     }
 
@@ -1020,6 +1037,7 @@ impl LiveCase {
                 | Self::BankCostNoCandidate
                 | Self::PauseResumeOtherPlane
                 | Self::ReconnectReturn
+                | Self::BankTripRelog
         )
     }
 }
@@ -1053,12 +1071,16 @@ struct InvRow {
     count: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct UnsettledItem {
     since: Instant,
     /// `Observation::captured_at` of the observation the item left the pack
     /// in: the cohort a genie-lamp wish confirmation must match.
     left_in: Instant,
+    /// Loaded-bank counts from the last observation before the item left the
+    /// pack. A later increase conserves it when a non-bank cell's supply trip
+    /// deposits it.
+    bank_before: Option<BTreeMap<i32, i32>>,
 }
 
 /// How long an item that left the pack may stay unaccounted (not back in
@@ -1973,6 +1995,7 @@ struct Witness {
     bank_nonzero_roundtrips: u32,
     tool_selected_observed: bool,
     bank_loaded_observed: bool,
+    bank_open_login_session: Option<u64>,
     bank_closed_observed: bool,
     bank_return_step_seen: bool,
     site_anchor_selected: bool,
@@ -2058,6 +2081,19 @@ struct Witness {
     /// Stamped by `frame` after its client drain's observation was
     /// captured, so it belongs to that observation; one lamp consumes it.
     last_wish_granted: Option<Instant>,
+    /// `BankTripRelog`: the cut was made, at this published trip step.
+    relog_fired: bool,
+    relog_step: Option<String>,
+    /// The client's session counter when the cut was made, and whether a
+    /// later session reached the world again.
+    relog_session_before: Option<u64>,
+    relog_session_advanced: bool,
+    relog_offline_observed: bool,
+    /// Published trip steps after the new session, without repeats.
+    relog_steps_after: Vec<String>,
+    /// `BankTripRelog` at Access: the character's tile on the first frame of
+    /// the walk to the bank.
+    relog_access_origin: Option<(i32, i32, i32)>,
 }
 
 /// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
@@ -2129,6 +2165,10 @@ struct GatherSlot {
     baseline: Option<Observation>,
     latest: Option<Observation>,
     unsettled_items: BTreeMap<(i32, i32), UnsettledItem>,
+    /// The loaded bank counts from the previous observation. A non-bank cell
+    /// (a death recovery's supply trip) can deposit a non-product item, and
+    /// that deposit must conserve it.
+    bank_counts_before: Option<BTreeMap<i32, i32>>,
     bank_config: Option<Arc<script::native::PreparedConfig>>,
     last_observed_dropped: i64,
     last_observed_product_drops: u32,
@@ -2137,7 +2177,259 @@ struct GatherSlot {
     pause_plane_teleport_sent: bool,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
     soak_last_refill: Instant,
+    relog: RelogPlan,
+    /// The cut is a silent server (`RelogPlan::dead_server`): the main loop
+    /// owns the relay and stops forwarding when this is set.
+    relog_pause_requested: bool,
+    /// `BankTripRelog`: the preparation sent the mainland hop itself.
+    relog_prep_hop_sent: bool,
+    /// The slot's arm. The preparation relogs a bot that has no script yet,
+    /// so the approved scriptless policy parks it after its own logout; the
+    /// fixture posts the operator's Login, as a user would.
+    login_arm: Option<Arc<SlotArm>>,
 }
+/// How far the character walks toward the bank before an `Access` cut. The
+/// oak fixture (3017,3170) is 75 tiles from the Draynor bank (3092,3243), so
+/// 20 tiles leaves the walk well under way and the bank well ahead.
+const RELOG_ACCESS_CUT_TILES: i32 = 20;
+
+/// Where a `BankTripRelog` cell cuts the connection, and how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RelogPlan {
+    /// The Gatherer's published trip step at the cut: `Access`, `Open` or `Deposit`.
+    step: &'static str,
+    /// `false`: an unknown opcode fails the client's own dispatch (the T1
+    /// path of `relog_live_tests.rs`) and a fresh login follows. `true`: a
+    /// relay stops forwarding the server's bytes, so the client's dead-server
+    /// deadline fires and a soft reconnect follows.
+    dead_server: bool,
+}
+
+impl RelogPlan {
+    const DEFAULT: Self = Self {
+        step: "Open",
+        dead_server: false,
+    };
+}
+
+fn relog_plan() -> Result<RelogPlan, String> {
+    let step = match std::env::var("GATHERER_RELOG_STEP").as_deref() {
+        Ok("Open") | Err(_) => "Open",
+        Ok("Access") => "Access",
+        Ok("Deposit") => "Deposit",
+        Ok(other) => {
+            return Err(format!(
+                "GATHERER_RELOG_STEP must be Access, Open or Deposit, not {other:?}"
+            ))
+        }
+    };
+    let dead_server = match std::env::var("GATHERER_RELOG_FAULT").as_deref() {
+        Ok("protocol-error") | Err(_) => false,
+        Ok("dead-server") => true,
+        Ok(other) => {
+            return Err(format!(
+                "GATHERER_RELOG_FAULT must be protocol-error or dead-server, not {other:?}"
+            ))
+        }
+    };
+    Ok(RelogPlan { step, dead_server })
+}
+
+/// The published trip steps after the new session include `step`. The status
+/// labels "withdrawal confirmed" and "bank closed; validating equipment" last
+/// one tick. In one run of twelve the Gatherer's own log shows the close label
+/// and the witness did not record it. The Close and Validate steps follow those
+/// labels and the Gatherer reaches them only when the withdrawal and the close
+/// completed, so the step trail states the same facts.
+fn relog_step_seen(steps: &[String], step: &str) -> bool {
+    steps.iter().any(|seen| seen == step)
+}
+
+/// The trip steps a restarted bank trip must publish, in this order, after
+/// the new session (other steps may lie between).
+fn relog_steps_in_order(steps: &[String]) -> bool {
+    let mut wanted = ["Access", "Open", "Deposit"].into_iter();
+    let mut next = wanted.next();
+    for step in steps {
+        if next == Some(step.as_str()) {
+            next = wanted.next();
+        }
+    }
+    next.is_none()
+}
+
+/// Host-log lines of one `BankTripRelog` run: the Gatherer's recovery lines,
+/// the bank machine's reopen lines and the session lines around the cut.
+struct RelogCapture(Mutex<Vec<String>>);
+
+static RELOG_CAPTURE: RelogCapture = RelogCapture(Mutex::new(Vec::new()));
+
+impl api::hostlog::Sink for RelogCapture {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        let message = record.message;
+        if [
+            "gatherer-bank-",
+            "bank-reopen",
+            "session exit",
+            "relog decision",
+            "unexpected logout",
+            "handshake ok",
+            "login code",
+            "native Gatherer",
+        ]
+        .iter()
+        .any(|prefix| message.starts_with(prefix))
+        {
+            if let Ok(mut lines) = self.0.lock() {
+                lines.push(format!("{} {message}", record.slot.unwrap_or("-")));
+            }
+        }
+    }
+}
+
+fn relog_log() -> Vec<String> {
+    RELOG_CAPTURE
+        .0
+        .lock()
+        .map(|lines| lines.clone())
+        .unwrap_or_default()
+}
+
+/// The Gatherer logged the restart of its bank trip at `step`.
+fn relog_restart_logged(step: &str) -> bool {
+    let needle = format!("step={step} ");
+    relog_log()
+        .iter()
+        .any(|line| line.contains("gatherer-bank-trip-restart") && line.contains(&needle))
+}
+
+/// Test-only relay between the client and the engine, as in
+/// `relog_live_tests.rs`: `pause_live_connection` stops the server-to-client
+/// direction of the game connection that is live when it is called; the
+/// reconnect passes through. The client also opens update-service
+/// connections to the same port, so the game connection is the newest one
+/// whose first byte is the login opcode 14 (`client.rs:3530`), not the newest
+/// connection.
+mod relog_relay {
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    const LOGIN_OPCODE: u8 = 14;
+
+    pub struct Relay {
+        pub port: u16,
+        game: Arc<AtomicUsize>,
+        paused: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Relay {
+        pub fn start(upstream: u16) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind relay");
+            let port = listener.local_addr().unwrap().port();
+            let game = Arc::new(AtomicUsize::new(0));
+            let paused = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (game_accept, paused_accept, stop_accept) =
+                (Arc::clone(&game), Arc::clone(&paused), Arc::clone(&stop));
+            thread::spawn(move || {
+                let mut next = 0;
+                for incoming in listener.incoming() {
+                    if stop_accept.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let Ok(client) = incoming else { continue };
+                    let Ok(server) = TcpStream::connect(("127.0.0.1", upstream)) else {
+                        let _ = client.shutdown(Shutdown::Both);
+                        continue;
+                    };
+                    next += 1;
+                    let id = next;
+                    pump(
+                        client.try_clone().unwrap(),
+                        server.try_clone().unwrap(),
+                        Direction::ToServer {
+                            id,
+                            game: Arc::clone(&game_accept),
+                        },
+                    );
+                    pump(
+                        server,
+                        client,
+                        Direction::ToClient {
+                            id,
+                            paused: Arc::clone(&paused_accept),
+                        },
+                    );
+                }
+            });
+            Self {
+                port,
+                game,
+                paused,
+                stop,
+            }
+        }
+
+        pub fn pause_live_connection(&self) -> usize {
+            let id = self.game.load(Ordering::Relaxed);
+            self.paused.store(id, Ordering::Relaxed);
+            id
+        }
+    }
+
+    impl Drop for Relay {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let _ = TcpStream::connect(("127.0.0.1", self.port));
+        }
+    }
+
+    enum Direction {
+        /// Client to server: the first byte of a connection names its service.
+        ToServer { id: usize, game: Arc<AtomicUsize> },
+        /// Server to client: bytes are dropped while this connection is paused.
+        ToClient { id: usize, paused: Arc<AtomicUsize> },
+    }
+
+    /// Copy `from` to `to`. While the paused id is this connection's, the
+    /// client hears nothing until it gives up, and its close ends the other
+    /// direction.
+    fn pump(mut from: TcpStream, mut to: TcpStream, direction: Direction) {
+        thread::spawn(move || {
+            let mut buf = [0u8; 16 * 1024];
+            let mut first = true;
+            loop {
+                let n = match from.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                match &direction {
+                    Direction::ToServer { id, game } => {
+                        if first && buf[0] == LOGIN_OPCODE {
+                            game.store(*id, Ordering::Relaxed);
+                        }
+                        first = false;
+                    }
+                    Direction::ToClient { id, paused } => {
+                        if paused.load(Ordering::Relaxed) == *id {
+                            continue;
+                        }
+                    }
+                }
+                if to.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+            let _ = from.shutdown(Shutdown::Both);
+            let _ = to.shutdown(Shutdown::Both);
+        });
+    }
+}
+
 impl GatherSlot {
     fn new(
         cell: Cell,
@@ -2172,6 +2464,7 @@ impl GatherSlot {
             baseline: None,
             latest: None,
             unsettled_items: BTreeMap::new(),
+            bank_counts_before: None,
             bank_config: None,
             last_observed_dropped: 0,
             last_observed_product_drops: 0,
@@ -2180,6 +2473,85 @@ impl GatherSlot {
             pause_plane_teleport_sent: false,
             tutorial_reseed: None,
             soak_last_refill: Instant::now(),
+            relog: relog_plan().unwrap_or(RelogPlan::DEFAULT),
+            relog_pause_requested: false,
+            relog_prep_hop_sent: false,
+            login_arm: None,
+        }
+    }
+
+    /// `BankTripRelog`: cut the connection the first frame the published trip
+    /// step is the planned one (`Access`: the walk to the bank is
+    /// `RELOG_ACCESS_CUT_TILES` under way; `Open`: before the table loads;
+    /// `Deposit`: with the table loaded), then follow the steps the new
+    /// session publishes.
+    fn relog_frame(&mut self, client: &mut client::client::Client) {
+        let step = self
+            .witness
+            .last_status_bank
+            .as_deref()
+            .and_then(|bank| bank.rsplit_once("; "))
+            .map(|(_, step)| step.to_owned());
+        if !self.witness.relog_fired {
+            if !client.ingame || step.as_deref() != Some(self.relog.step) {
+                return;
+            }
+            let at_boundary = match self.relog.step {
+                "Open" => !self.snapshot.bank_loaded(),
+                "Access" => {
+                    // Mid-walk: the character has left the tile it stood on
+                    // when the walk to the bank began.
+                    let Some(here) = self.latest.as_ref().and_then(|row| row.tile) else {
+                        return;
+                    };
+                    let origin = *self.witness.relog_access_origin.get_or_insert(here);
+                    here.2 == origin.2
+                        && (here.0 - origin.0).abs().max((here.1 - origin.1).abs())
+                            >= RELOG_ACCESS_CUT_TILES
+                }
+                _ => self.snapshot.bank_loaded(),
+            };
+            if !at_boundary {
+                return;
+            }
+            self.witness.relog_fired = true;
+            self.witness.relog_step = step;
+            self.witness.relog_session_before = Some(client.gens.session);
+            if self.relog.dead_server {
+                self.relog_pause_requested = true;
+            } else {
+                // The decoded opcode DIAG-PROTO-74 saw: 289 size 0, no
+                // handler. Dispatched through the client's own seam.
+                let mut payload = client::io::Packet::new(vec![]);
+                client.ptype = 74;
+                client.psize = 0;
+                client.handle_packet(74, &mut payload);
+            }
+            println!(
+                "gatherer-bank-relog-cut {}",
+                json!({
+                    "step": self.witness.relog_step,
+                    "dead_server": self.relog.dead_server,
+                    "session": client.gens.session,
+                    "bank_loaded": self.snapshot.bank_loaded(),
+                    "tile": self.latest.as_ref().and_then(|row| row.tile),
+                })
+            );
+            return;
+        }
+        let before = self.witness.relog_session_before.unwrap_or(0);
+        if !client.ingame {
+            self.witness.relog_offline_observed = true;
+        }
+        if client.ingame && client.gens.session > before {
+            self.witness.relog_session_advanced = true;
+        }
+        if self.witness.relog_session_advanced {
+            if let Some(step) = step {
+                if self.witness.relog_steps_after.last() != Some(&step) {
+                    self.witness.relog_steps_after.push(step);
+                }
+            }
         }
     }
 
@@ -2500,6 +2872,9 @@ impl GatherSlot {
         }
         if self.case == LiveCase::ReconnectReturn && !self.snapshot.ingame() {
             self.witness.reconnect_offline_observed = true;
+        }
+        if self.case == LiveCase::BankTripRelog {
+            self.relog_frame(client);
         }
         if self.started && self.snapshot.modals().chat != previous_chat_root {
             println!(
@@ -2971,10 +3346,7 @@ impl GatherSlot {
         // Inventory, equipment and bank counts arrive in separate packets.
         // Every banked item settles only after its expected bank increase;
         // protected tools still must reappear in inventory or equipment.
-        let bank_counts = if !self.unsettled_items.is_empty()
-            && self.witness.pending_bank_trip.is_some()
-            && self.snapshot.bank_loaded()
-        {
+        let bank_counts = if !self.unsettled_items.is_empty() && self.snapshot.bank_loaded() {
             self.snapshot_bank_counts()
         } else {
             BTreeMap::new()
@@ -3011,6 +3383,15 @@ impl GatherSlot {
                     .death_reprovision_deposits
                     .iter()
                     .any(|evidence| evidence.accounts_for(id, count, unsettled.left_in))
+                && !(!bank_active
+                    && unsettled.bank_before.as_ref().is_some_and(|before| {
+                        bank_counts
+                            .get(&id)
+                            .copied()
+                            .unwrap_or(0)
+                            .saturating_sub(before.get(&id).copied().unwrap_or(0))
+                            >= count
+                    }))
                 && !(id == GENIE_LAMP_ID
                     && wish_granted
                         .take_if(|granted| *granted >= unsettled.left_in)
@@ -3066,6 +3447,7 @@ impl GatherSlot {
                                 UnsettledItem {
                                     since: Instant::now(),
                                     left_in: observation.captured_at,
+                                    bank_before: self.bank_counts_before.clone(),
                                 },
                             );
                         } else {
@@ -3084,6 +3466,7 @@ impl GatherSlot {
                             .or_insert(UnsettledItem {
                                 since: Instant::now(),
                                 left_in: observation.captured_at,
+                                bank_before: self.bank_counts_before.clone(),
                             });
                     }
                 }
@@ -3200,6 +3583,9 @@ impl GatherSlot {
             {
                 return Err("unwieldable rune axe was equipped".into());
             }
+        }
+        if self.snapshot.bank_loaded() {
+            self.bank_counts_before = Some(self.snapshot_bank_counts());
         }
         self.latest = Some(observation);
         Ok(())
@@ -3687,14 +4073,24 @@ impl GatherSlot {
                 if !interact::logout(client, &ifaces) {
                     return Err("logout interface unavailable during fixture preparation".into());
                 }
+                if let Some(arm) = &self.login_arm {
+                    arm.arm_explicit_login();
+                }
                 self.phase = Prep::WaitRelog;
             }
             Prep::WaitRelog => {
-                if self.snapshot.ingame()
-                    && self.snapshot.scene_state() == 2
-                    && self.inventory_tab_available()
-                {
-                    self.phase = Prep::ReseedTutorial;
+                if self.snapshot.ingame() && self.snapshot.scene_state() == 2 {
+                    if self.case == LiveCase::BankTripRelog && !self.relog_prep_hop_sent {
+                        // The product's own hop is off for this cell (see
+                        // `run_cell`), so the preparation sends it once here,
+                        // where the product would have sent it, before the
+                        // planned cut. The cut is never followed by one.
+                        interact::mainland_hop(client);
+                        self.relog_prep_hop_sent = true;
+                    }
+                    if self.inventory_tab_available() {
+                        self.phase = Prep::ReseedTutorial;
+                    }
                 }
             }
             Prep::ReseedTutorial => {
@@ -4090,6 +4486,19 @@ impl GatherSlot {
                 status.card
             ));
         }
+        // Match SnapshotView::bank_session: only an in-game decoded modal
+        // can prove closure. Never bridge an offline frame or login session.
+        if !self.snapshot.ingame() {
+            self.witness.bank_open_login_session = None;
+        } else {
+            let session = self.snapshot.gens().session;
+            if self.snapshot.bank_component_id() >= 0 {
+                self.witness.bank_open_login_session = Some(session);
+            } else {
+                self.witness.bank_closed_observed |=
+                    self.witness.bank_open_login_session.take() == Some(session);
+            }
+        }
         let native_phase = format!("{:?}", status.phase);
         self.witness.native_phases.insert(native_phase.clone());
         for field in status.fields.iter() {
@@ -4416,6 +4825,34 @@ impl GatherSlot {
             }
             if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
+            }
+            if event == "bank selected" {
+                self.witness.bank_selected = true;
+                if self.case == LiveCase::PowerToBank {
+                    let completed = self
+                        .witness
+                        .confirmed_drops
+                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
+                        >= self.witness.power_to_bank_edit_slots;
+                    if !self.witness.power_to_bank_edit_requested
+                        || !self.witness.power_to_bank_applied
+                        || !completed
+                    {
+                        return Err(format!(
+                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
+                            self.witness
+                        ));
+                    }
+                }
+            }
+            if event == "withdrawal confirmed" {
+                self.witness.bank_withdrawal_confirmed = true;
+            }
+            if self.case == LiveCase::FishBait
+                && event == "withdrawal confirmed"
+                && integer_field(status, "bait") == Some(3)
+            {
+                self.witness.bait_exact = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
@@ -5307,6 +5744,34 @@ impl GatherSlot {
                 }
                 Ok(())
             }
+            LiveCase::BankTripRelog => {
+                let fired_step = self.witness.relog_step.clone().unwrap_or_default();
+                if !self.complete_bank_selection()
+                    || !self.witness.relog_fired
+                    || !self.witness.relog_session_advanced
+                    || !relog_steps_in_order(&self.witness.relog_steps_after)
+                    || !relog_restart_logged(&fired_step)
+                    || !(self.witness.bank_withdrawal_confirmed
+                        || relog_step_seen(&self.witness.relog_steps_after, "Close"))
+                    || !(self.witness.bank_closed_observed
+                        || relog_step_seen(&self.witness.relog_steps_after, "Validate"))
+                    || !self.status_integer_seen("trips", 1)
+                    || !self.witness.bank_return_step_seen
+                    || self.witness.post_bank_yields == 0
+                    || self
+                        .latest
+                        .as_ref()
+                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
+                {
+                    return Err(format!(
+                        "{} did not restart its bank trip after the cut and yield: log={:?} {:?}",
+                        self.name(),
+                        relog_log(),
+                        self.witness
+                    ));
+                }
+                Ok(())
+            }
             LiveCase::FishBankSoak => {
                 let soak = &self.witness.soak;
                 let min_trips = soak_min_trips();
@@ -5824,7 +6289,8 @@ fn fixture_plan(
         LiveCase::BankCostFirstGoal
         | LiveCase::BankCostSeersMaple
         | LiveCase::PauseResumeOtherPlane
-        | LiveCase::ReconnectReturn => plan.bank_seed.push(("bronze_axe".into(), 1)),
+        | LiveCase::ReconnectReturn
+        | LiveCase::BankTripRelog => plan.bank_seed.push(("bronze_axe".into(), 1)),
         LiveCase::DeathReturn => plan.bank_seed.push(("bronze_axe".into(), 3)),
         LiveCase::DeathNoStock => plan.inventory_seed.push(("bronze_axe".into(), 1)),
         LiveCase::DeathRespawnRegion
@@ -5908,7 +6374,8 @@ fn fixture_plan(
         | LiveCase::CoinRunesEmpty
         | LiveCase::PowerToBank
         | LiveCase::PauseResumeOtherPlane
-        | LiveCase::ReconnectReturn => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
+        | LiveCase::ReconnectReturn
+        | LiveCase::BankTripRelog => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
@@ -5978,28 +6445,31 @@ fn selected_profile(
     nav_pack: PathBuf,
     engine_dir: PathBuf,
     catalog_root: PathBuf,
+    cache_dir: Option<PathBuf>,
+    nav_flags: Option<PathBuf>,
     temp: &Path,
+    game_port: Option<u16>,
 ) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(
+        port: Some(game_port.unwrap_or_else(|| {
             std::env::var("GATHERER_GAME_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(47594),
-        ),
+                .unwrap_or(47594)
+        })),
         http_port: Some(
             std::env::var("GATHERER_HTTP_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(3080),
         ),
-        cache_dir: std::env::var_os("BOT_CACHE_DIR").map(PathBuf::from),
+        cache_dir,
         nav_pack: Some(nav_pack),
-        nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
+        nav_flags,
         engine_dir: Some(engine_dir),
         vault_path: Some(temp.join("vault")),
         catalog_root: Some(catalog_root),
@@ -6050,18 +6520,70 @@ fn run_cell_with_fixture(
     if let Some(reason) = macro_event_fixture_blocker(case) {
         return Err(reason.into());
     }
+    if !api::test_support::game_data_available() {
+        return Ok(());
+    }
     if case.is_named_site() && !cfg!(feature = "live-probe") {
         return Err(
             "Site live cells require host-play/live-probe for read-only Area-arrival evidence"
                 .into(),
         );
     }
+    if (case == LiveCase::RandomEvent
+        || case == LiveCase::BankTripRelog
+        || case.is_death_recovery())
+        && std::env::var_os("BOT_LIVE_NAME_PREFIX").is_none()
+    {
+        return Err("G4a live cells require an own BOT_LIVE_NAME_PREFIX".into());
+    }
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
     api::hostlog::set_debug(true);
-    let nav_pack = PathBuf::from(required("GATHERER_NAV_PACK")?);
-    let engine_dir = PathBuf::from(required("GATHERER_ENGINE_DIR")?);
-    let catalog_root = PathBuf::from(required("GATHERER_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "real navigation pack for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(engine_dir) = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "real 289 engine content for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(catalog_root) = api::test_support::local_asset_path(
+        "GATHERER_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let cache_dir = if std::env::var_os("BOT_CACHE_DIR").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "BOT_CACHE_DIR",
+            "",
+            "local Gatherer cache snapshot",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
+    let nav_flags = if std::env::var_os("GATHERER_NAV_FLAGS").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "GATHERER_NAV_FLAGS",
+            "",
+            "local Gatherer navigation flags",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
     for (name, path) in [
         ("GATHERER_NAV_PACK", &nav_pack),
         ("GATHERER_ENGINE_DIR", &engine_dir),
@@ -6094,7 +6616,25 @@ fn run_cell_with_fixture(
     }
     let (target, mut plan, fixture_task) = fixture_builder(cell, case)?;
     let temp = TempRoot::new(cell_name)?;
-    let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
+    let relog = relog_plan()?;
+    let upstream_port = std::env::var("GATHERER_GAME_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(45594);
+    let relay = (case == LiveCase::BankTripRelog && relog.dead_server)
+        .then(|| relog_relay::Relay::start(upstream_port));
+    if case == LiveCase::BankTripRelog && !api::hostlog::install_sink(&RELOG_CAPTURE) {
+        return Err("run this live cell in its own test process".into());
+    }
+    let (profile, template) = selected_profile(
+        nav_pack,
+        engine_dir,
+        catalog_root,
+        cache_dir,
+        nav_flags,
+        temp.path(),
+        relay.as_ref().map(|relay| relay.port),
+    )?;
     if case == LiveCase::BankCost {
         configure_bank_cost_plan(&template, &mut plan)?;
     }
@@ -6159,6 +6699,15 @@ fn run_cell_with_fixture(
             true,
         )))
     });
+    // The preparation relogs each bot before any script runs: each slot's arm
+    // is owned here so the fixture can post the Login after its own logout.
+    let subject_arm = SlotArm::new(274_289_304, true);
+    state.lock().unwrap().login_arm = Some(Arc::clone(&subject_arm));
+    let helper_arm = helper_state.as_ref().map(|helper| {
+        let arm = SlotArm::new(274_289_305, true);
+        helper.lock().unwrap().login_arm = Some(Arc::clone(&arm));
+        arm
+    });
     let start_handle: Arc<Mutex<Option<ScriptStartHandle>>> = Arc::new(Mutex::new(None));
     let frame_state = Arc::clone(&state);
     let frame_handle = Arc::clone(&start_handle);
@@ -6177,7 +6726,14 @@ fn run_cell_with_fixture(
     let frame_capture_job = Arc::new(Mutex::new(None::<PendingGathererCapture>));
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
-        true,
+        // The product re-sends this hop (a teleport to 3220,3220 and
+        // `setvar tutorial 1000`) at every new session of a --mainland run
+        // (`play_slots.rs:1461,1801-1804`). A relog cell cuts a session on
+        // purpose, and the hop after the cut moved the character off its
+        // walk. The cell's preparation sends the hop once itself
+        // (`Prep::WaitRelog`), before the cut, and the cut is never followed
+        // by one.
+        case != LiveCase::BankTripRelog,
         vec![],
         |_| (None, None),
         move |client, username, frame| {
@@ -6381,7 +6937,7 @@ fn run_cell_with_fixture(
     {
         subject.settings.random_events = false;
     }
-    play.try_spawn_slot(subject, None, None, None)?;
+    play.try_spawn_slot(subject, None, None, Some(subject_arm))?;
     if let (Some(helper_account), Some(helper_password)) =
         (helper_account.as_ref(), helper_password.as_ref())
     {
@@ -6389,7 +6945,7 @@ fn run_cell_with_fixture(
             mint_profile(helper_account, helper_password, 2)?,
             None,
             None,
-            None,
+            helper_arm,
         )?;
     }
     let mut logout_guard = (case == LiveCase::BankCostFirstGoal).then(|| CleanLogoutGuard {
@@ -6457,6 +7013,7 @@ fn run_cell_with_fixture(
     let mut resume_requested = false;
     let mut reconnect_logout_requested = false;
     let mut reconnect_login_armed = false;
+    let mut relay_paused = false;
     let mut soak_started_at: Option<Instant> = None;
     let mut soak_stop_requested = false;
     let mut soak_stop_at = Instant::now();
@@ -6769,6 +7326,23 @@ fn run_cell_with_fixture(
         {
             let mut slot = state.lock().map_err(|_| "live state poisoned")?;
             slot.witness.resume_observed = true;
+        }
+        if case == LiveCase::BankTripRelog && !relay_paused {
+            if let Some(relay) = &relay {
+                let requested = state
+                    .lock()
+                    .map_err(|_| "live state poisoned")?
+                    .relog_pause_requested;
+                if requested {
+                    let connection = relay.pause_live_connection();
+                    println!(
+                        "gatherer-bank-relog-pause {}",
+                        json!({"connection": connection})
+                    );
+                    // Connection 0 means no game connection was seen yet.
+                    relay_paused = connection != 0;
+                }
+            }
         }
         if case == LiveCase::ReconnectReturn
             && witness.bank_return_step_seen
@@ -7280,6 +7854,16 @@ fn run_cell_with_fixture(
                         .as_ref()
                         .is_some_and(|latest| latest.xp > baseline_xp)
             }
+            LiveCase::BankTripRelog => {
+                witness.relog_fired
+                    && witness.relog_session_advanced
+                    && relog_steps_in_order(&witness.relog_steps_after)
+                    && witness.bank_return_step_seen
+                    && witness.post_bank_yields >= 1
+                    && latest
+                        .as_ref()
+                        .is_some_and(|latest| latest.xp > baseline_xp)
+            }
             LiveCase::FishBankSoak => {
                 soak_started_at.is_some_and(|started| started.elapsed() >= soak_duration())
             }
@@ -7452,6 +8036,19 @@ fn run_cell_with_fixture(
     }
     receipt["bank_trip"] = bank_receipt;
     receipt["bank_status_sequence"] = json!(witness.bank_status_sequence);
+    if case == LiveCase::BankTripRelog {
+        receipt["bank_relog"] = json!({
+            "step": relog.step,
+            "dead_server": relog.dead_server,
+            "fired": witness.relog_fired,
+            "fired_step": witness.relog_step,
+            "session_before": witness.relog_session_before,
+            "session_advanced": witness.relog_session_advanced,
+            "offline_observed": witness.relog_offline_observed,
+            "steps_after": witness.relog_steps_after,
+            "host_log": relog_log(),
+        });
+    }
     receipt["failure_sequence"] = json!(witness.failure_sequence);
     if case == LiveCase::FishBankSoak {
         let soak = &witness.soak;
@@ -7803,12 +8400,33 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
+    if !api::test_support::game_data_available() {
+        return Ok(());
+    }
     const CELL: &str = "g3_quester_sheep_bank_shared_core";
     let _home = script::IsolatedEnv::enter(CELL);
     api::hostlog::set_debug(true);
-    let nav_pack = PathBuf::from(required("GATHERER_NAV_PACK")?);
-    let engine_dir = PathBuf::from(required("GATHERER_ENGINE_DIR")?);
-    let catalog_root = PathBuf::from(required("GATHERER_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "real navigation pack for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(engine_dir) = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "real 289 engine content for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(catalog_root) = api::test_support::local_asset_path(
+        "GATHERER_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
     for (name, path, is_file) in [
         ("GATHERER_NAV_PACK", &nav_pack, true),
         ("GATHERER_ENGINE_DIR", &engine_dir, false),
@@ -7827,6 +8445,30 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
             return Err(format!("{name} is not a directory: {}", path.display()));
         }
     }
+    let cache_dir = if std::env::var_os("BOT_CACHE_DIR").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "BOT_CACHE_DIR",
+            "",
+            "local Gatherer cache snapshot",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
+    let nav_flags = if std::env::var_os("GATHERER_NAV_FLAGS").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "GATHERER_NAV_FLAGS",
+            "",
+            "local Gatherer navigation flags",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
     let mut scenario =
         scenario::get("quester_sheep").ok_or("scenario registry has no quester_sheep")?;
     if scenario.settings.start_script != Some("Quester") {
@@ -7846,7 +8488,15 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     let mainland = scenario.seed.mainland;
     scenario.settings.nav.engine_speed_ms = None;
     let temp = TempRoot::new(CELL)?;
-    let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
+    let (profile, template) = selected_profile(
+        nav_pack,
+        engine_dir,
+        catalog_root,
+        cache_dir,
+        nav_flags,
+        temp.path(),
+        None,
+    )?;
     let names = host_play::mint_live_names(1);
     let account = names
         .first()
@@ -7912,6 +8562,11 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         let lifecycle = play.script_lifecycle_receipt(&account);
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
+            if slot.runner.take_relog_login() {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
             }
@@ -8179,7 +8834,32 @@ fn gatherer_bank_reconnect_return() {
     run_cell(Cell::Woodcutting, LiveCase::ReconnectReturn).unwrap();
 }
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX and local 289 engine; GATHERER_RELOG_STEP and GATHERER_RELOG_FAULT choose the cut"]
+fn gatherer_bank_trip_relog() {
+    run_cell(Cell::Woodcutting, LiveCase::BankTripRelog).unwrap();
+}
+
+#[test]
+fn relog_steps_must_restart_at_access_then_open_then_deposit() {
+    let steps = |list: &[&str]| {
+        list.iter()
+            .map(|step| (*step).to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(relog_steps_in_order(&steps(&[
+        "Deposit", "Access", "Open", "Deposit", "Withdraw"
+    ])));
+    assert!(relog_steps_in_order(&steps(&["Access", "Open", "Deposit"])));
+    assert!(!relog_steps_in_order(&steps(&[
+        "Deposit", "Withdraw", "Close"
+    ])));
+    assert!(!relog_steps_in_order(&steps(&[
+        "Open", "Deposit", "Access"
+    ])));
+    assert!(!relog_steps_in_order(&[]));
+}
+#[test]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -8202,13 +8882,13 @@ fn maze_random_complete(witness: &Witness) -> bool {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_reprovision_real_content() {
     run_cell_with_fixture(
         Cell::Woodcutting,
@@ -8219,33 +8899,33 @@ fn gatherer_death_reprovision_real_content() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
 fn gatherer_death_return_respawn_region() {
     run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_return_no_stock() {
     run_cell(Cell::Woodcutting, LiveCase::DeathNoStock).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
 fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_pending5() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogPending).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_proving() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogProving).unwrap();
 }
@@ -8339,10 +9019,11 @@ mod bank_conservation_tests {
 
     fn bank_fixture(items: &[(i32, i32)]) -> (Arc<script::native::PreparedConfig>, GameSnapshot) {
         let config = api::selected::FamilyPreparation::run(|families| {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let revision = api::selected::ClientRevision::R289;
+            let selected = api::game_data::for_revision(revision).unwrap();
             let mut cx = script::native::PrepareContext {
-                pin: selected.selected_pin().unwrap(),
+                zones: None,
+                revision,
                 selected,
                 banks: Arc::default(),
                 families,
@@ -8408,6 +9089,7 @@ mod bank_conservation_tests {
     ) -> script::native::ScriptStatus {
         use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
         ScriptStatus {
+            survival: Default::default(),
             run: api::selected::RunKey {
                 slot: 1,
                 run: 1,
@@ -8697,6 +9379,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn woodcutting_status_gate_rejects_kebab_left_after_deposit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
         let (config, snapshot) = bank_fixture(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let mut slot = GatherSlot::new(
@@ -8739,6 +9424,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(deposited),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         };
         slot.apply_status(&status("bank opened", 0)).unwrap();
         let rows = slot.snapshot.inventory().to_vec();
@@ -8754,6 +9440,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn tool_fetch_first_visit_is_not_a_deposit_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let empty = BTreeMap::new();
         let deposit_ids = native_deposit_ids(&[]);
         assert!(deposit_ids.is_empty());
@@ -8775,6 +9464,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn woodcutting_bank_conserves_products_and_incidental_kebab() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let inventory_before = counts(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let deposit_ids = native_deposit_ids(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let expected_items = bank_deposit_expectation(&inventory_before, &deposit_ids);
@@ -8967,10 +9659,11 @@ mod bank_conservation_tests {
         use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
         let settings = Cell::Fishing.settings(LiveCase::FishBankSoak);
         let config = api::selected::FamilyPreparation::run(|families| {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let revision = api::selected::ClientRevision::R289;
+            let selected = api::game_data::for_revision(revision).unwrap();
             let mut cx = script::native::PrepareContext {
-                pin: selected.selected_pin().unwrap(),
+                zones: None,
+                revision,
                 selected,
                 banks: Arc::default(),
                 families,
@@ -9031,6 +9724,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(0),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         };
         slot.apply_status(&status).unwrap();
         let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
@@ -9124,6 +9818,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(trips),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         }
     }
 
@@ -9326,6 +10021,9 @@ mod bank_conservation_tests {
     /// credited in the bank, tally 27, net kept) passes every gate.
     #[test]
     fn fish_bank_soak_oracle_accepts_a_banked_incidental_item() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(
             &mut slot,
@@ -9361,10 +10059,47 @@ mod bank_conservation_tests {
         assert_eq!(slot.witness.bank_trips[0].deposited_count, 27);
     }
 
+    /// A death recovery's supply trip opens the bank even though the cell is
+    /// Power, not bank mode. Depositing a seeded non-product item there is
+    /// conservation, not a loss: the item's bank increase settles it.
+    #[test]
+    fn death_recovery_bank_deposit_conserves_a_seeded_filler() {
+        let filler = DEATH_FILLERS[1].0;
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::DeathReturn,
+            OAK_RESPAWN_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(LOG_ID, 1), (filler, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(bank_rows(&[])), vec![]);
+        let before = slot.capture();
+        slot.observe_running(None, before.clone()).unwrap();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(LOG_ID, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank_rows(&[(filler, 1)])), vec![]);
+        let after = slot.capture();
+        slot.observe_running(Some(before), after.clone()).unwrap();
+        slot.observe_running(Some(after.clone()), after).unwrap();
+        assert!(
+            slot.unsettled_items.is_empty(),
+            "the deposited filler settles against its bank increase: {:?}",
+            slot.unsettled_items
+        );
+    }
+
     /// The incidental fruit left the pack but never reached the bank: the
     /// frame oracle keeps it unsettled and the trip is not verified.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_missing_bank_credit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[(NET_ID, 1)], &[(SHRIMP_ID, 26)]).unwrap();
         assert_eq!(
@@ -9409,6 +10144,9 @@ mod bank_conservation_tests {
     /// candidate, so no bank increase settles it.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_lost_protected_net() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[], &[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)]).unwrap();
         assert_eq!(
@@ -9431,6 +10169,9 @@ mod bank_conservation_tests {
     /// held, so the trip is not verified.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_wrong_deposit_tally() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(
             &mut slot,
@@ -9461,6 +10202,9 @@ mod bank_conservation_tests {
     /// blocks instead of failing on the aborted trip's accounting.
     #[test]
     fn fish_bank_soak_block_abandons_the_pending_trip_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[(NET_ID, 1)], &[]).unwrap();
         assert_eq!(slot.unsettled_items.len(), 2);
@@ -9522,6 +10266,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_without_a_wish_fails_at_the_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.observe_running(Some(before), left.clone()).unwrap();
@@ -9533,6 +10280,9 @@ mod bank_conservation_tests {
     /// the earliest such stamp is the observation's own capture instant.
     #[test]
     fn lamp_settles_on_a_wish_in_the_observation_it_left_in() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.witness.last_wish_granted = Some(left.captured_at);
@@ -9549,6 +10299,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_settles_on_a_wish_after_it_left() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.observe_running(Some(before), left.clone()).unwrap();
@@ -9569,6 +10322,9 @@ mod bank_conservation_tests {
     /// accepted by the old two-second window).
     #[test]
     fn lamp_is_not_settled_by_a_recent_earlier_wish() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for earlier in [Duration::from_nanos(1), Duration::from_secs(1)] {
             let mut slot = soak_slot_with_lamps(1);
             let (before, left) = lamp_leaves(&mut slot);
@@ -9580,6 +10336,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_is_not_settled_by_an_old_wish() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.witness.last_wish_granted = Some(
@@ -9596,6 +10355,9 @@ mod bank_conservation_tests {
     /// settle the second, although it belongs to the second's observation.
     #[test]
     fn lamp_is_not_settled_by_a_wish_another_lamp_consumed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(2);
         let before = slot.capture();
         slot.snapshot
@@ -10078,6 +10840,172 @@ fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
 }
 
 #[cfg(test)]
+mod bank_closure_oracle_tests {
+    use super::*;
+
+    fn slot() -> GatherSlot {
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::BankCostFirstGoal,
+            OAK_RESPAWN_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.snapshot.seed_ingame(2);
+        // Keep the existing deposit guard active. Verify a real fixture
+        // transfer before testing either the legacy text or decoded closure.
+        let mut receipt = BankTripReceipt::new(
+            1,
+            BTreeMap::from([(1521, 1)]),
+            &[1521],
+            BTreeMap::new(),
+            0,
+            &[1521],
+            0,
+        );
+        receipt
+            .observe_deposit(
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                true,
+                &BTreeMap::from([(1521, 1)]),
+                1,
+                true,
+            )
+            .unwrap();
+        assert!(receipt.deposit_verified);
+        slot.witness.pending_bank_trip = Some(receipt);
+        slot
+    }
+
+    fn observe(slot: &mut GatherSlot, component_id: i32, event: &'static str) {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        slot.snapshot
+            .seed_bank_observation(component_id, 1, Some(vec![]), vec![]);
+        let status = ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(
+                        "Draynor; Reachable; access:3092,3245; Validate".into(),
+                    ),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+            ]),
+            survival: script::survival::SurvivalReport::default(),
+        };
+        slot.apply_status(&status).unwrap();
+    }
+
+    #[test]
+    fn bank_closure_survives_a_missed_status_pulse() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_requires_a_decoded_open_to_closed_transition() {
+        let mut slot = slot();
+        observe(&mut slot, -1, "bank closed; validating equipment");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "bank closed; validating equipment");
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_does_not_bridge_an_offline_frame() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        slot.snapshot = GameSnapshot::new();
+        observe(&mut slot, -1, "waiting for world");
+        assert!(!slot.witness.bank_closed_observed);
+        slot.snapshot.seed_ingame(2);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_does_not_bridge_login_sessions() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        let mut gens = slot.snapshot.gens();
+        gens.session += 1;
+        slot.snapshot.reset_session(gens);
+        slot.snapshot.seed_ingame(2);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_never_closes_still_fails_the_unchanged_terminal() {
+        let mut slot = slot();
+        slot.witness = Witness {
+            status_trips: 1,
+            status_deposited: 1,
+            bank_nonzero_roundtrips: 1,
+            post_bank_yields: 1,
+            bank_loaded_observed: true,
+            bank_withdrawal_confirmed: true,
+            last_status_yielded: 1,
+            last_xp: 1,
+            ..slot.witness
+        };
+        slot.witness.products_seen.insert(1521);
+        slot.witness.oak_live_tiles.insert((
+            OAK_RESPAWN_START.x,
+            OAK_RESPAWN_START.z,
+            OAK_RESPAWN_START.level,
+        ));
+        for _ in 0..3 {
+            observe(&mut slot, 5292, "bank closed; validating equipment");
+            assert!(!real_content_bank_lifecycle_complete(
+                slot.case,
+                &slot.witness,
+                &slot.plan,
+                slot.target,
+                0,
+            ));
+        }
+        observe(&mut slot, -1, "wielding tool");
+        assert!(
+            real_content_bank_lifecycle_complete(
+                slot.case,
+                &slot.witness,
+                &slot.plan,
+                slot.target,
+                0,
+            ),
+            "all other terminal facts were already satisfied before decoded closure"
+        );
+    }
+}
+
+#[cfg(test)]
 mod woodcutting_wield_oracle_tests {
     use super::*;
 
@@ -10110,6 +11038,7 @@ mod woodcutting_wield_oracle_tests {
                 label: "Tool",
                 value: StatusValue::Text(tool.into()),
             }]),
+            survival: script::survival::SurvivalReport::default(),
         }
     }
 
@@ -11763,6 +12692,7 @@ mod quester_shared_core_completion_tests {
     #[test]
     fn another_cards_status_does_not_pass() {
         let status = script::native::ScriptStatus {
+            survival: Default::default(),
             run: api::selected::RunKey {
                 slot: 1,
                 run: 1,

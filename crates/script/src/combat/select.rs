@@ -1,11 +1,205 @@
 //! Borrowed combat selection, danger lines and fact-derived combat formulas.
 use super::frame::Frame;
-use super::request::{ActorKind, ActorRef, CombatRequest, Pick, Target};
+use super::request::{ActorKind, ActorRef, CombatRequest, Pick, PvpRefusal, Style, Target};
 use super::tables::{CombatTables, PrayerRole, StyleMask};
 use super::threats::{StyleObs, Threat, ThreatSet};
+use crate::native::{PvpGlobals, WildernessLevels};
 use api::game_data::{DragonfireKind, NpcAttackKind, NpcNameRow, PrayerFact};
 use api::gather_methods::SceneRegionInput;
-use api::snapshot::NpcView;
+use api::snapshot::{NpcView, PlayerView, WorldTile};
+
+/// Which source authorised STARTING a fight with a player. Reported on the
+/// combat report, never re-derived (PVP-DESIGN-1026 §2.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum PvpSource {
+    /// The request field (`pvp: true`) alone.
+    Request,
+    /// The global operator setting (`pvp.start_fights`) alone.
+    Global,
+    /// Both sources.
+    Both,
+}
+
+impl PvpSource {
+    /// The word scripts read (`pvpSource` in the `api.combat.fight` result).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Global => "global",
+            Self::Both => "both",
+        }
+    }
+
+    /// The wire code of the retained outcome page (0 is no source).
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Request => 1,
+            Self::Global => 2,
+            Self::Both => 3,
+        }
+    }
+
+    /// The source a wire code names; `None` for 0 and unknown codes.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Request),
+            2 => Some(Self::Global),
+            3 => Some(Self::Both),
+            _ => None,
+        }
+    }
+}
+
+/// The ONE authorization predicate. `Combat::begin` calls it exactly once, and
+/// only when the request target is [`Target::Player`]. No other route calls it:
+/// self-defence needs no opt-in (operator Q1, PVP-DESIGN-1026 §2.8).
+pub const fn pvp_initiation_allowed(
+    request: &CombatRequest,
+    globals: PvpGlobals,
+) -> Option<PvpSource> {
+    match (request.pvp, globals.start_fights) {
+        (true, true) => Some(PvpSource::Both),
+        (true, false) => Some(PvpSource::Request),
+        (false, true) => Some(PvpSource::Global),
+        (false, false) => None,
+    }
+}
+
+/// The attack label the content gave a player row: "Attack" (the Wilderness) or
+/// "Fight" (a started duel). `None` means the row is a threat, never a target.
+pub fn attack_label(actions: &[Option<String>]) -> Option<&'static str> {
+    actions
+        .iter()
+        .flatten()
+        .find_map(|action| match action.as_str() {
+            "Attack" => Some("Attack"),
+            "Fight" => Some("Fight"),
+            _ => None,
+        })
+}
+
+/// The content's own zone checks (`pvp_is_attackable`,
+/// `skill_combat/scripts/pvp/pvp_combat.rs2:50-74`, `pvp_level_check` `:32-48`)
+/// as the machine can evaluate them from one frame. Inside a duel pen the
+/// arena rules replace the Wilderness rules. The single-way and duel-state
+/// checks are not observable and are classified from server lines instead.
+pub fn zone_gate(
+    here: WorldTile,
+    them: WorldTile,
+    my_combat_level: i32,
+    their_combat_level: i32,
+    tables: &CombatTables,
+    wilderness: Option<&dyn WildernessLevels>,
+) -> Result<(), PvpRefusal> {
+    if let Some(zones) = tables.selected().duel_zones() {
+        if here.level == 0 {
+            let inside = |x1: i32, z1: i32, x2: i32, z2: i32| {
+                here.x >= x1 && here.x <= x2 && here.z >= z1 && here.z <= z2
+            };
+            if zones
+                .pens
+                .iter()
+                .any(|pen| inside(pen.x1, pen.z1, pen.x2, pen.z2))
+            {
+                return Ok(());
+            }
+            let area = zones.challenge;
+            if inside(area.x1, area.z1, area.x2, area.z2) {
+                return Err(PvpRefusal::ChallengeArea);
+            }
+        }
+    }
+    let level = |tile: WorldTile| wilderness.map_or(0, |levels| levels.level(tile));
+    let ours = level(here);
+    if ours < 1 {
+        return Err(PvpRefusal::OutsideWilderness);
+    }
+    let theirs = level(them);
+    if theirs < 1 {
+        return Err(PvpRefusal::OpponentOutside);
+    }
+    let wilderness_level = ours.min(theirs);
+    let difference = my_combat_level.abs_diff(their_combat_level);
+    if u32::try_from(wilderness_level).is_ok_and(|level| level < difference) {
+        return Err(PvpRefusal::LevelRange {
+            wilderness: u8::try_from(wilderness_level).unwrap_or(u8::MAX),
+            difference: u8::try_from(difference).unwrap_or(u8::MAX),
+        });
+    }
+    Ok(())
+}
+
+/// The ONE candidate predicate: the attack label and the zone gate. It has no
+/// opt-in input (operator Q1): it is the same for a fight we start and for a
+/// fight we only answer. Returns the label the attack row must carry.
+pub fn player_candidate(
+    row: &PlayerView,
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+) -> Result<&'static str, PvpRefusal> {
+    let label = attack_label(&row.actor.actions).ok_or(PvpRefusal::NoAttackOp)?;
+    zone_gate(
+        frame.here,
+        row.actor.tile,
+        frame.local.player.combat_level,
+        row.combat_level,
+        tables,
+        frame.wilderness,
+    )?;
+    Ok(label)
+}
+
+/// The refusal `begin` reports for a request that starts a fight with `name`.
+/// Where WE stand comes first: outside every PvP zone the reason is the zone
+/// (a real player row there carries no attack op at all, and "no attack op"
+/// would hide why). Then the candidate check on the named row when it is on
+/// this frame; a row not yet seen is no refusal (the machine searches for it).
+pub fn begin_refusal(name: &str, frame: &Frame<'_>, tables: &CombatTables) -> Option<PvpRefusal> {
+    let level = frame.local.player.combat_level;
+    let here = zone_gate(
+        frame.here,
+        frame.here,
+        level,
+        level,
+        tables,
+        frame.wilderness,
+    )
+    .err();
+    if here.is_some() {
+        return here;
+    }
+    frame
+        .players
+        .iter()
+        .find(|row| row.actor.name.as_deref() == Some(name))
+        .and_then(|row| player_candidate(row, frame, tables).err())
+}
+
+/// The eleven kill statements the server sends the killer
+/// (`skill_combat/scripts/pvp/pvp_combat.rs2:201-212`), each as the text
+/// before and after `<displayname>`.
+const KILL_LINES: [(&str, &str); 11] = [
+    ("You have defeated ", "."),
+    ("", " was no match for you."),
+    ("With a crushing blow you finish ", "."),
+    ("Can anyone defeat you? Certainly not ", "."),
+    ("", " regrets the day they met you in combat."),
+    ("It's all over for ", "."),
+    ("", " didn't stand a chance against you."),
+    ("A humiliating defeat for ", "."),
+    ("", " falls before your might."),
+    ("", " has won a free ticket to Lumbridge."),
+    ("You were clearly a better fighter than ", "."),
+];
+
+/// Whether `line` is a server kill statement naming `name`.
+pub fn is_kill_line(line: &str, name: &str) -> bool {
+    KILL_LINES.iter().any(|(head, tail)| {
+        line.strip_prefix(head)
+            .and_then(|rest| rest.strip_suffix(tail))
+            .is_some_and(|middle| middle == name)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lines {
@@ -258,8 +452,11 @@ pub fn taken_by_another(npc: &NpcView, engaged: Option<ActorRef>, local_slot: us
     targets_another || (npc.in_combat && !targets_me)
 }
 
-/// Literal action eligibility. A facing actor without an `Attack` option is
-/// still a threat, but it is never selected or emitted as a combat target.
+/// Literal action eligibility. A facing actor without an attack option is
+/// still a threat, but it is never selected or emitted as a combat target. An
+/// npc needs "Attack"; a player needs the label the content gave it ("Attack"
+/// in the Wilderness, "Fight" in a duel). The zone gate is the candidate
+/// predicate's ([`player_candidate`]), not this one's.
 pub fn actor_attackable(frame: &Frame<'_>, actor: ActorRef) -> bool {
     match actor.kind {
         ActorKind::Npc => frame
@@ -271,7 +468,7 @@ pub fn actor_attackable(frame: &Frame<'_>, actor: ActorRef) -> bool {
             .players
             .iter()
             .find(|row| row.index == usize::from(actor.index))
-            .is_some_and(|row| has_attack(&row.actor.actions)),
+            .is_some_and(|row| attack_label(&row.actor.actions).is_some()),
     }
 }
 
@@ -281,10 +478,40 @@ fn has_attack(actions: &[Option<String>]) -> bool {
         .any(|action| action.as_deref() == Some("Attack"))
 }
 
+/// True when the local player's network tile is within the stand's walk radius.
+pub fn stand_reached(stand: api::WorldTile, local: &api::snapshot::LocalPlayerView) -> bool {
+    tile_distance(local.player.network, stand) <= 1
+}
+
+/// True while an authored stand is still to be reached. A fight with a stand
+/// picks no target until the network tile is within one tile of it.
+pub fn stand_pending(request: &CombatRequest, frame: &Frame<'_>) -> bool {
+    request
+        .stand
+        .is_some_and(|stand| !stand_reached(stand, frame.local))
+}
+
+/// Walking steps from the player's tile to a wall-valid stand beside
+/// `npc`, from the posted live reach flood. `None` when no stand beside
+/// the NPC is reachable in that flood.
+fn npc_route_steps(view: &api::query::ReachQueryView, npc: &NpcView) -> Option<u32> {
+    crate::reach_route::route_steps(
+        view,
+        crate::reach_route::Footprint {
+            tile: npc.tile,
+            width: npc.size.max(1),
+            length: npc.size.max(1),
+        },
+    )
+    .map(|(steps, _)| steps)
+}
+
 /// Pick an attackable target without allocating or weakening actor identity.
 /// The parent machine retains a selected actor/type while it remains valid.
+/// Reach filtering follows the executable style, not the authored opening style.
 pub fn pick_target(
     request: &CombatRequest,
+    executable_style: Style,
     frame: &Frame<'_>,
     threats: &ThreatSet,
     _tables: &CombatTables,
@@ -295,43 +522,19 @@ pub fn pick_target(
             types,
             pick,
             not_targeting_others,
-        } => {
-            let origin = request.stand.unwrap_or(frame.here);
-            let mut best: Option<(&NpcView, u64, u64)> = None;
-            let mut random_state = seed | 1;
-            let mut seen = 0u64;
-            for npc in frame.npcs.iter().filter(|npc| {
-                !corpse(npc)
-                    && npc.r#type.is_some_and(|id| {
-                        types
-                            .iter()
-                            .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
-                    })
-                    && within_search_bounds(npc.tile, request.search_bounds.as_deref())
-                    && tile_distance(npc.tile, origin) <= u32::from(request.engage_radius)
-                    && (!not_targeting_others || !taken_by_another(npc, None, frame.me()))
-                    && npc_actor(npc).is_some_and(|actor| actor_attackable(frame, actor))
-            }) {
-                seen = seen.saturating_add(1);
-                let distance = u64::from(tile_distance(npc.tile, origin));
-                let health = health_rank(npc);
-                let replace = match (pick, best) {
-                    (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,
-                    (Pick::LowestHealth, Some((_, _, best_health))) => health < best_health,
-                    (Pick::Random, _) => {
-                        random_state ^= random_state << 13;
-                        random_state ^= random_state >> 7;
-                        random_state ^= random_state << 17;
-                        random_state.is_multiple_of(seen)
-                    }
-                    (_, None) => true,
-                };
-                if replace || best.is_none() {
-                    best = Some((npc, distance, health));
-                }
-            }
-            best.and_then(|(npc, _, _)| npc_actor(npc))
-        }
+        } => pick_npc(
+            request,
+            executable_style,
+            frame,
+            seed,
+            NpcPick {
+                types,
+                pick,
+                not_targeting_others: *not_targeting_others,
+                attackers_only: false,
+                except: None,
+            },
+        ),
         Target::Attacker { npcs, players } => threats
             .iter(frame.tick)
             .filter(|threat| match threat.actor.kind {
@@ -359,6 +562,192 @@ pub fn pick_target(
                     && player_actor(player).is_some_and(|actor| actor_attackable(frame, actor))
             })
             .and_then(player_actor),
+    }
+}
+
+/// What [`pick_npc`] chooses among.
+#[derive(Clone, Copy)]
+struct NpcPick<'a> {
+    types: &'a [i32],
+    pick: &'a Pick,
+    not_targeting_others: bool,
+    /// Keep only the rows whose target is the local player: the single-way
+    /// retarget ([`single_way_attacker`]) chooses among the NPCs that are
+    /// hitting the bot.
+    attackers_only: bool,
+    /// With `attackers_only`: the actor the server just refused, which the
+    /// retarget never picks again.
+    except: Option<ActorRef>,
+}
+
+/// The authored-NPC pick of [`pick_target`].
+fn pick_npc(
+    request: &CombatRequest,
+    executable_style: Style,
+    frame: &Frame<'_>,
+    seed: u64,
+    filter: NpcPick<'_>,
+) -> Option<ActorRef> {
+    let NpcPick {
+        types,
+        pick,
+        not_targeting_others,
+        attackers_only,
+        except,
+    } = filter;
+    // Walk to the stand first: a target near the stand is not
+    // engageable from wherever the player happens to be, and a
+    // melee click from outside its walls or fence never lands. The stand
+    // gates starting an engagement: an NPC that already hits the bot needs
+    // neither the stand nor a route, because it reached the bot.
+    if !attackers_only && stand_pending(request, frame) {
+        return None;
+    }
+    let origin = request.stand.unwrap_or(frame.here);
+    // Melee uses the posted reach flood when it starts at the
+    // network tile. A stale posted flood gives no pick this poll.
+    // Only a missing flood keeps straight-line picks.
+    let reach = if executable_style == Style::Melee && !attackers_only {
+        match frame.reach {
+            Some(view) => Some(crate::reach_route::live(
+                Some(view),
+                Some(frame.local.player.network),
+            )?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    // In single-way combat an attack on any NPC but the one that last hit the
+    // bot is refused for 8 ticks (`player_combat.rs2:115`), so the nearest
+    // pick takes an NPC that is already in combat with the bot first. Another
+    // pick order is the request's own, and a multiway map has no such rule.
+    let attacker_first =
+        !attackers_only && matches!(pick, Pick::Nearest) && !frame.world.multi_combat;
+    let mut best: Option<(ActorRef, u64, u64)> = None;
+    let mut random_state = seed | 1;
+    let mut seen = 0u64;
+    let candidates = frame.npcs.iter().filter_map(|npc| {
+        if corpse(npc)
+            || !npc.r#type.is_some_and(|id| {
+                types
+                    .iter()
+                    .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
+            })
+            || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
+            || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
+        {
+            return None;
+        }
+        if attackers_only
+            && (!targets_player(npc, frame.me())
+                || except.is_some_and(|skip| npc_actor(npc) == Some(skip)))
+        {
+            return None;
+        }
+        let route_steps = reach.and_then(|view| npc_route_steps(view, npc));
+        if reach.is_some() && route_steps.is_none() {
+            return None;
+        }
+        if not_targeting_others && taken_by_another(npc, None, frame.me()) {
+            return None;
+        }
+        let actor = npc_actor(npc)?;
+        actor_attackable(frame, actor).then_some((npc, actor, route_steps))
+    });
+    for (npc, actor, route_steps) in candidates {
+        seen = seen.saturating_add(1);
+        let distance = if attackers_only {
+            // The NPC that is in combat with the bot comes first, then the
+            // nearest to the bot.
+            (u64::from(!npc.in_combat) << 32) | u64::from(tile_distance(npc.tile, frame.here))
+        } else {
+            let near =
+                route_steps.map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
+            if attacker_first {
+                (u64::from(!(npc.in_combat && targets_player(npc, frame.me()))) << 32) | near
+            } else {
+                near
+            }
+        };
+        let health = health_rank(npc);
+        let replace = match (pick, best) {
+            (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,
+            (Pick::LowestHealth, Some((_, _, best_health))) => health < best_health,
+            (Pick::Random, _) => {
+                random_state ^= random_state << 13;
+                random_state ^= random_state >> 7;
+                random_state ^= random_state << 17;
+                random_state.is_multiple_of(seen)
+            }
+            (_, None) => true,
+        };
+        if replace || best.is_none() {
+            best = Some((actor, distance, health));
+        }
+    }
+    best.map(|(actor, _, _)| actor)
+}
+
+/// True when the NPC row's target is the local player.
+fn targets_player(npc: &NpcView, local_slot: usize) -> bool {
+    npc.target
+        .is_some_and(|target| target.kind == ActorKind::Player && target.index == local_slot)
+}
+
+/// The NPC that holds the bot in single-way combat: an attackable NPC the
+/// request may fight whose target is the local player, other than `refused`
+/// (the engaged actor whose attack the server just refused). In single-way
+/// combat the attack is refused unless its target is the NPC that last
+/// attacked the player (`player_combat.rs2:115`, `npc_combat.rs2:367-370`),
+/// so after a refusal this is the target the content allows. The pick keeps
+/// the authored NPC filters (types, search bounds, engage radius) and takes
+/// the NPC in combat with the bot first, then the nearest. `None` when no
+/// such NPC is observed.
+pub fn single_way_attacker(
+    request: &CombatRequest,
+    executable_style: Style,
+    frame: &Frame<'_>,
+    threats: &ThreatSet,
+    refused: Option<ActorRef>,
+) -> Option<ActorRef> {
+    match &request.target {
+        Target::Npc { types, .. } => pick_npc(
+            request,
+            executable_style,
+            frame,
+            0,
+            NpcPick {
+                types,
+                pick: &Pick::Nearest,
+                not_targeting_others: false,
+                attackers_only: true,
+                except: refused,
+            },
+        ),
+        Target::Attacker { npcs: true, .. } => threats
+            .iter(frame.tick)
+            .filter(|threat| threat.actor.kind == ActorKind::Npc)
+            .filter(|threat| Some(threat.actor) != refused)
+            .filter(|threat| {
+                frame
+                    .npcs
+                    .iter()
+                    .find(|row| row.index == usize::from(threat.actor.index))
+                    .is_some_and(|row| targets_player(row, frame.me()))
+            })
+            .filter(|threat| {
+                actor_in_search_bounds(frame, threat.actor, request.search_bounds.as_deref())
+            })
+            .filter(|threat| actor_attackable(frame, threat.actor))
+            .max_by_key(|threat| {
+                (
+                    threat.max_hit_est().unwrap_or(u8::MAX),
+                    u16::MAX.wrapping_sub(frame.tick.wrapping_sub(threat.last_seen)),
+                )
+            })
+            .map(|threat| threat.actor),
+        Target::Attacker { npcs: false, .. } | Target::Player { .. } => None,
     }
 }
 #[inline]
@@ -548,8 +937,20 @@ mod tests {
             vislevel: 0,
             headicon: None,
             hitpoints: 0,
+            max_dealt: Some(1000),
             damagetype: None,
             dragonfire,
+            attack: 1,
+            defence: 1,
+            magic: 1,
+            attackbonus: 0,
+            rangeattack: 0,
+            magicattack: 0,
+            stabdefence: 0,
+            slashdefence: 0,
+            crushdefence: 0,
+            magicdefence: 0,
+            rangedefence: 0,
             strength,
             ranged: Some(1),
             strengthbonus,
@@ -563,6 +964,7 @@ mod tests {
             counter_protect: false,
             poison_severity: None,
             forcemulti: false,
+            combat_transform: None,
         }
     }
 

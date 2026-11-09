@@ -281,7 +281,6 @@ impl Script for OpenClose {
                     },
                     options: script::native::WalkOptions::default(),
                     explicit: Some(Arc::clone(&self.bank_name)),
-                    excluded_banks: None,
                     allow_air_fallback: false,
                 };
                 match tick.actions.begin::<Select>(args, &mut tick.cx) {
@@ -552,6 +551,7 @@ fn pump_frame(
         map_members,
         None,
         false,
+        Some(world),
     ));
     guard.tile = Some([here.0, here.1, here.2]);
     guard.held_coins = count(snapshot.inventory(), COINS);

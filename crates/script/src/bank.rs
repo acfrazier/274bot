@@ -6,16 +6,20 @@
 pub(crate) mod npc;
 pub mod ops;
 pub mod request;
+/// Pure bank-sort categories, ranks, and bounded planning.
+pub mod sort;
 
 pub mod compat;
 #[cfg(test)]
 mod prompt_args_tests;
 pub(crate) mod seat_open;
+pub(crate) mod seat_sort;
 pub(crate) mod seat_transfer;
 
 pub use crate::native_bank::{
-    AccessKind, BankPickReceipt, BankPickRequest, BankStandAccess, Close, Deposit, DepositArgs,
-    Open, OpenArgs, PickKind, Select, SelectArgs, SelectedBank, Withdraw, WithdrawArgs, Withdrawal,
+    AccessKind, BankPickOutcome, BankPickReceipt, BankPickRequest, BankStandAccess, Close, Deposit,
+    DepositArgs, Open, OpenArgs, PickKind, Select, SelectArgs, SelectOther, SelectOtherArgs,
+    SelectedBank, Withdraw, WithdrawArgs, Withdrawal,
 };
 
 /// One Rust-owned settings fact, shared by the V8 materializer and static

@@ -183,8 +183,8 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(47594),
-        http_port: Some(3080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         cache_dir: Some(required_path("BOT_CACHE_DIR")),
         nav_pack: Some(required_path("BLOCKED_NAV_PACK")),
         engine_dir: Some(required_path("BLOCKED_ENGINE_DIR")),
@@ -296,6 +296,12 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         )?;
         assert_eq!(session.selected(), Some(account.as_str()));
         loop {
+            let relog_login = state.lock().unwrap().runner.take_relog_login();
+            if relog_login {
+                if let Some(arm) = session.play_for_test().and_then(|play| play.arm(&account)) {
+                    arm.arm_explicit_login();
+                }
+            }
             session.poll();
             match state.lock().unwrap().runner.status() {
                 RunnerStatus::Passed => break,

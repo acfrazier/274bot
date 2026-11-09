@@ -3,7 +3,7 @@
   "counts": {
     "api": {
       "clippy::too_many_arguments": {
-        "non_test": 5,
+        "non_test": 6,
         "test": 1
       },
       "clippy::type_complexity": {
@@ -75,12 +75,12 @@
     },
     "host-play": {
       "clippy::large_enum_variant": {
-        "non_test": 6,
+        "non_test": 5,
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 39,
-        "test": 18
+        "non_test": 44,
+        "test": 20
       },
       "dead_code": {
         "non_test": 0,
@@ -97,10 +97,16 @@
     },
     "nav-bake": {
       "clippy::too_many_arguments": {
-        "non_test": 8,
+        "non_test": 7,
         "test": 0
       },
       "clippy::type_complexity": {
+        "non_test": 1,
+        "test": 0
+      }
+    },
+    "nav-executor": {
+      "clippy::too_many_arguments": {
         "non_test": 1,
         "test": 0
       }
@@ -140,17 +146,13 @@
         "non_test": 1,
         "test": 2
       },
-      "clippy::duplicate_mod": {
-        "non_test": 0,
-        "test": 1
-      },
       "clippy::too_many_arguments": {
         "non_test": 9,
         "test": 0
       },
       "dead_code": {
         "non_test": 8,
-        "test": 1
+        "test": 0
       }
     },
     "scenario": {
@@ -165,7 +167,7 @@
     },
     "script": {
       "clippy::large_enum_variant": {
-        "non_test": 7,
+        "non_test": 10,
         "test": 0
       },
       "clippy::manual_clamp": {
@@ -173,8 +175,16 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 17,
-        "test": 2
+        "non_test": 22,
+        "test": 3
+      },
+      "dead_code": {
+        "non_test": 1,
+        "test": 0
+      },
+      "non_snake_case": {
+        "non_test": 0,
+        "test": 5
       }
     },
     "script-js": {
@@ -191,12 +201,16 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 8,
+        "non_test": 13,
         "test": 0
       },
       "dead_code": {
-        "non_test": 3,
+        "non_test": 4,
         "test": 4
+      },
+      "non_snake_case": {
+        "non_test": 0,
+        "test": 97
       },
       "rustdoc::all": {
         "non_test": 1,
@@ -204,12 +218,6 @@
       },
       "unused_imports": {
         "non_test": 3,
-        "test": 0
-      }
-    },
-    "tui": {
-      "clippy::too_many_arguments": {
-        "non_test": 1,
         "test": 0
       }
     },

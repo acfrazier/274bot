@@ -1,10 +1,13 @@
-// ClientAdapter.toLocal / actions.walkTo are thin scene-shape mappings
-// onto posted reach facts and the existing scene walk-to queue.
-// Queue admission is not arrival. Traveller (`walk` / `walk-near`) is
-// a different host op.
+// ClientAdapter.toLocal maps posted client-adapter scene facts; actions.walkTo
+// maps posted reach facts onto the existing scene walk-to queue. Queue
+// admission is not arrival. Traveller (`walk` / `walk-near`) is a different
+// host op.
 
-use script::shim::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ClientAdapterFactsInput, MainModalTextsInput, NativeFactsInput, ReachViewInput, SnapshotInput,
+    TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -114,6 +117,40 @@ fn posted_scene(
         stamp: 0,
     }
 }
+fn client_adapter_native(attached: bool, base_x: i32, base_z: i32) -> NativeFactsInput<'static> {
+    NativeFactsInput {
+        client_adapter: Some(ClientAdapterFactsInput {
+            attached,
+            map_build_base: (base_x, base_z),
+            server_tile: None,
+            hint_tile_level: None,
+            bank_com_id: -1,
+            chat_continue_component_id: -1,
+            chat_modal_texts: MainModalTextsInput {
+                root: -1,
+                texts: &[],
+            },
+            widget_facts: &[],
+            player_count: 0,
+            npc_count: 0,
+            run_controls: None,
+            login_message: "",
+            menu_entries: &[],
+            last_walk_path_local: &[],
+            session_generation: 1,
+            modal_close_generation: 0,
+            projection_scene: None,
+        }),
+        ..NativeFactsInput::default()
+    }
+}
+
+fn post_with_client_adapter(iso: &LoadIsolate, snap: &SnapshotInput<'_>, base_x: i32, base_z: i32) {
+    iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
+        snap,
+        client_adapter_native(true, base_x, base_z),
+    ));
+}
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
@@ -154,7 +191,7 @@ fn to_local_maps_nonzero_base_and_104_edges() {
     ));
     let mut snap = base_snapshot(tile(3222, 3228, 0));
     snap.reach = posted_scene(3222, 3228, 0, 104, 104);
-    post_snapshot_input(&iso, &snap);
+    post_with_client_adapter(&iso, &snap, 3222, 3228);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value["origin"]["lx"], 0);
@@ -192,7 +229,7 @@ fn to_local_rejects_wrong_inputs_and_unavailable_old_data() {
     ));
     let mut snap = base_snapshot(tile(3222, 3228, 0));
     snap.reach = posted_scene(3222, 3228, 0, 104, 104);
-    post_snapshot_input(&iso, &snap);
+    post_with_client_adapter(&iso, &snap, 3222, 3228);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value["missing"], serde_json::Value::Null);
@@ -307,7 +344,7 @@ fn flax_pair_to_local_then_walk_to_queues_exact_world() {
     ));
     let mut snap = base_snapshot(tile(3222, 3228, 0));
     snap.reach = posted_scene(3222, 3228, 0, 104, 104);
-    post_snapshot_input(&iso, &snap);
+    post_with_client_adapter(&iso, &snap, 3222, 3228);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value["local"]["lx"], 8);
@@ -335,7 +372,7 @@ fn current_base_and_plane_change_affects_the_next_call() {
     ));
     let mut snap = base_snapshot(tile(3222, 3228, 0));
     snap.reach = posted_scene(3222, 3228, 0, 104, 104);
-    post_snapshot_input(&iso, &snap);
+    post_with_client_adapter(&iso, &snap, 3222, 3228);
     iso.on_game_tick(1);
     let first = iso.probe("__probe").unwrap();
     assert_eq!(first["local"]["lx"], 8);
@@ -348,7 +385,7 @@ fn current_base_and_plane_change_affects_the_next_call() {
     snap.tick = 2;
     snap.here = Some(tile(4000, 4100, 2));
     snap.reach = posted_scene(4000, 4100, 2, 104, 104);
-    post_snapshot_input(&iso, &snap);
+    post_with_client_adapter(&iso, &snap, 4000, 4100);
     iso.on_game_tick(2);
     let second = iso.probe("__probe").unwrap();
     assert_eq!(
@@ -372,7 +409,7 @@ fn current_base_and_plane_change_affects_the_next_call() {
         };
         "#,
     ));
-    post_snapshot_input(&moved, &snap);
+    post_with_client_adapter(&moved, &snap, 4000, 4100);
     moved.on_game_tick(2);
     let value = moved.probe("__probe").unwrap();
     assert_eq!(value["local"]["lx"], 8);
@@ -400,8 +437,8 @@ fn two_slots_do_not_exchange_scene_bases() {
     snap_a.reach = posted_scene(3222, 3228, 0, 104, 104);
     let mut snap_b = base_snapshot(tile(4000, 4100, 1));
     snap_b.reach = posted_scene(4000, 4100, 1, 104, 104);
-    post_snapshot_input(&a, &snap_a);
-    post_snapshot_input(&b, &snap_b);
+    post_with_client_adapter(&a, &snap_a, 3222, 3228);
+    post_with_client_adapter(&b, &snap_b, 4000, 4100);
     a.on_game_tick(1);
     b.on_game_tick(1);
     let pa = a.probe("__probe").unwrap();
@@ -422,7 +459,7 @@ fn two_slots_do_not_exchange_scene_bases() {
 }
 
 #[test]
-fn omitted_delta_keeps_last_scene_unavailable_clears() {
+fn omitted_delta_keeps_adapter_base_and_detach_clears() {
     let iso = spawn(&probe_src(
         r#"
         const local = reader.toLocal(3230, 3234);
@@ -435,7 +472,12 @@ fn omitted_delta_keeps_last_scene_unavailable_clears() {
     ));
     let mut snap = base_snapshot(tile(3222, 3228, 0));
     snap.reach = posted_scene(3222, 3228, 0, 104, 104);
-    let (keyframe, fp) = script_js::wire::encode_snapshot_delta(None, &snap, false);
+    let (keyframe, fp) = script_js::wire::encode_snapshot_delta_with_native(
+        None,
+        &snap,
+        client_adapter_native(true, 3222, 3228),
+        false,
+    );
     iso.post_snapshot(keyframe);
     iso.on_game_tick(1);
     let first = iso.probe("__probe").unwrap();
@@ -444,7 +486,12 @@ fn omitted_delta_keeps_last_scene_unavailable_clears() {
     assert_eq!(iso.drain_interacts(), vec![scene_walk_to(3230, 3234, 0)]);
 
     snap.tick = 2;
-    let (delta, fp2) = script_js::wire::encode_snapshot_delta(Some(&fp), &snap, false);
+    let (delta, fp2) = script_js::wire::encode_snapshot_delta_with_native(
+        Some(&fp),
+        &snap,
+        client_adapter_native(true, 3222, 3228),
+        false,
+    );
     let omitted = script_js::wire::decode_snapshot(&delta).expect("delta");
     assert!(!omitted.has_reach(), "unchanged reach omitted");
     iso.post_snapshot(delta);
@@ -459,7 +506,12 @@ fn omitted_delta_keeps_last_scene_unavailable_clears() {
 
     snap.tick = 3;
     snap.reach = ReachViewInput::UNAVAILABLE;
-    let (cleared, _) = script_js::wire::encode_snapshot_delta(Some(&fp2), &snap, false);
+    let (cleared, _) = script_js::wire::encode_snapshot_delta_with_native(
+        Some(&fp2),
+        &snap,
+        client_adapter_native(false, 3222, 3228),
+        false,
+    );
     iso.post_snapshot(cleared);
     iso.on_game_tick(3);
     let gone = iso.probe("__probe").unwrap();

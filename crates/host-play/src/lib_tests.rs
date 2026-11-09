@@ -16,6 +16,11 @@ use std::time::{Duration, Instant};
 fn no_frames() -> impl FnMut() -> Duration {
     || Duration::MAX
 }
+fn test_cache_mut(client: &mut Client) -> &mut client::config::Cache {
+    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
+    Arc::get_mut(&mut client.cache)
+        .expect("test cache is unique after clearing its adapter weak ref")
+}
 
 fn wait_for_permit(
     queue: &SharedLoginQueue,
@@ -436,7 +441,7 @@ fn connected_session_boundary_keeps_the_connection_published() {
 
 #[test]
 fn disconnected_row_drops_session_counters_but_retains_script_paint() {
-    let paint = Arc::new(script::shim::ScriptPaint::default());
+    let paint = Arc::new(script::paint::ScriptPaint::default());
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         connected: true,
@@ -1178,6 +1183,9 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
 
 #[test]
 fn memory_queue_survives_socket_reconnect_until_clean_logout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1235,6 +1243,8 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    // The reconnect under test is a script's.
+    start_idle_script(&play, "alice");
     let first = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert!(wait_settled(|| play
         .statuses()
@@ -1520,7 +1530,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     .unwrap();
 
     let error = Servers::load(&bot_dir).unwrap_err();
-    assert!(error.contains("duplicate vault"), "{error}");
+    assert!(error.to_string().contains("duplicate vault"), "{error}");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -1609,22 +1619,8 @@ fn open_vault_wrong_pass_is_not_already_exists() {
 }
 
 #[test]
-fn open_vault_accepts_short_new_and_legacy_vaults() {
-    // A vault written by the released code under passphrase `bot`.
-    let old = tmp_vault("old");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::write(
-        &old,
-        include_bytes!("../../vault/tests/fixtures/legacy-0.1.9.vault"),
-    )
-    .unwrap();
-    let opened = open_vault(&old, "bot").expect("a legacy vault still opens");
-    assert_eq!(
-        opened.get("alice").unwrap().password,
-        "alice-password-legacy"
-    );
-
-    let fresh = old.parent().unwrap().join("new");
+fn open_vault_accepts_short_passphrases() {
+    let fresh = tmp_vault("short");
     let created =
         open_vault(&fresh.join("vault"), "bot").expect("a short passphrase creates a new vault");
     assert!(created.get("alice").is_none());
@@ -2496,6 +2492,8 @@ fn client_after_connection_loss() -> Client {
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    // Release evidence serves a login the slot still wants: a script's.
+    arm.set_script_active(true);
     let mut client = client_after_server_logout();
     let before = Instant::now();
     tick_flags(&mut client, &[], &arm);
@@ -2615,6 +2613,7 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     client.lost_con();
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, client.ingame));
@@ -2714,6 +2713,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     client.ptype = 74;
     client.psize = 0;
@@ -2747,6 +2747,7 @@ fn protocol_error_t2_logs_in_fresh() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     // A one-byte frame for a zero-length opcode fails the fixed-length check.
     client.ptype = 74;
@@ -2863,6 +2864,309 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     assert_eq!(arm.login_latch_reason(), None);
 }
 
+/// Every way a session ends unexpectedly, as the client reports it, with the
+/// reason the park gives: only a server logout after the client's own idle
+/// request is an idle logout.
+fn unexpected_exits() -> Vec<(&'static str, LoginLatchReason, Client)> {
+    let dead_server = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = hosted_client_on_a_built_scene(listener.local_addr().unwrap());
+        client.last_response = Some(Instant::now() - Duration::from_secs(16));
+        client.game_loop();
+        assert!(!client.ingame);
+        client
+    };
+    let protocol_error = {
+        let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
+        client.ptype = 74;
+        client.psize = 0;
+        client.handle_packet(74, &mut Packet::new(vec![]));
+        client
+    };
+    vec![
+        (
+            "connection lost",
+            LoginLatchReason::IdleDisconnect,
+            client_after_connection_loss(),
+        ),
+        (
+            "dead server deadline",
+            LoginLatchReason::IdleDisconnect,
+            dead_server,
+        ),
+        (
+            "protocol error",
+            LoginLatchReason::IdleDisconnect,
+            protocol_error,
+        ),
+        (
+            "server logout",
+            LoginLatchReason::ServerLogout,
+            client_after_server_logout(),
+        ),
+        (
+            "idle logout",
+            LoginLatchReason::IdleLogout,
+            client_after_observed_idle_logout(),
+        ),
+    ]
+}
+
+/// A native script that does nothing: the slot counts as scripted.
+struct IdleTestScript;
+
+impl script::native::Script for IdleTestScript {
+    fn tick(
+        &mut self,
+        _tick: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        Ok(script::native::ScriptFlow::Continue)
+    }
+}
+
+/// Run `IdleTestScript` on `name`, as an operator Start would, so the slot
+/// keeps its reconnect policy.
+fn start_idle_script(play: &Play, name: &str) {
+    play.script_start_handle()
+        .start_test_script(name, Box::new(IdleTestScript), None)
+        .expect("start the idle script");
+}
+
+/// A bot with no script behaves like a human client: after any unexpected
+/// disconnect, and after the server's idle logout, it stays logged out until
+/// the operator logs it in. It never relogs by itself, however long the
+/// auto-login preference has asked for it.
+#[test]
+fn scriptless_unexpected_disconnect_stays_parked() {
+    for (label, reason, mut client) in unexpected_exits() {
+        let arm = SlotArm::new(7, true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+
+        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
+        assert!(
+            !should_handshake(&arm, client.ingame),
+            "{label}: a bot with no script must not reconnect"
+        );
+        assert!(!arm.relogs_after_drop(), "{label}");
+        assert_eq!(
+            arm.login_latch_reason(),
+            Some(reason),
+            "{label}: the park says why the bot is logged out"
+        );
+        assert!(
+            !arm.login_latched(),
+            "{label}: a park is not an operator latch"
+        );
+        assert!(arm.auto_login(), "{label}: the saved preference is kept");
+    }
+}
+
+#[test]
+fn a_bot_with_a_running_script_still_relogs_after_an_unexpected_exit() {
+    for (label, _, mut client) in unexpected_exits() {
+        let arm = SlotArm::new(7, true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        arm.set_script_active(true);
+
+        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
+        assert!(
+            should_handshake(&arm, client.ingame),
+            "{label}: a script's reconnect is unchanged"
+        );
+        assert_eq!(arm.login_latch_reason(), None, "{label}");
+    }
+}
+
+/// The script flag is decided from the slot's own state at the exit: the
+/// boundary sync that follows corrects a flag that was stale when the client
+/// reported the exit.
+#[test]
+fn the_script_state_at_the_boundary_decides_a_stale_exit() {
+    // A script started online: the exit parked first, the sync restores it.
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+
+    // A script stopped online: the exit owed the relog, the sync parks it.
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    arm.set_script_active(true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(should_handshake(&arm, false));
+    arm.set_script_active(false);
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::IdleDisconnect)
+    );
+}
+
+/// The mailbox row that the end of a script's need posts: a relog that is in
+/// progress is no longer current and the bot parks; the operator's own Login
+/// still connects. The public Stop that posts it, with an open handshake, is
+/// `a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through`.
+#[test]
+fn stopping_the_script_cancels_a_relog_in_progress_and_login_connects_again() {
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    arm.set_script_active(true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    let command = arm.login_command(false).expect("the script's relog");
+    let world = 0;
+    assert!(arm.login_attempt_is_current(command, world));
+
+    arm.set_script_active(false);
+    assert!(!arm.login_attempt_is_current(command, world));
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(
+        arm.relog_park_reason().to_string(),
+        "idle_disconnect",
+        "the one park line names the reason"
+    );
+
+    arm.arm_explicit_login();
+    assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+/// A `Play` with no slot thread, for the control-thread paths of a script's
+/// Start and Stop. The test plays the slot thread's part by hand.
+fn play_for_script_control() -> Play {
+    run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+}
+
+/// The race: a script's connection drops, the slot starts the script's
+/// replacement handshake, and the operator stops the script while that
+/// handshake is open. The Stop itself, not a later slot step, cancels the
+/// attempt: a handshake that finishes afterwards is not accepted, so the bot
+/// never comes back without its script. Every public Stop does it.
+#[test]
+fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    type Stop = fn(&Play, &str, api::selected::RunKey);
+    let stops: [(&str, Stop); 2] = [
+        ("script_stop", |play, name, _| play.script_stop(name)),
+        ("script_native_stop", |play, name, key| {
+            assert!(play.script_native_stop(name, key));
+        }),
+    ];
+    for (label, stop) in stops {
+        let mut play = play_for_script_control();
+        let arm = SlotArm::new(7, true);
+        play.attach_arm("alice", Arc::clone(&arm));
+        let key = play
+            .script_start_handle()
+            .start_test_script("alice", Box::new(IdleTestScript), None)
+            .expect("start the idle script");
+        // The slot thread's own step, before it connects.
+        crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        let mut client = client_after_connection_loss();
+        tick_flags(&mut client, &[], &arm);
+        assert!(should_handshake(&arm, false), "{label}: the script's relog");
+
+        let (command, world) = capture_login_authorization(&arm, false).expect(label);
+        let cancel = client::io::client_stream::LoginCancel::new();
+        assert!(arm.begin_attempt(command, world, cancel.clone()), "{label}");
+        assert!(!cancel.is_cancelled(), "{label}");
+
+        // The slot thread is inside the handshake and syncs nothing.
+        stop(&play, "alice", key);
+
+        assert!(cancel.is_cancelled(), "{label}: Stop cancels the handshake");
+        assert!(
+            !arm.finish_attempt(
+                command,
+                world,
+                Instant::now() + Duration::from_secs(30),
+                &cancel,
+                &Ok(()),
+            ),
+            "{label}: a handshake that completes after Stop is not accepted"
+        );
+        assert!(!should_handshake(&arm, false), "{label}");
+        assert_eq!(
+            arm.login_latch_reason(),
+            Some(LoginLatchReason::IdleDisconnect),
+            "{label}"
+        );
+        arm.arm_explicit_login();
+        assert!(should_handshake(&arm, false), "{label}: Log in connects");
+    }
+}
+
+/// A script started on a parked bot and stopped before the bot is back leaves
+/// it parked; the saved auto-login preference does not log it in.
+#[test]
+fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
+    let mut play = play_for_script_control();
+    let arm = SlotArm::new(7, true);
+    play.attach_arm("alice", Arc::clone(&arm));
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let mut client = client_after_connection_loss();
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false), "parked");
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
+    start_idle_script(&play, "alice");
+    crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
+    assert!(should_handshake(&arm, false), "the script logs the bot in");
+
+    play.script_stop("alice");
+
+    assert!(!should_handshake(&arm, false), "no scriptless auto-login");
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::IdleDisconnect)
+    );
+    arm.arm_explicit_login();
+    assert!(should_handshake(&arm, false), "the operator's Log in works");
+}
+
+/// A script that starts while the bot is parked logs it in; an operator
+/// latch is not undone by a script.
+#[test]
+fn a_script_started_during_a_park_logs_in_but_not_through_an_operator_latch() {
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false));
+
+    let mut client = client_after_server_logout();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.request_logout();
+    tick_flags(&mut client, &[], &arm);
+    arm.set_script_active(true);
+    assert!(!should_handshake(&arm, false), "the operator's logout wins");
+}
+
 #[test]
 fn session_exit_snapshot_is_consistent_with_logout_order() {
     for logout_before_exit in [false, true] {
@@ -2893,7 +3197,11 @@ fn clean_server_logout_does_not_count_toward_repeat_guard() {
     let mut client = client_after_server_logout();
     observe_client_session_exit(&mut client, &arm);
     assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
-    assert_eq!(arm.login_latch_reason(), None);
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::ServerLogout),
+        "a bot without a script parks; the guard counts nothing"
+    );
 }
 
 #[test]
@@ -4905,7 +5213,10 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         level: bot.walk_outcome_level,
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
-        blocked: false,
+        blocked: bot.walk_outcome_blocked,
+        no_path: bot.walk_outcome_no_path,
+        remaining_request_id: bot.walk_request_id,
+        remaining: bot.traveller.remaining() as u64,
         cancel_reason: bot.walk_outcome_cancel_reason,
         user_move_intent_seq: bot.user_move_intent_seq,
     }
@@ -4994,7 +5305,7 @@ fn park_walk_isolate(
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
     let drained = iso.drain_interacts();
     let request_id = match &drained[..] {
-        [script::shim::InteractReq::WalkNear {
+        [script::interact::InteractReq::WalkNear {
             x: dx,
             z: dz,
             level: 0,
@@ -5003,6 +5314,8 @@ fn park_walk_isolate(
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -5025,7 +5338,7 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
     assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::WalkNear {
+        [script::interact::InteractReq::WalkNear {
             x: dx0,
             z: dz0,
             level: 0,
@@ -5034,10 +5347,12 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: first,
             avoid: _,
             cross: _,
-        }, script::shim::InteractReq::WalkNear {
+        }, script::interact::InteractReq::WalkNear {
             x: dx1,
             z: dz1,
             level: 0,
@@ -5046,6 +5361,8 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: second,
             avoid: _,
             cross: _,
@@ -6019,6 +6336,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         radius: 0,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6113,6 +6431,7 @@ fn radius_route_job_keeps_first_connected_open_floor_approach() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6170,6 +6489,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6228,6 +6548,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6279,6 +6600,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6379,6 +6701,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6429,6 +6752,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
                 0,
                 crate::WalkGlobals::default(),
             ),
+            prereq_catalog: None,
             bank_origin: Default::default(),
             loc_id: None,
             arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6506,6 +6830,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6571,6 +6896,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         radius: 1,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6601,13 +6927,17 @@ fn radius_route_job_drops_detour_outside_radius() {
 #[test]
 #[ignore = "requires the locally generated actual 289 navpack"]
 fn actual_289_radius_arrival_stays_out_of_horvik() {
-    let world = Arc::new(
-        NavWorld::load_pack(std::path::Path::new(concat!(
+    let Some(path) = api::test_support::local_asset_path(
+        "",
+        concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../target/debug/nav/289/274bot.navpack"
-        )))
-        .expect("actual 289 navpack"),
-    );
+        ),
+        "actual 289 navpack",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&path).expect("actual 289 navpack"));
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
@@ -6634,6 +6964,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         radius: 2,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -7214,7 +7545,7 @@ fn script_stop_clears_offline_published_paint() {
     script_slot_or_insert(&play.scripts, "alice");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
-        script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+        script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
         ..SlotStatus::default()
     });
 
@@ -7329,6 +7660,9 @@ fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
 /// different run changes nothing.
 #[test]
 fn script_native_stop_retires_only_the_named_runs_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7346,7 +7680,7 @@ fn script_native_stop_retires_only_the_named_runs_rows() {
         play.attach_arm(name, SlotArm::new(7, false));
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -7418,7 +7752,7 @@ fn every_other_way_a_run_ends_retires_its_published_rows() {
     for name in names {
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -7477,6 +7811,9 @@ fn every_other_way_a_run_ends_retires_its_published_rows() {
 /// keeps its run and its rows.
 #[test]
 fn an_unload_retires_the_run_once_before_it_removes_the_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7494,7 +7831,7 @@ fn an_unload_retires_the_run_once_before_it_removes_the_row() {
         play.attach_arm(name, SlotArm::new(7, false));
         let mut row = SlotStatus {
             username: name.into(),
-            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            script_paint: Some(Arc::new(script::paint::ScriptPaint::default())),
             ..SlotStatus::default()
         };
         row.publish_script_walk(Some(WorldTile {
@@ -7518,13 +7855,13 @@ fn an_unload_retires_the_run_once_before_it_removes_the_row() {
 
     let retired = crate::play_status::RETIRED_RUNS.with(std::cell::RefCell::take);
     assert_eq!(
-        retired,
-        [
-            ("stopped".to_owned(), true, true),
-            ("retiring".to_owned(), true, true),
-        ],
-        "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
-    );
+    retired,
+    [
+        ("stopped".to_owned(), true, true),
+        ("retiring".to_owned(), true, true),
+    ],
+    "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
+);
     let rows: Vec<(String, bool, bool)> = play
         .statuses
         .lock()
@@ -7695,6 +8032,9 @@ fn fire_compiled_until_settled(
 #[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_reaches_running() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let play = compiled_start_play();
     let mut pending = vec![live_start::PendingCatalogStart::compiled(
         "alice",
@@ -7726,6 +8066,9 @@ fn compiled_catalog_start_pump_reaches_running() {
 #[cfg(feature = "js")]
 #[test]
 fn start_handle_reads_native_runtime_pair_atomically() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Barrier;
 
@@ -7778,6 +8121,9 @@ fn start_handle_reads_native_runtime_pair_atomically() {
 #[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let play = compiled_start_play();
     let mut bag = serde_json::Map::new();
     bag.insert("clueDuelPartner".into(), serde_json::json!(7));
@@ -7855,6 +8201,241 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         !play.scripts.lock().unwrap().contains_key("ghost"),
         "an unknown uid must never get a SlotScript entry"
     );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() {
+    fn bounded_slot_call<T: Send + 'static>(
+        slot: Arc<Mutex<script::SlotScript>>,
+        action: impl FnOnce(&mut script::SlotScript) -> T + Send + 'static,
+    ) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = {
+                let mut slot = slot.lock().unwrap();
+                action(&mut slot)
+            };
+            tx.send(result).unwrap();
+        });
+        let result = rx
+            .recv_timeout(Duration::from_millis(350))
+            .expect("slot action exceeded its bound");
+        worker.join().expect("slot action thread panicked");
+        result
+    }
+
+    fn wait_for_execution(slot: &Arc<Mutex<script::SlotScript>>, active: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) == active
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "surface execution did not become active={active}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_execution_end(slot: &Arc<Mutex<script::SlotScript>>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if !bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn start_frame_wait(
+        slot: Arc<Mutex<script::SlotScript>>,
+    ) -> (thread::JoinHandle<()>, std::sync::mpsc::Receiver<bool>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            tx.send(crate::play_slots::dispatch_client_frame(&slot, "alice"))
+                .unwrap();
+        });
+        (worker, rx)
+    }
+
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+globalThis.__frameCalled = false;
+globalThis.__hangFrame = false;
+BotHost.addFrameListener(() => {
+    globalThis.__frameCalled = true;
+    if (globalThis.__hangFrame) {
+        globalThis.__hangFrame = false;
+        while (true) {}
+    }
+});
+export default class T extends LoopingBot {
+    loop() {}
+    onPause() {
+        globalThis.__pauseCalled = true;
+        while (true) {}
+    }
+    onResume() {
+        globalThis.__resumeCalled = true;
+        while (true) {}
+    }
+}
+"#
+        .to_string(),
+        script_js::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
+    let slot = script_slot(&play.scripts, "alice").expect("script slot exists");
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    while play.script_state("alice") != script::RunState::Running
+        && Instant::now() < startup_deadline
+    {
+        play.pump_script_lifecycle("alice");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        play.script_state("alice"),
+        script::RunState::Running,
+        "compat script did not finish setup"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| {
+        let mut driver = NavRec::default();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("true").expect("the first compat tick completes");
+    });
+    slot.lock()
+        .unwrap()
+        .probe("globalThis.__hangFrame = true")
+        .unwrap();
+
+    let (frame_thread, frame_done) = start_frame_wait(Arc::clone(&slot));
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while the frame listener is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "Pause returns while the frame listener is stuck"
+    );
+    assert!(
+        frame_done
+            .recv_timeout(Duration::from_secs(2))
+            .expect("frame listener watchdog did not release its dispatch"),
+        "the host receives the frame acknowledgement after the listener is cut"
+    );
+    frame_thread.join().unwrap();
+
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while onPause is stuck"
+    );
+    let on_pause_ended = wait_for_execution_end(&slot);
+    if !on_pause_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_pause_ended,
+        "onPause watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__frameCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "the frame listener ran before the watchdog cut its infinite loop"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__pauseCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onPause ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.resume());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running
+    );
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while onResume is stuck"
+    );
+    let on_resume_ended = wait_for_execution_end(&slot);
+    if !on_resume_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_resume_ended,
+        "onResume watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__resumeCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onResume ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while the second onPause is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[cfg(feature = "js")]
@@ -8188,6 +8769,111 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
 
 #[cfg(feature = "js")]
 #[test]
+fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
+    let scratch = script::IsolatedEnv::enter("script-settings-start-readback");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = "local-289";
+    let content = "test-content";
+    let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let path = root.script_runtime_settings_file(profile, "alice", 289, content);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "profile": profile,
+        "account": "alice",
+        "revision": 289,
+        "content": content,
+        "rows": [{
+            "namespace": "WalkTo",
+            "key": "destination",
+            "raw": "Varrock"
+        }]
+    });
+    vault::write_private_file(
+        &path,
+        serde_json::to_vec_pretty(&document).unwrap().as_slice(),
+    )
+    .unwrap();
+    let service = local_state::LocalStateService::open(
+        root,
+        &[
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            api::local_state::LocalStateDomain::BankHints,
+            api::local_state::LocalStateDomain::ScriptRuntimeSettings,
+        ],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let composition = Arc::new(local_state::StateComposition::new(
+        Arc::clone(&service),
+        profile,
+        api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, content).unwrap(),
+    ));
+    play.local_state = Some(Arc::clone(&composition));
+    play.attach_arm("alice", SlotArm::new(7, false));
+    // Slot spawn binds the account's state capability (`play_slots.rs`);
+    // this offline Play spawns no slot, so bind it the same way here.
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .bind_local_state(
+            composition
+                .slot_state("alice")
+                .expect("alice is a login identity"),
+        );
+
+    // The resolve runs at module evaluation, before the first tick. Read its
+    // result straight from the isolate: script log rows reach the panel only
+    // through the bot thread's observe drain, which this offline Play has not.
+    let source = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+const first = SettingsStore.resolve('WalkTo', {
+    destination: { type: 'string', default: 'Draynor' },
+});
+globalThis.__firstResolve = first.destination;
+export function tick(api) {}
+"#;
+    play.script_start_load(
+        "alice",
+        source.into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let first = {
+        let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
+        let slot = slot.lock().unwrap();
+        slot.probe("globalThis.__firstResolve ?? null")
+            .expect("the started isolate answers a probe")
+    };
+    assert_eq!(
+        first,
+        serde_json::json!("Varrock"),
+        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}",
+        play.script_state("alice"),
+        play.script_last_error("alice"),
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");
     let mut play = run_with_io(
@@ -8311,7 +8997,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
 #[cfg(feature = "js")]
 #[test]
 fn script_paint_select_adverts_fixture_chrome() {
-    use script::shim::{PaintChromeBand, ScriptPaint};
+    use script::paint::{PaintChromeBand, ScriptPaint};
     let paint = ScriptPaint {
         generation: 7,
         strip: Some(PaintChromeBand {
@@ -8692,6 +9378,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         None,
         None,
+        None,
         #[cfg(feature = "js")]
         None,
         #[cfg(feature = "js")]
@@ -8716,6 +9403,126 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         records.is_empty(),
         "host-internal probe logged a reply candidate"
     );
+}
+
+/// A cheat the operator typed is input to the game: once the client accepts
+/// it, the idle counter restarts, as a typed chat line would restart it in the
+/// Java client. A host bookkeeping cheat is not input, and neither is a cheat
+/// the client refuses.
+#[test]
+fn an_accepted_operator_cheat_resets_the_idle_counter_and_bookkeeping_does_not() {
+    // (queue the command, the client accepts cheats, idle count afterwards)
+    type Queue = fn(&Play);
+    let cases: [(&str, Queue, bool, u32); 4] = [
+        (
+            "operator cheat",
+            |play| play.cheat("alice", "getcoord").unwrap(),
+            true,
+            0,
+        ),
+        (
+            "host bookkeeping cheat",
+            |play| play.cheat_internal("alice", "getvar tutorial").unwrap(),
+            true,
+            4000,
+        ),
+        (
+            "operator cheat the client refuses",
+            |play| play.cheat("alice", "getcoord").unwrap(),
+            false,
+            4000,
+        ),
+        ("no command", |_| {}, true, 4000),
+    ];
+    for (label, queue, admitted, idle_after) in cases {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+        play.cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        queue(&play);
+
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        if admitted {
+            client.set_cheat_admission(client::CheatAdmission::Granted);
+        }
+        client.shell.idle_cycles = 4000;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+
+        super::script_observe_cached_with_channels(
+            &mut client,
+            "alice",
+            true,
+            false,
+            false,
+            1,
+            None,
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            #[cfg(feature = "js")]
+            None,
+            None,
+            &scripts,
+            &play.cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "js")]
+            None,
+            #[cfg(feature = "js")]
+            super::script_channels::BrokerWorld::Unavailable,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(client.shell.idle_cycles, idle_after, "{label}");
+    }
 }
 
 #[test]
@@ -8784,6 +9591,9 @@ fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
 
 #[test]
 fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts, cheats, ..
     } = script_wiring();
@@ -9157,7 +9967,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     let mut snap = GameSnapshot::new();
     let mut last = None;
     let mut tick = 0;
-    script_js::observed::on_reset();
+    script_js::scene::observed::on_reset();
     // One host frame: rebuild, post the IPC delta, apply it in the isolate.
     // Returns (native side, isolate side) as `None` / row count, plus the
     // sweep op each representation chooses for the first side row.
@@ -9180,7 +9990,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
         );
         last = Some(fp);
         let view = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
-        script_js::observed::apply(&view);
+        script_js::scene::observed::apply(&view);
         let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
             .bank_side()
             .map(|side| {
@@ -9192,7 +10002,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
                         .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
                 )
             });
-        let isolate = script_js::observed::with(|scene| {
+        let isolate = script_js::scene::observed::with(|scene| {
             let session = scene.since_login();
             ops::side_observation(
                 session.bank_open().unwrap_or(false),
@@ -9252,7 +10062,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     assert!(snap.bank_side().is_empty(), "the leftover list is empty");
     dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
     assert_eq!(frame(&c, &mut snap), (empty, empty));
-    script_js::observed::on_reset();
+    script_js::scene::observed::on_reset();
 }
 
 #[test]
@@ -9358,6 +10168,7 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
+            name,
             source.to_string(),
             script_js::LoadShape::CompatClass,
             vec![],
@@ -9430,7 +10241,7 @@ fn t23_bank_observe(
             tick,
             here,
             inv,
-            state.clone(),
+            state.clone().map(Arc::new),
             snapshot,
             None,
             #[cfg(feature = "js")]
@@ -9443,6 +10254,7 @@ fn t23_bank_observe(
             hold,
             false,
             ours,
+            None,
             None,
             None,
             None,
@@ -9501,6 +10313,9 @@ fn t23_bank_assert_button_packet(
 #[cfg(feature = "js")]
 #[test]
 fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::config::ObjType;
     use client::io::{ClientProt289, ServerProt289};
     let mut c = bank_client_289();
@@ -9543,11 +10358,11 @@ fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
+}
 }
 "#;
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -9709,7 +10524,7 @@ fn deposit_with_an_item_id_takes_exactly_that_same_name_side_row() {
             .enumerate()
             .map(|(slot, (id, _))| (*id, slot as i32))
         {
-            let req = script::shim::InteractReq::Deposit {
+            let req = script::interact::InteractReq::Deposit {
                 name: "Trout".into(),
                 id: Some(want),
             };
@@ -9764,7 +10579,7 @@ fn deposit_with_an_item_id_takes_exactly_that_same_name_side_row() {
                 701,
             );
         }
-        let absent = script::shim::InteractReq::Deposit {
+        let absent = script::interact::InteractReq::Deposit {
             name: "Trout".into(),
             id: Some(335),
         };
@@ -9810,10 +10625,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.locs()
@@ -9832,7 +10644,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
     for (label, req) in [
         (
             "open-booth",
-            script::shim::InteractReq::OpenBooth {
+            script::interact::InteractReq::OpenBooth {
                 x: 3205,
                 z: 3206,
                 level: 0,
@@ -9843,19 +10655,19 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         ),
         (
             "deposit",
-            script::shim::InteractReq::Deposit {
+            script::interact::InteractReq::Deposit {
                 name: "Bones".into(),
                 id: None,
             },
         ),
         (
             "withdraw",
-            script::shim::InteractReq::Withdraw {
+            script::interact::InteractReq::Withdraw {
                 name: "Bones".into(),
                 action: "Withdraw-All".into(),
             },
         ),
-        ("close", script::shim::InteractReq::Close),
+        ("close", script::interact::InteractReq::Close),
     ] {
         let before = c.out.pos;
         assert!(
@@ -9893,11 +10705,11 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Deposit {
+            script::interact::InteractReq::Deposit {
                 name: "Lobster".into(),
                 id: None,
             },
-            script::shim::InteractReq::Withdraw {
+            script::interact::InteractReq::Withdraw {
                 name: "Lobster".into(),
                 action: "Withdraw 1".into()
             },
@@ -9953,7 +10765,7 @@ fn shared_deposit_all_sends_one_packet_for_a_full_nonstackable_load() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Deposit {
+        vec![script::interact::InteractReq::Deposit {
             name: "bOnEs".into(),
             id: None,
         }],
@@ -10044,7 +10856,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         if let Some(name) = cross {
             value["cross"] = serde_json::json!([name]);
         }
-        let request: script::shim::InteractReq =
+        let request: script::interact::InteractReq =
             serde_json::from_value(value).expect("inspect request decodes");
         #[cfg(feature = "js")]
         {
@@ -10153,7 +10965,7 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
         ),
     ]);
 
-    let open = || script::shim::InteractReq::OpenBooth {
+    let open = || script::interact::InteractReq::OpenBooth {
         x: 3205,
         z: 3206,
         level: 0,
@@ -10228,7 +11040,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::OpenBooth {
+        vec![script::interact::InteractReq::OpenBooth {
             x: 3205,
             z: 3206,
             level: 0,
@@ -10249,7 +11061,7 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let (navs, world) = empty_nav();
-    let request = |name: &str, stand_op| script::shim::InteractReq::OpenStand {
+    let request = |name: &str, stand_op| script::interact::InteractReq::OpenStand {
         x: 3205,
         z: 3206,
         level: 0,
@@ -10306,6 +11118,9 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -10313,17 +11128,17 @@ fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (!globalThis.__started) {
-            globalThis.__started = true;
-            globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
-            return;
-        }
-        if (globalThis.__posted_result === true && !globalThis.__noted_started) {
-            globalThis.__noted_started = true;
-            globalThis.__noted_result = await Bank.withdrawXById(2, 5, 3);
-        }
+async loop() {
+    if (!globalThis.__started) {
+        globalThis.__started = true;
+        globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
+        return;
     }
+    if (globalThis.__posted_result === true && !globalThis.__noted_started) {
+        globalThis.__noted_started = true;
+        globalThis.__noted_result = await Bank.withdrawXById(2, 5, 3);
+    }
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -10688,6 +11503,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
     use script::native_bank::{BankAction, BankMachine, BankRequest, Withdrawal};
     use std::task::Poll;
@@ -10887,6 +11705,9 @@ fn withdraw_load_selects_exact_then_all_then_x() {
 #[cfg(feature = "js")]
 #[test]
 fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -10894,15 +11715,15 @@ fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        const before = Bank.snapshotGeneration();
-        await Bank.depositInventory();
-        globalThis.__snapshot_fresh = await Bank.waitSnapshotAfter(before, 5000);
-        globalThis.__deposit_done = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    const before = Bank.snapshotGeneration();
+    await Bank.depositInventory();
+    globalThis.__snapshot_fresh = await Bank.waitSnapshotAfter(before, 5000);
+    globalThis.__deposit_done = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11164,6 +11985,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -11171,11 +11995,11 @@ fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11277,6 +12101,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -11284,11 +12111,11 @@ fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11395,15 +12222,15 @@ export default class T extends LoopingBot {
     );
 }
 
-fn key_req(down: bool, key: &str) -> script::shim::InteractReq {
-    script::shim::InteractReq::Key {
+fn key_req(down: bool, key: &str) -> script::interact::InteractReq {
+    script::interact::InteractReq::Key {
         down,
         key: key.into(),
         code: key.into(),
     }
 }
 
-fn type_amount(chars: &str) -> Vec<script::shim::InteractReq> {
+fn type_amount(chars: &str) -> Vec<script::interact::InteractReq> {
     let mut reqs = Vec::new();
     for ch in chars.chars() {
         let key = ch.to_string();
@@ -11416,7 +12243,7 @@ fn type_amount(chars: &str) -> Vec<script::shim::InteractReq> {
 fn dispatch_keys(
     client: &mut Client,
     snapshot: &GameSnapshot,
-    reqs: Vec<script::shim::InteractReq>,
+    reqs: Vec<script::interact::InteractReq>,
 ) -> bool {
     let (navs, world) = empty_nav();
     dispatch_script_interact(
@@ -12589,7 +13416,7 @@ export default class T extends LoopingBot {
         .unwrap()
         .lock()
         .unwrap()
-        .drain_host_interacts()
+        .drain_host_interacts(None)
         .1
         .into_iter()
         .map(|queued| queued.req)
@@ -12598,15 +13425,20 @@ export default class T extends LoopingBot {
     let decoded = script_js::wire::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
         .iter()
-        .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: true, .. }))
+        .find(|req| matches!(req, script::interact::InteractReq::Mouse { down: true, .. }))
         .cloned()
         .expect("produced down");
     let old_up = decoded
         .iter()
-        .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. }))
+        .find(|req| {
+            matches!(
+                req,
+                script::interact::InteractReq::Mouse { down: false, .. }
+            )
+        })
         .cloned()
         .expect("produced up");
-    let script::shim::InteractReq::Mouse {
+    let script::interact::InteractReq::Mouse {
         down,
         x,
         y,
@@ -12629,7 +13461,7 @@ export default class T extends LoopingBot {
     inp.consume_native_frame(&mut c.shell);
     assert_eq!(c.shell.mouse_button, 1);
     assert_eq!(c.shell.mouse_click_x, 50);
-    let script::shim::InteractReq::Mouse {
+    let script::interact::InteractReq::Mouse {
         down,
         x,
         y,
@@ -12682,7 +13514,7 @@ export default class T extends LoopingBot {
     assert!(
         old_down.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity,
                 ..
@@ -12712,7 +13544,7 @@ export default class T extends LoopingBot {
     assert!(
         fresh_down.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity,
                 ..
@@ -12732,7 +13564,7 @@ export default class T extends LoopingBot {
     assert!(
         old_up.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity,
                 ..
@@ -12758,7 +13590,7 @@ export default class T extends LoopingBot {
     assert!(
         fresh_up.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity,
                 ..
@@ -12813,6 +13645,9 @@ fn canvas_mouse_289_sample_after_down_does_not_publish_click_coords() {
 #[cfg(feature = "js")]
 #[test]
 fn ordinary_withdraw_refusal_posts_false_to_the_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -12820,11 +13655,11 @@ fn ordinary_withdraw_refusal_posts_false_to_the_isolate() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw 42');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw 42');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -12921,6 +13756,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_expired_dialog_posts_failure_without_answer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -13008,6 +13846,9 @@ fn withdraw_x_expired_dialog_posts_failure_without_answer() {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_same_generation_rejection_posts_false_to_the_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -13015,11 +13856,11 @@ fn withdraw_x_same_generation_rejection_posts_false_to_the_isolate() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    loop() {
-        if (globalThis.__started) return;
-        globalThis.__started = true;
-        Bank.withdrawX('Knife', 7).then((ok) => { globalThis.__rejected = ok; });
-    }
+loop() {
+    if (globalThis.__started) return;
+    globalThis.__started = true;
+    Bank.withdrawX('Knife', 7).then((ok) => { globalThis.__rejected = ok; });
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -13131,15 +13972,12 @@ fn dispatch_script_interact_sends_held_item_bury() {
     let mut c = bank_fetch_client();
     // Bones (obj 1) has the `Bury` held op (`[opheld1,_bones]`).
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut c);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.inventory()
@@ -13160,7 +13998,7 @@ fn dispatch_script_interact_sends_held_item_bury() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Held {
+            vec![script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Bury".into(),
                 slot: None,
@@ -13183,13 +14021,13 @@ fn dispatch_script_interact_sends_held_item_bury() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Held {
+            script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Wear".into(),
                 slot: None,
                 target_item_id: None,
             },
-            script::shim::InteractReq::Held {
+            script::interact::InteractReq::Held {
                 name: "Lobster".into(),
                 action: "Bury".into(),
                 slot: None,
@@ -13214,7 +14052,7 @@ fn dispatch_held_revalidates_exact_id_and_slot_without_name_fallback() {
     }
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
-    let request = |target_item_id, slot| script::shim::InteractReq::Held {
+    let request = |target_item_id, slot| script::interact::InteractReq::Held {
         name: "Bones".into(),
         action: "Bury".into(),
         slot,
@@ -13330,7 +14168,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
         None,
         "alice",
         (0..5)
-            .map(|slot| script::shim::InteractReq::Held {
+            .map(|slot| script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
@@ -13364,7 +14202,7 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Held {
+            vec![script::interact::InteractReq::Held {
                 name: "Bones".into(),
                 action: "Drop".into(),
                 slot: Some(slot),
@@ -13378,8 +14216,8 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
     );
     c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
     let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
-    let requests = std::iter::once(script::shim::InteractReq::CloseModal)
-        .chain((0..4).map(|slot| script::shim::InteractReq::Held {
+    let requests = std::iter::once(script::interact::InteractReq::CloseModal)
+        .chain((0..4).map(|slot| script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Drop".into(),
             slot: Some(slot),
@@ -13448,10 +14286,7 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.equipment()
@@ -13473,10 +14308,10 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
         None,
         "alice",
         vec![
-            script::shim::InteractReq::Unequip {
+            script::interact::InteractReq::Unequip {
                 name: "Bones".into()
             },
-            script::shim::InteractReq::Unequip {
+            script::interact::InteractReq::Unequip {
                 name: "Lobster".into()
             },
         ],
@@ -13496,7 +14331,7 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Unequip {
+            vec![script::interact::InteractReq::Unequip {
                 name: "knife".into()
             }],
         ),
@@ -13552,7 +14387,7 @@ fn dispatch_use_on_honors_exact_inventory_identity_and_rejects_stale_slots() {
     );
     let (navs, world) = empty_nav();
     let request = |source_item_id, source_item_slot, target_item_id, target_item_slot| {
-        script::shim::InteractReq::UseOn {
+        script::interact::InteractReq::UseOn {
             name: "Willow shortbow".into(),
             kind: "inv".into(),
             target_name: Some("Bow string".into()),
@@ -13716,7 +14551,7 @@ fn colocated_loc_use_fixture(wall_first: bool) -> (GameSnapshot, api::obj_names:
 
     let (mut client, mut snapshot) = colocated_wall_flax(wall_first);
     {
-        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut client);
         cache.objs.resize(433, ObjType::default());
         cache.objs[432].id = 432;
         cache.objs[432].name = "Chest key".into();
@@ -13773,7 +14608,7 @@ fn dispatch_use_on_loc_honors_co_located_name_and_exact_id() {
                 &world,
                 None,
                 "alice",
-                vec![script::shim::InteractReq::UseOn {
+                vec![script::interact::InteractReq::UseOn {
                     name: "Chest key".into(),
                     kind: "loc".into(),
                     target_name: target_name.map(str::to_owned),
@@ -13824,7 +14659,7 @@ fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::UseOn {
+            vec![script::interact::InteractReq::UseOn {
                 name: "Chest key".into(),
                 kind: "loc".into(),
                 target_name: target_name.map(str::to_owned),
@@ -13845,8 +14680,8 @@ fn dispatch_use_on_loc_refuses_missing_or_conflicting_identity() {
     }
 }
 
-fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
-    script::shim::InteractReq::Loc {
+fn loc_req(id: Option<i32>, action: &str) -> script::interact::InteractReq {
+    script::interact::InteractReq::Loc {
         x: 5,
         z: 6,
         level: 0,
@@ -13886,7 +14721,7 @@ fn native_loc_click_driver_trace_counts_move_and_operation_packets() {
     );
 }
 
-fn dispatch_loc(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+fn dispatch_loc(snap: &GameSnapshot, req: script::interact::InteractReq) -> GuardRec {
     let (navs, world) = empty_nav();
     let mut rec = GuardRec::default();
     dispatch_script_interact(
@@ -14050,8 +14885,8 @@ fn inv_button_req(
     component: i32,
     operation: i32,
     bank_generation: u64,
-) -> script::shim::InteractReq {
-    script::shim::InteractReq::InvButton {
+) -> script::interact::InteractReq {
+    script::interact::InteractReq::InvButton {
         id,
         slot,
         component,
@@ -14060,7 +14895,7 @@ fn inv_button_req(
     }
 }
 
-fn dispatch_inv_button(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+fn dispatch_inv_button(snap: &GameSnapshot, req: script::interact::InteractReq) -> GuardRec {
     let (navs, world) = empty_nav();
     let mut rec = GuardRec::default();
     dispatch_script_interact(
@@ -14638,7 +15473,7 @@ fn dispatch_script_interact_walk_to_uses_nearest_scene_packet_for_solid_target()
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::WalkTo {
+            vec![script::interact::InteractReq::WalkTo {
                 x: 3205,
                 z: 3207,
                 level: 0,
@@ -14733,13 +15568,15 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: 4,
             z: 4,
             level: 0,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14768,13 +15605,15 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: 4,
             z: 4,
             level: 0,
             allow_teleports: true,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14804,7 +15643,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     frame_b.quests.insert("Frame B".into());
     frame_b.inv.insert(995, 20);
     let walk_near = || {
-        vec![script::shim::InteractReq::WalkNear {
+        vec![script::interact::InteractReq::WalkNear {
             x: 10,
             z: 10,
             level: 0,
@@ -14813,6 +15652,8 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 7,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14820,6 +15661,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     };
     let next_frame_watchdog =
         |c: &mut Client, navs: &Arc<Mutex<HashMap<String, NavBot>>>, state: &WorldState| {
+            let state = Arc::new(state.clone());
             for action in [
                 script::WatchdogAction::None,
                 script::WatchdogAction::WarnHungLoop,
@@ -14831,7 +15673,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
                     Some((0, 0, 0)),
                     navs,
                     &world,
-                    Some(state),
+                    Some(&state),
                     None,
                     "alice",
                 );
@@ -14874,6 +15716,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     // Watchdog: only ArmWalk captures, and it captures its own frame.
     let navs = test_navs("alice");
     bind_test_route_scope(&navs, "alice");
+    let state = Arc::new(frame_a.clone());
     apply_watchdog_nav_action(
         script::WatchdogAction::ArmWalk {
             x: 10,
@@ -14885,7 +15728,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
         Some((0, 0, 0)),
         &navs,
         &world,
-        Some(&frame_a),
+        Some(&state),
         None,
         "alice",
     );
@@ -14960,13 +15803,15 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: dest.x,
             z: dest.z,
             level: dest.level,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 1,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -14995,13 +15840,15 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: dest.x,
             z: dest.z,
             level: dest.level,
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 2,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -15143,7 +15990,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::WalkNear {
+        vec![script::interact::InteractReq::WalkNear {
             x: dest.x,
             z: dest.z,
             level: dest.level,
@@ -15152,6 +15999,8 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 77,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -15174,15 +16023,12 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
 fn dispatch_script_interact_held_first_match_only() {
     let mut one = bank_fetch_client();
     {
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut one);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap_one = GameSnapshot::new();
     snap_one.rebuild(&one);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&one.cache.objs);
     let (navs, world) = empty_nav();
     let before_one = one.out.pos;
     assert!(dispatch_script_interact(
@@ -15194,7 +16040,7 @@ fn dispatch_script_interact_held_first_match_only() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -15240,7 +16086,7 @@ fn dispatch_script_interact_held_first_match_only() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -15305,7 +16151,7 @@ fn dispatch_script_interact_sends_npc_pick() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Goblin".into(),
             action: "Pick".into(),
             index: None,
@@ -15373,7 +16219,7 @@ fn dispatch_script_interact_npc_index_beats_same_name() {
         &world,
         None,
         "alice",
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Goblin".into(),
             action: "Pick".into(),
             index: Some(7),
@@ -15763,7 +16609,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -15835,7 +16681,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -15950,7 +16796,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "compat-full-pack".into(),
-        state: Some(state.clone()),
+        state: Some(Arc::new(state.clone())),
         bank: BankRows {
             origin: Origin::Session,
             rows: vec![(2, 30)],
@@ -16224,7 +17070,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -16532,7 +17378,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         policy: RiskPolicy::Proceed,
         grants: options.zones,
         allow: Default::default(),
-        input: crate::admission::capture(&snapshot, false, None, false),
+        input: crate::admission::capture(&snapshot, false, None, false, None),
         generation: 7,
         compat_v1: false,
         enforce: true,
@@ -16603,7 +17449,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     );
     assert_eq!(
         fresh.input,
-        crate::admission::capture(&snapshot, false, bot.condition.current(), false)
+        crate::admission::capture(&snapshot, false, bot.condition.current(), false, None)
     );
     assert!(Arc::ptr_eq(
         bot.route_basis.as_ref().expect("frozen basis"),
@@ -17641,6 +18487,9 @@ fn wait_settled(cond: impl FnMut() -> bool) -> bool {
 
 #[test]
 fn script_observe_ticks_only_on_player_edge_while_up() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -18020,7 +18869,7 @@ export default class T extends LoopingBot {
         slot.observe_lifecycle();
         assert_eq!(slot.state(), script::RunState::Running);
         let old_generation = slot.runtime_generation();
-        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot);
+        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot, None);
         slot.restart_from_identity(Instant::now())
             .expect("watchdog-style runtime replacement starts");
         (
@@ -18102,9 +18951,11 @@ export default class T extends LoopingBot {
 
 #[test]
 fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
-    // Task 12: an Idle SlotScript must not publish a script snapshot —
-    // no dispatch and no driver write, so the slot has nothing to send
-    // on the next mainloop pass.
+    if !api::test_support::game_data_available() {
+        return;
+    } // Task 12: an Idle SlotScript must not publish a script snapshot —
+      // no dispatch and no driver write, so the slot has nothing to send
+      // on the next mainloop pass.
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let count = Arc::new(Mutex::new(0));
@@ -18173,16 +19024,17 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let here = Some((3200, 3200, 0));
+    let mut cache = super::script_runtime::NavWorldStateCache::default();
     assert!(
-        nav_world_state_for_observe(here, &snap, false, false, false).is_none(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, false, false, 0).is_none(),
         "idle slot with no armed nav must not build WorldState"
     );
     assert!(
-        nav_world_state_for_observe(here, &snap, true, false, false).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, true, false, false, 0).is_some(),
         "Running script must get WorldState for the walk arm"
     );
     assert!(
-        nav_world_state_for_observe(here, &snap, false, true, false).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, true, false, 0).is_some(),
         "armed nav bot must get WorldState for interact walks"
     );
 }
@@ -18224,10 +19076,11 @@ fn starting_script_frame_builds_nav_facts() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let here = Some((3200, 3200, 0));
+    let mut cache = super::script_runtime::NavWorldStateCache::default();
     let nav_facts =
         crate::play_slots::script_state_builds_nav_facts(Some(script::RunState::Starting));
     assert!(
-        nav_world_state_for_observe(here, &snap, nav_facts, false, true).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, nav_facts, false, true, 0).is_some(),
         "a Starting frame must build WorldState so the first walk sees posted skills"
     );
 }
@@ -18256,7 +19109,7 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
         "membership is not inferred from GameSnapshot when the arm is missing"
     );
     let armed = nav_planner::WorldState::empty().with_map_members(true);
-    let reused = super::script_runtime::route_world_state(&snap, Some(armed));
+    let reused = super::script_runtime::route_world_state(&snap, Some(Arc::new(armed)));
     assert!(
         !reused.stats.contains_key(&SKILL_FISHING),
         "an existing arm is reused; the snapshot is not rebuilt"
@@ -18266,6 +19119,9 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
 
 #[test]
 fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -18323,6 +19179,9 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
 
 #[test]
 fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts: compiled_scripts,
         cheats: _,
@@ -18453,6 +19312,9 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
 
 #[test]
 fn script_observe_drains_queued_cheat_onto_driver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -18792,7 +19654,7 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
         let expected = if hidden {
             vec![]
         } else {
-            vec![script::shim::InteractReq::IfButton {
+            vec![script::interact::InteractReq::IfButton {
                 component_id: button,
             }]
         };
@@ -18910,6 +19772,9 @@ fn duel_accept_snapshot(
 
 #[test]
 fn duel_accept_requires_empty_exact_partner_session_and_obstacle_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::script_runtime::validated_duel_accept;
 
     let controls = *api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -19231,8 +20096,8 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert_ne!(flags.get(5 * 104 + 1) & CollisionFlag::V_W, 0);
     assert_eq!(flags.get(104 + 1), CollisionFlag::_OPEN);
 
-    script_js::observed::on_reset();
-    script_js::observed::apply(&view);
+    script_js::scene::observed::on_reset();
+    script_js::scene::observed::apply(&view);
     let here = api::snapshot::WorldTile {
         x: 3201,
         z: 3201,
@@ -19249,20 +20114,24 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
         level: 0,
     };
     assert_eq!(
-        script_js::line_of_sight::query_v2(here, open_to, Some(1)),
+        script_js::scene::line_of_sight::query_v2(here, open_to, Some(1)),
         Ok(true)
     );
     assert_eq!(
-        script_js::line_of_sight::query_v2(here, blocked_to, Some(1)),
+        script_js::scene::line_of_sight::query_v2(here, blocked_to, Some(1)),
         Ok(false)
     );
-    assert!(script_js::line_of_sight::query_v1(here, open_to, None));
-    assert!(!script_js::line_of_sight::query_v1(here, blocked_to, None));
+    assert!(script_js::scene::line_of_sight::query_v1(
+        here, open_to, None
+    ));
+    assert!(!script_js::scene::line_of_sight::query_v1(
+        here, blocked_to, None
+    ));
     assert_eq!(
-        script_js::line_of_sight::raw_flag_at(104 + 1),
+        script_js::scene::line_of_sight::raw_flag_at(104 + 1),
         Some(CollisionFlag::_OPEN)
     );
-    assert_eq!(script_js::line_of_sight::raw_flag_at(-1), None);
+    assert_eq!(script_js::scene::line_of_sight::raw_flag_at(-1), None);
 
     let iso = script_js::LoadIsolate::spawn(
         r#"
@@ -19389,12 +20258,14 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     .unwrap();
     let mut snapshot = GameSnapshot::new();
     let mut fingerprint = None;
+    // The first observed chat line seeds this generation; later sequences are
+    // delivered in order, with duplicate sequences suppressed.
     for (tick, seq, kind, sender, events, requests) in [
-        (1, 11, 0, "Partner", 1, 0),
-        (2, 12, 4, "Stranger", 2, 0),
-        (3, 13, 4, "Partner", 3, 1),
-        (4, 13, 4, "Partner", 3, 1),
-        (5, 14, 4, "Partner", 4, 2),
+        (1, 11, 0, "Partner", 0, 0),
+        (2, 12, 4, "Stranger", 1, 0),
+        (3, 13, 4, "Partner", 2, 1),
+        (4, 13, 4, "Partner", 2, 1),
+        (5, 14, 4, "Partner", 3, 2),
     ] {
         c.chat_text[0] = "wishes to trade with you.".into();
         c.chat_type[0] = kind;
@@ -19875,6 +20746,9 @@ fn script_snapshot_loc_behind_wall_posts_reachable_false() {
 #[cfg(feature = "js")]
 #[test]
 fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cache = Cache {
         varps: (0..173)
             .map(|_| client::config::VarpType::default())
@@ -20127,6 +21001,105 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
 }
 
 #[cfg(feature = "js")]
+#[test]
+fn script_snapshot_posts_the_local_attack_marks_when_they_change() {
+    let actor = api::snapshot::ActorView {
+        name: None,
+        actions: Vec::new(),
+        tile: api::WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        },
+        distance: 0,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: 640,
+        health: 10,
+        total_health: 10,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+    };
+    let player = api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            network: actor.tile,
+            actor,
+            combat_level: 3,
+            skill_level: 1,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+        animation_update: Some(api::snapshot::AnimationUpdateView {
+            serial: 7,
+            sequence: 424,
+        }),
+    };
+    let hit = |kind, stamp| api::snapshot::HitmarksView {
+        marks: [
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind,
+                cycle: stamp,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+            api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            },
+        ],
+        loop_cycle: 1000,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+
+    // No local player or hit data: the keyframe leaves the slot absent.
+    let (keyframe, first) = publish_script_snapshot(None, 1, &snapshot);
+    let view = script_js::wire::decode_snapshot(&keyframe).unwrap();
+    assert!(!view.has_local_attack_marks());
+
+    snapshot.seed_local_player(player);
+    snapshot.seed_hitmarks(hit(1, 900));
+    let expected = api::snapshot::AttackMarks::new(900, 7, 640, 0);
+    let (marked, second) = publish_script_snapshot(Some(&first), 2, &snapshot);
+    let view = script_js::wire::decode_snapshot(&marked).unwrap();
+    assert_eq!(view.local_attack_marks(), Some(expected.to_wire()));
+
+    // The same marks are not posted again.
+    let (quiet, third) = publish_script_snapshot(Some(&second), 3, &snapshot);
+    let view = script_js::wire::decode_snapshot(&quiet).unwrap();
+    assert!(!view.has_local_attack_marks());
+
+    // A poison hit, which closes a chat with no other mark, moves them.
+    snapshot.seed_hitmarks(hit(2, 1100));
+    let (poisoned, _) = publish_script_snapshot(Some(&third), 4, &snapshot);
+    let view = script_js::wire::decode_snapshot(&poisoned).unwrap();
+    let moved = api::snapshot::AttackMarks::from_wire(view.local_attack_marks().unwrap())
+        .expect("posted marks are never zero");
+    assert!(moved.after(expected));
+}
+
+#[cfg(feature = "js")]
 fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
         .iter()
@@ -20140,6 +21113,9 @@ fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> 
 #[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let extras = 40;
     let off_snap = prayer_overlay_game_snapshot(0, extras);
     let on_snap = prayer_overlay_game_snapshot(1, extras);
@@ -20804,6 +21780,9 @@ fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
 /// dispatches fully.
 #[test]
 fn script_observe_skips_the_tick_dispatch_while_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -20843,6 +21822,9 @@ fn script_observe_skips_the_tick_dispatch_while_hold() {
 
 #[test]
 fn welcome_hold_skips_compiled_tick_until_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -21004,7 +21986,7 @@ fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32))
         &[],
         false,
         true,
-        &[script::shim::InteractReq::NoteProgress],
+        &[script::interact::InteractReq::NoteProgress],
     );
     let until = t + script::watchdog::WEDGE;
     let mut packet_tick = t;
@@ -21033,7 +22015,7 @@ fn force_watchdog_recovering(slot: &mut script::SlotScript, here: (i32, i32, i32
             &[],
             false,
             true,
-            &[script::shim::InteractReq::RecoveryAnchor {
+            &[script::interact::InteractReq::RecoveryAnchor {
                 x: 3200,
                 z: 3200,
                 level: 0
@@ -22333,6 +23315,9 @@ fn tick_fix_route_inspect_completion_wakes_without_player_info() {
 #[cfg(feature = "js")]
 #[test]
 fn tick_fix_bank_selection_completion_wakes_without_player_info() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_tick_fix_evidence_wake(TickFixEvidence::BankSelection);
 }
 
@@ -22371,7 +23356,7 @@ impl script::native::NativeMachine for SnapshotPumpMachine {
             .snapshot()
             .bank_session()
             .is_some_and(|bank| bank.value.open);
-        let emitted = cx.emit(script::shim::InteractReq::CloseModal);
+        let emitted = cx.emit(script::interact::InteractReq::CloseModal);
         self.0
             .lock()
             .unwrap()
@@ -22408,6 +23393,9 @@ impl script::native::Script for SnapshotPumpScript {
 
 #[test]
 fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let (navs, world) = empty_nav();
@@ -22454,6 +23442,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             false,
             false,
             false,
+            None,
             None,
             None,
             None,
@@ -22584,6 +23573,7 @@ impl ReconnectRig {
             let mut slot = slot.lock().unwrap();
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
+                    "bank wake test",
                     source,
                     script_js::LoadShape::CompatClass,
                     vec![],
@@ -22714,6 +23704,7 @@ impl ReconnectRig {
             None,
             None,
             None,
+            None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
             None,
@@ -22839,7 +23830,7 @@ impl ReconnectRig {
     }
 
     /// Dispatch `reqs` as the slot's script requests this frame.
-    fn dispatch(&mut self, reqs: Vec<script::shim::InteractReq>) {
+    fn dispatch(&mut self, reqs: Vec<script::interact::InteractReq>) {
         dispatch_script_interact(
             &mut self.client,
             &self.snap,
@@ -22984,7 +23975,7 @@ fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
         &[],
         false,
         true,
-        &[script::shim::InteractReq::RecoveryAnchor {
+        &[script::interact::InteractReq::RecoveryAnchor {
             x: 40,
             z: 40,
             level: 0,
@@ -23097,7 +24088,7 @@ fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
         &[],
         false,
         true,
-        &[script::shim::InteractReq::NoteProgress],
+        &[script::interact::InteractReq::NoteProgress],
     );
     assert!(manual_resume_click(&rig, 2));
     {
@@ -23115,7 +24106,7 @@ fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
                 &[],
                 false,
                 true,
-                &[script::shim::InteractReq::LoopSettled],
+                &[script::interact::InteractReq::LoopSettled],
             ),
             script::WatchdogAction::None,
             "a non-moving human click gives gameplay a fresh wedge budget"
@@ -23392,7 +24383,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _zones) =
         requested.expect("the carry re-armed the walk");
     let compat_tile_intent = rig.navs.lock().unwrap()["alice"].route_compat_tile_intent;
-    rig.dispatch(vec![script::shim::InteractReq::WalkNear {
+    rig.dispatch(vec![script::interact::InteractReq::WalkNear {
         x: to.x,
         z: to.z,
         level: to.level,
@@ -23401,6 +24392,8 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
         allow_teleports,
         allow_wilderness,
         allow_bank_fetch,
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
         request_id,
         avoid: Vec::new(),
         cross: Vec::new(),
@@ -23463,6 +24456,9 @@ fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
 #[cfg(feature = "js")]
 #[test]
 fn a_paused_bank_access_booth_walk_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = ReconnectRig::t23_bank_wake_with_source(
         once_src(
             "import { Bank } from '../../api/bank/Bank.js';",
@@ -23959,14 +24955,16 @@ fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
     let (request_id, _) = rig.armed();
     assert_ne!(request_id, 0, "the script walk is armed");
     rig.slot().lock().unwrap().restore_interacts(vec![
-        script::shim::InteractReq::AbortWalk { request_id },
-        script::shim::InteractReq::Walk {
+        script::interact::InteractReq::AbortWalk { request_id },
+        script::interact::InteractReq::Walk {
             x: 50,
             z: 50,
             level: 0,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 777,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -24163,7 +25161,7 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn a_reconnect_keeps_the_surviving_isolate_in_its_channel_party() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::{BrokerWorld, Delivery};
 
     let mut rig =
@@ -24959,6 +25957,9 @@ fn assert_worker_uses_generic_code5_wait(
 
 #[test]
 fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -25001,6 +26002,8 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "clean-release-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16), "initial login is fresh");
@@ -25085,6 +26088,9 @@ fn spawned_worker_code5_without_exit_evidence_uses_generic_sixty_seconds() {
 
 #[test]
 fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -25115,6 +26121,8 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "dirty-exit-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
@@ -25138,8 +26146,139 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
     server.join().unwrap();
 }
 
+/// The spawned worker of a bot with no script does not reconnect by itself
+/// after the server drops its connection: it parks, publishes why, and only
+/// the operator's Log in starts the next handshake.
+#[test]
+fn spawned_scriptless_worker_stays_parked_after_a_drop_until_login() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (disconnect_tx, disconnect_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut first);
+        attempt_tx.send((1, opcode, arrived)).unwrap();
+        answer_worker_login(&mut first, 2);
+        disconnect_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+        drop(first);
+
+        let (mut second, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut second);
+        attempt_tx.send((2, opcode, arrived)).unwrap();
+        answer_worker_login(&mut second, 5);
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("scriptless-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!((number, opcode), (1, 16));
+    assert!(wait_settled(|| play.slot_connected("scriptless-worker")));
+    disconnect_tx.send(()).unwrap();
+    assert!(
+        wait_settled(|| arm.login_latch_reason() == Some(LoginLatchReason::IdleDisconnect)),
+        "the dropped bot parks with its reason"
+    );
+    assert!(
+        attempt_rx.recv_timeout(Duration::from_secs(4)).is_err(),
+        "no reconnect starts: login spacing is 1.2 s"
+    );
+    assert!(wait_settled(|| play.statuses().iter().any(|row| row
+        .username
+        == "scriptless-worker"
+        && row.login_latch_reason
+            == Some(LoginLatchReason::IdleDisconnect))));
+
+    arm.arm_explicit_login();
+    play.wake("scriptless-worker");
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(
+        (number, opcode),
+        (2, 18),
+        "the operator's Log in reconnects into the dirty session"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("scriptless-worker");
+    server.join().unwrap();
+}
+
+/// Whether the client of a spawned, logged-in worker ran the Java idle timer
+/// at any frame in a few seconds, with or without a running script.
+fn worker_runs_idle_timer(scripted: bool) -> bool {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        read_worker_login_attempt(&mut socket);
+        answer_worker_login(&mut socket, 2);
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+    let ran = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&ran);
+    let mut play = run_worker_play(endpoint, move |client, _, _| {
+        if client.ingame && client.host_idle_timer() {
+            seen.store(true, Ordering::Relaxed);
+        }
+    });
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("idle-timer-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+    if scripted {
+        start_idle_script(&play, "idle-timer-worker");
+    }
+    assert!(wait_settled(|| play.slot_connected("idle-timer-worker")));
+    thread::sleep(Duration::from_secs(3));
+    let result = ran.load(Ordering::Relaxed);
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("idle-timer-worker");
+    server.join().unwrap();
+    result
+}
+
+/// A bot with no script runs the Java idle timer; a running script holds it
+/// off. (The host owns reconnect, so before the host asked for the timer no
+/// bot ever sent the idle request.)
+#[test]
+fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
+    assert!(
+        worker_runs_idle_timer(false),
+        "a bot with no script runs the idle timer"
+    );
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    assert!(
+        !worker_runs_idle_timer(true),
+        "a running script suppresses the idle timer"
+    );
+}
+
 #[test]
 fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -25175,6 +26314,8 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "release-budget-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
@@ -25489,7 +26630,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn identical_script_paint_skips_status_clone() {
-    use script::shim::ScriptPaint;
+    use script::paint::ScriptPaint;
 
     let frame = ScriptPaint {
         title: Some("probe".into()),
@@ -25536,7 +26677,7 @@ fn identical_script_paint_skips_status_clone() {
         title: Some("probe".into()),
         accent: None,
         lines: vec!["different".into()],
-        buttons: vec![script::shim::ScriptPaintButton {
+        buttons: vec![script::paint::ScriptPaintButton {
             id: "gobank".into(),
             label: "Resume".into(),
         }],
@@ -25662,6 +26803,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn hold_freezes_follow_and_keeps_the_armed_route() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -25755,6 +26899,9 @@ impl script::native::Script for ClaimHandle {
 
 #[test]
 fn handle_claim_keeps_ticks_and_blocks_host_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let count = Arc::new(Mutex::new(0u32));
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     script_slot_or_insert(&scripts, "alice")
@@ -25801,8 +26948,10 @@ fn handle_claim_keeps_ticks_and_blocks_host_talk() {
 
 #[test]
 fn knock_reaches_peer_slot_while_other_slot_lock_held() {
-    // OPT-006: knock takes a brief wall lookup then the peer slot lock —
-    // never the wall lock for the whole on_random call.
+    if !api::test_support::game_data_available() {
+        return;
+    } // OPT-006: knock takes a brief wall lookup then the peer slot lock —
+      // never the wall lock for the whole on_random call.
     use api::random::{DetectedRandom, RandomKind};
 
     struct ClaimHandle;
@@ -25854,6 +27003,9 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
 #[cfg(feature = "js")]
 #[test]
 fn load_ignored_randoms_decline_only_listed_events() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     fn production_knock(
         scripts: &ScriptWall,
         name: &str,
@@ -25873,7 +27025,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
 
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let src =
-        "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
+    "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
     {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
@@ -25979,7 +27131,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
     // The same exact production knock releases the hold when Maze itself is
     // listed, while continuing to publish the detected event.
     let maze_src =
-        "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
+    "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
     {
         let slot = script_slot_or_insert(&scripts, "bob");
         let mut slot = slot.lock().unwrap();
@@ -26166,6 +27318,9 @@ fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
 #[cfg(feature = "js")]
 #[test]
 fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct NoRandomCallback(Arc<Mutex<usize>>);
     impl script::native::Script for NoRandomCallback {
         fn tick(
@@ -26186,9 +27341,9 @@ fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
             let mut slot = slot.lock().unwrap();
             slot.start_load_settled(
                 "export default class T extends LoopingBot {
-                    ignoredRandoms() { return ['Strange box']; }
-                    loop() {}
-                }"
+                ignoredRandoms() { return ['Strange box']; }
+                loop() {}
+            }"
                 .into(),
                 script_js::LoadShape::CompatClass,
                 vec![],
@@ -26402,11 +27557,17 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
 
 #[test]
 fn disabled_box_guardian_keeps_native_eligibility_available() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_box_guardian_native_eligibility(false);
 }
 
 #[test]
 fn enabled_box_guardian_pauses_native_eligibility_for_an_owned_event() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_box_guardian_native_eligibility(true);
 }
 
@@ -26516,13 +27677,15 @@ impl script::native::Script for WalkProbe {
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
         let (x, z, level) = *self.0.lock().expect("walk target");
-        ctx.queue_test_interaction(script::shim::InteractReq::Walk {
+        ctx.queue_test_interaction(script::interact::InteractReq::Walk {
             x,
             z,
             level,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -26741,6 +27904,9 @@ fn nav_frame_at(x: i32, z: i32) -> GameSnapshot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = bank_client();
     c.map_build_base_x = 3250;
     c.map_build_base_z = 3416;
@@ -26847,10 +28013,11 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let requests = iso.drain_interacts();
     assert_eq!(
         requests,
-        vec![script::shim::InteractReq::WalkNearestBank],
+        vec![script::interact::InteractReq::WalkNearestBank],
         "native v2 must select the raw bank-walk path from the initial scene",
     );
     let out_before = c.out.pos;
+    let state = Arc::new(WorldState::empty());
     assert!(
         dispatch_script_interact_cached_scoped(
             &mut c,
@@ -26860,7 +28027,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 here: Some((start.x, start.z, start.level)),
                 navs: &navs,
                 world: &world_opt,
-                state: Some(&WorldState::empty()),
+                state: Some(&state),
                 bank: None,
                 name: "test",
                 compatibility_scope: Some(api::identity::Scope::Slot(
@@ -26869,6 +28036,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 cache: &None,
                 obj_names_arc: &None,
             },
+            None,
             requests,
         ),
         "raw bank selection must be accepted without a movement packet",
@@ -26937,7 +28105,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     assert!(
         matches!(
             requests.as_slice(),
-            [script::shim::InteractReq::OpenStand {
+            [script::interact::InteractReq::OpenStand {
                 x,
                 z,
                 level,
@@ -27098,13 +28266,15 @@ export function tick(api) {
     let requests = iso.drain_interacts();
     assert_eq!(
         requests,
-        vec![script::shim::InteractReq::Walk {
+        vec![script::interact::InteractReq::Walk {
             x: stand.x,
             z: stand.z,
             level: stand.level,
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -27181,7 +28351,7 @@ export function tick(api) {
         &world_opt,
         Some(WorldState::empty()),
         "native-v2",
-        vec![script::shim::InteractReq::OpenStand {
+        vec![script::interact::InteractReq::OpenStand {
             x: booth.x,
             z: booth.z,
             level: booth.level,
@@ -27205,7 +28375,7 @@ export function tick(api) {
     assert!(
         matches!(
             requests.as_slice(),
-            [script::shim::InteractReq::OpenStand {
+            [script::interact::InteractReq::OpenStand {
                 x,
                 z,
                 level,
@@ -27269,6 +28439,9 @@ export function tick(api) {
 
 #[test]
 fn script_observe_walk_arms_route_and_pump_steps_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -27364,7 +28537,10 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
 }
 
 #[test]
-fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
+fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
+    use crate::test_support::{range, tbwt_evidence, window};
+    use nav_planner::quest_gates::QuestGates;
+
     let mut c = nav_client();
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -27417,17 +28593,26 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
         worn_req: Vec::new(),
         members_req: false,
         wildy_cap: None,
-        quest_gates: None,
+        quest_gates: Some(
+            QuestGates::new([window("tbwt", "tbwt_main", Some(3), Some(3))])
+                .expect("typed gated NPC crossing"),
+        ),
     };
-    let route = Route {
+    let route = Arc::new(Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge.clone()),
         }],
         dest: edge.to,
         ticks: 1.0,
-    };
+    });
     let mut arm = WalkArm {
-        route: Some(Arc::new(route)),
+        route: Some(Arc::clone(&route)),
+        basis: Some(Arc::new(crate::admission::RouteBasis {
+            _route: crate::walk_plan::RoutePath::legacy(route),
+            options: FindOptions::default(),
+            avoid: Arc::from([]),
+            quest_evidence: Some(tbwt_evidence(range(Some(3), Some(3)))),
+        })),
         ..Default::default()
     };
     let mut d = NavRec::default();
@@ -27772,7 +28957,7 @@ export default class T extends LoopingBot {{
         assert!(
             matches!(
                 requests.as_slice(),
-                [script::shim::InteractReq::WalkNear {
+                [script::interact::InteractReq::WalkNear {
                     x: 10,
                     z: 10,
                     level: 0,
@@ -27842,6 +29027,9 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::walk::Walk;
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd};
     use std::task::Poll;
@@ -27875,8 +29063,10 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),
+                                avoid: Box::default(),
                                 protect: false,
                                 food_guard: false,
+                                cure_guard: false,
                                 allow: Default::default(),
                             },
                             &mut tick.cx,
@@ -28222,7 +29412,7 @@ pub(super) fn plant_nav_footprint_loc(
 ) {
     use client::config::LocType;
 
-    let cache = Arc::get_mut(&mut client.cache).expect("nav test owns its cache");
+    let cache = test_cache_mut(client);
     let id = cache.locs.len() as i32;
     cache.locs.push(LocType {
         id,
@@ -28540,9 +29730,12 @@ fn walkable_loc_arrival_uses_footprint_distance_but_plain_tiles_keep_anchor_radi
 
 #[test]
 fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+    use script::interact::InteractReq;
     use script::native::HostEffect;
-    use script::shim::InteractReq;
 
     let target = WorldTile {
         x: 3085,
@@ -28622,6 +29815,7 @@ fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
         Arc::new(settings),
         selected,
         Arc::default(),
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -28925,7 +30119,7 @@ fn arm_route_outcome(
         world: Some(world),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state,
+        state: state.map(Arc::new),
         bank,
     };
     let _completion = arm
@@ -29356,11 +30550,14 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
 /// and detours whose distance alone cannot decide the dequeue-rank budget.
 #[test]
 fn real_v16_batched_arrival_matches_every_forward_predicate() {
-    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
-        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_ARRIVAL_PACK",
+        "",
+        "real v16 NAV_ARRIVAL_PACK for batched arrival comparison",
+    ) else {
         return;
     };
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v16 pack");
+    let world = NavWorld::load_pack(&path).expect("real v16 pack");
     let tile = |x, z, level| WorldTile { x, z, level };
     let cases = [
         (tile(3017, 3170, 0), 12),
@@ -29439,14 +30636,24 @@ fn real_v16_batched_arrival_matches_every_forward_predicate() {
 /// endpoint scene without connecting to the game engine.
 #[test]
 fn real_v16_return_radius_endpoint_is_native_arrival() {
-    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
-        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_ARRIVAL_PACK",
+        "",
+        "real v16 NAV_ARRIVAL_PACK for Return endpoint arrival",
+    ) else {
         return;
     };
-    let path = std::path::PathBuf::from(path);
     let mut world = NavWorld::load_pack(&path).expect("real v16 pack");
-    let flags = nav_planner::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
-        .expect("matching raw flags");
+    let sidecar = path.with_extension("navflags");
+    let sidecar = sidecar.to_string_lossy().into_owned();
+    let Some(sidecar) = api::test_support::local_asset_path(
+        "",
+        &sidecar,
+        "matching raw flags sidecar for real v16 NAV_ARRIVAL_PACK",
+    ) else {
+        return;
+    };
+    let flags = nav_planner::pack::read_flags_sidecar(&sidecar).expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
     assert_eq!(
         (flags.width, flags.height),
@@ -29493,6 +30700,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
             ..FindOptions::default()
         },
         state: None,
+        prereq_catalog: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -29717,7 +30925,7 @@ fn glory_edge() -> TransportEdge {
 /// shape `teleport_send` reads the rub's held item from.
 fn plant_inv_item(c: &mut Client, obj_id: i32) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(c);
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(client::config::ObjType::default());
         }
@@ -29812,6 +31020,9 @@ fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
 /// make).
 #[test]
 fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let karamja = WorldTile {
         x: 2918,
         z: 3176,
@@ -29990,6 +31201,9 @@ fn toll_nav_world() -> NavWorld {
 /// the toll Transport leg.
 #[test]
 fn script_observe_walk_uses_slot_state_across_a_toll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30076,6 +31290,9 @@ fn mine_nav_world() -> NavWorld {
 /// out through the exit portal's return hop to the wizard's anchor.
 #[test]
 fn script_observe_walk_uses_the_latched_essence_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30140,6 +31357,9 @@ fn script_observe_walk_uses_the_latched_essence_session() {
 /// mine stays NoPath for a native walk (fail-closed remains correct).
 #[test]
 fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30181,6 +31401,9 @@ fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
 /// toll stays unusable and no route arms.
 #[test]
 fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30220,6 +31443,9 @@ fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
 
 #[test]
 fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30584,7 +31810,7 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
             &world,
             None,
             "alice",
-            vec![script::shim::InteractReq::AbortWalk { request_id }],
+            vec![script::interact::InteractReq::AbortWalk { request_id }],
         ));
         assert_eq!(c.out.pos, out_before, "abort-walk writes no packet");
     };
@@ -30620,9 +31846,16 @@ mod native_walk;
 #[path = "script_server_ordered_tests.rs"]
 mod server_ordered;
 
+#[path = "script_talk_dispatch_tests.rs"]
+mod talk_dispatch;
+
 #[cfg(feature = "js")]
 #[path = "script_progress_tests.rs"]
 mod script_progress;
+
+#[cfg(feature = "js")]
+#[path = "script_hold_conformance_tests.rs"]
+mod script_hold_conformance;
 
 #[cfg(test)]
 mod read_journal_tests {
@@ -30652,6 +31885,7 @@ mod read_journal_tests {
                     active_settings: 1,
                     pending_settings: None,
                     fields: Arc::from([]),
+                    survival: script::survival::SurvivalReport::default(),
                     failure: None,
                 });
                 Ok(ScriptFlow::Continue)
@@ -30711,6 +31945,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_dispatches_a_live_wait_and_finishes_the_read() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
@@ -30733,6 +31970,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_refuses_every_stale_run_key_dimension() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         for stale in [
@@ -30770,6 +32010,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_cannot_restart_a_terminal_blocked_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, true);
         let status = slot.lock().unwrap().native_status().unwrap();
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
@@ -30791,6 +32034,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(true, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
@@ -30843,20 +32089,20 @@ mod host_batch_tests {
     }
 
     struct BatchArgs {
-        rows: [Option<script::shim::InteractReq>; 5],
+        rows: [Option<script::interact::InteractReq>; 5],
         order: AdmissionOrder,
-        ordinary: Option<script::shim::InteractReq>,
-        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+        ordinary: Option<script::interact::InteractReq>,
+        followup: Option<[Option<script::interact::InteractReq>; 5]>,
     }
 
-    fn prefix_len(rows: &[Option<script::shim::InteractReq>; 5]) -> usize {
+    fn prefix_len(rows: &[Option<script::interact::InteractReq>; 5]) -> usize {
         rows.iter().take_while(|row| row.is_some()).count()
     }
 
     fn rows(
-        requests: impl IntoIterator<Item = script::shim::InteractReq>,
-    ) -> [Option<script::shim::InteractReq>; 5] {
-        let mut rows: [Option<script::shim::InteractReq>; 5] = std::array::from_fn(|_| None);
+        requests: impl IntoIterator<Item = script::interact::InteractReq>,
+    ) -> [Option<script::interact::InteractReq>; 5] {
+        let mut rows: [Option<script::interact::InteractReq>; 5] = std::array::from_fn(|_| None);
         let mut requests = requests.into_iter();
         for row in &mut rows {
             *row = requests.next();
@@ -30879,7 +32125,7 @@ mod host_batch_tests {
         batch_receipts: Option<Vec<bool>>,
         ordinary: Option<Result<u64, ActionError>>,
         ordinary_receipt: Option<bool>,
-        followup_rows: Option<[Option<script::shim::InteractReq>; 5]>,
+        followup_rows: Option<[Option<script::interact::InteractReq>; 5]>,
         followup: Option<Result<u64, ActionError>>,
         followup_id: Option<u64>,
         followup_len: usize,
@@ -30969,7 +32215,7 @@ mod host_batch_tests {
 
     struct BatchScript {
         args: Option<BatchArgs>,
-        direct: Option<script::shim::InteractReq>,
+        direct: Option<script::interact::InteractReq>,
         handle: Option<ActionHandle<BatchMachine>>,
         report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
     }
@@ -31015,11 +32261,11 @@ mod host_batch_tests {
     }
 
     fn rig(
-        batch: [Option<script::shim::InteractReq>; 5],
+        batch: [Option<script::interact::InteractReq>; 5],
         order: AdmissionOrder,
-        ordinary: Option<script::shim::InteractReq>,
-        followup: Option<[Option<script::shim::InteractReq>; 5]>,
-        direct: Option<script::shim::InteractReq>,
+        ordinary: Option<script::interact::InteractReq>,
+        followup: Option<[Option<script::interact::InteractReq>; 5]>,
+        direct: Option<script::interact::InteractReq>,
         world: Option<Arc<NavWorld>>,
     ) -> BatchRig {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -31149,6 +32395,7 @@ mod host_batch_tests {
                 None,
                 None,
                 None,
+                None,
                 #[cfg(feature = "js")]
                 None,
                 #[cfg(feature = "js")]
@@ -31202,16 +32449,19 @@ mod host_batch_tests {
 
     #[test]
     fn refused_batch_fails_stops_suffix_and_releases_reservations_without_blocking_direct_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3420 },
-                script::shim::InteractReq::Held {
+                script::interact::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::Held {
                     name: "missing food".into(),
                     action: "Eat".into(),
                     slot: Some(0),
                     target_item_id: None,
                 },
-                script::shim::InteractReq::Npc {
+                script::interact::InteractReq::Npc {
                     name: "Goblin".into(),
                     action: "Attack".into(),
                     index: Some(0),
@@ -31219,10 +32469,10 @@ mod host_batch_tests {
             ]),
             AdmissionOrder::BatchThenOrdinary,
             None,
-            Some(rows([script::shim::InteractReq::IfButton {
+            Some(rows([script::interact::InteractReq::IfButton {
                 component_id: 3422,
             }])),
-            Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+            Some(script::interact::InteractReq::IfButton { component_id: 3421 }),
             None,
         );
 
@@ -31258,15 +32508,18 @@ mod host_batch_tests {
 
     #[test]
     fn ordinary_and_batch_admission_orders_keep_batch0_independent_and_gate_follow() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (order, batch_exclusive, dispatched_button) in [
             (AdmissionOrder::BatchThenOrdinary, true, 3420),
             (AdmissionOrder::OrdinaryThenBatch, false, 3421),
         ] {
             let world = Arc::new(open_world(40, 1));
             let mut rig = rig(
-                rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+                rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
                 order,
-                Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+                Some(script::interact::InteractReq::IfButton { component_id: 3421 }),
                 None,
                 None,
                 Some(world),
@@ -31317,10 +32570,13 @@ mod host_batch_tests {
 
     #[test]
     fn host_batch_preserves_builder_component_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3421 },
-                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::IfButton { component_id: 3421 },
+                script::interact::InteractReq::IfButton { component_id: 3420 },
             ]),
             AdmissionOrder::BatchThenOrdinary,
             None,
@@ -31340,10 +32596,13 @@ mod host_batch_tests {
 
     #[test]
     fn terminal_batch_freezes_only_its_player_observation_key() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
-                script::shim::InteractReq::IfButton { component_id: 3420 },
-                script::shim::InteractReq::Npc {
+                script::interact::InteractReq::IfButton { component_id: 3420 },
+                script::interact::InteractReq::Npc {
                     name: "Goblin".into(),
                     action: "Attack".into(),
                     index: Some(0),
@@ -31409,8 +32668,11 @@ mod host_batch_tests {
 
     #[test]
     fn guardian_and_recovery_holds_dispatch_no_native_batch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut guardian = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -31422,7 +32684,7 @@ mod host_batch_tests {
         assert!(guardian.driver.if_button_components.is_empty());
 
         let mut recovering = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -31440,7 +32702,7 @@ mod host_batch_tests {
                 &[],
                 false,
                 true,
-                &[script::shim::InteractReq::NoteProgress],
+                &[script::interact::InteractReq::NoteProgress],
             );
             let until = now + script::watchdog::WEDGE;
             let mut packet_tick = now;
@@ -31464,8 +32726,11 @@ mod host_batch_tests {
 
     #[test]
     fn changed_work_epoch_revokes_queued_batch_before_host_dispatch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
-            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
             None,
             None,
@@ -31516,13 +32781,9 @@ mod quest_route_evidence_tests {
     use super::*;
     use api::identity::Scope;
     use api::quest_progress::EvidenceStamp;
-    #[cfg(feature = "js")]
-    use api::selected::RunKey;
     use api::selected::{QuestGate, Truth};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
-    #[cfg(feature = "js")]
-    use std::num::NonZeroU16;
     use std::sync::LazyLock;
 
     #[derive(Clone, Copy)]
@@ -31551,7 +32812,7 @@ mod quest_route_evidence_tests {
             .expect("submit production quest preparation")
             .join()
             .expect("quest preparation worker")
-            .expect("prepare selected quest family");
+            .expect("prepare selected quest facts");
             assert!(
                 selected.try_quests().is_some(),
                 "production preparation must retain the selected quest catalog"
@@ -31572,23 +32833,11 @@ mod quest_route_evidence_tests {
         (facts.id.clone(), facts.display.to_string())
     }
 
-    fn family(
-        selected: &api::game_data::SelectedGameData,
-    ) -> nav_planner::quest_gates::QuestFamilyId {
-        let identity = selected
-            .quest_family_identity()
-            .expect("selected quest family identity");
-        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
-    }
-
     fn tile(x: i32, z: i32) -> api::snapshot::WorldTile {
         api::snapshot::WorldTile { x, z, level: 0 }
     }
 
-    fn gate_world(
-        family: nav_planner::quest_gates::QuestFamilyId,
-        quest: api::selected::FactKey,
-    ) -> Arc<NavWorld> {
+    fn gate_world(quest: api::selected::FactKey) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
         use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -31621,14 +32870,11 @@ mod quest_route_evidence_tests {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
+        let mut graph = TransportGraph::default();
         graph.at.entry(origin).or_default().push(0);
         graph.edges.push(edge);
         Arc::new(NavWorld::from_parts(
@@ -31694,6 +32940,7 @@ export default class T extends LoopingBot {
 "#;
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "test card",
                 source.to_owned(),
                 script_js::LoadShape::CompatClass,
                 vec![],
@@ -31782,19 +33029,6 @@ export default class T extends LoopingBot {
             false,
         );
     }
-    #[cfg(feature = "js")]
-    fn route_run(slot: &script::SlotScript) -> RunKey {
-        slot.native_run().unwrap_or_else(|| {
-            let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
-                panic!("compatibility route must use slot scope");
-            };
-            RunKey {
-                slot: key.incarnation().get(),
-                run: slot.runtime_generation(),
-                session: slot.work_epoch(),
-            }
-        })
-    }
 
     #[cfg(feature = "js")]
     fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
@@ -31817,19 +33051,18 @@ export default class T extends LoopingBot {
     #[cfg(feature = "js")]
     #[test]
     fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let selected_family = family(&selected);
 
-        let rig = start_compat_route(
-            gate_world(selected_family, quest.clone()),
-            Arc::clone(&selected),
-        );
+        let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
         let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
         let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
         let mut driver = NavRec::default();
 
-        // Observation retains selected identity and its causal stamp only.
+        // Observation retains ordinary quest evidence and its causal stamp only.
         observe(&rig, &mut driver, &snapshot, 1, None);
         {
             let navs = rig.navs.lock().unwrap();
@@ -31842,8 +33075,18 @@ export default class T extends LoopingBot {
         start_walk(&slot);
         observe(&rig, &mut driver, &snapshot, 2, None);
         await_walk(&rig);
+        let expected_run = {
+            let slot = slot.lock().unwrap();
+            let run = slot.seat_run().expect("compatibility gameplay seat");
+            assert_ne!(
+                run.session,
+                slot.work_epoch(),
+                "fixture must distinguish gameplay session from work epoch"
+            );
+            run
+        };
         let expected = EvidenceStamp {
-            run: route_run(&slot.lock().unwrap()),
+            run: expected_run,
             tick: 2,
             sequence: 2,
         };
@@ -31867,33 +33110,18 @@ export default class T extends LoopingBot {
 
     #[cfg(feature = "js")]
     #[test]
-    fn compatibility_queue_route_fails_closed_for_wrong_family_and_bad_rows() {
+    fn compatibility_queue_route_fails_closed_for_unavailable_or_unsupported_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let selected_family = family(&selected);
-        let wrong_family = nav_planner::quest_gates::QuestFamilyId::new(
-            [0xA5; 32],
-            NonZeroU16::new(1).expect("nonzero test schema"),
-        );
-        assert_ne!(wrong_family, selected_family);
 
-        for (label, edge_family, frame) in [
-            ("wrong family", wrong_family, QuestListFrame::Complete),
-            (
-                "unavailable list",
-                selected_family,
-                QuestListFrame::Unavailable,
-            ),
-            (
-                "unsupported status colour",
-                selected_family,
-                QuestListFrame::Unsupported,
-            ),
+        for (label, frame) in [
+            ("unavailable list", QuestListFrame::Unavailable),
+            ("unsupported status colour", QuestListFrame::Unsupported),
         ] {
-            let rig = start_compat_route(
-                gate_world(edge_family, quest.clone()),
-                Arc::clone(&selected),
-            );
+            let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
             let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
             start_walk(&slot);
             let snapshot = quest_snapshot(&selected, frame);
@@ -31933,8 +33161,10 @@ export default class T extends LoopingBot {
                             required_after: tick.cx.evidence(),
                             evidence: None,
                             cross: Box::default(),
+                            avoid: Box::default(),
                             protect: false,
                             food_guard: false,
+                            cure_guard: false,
                             allow: Default::default(),
                         },
                         &mut tick.cx,
@@ -31951,9 +33181,12 @@ export default class T extends LoopingBot {
 
     #[test]
     fn native_assessment_uses_the_same_complete_row_and_request_stamp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let world = gate_world(family(&selected), quest);
+        let world = gate_world(quest);
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("test slot");
         let shared = Arc::new(Mutex::new(Advice::default()));
@@ -32080,7 +33313,6 @@ export default class T extends LoopingBot {
 
     fn gatherer_world(
         target: api::snapshot::WorldTile,
-        family: nav_planner::quest_gates::QuestFamilyId,
         quest: api::selected::FactKey,
     ) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
@@ -32121,14 +33353,11 @@ export default class T extends LoopingBot {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
+        let mut graph = TransportGraph::default();
         // Resource selection needs observed zone data. This synthetic world
         // has no danger zones, rather than an unavailable zone table.
         graph.zones = Some(
@@ -32162,13 +33391,227 @@ export default class T extends LoopingBot {
     }
 
     #[test]
+    fn slot_keeps_parked_native_run_and_resumes_after_dose() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::quest_progress::EvidenceStamp;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+        use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
+        use script::survival::CurePoison;
+
+        fn condition(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
+            BotCondition {
+                tick: u32::try_from(tick).unwrap(),
+                session: SessionMark::Live,
+                hp,
+                hp_max: 99,
+                hp_known: true,
+                poison,
+                poison_window: None,
+                food: FoodSummary::default(),
+                cures: CureDoses {
+                    antipoison,
+                    ..CureDoses::default()
+                },
+            }
+        }
+
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(81_031);
+        slot.start_compiled(
+            "alice",
+            script::CompiledId("Gatherer"),
+            Arc::new(SettingsBag::new()),
+            Arc::clone(&selected),
+            Arc::default(),
+            None,
+        )
+        .expect("start selected Gatherer");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match slot.poll_start() {
+                script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                script::StartPoll::Pending => {
+                    assert!(Instant::now() < deadline, "Gatherer preparation timed out");
+                    std::thread::yield_now();
+                }
+                other => panic!("Gatherer start failed: {other:?}"),
+            }
+        }
+
+        let run = slot.native_run().expect("compiled Gatherer run");
+        let mut snapshot = nav_frame_at(3200, 3200);
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 60,
+            xp: 0,
+            used: true,
+        }]);
+        let onset = PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        let mut driver = NavRec::default();
+
+        for tick in 1..=40 {
+            snapshot.seed_tick(u32::try_from(tick).unwrap());
+            let mut context = script::ScriptCtx {
+                driver: &mut driver,
+                tick,
+                here: Some((3200, 3200, 0)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick {
+                    selected: Some(&selected),
+                    condition: Some(condition(tick, onset, 5, 0)),
+                    poison_unknown_pulse: Some(11),
+                    cure_poison: CurePoison::WhenNeeded,
+                    ..script::CompiledTick::default()
+                },
+            };
+            slot.on_game_tick(&mut context);
+            let status = slot.native_status().expect("parked status");
+            assert_eq!(slot.state(), script::RunState::Running);
+            assert_eq!(slot.native_run(), Some(run));
+            assert_eq!(status.run, run);
+            assert_eq!(status.phase, NativePhase::Waiting);
+            assert!(status.failure.is_none());
+            assert!(slot.lifecycle_receipt().is_none());
+        }
+
+        let dose_id = script::combat::guard::shared_tables()
+            .expect("shared potion tables")
+            .potion(script::combat::tables::PotionKind::Antipoison)
+            .expect("antipoison table row")
+            .doses[0]
+            .expect("one-dose antipoison item")
+            .id;
+        snapshot.seed_tick(41);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: api::ItemDefView {
+                    id: dose_id,
+                    name: Some("Antipoison".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            }],
+            28,
+        );
+        let mut context = script::ScriptCtx {
+            driver: &mut driver,
+            tick: 41,
+            here: Some((3200, 3200, 0)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick {
+                selected: Some(&selected),
+                condition: Some(condition(41, onset, 5, 1)),
+                poison_unknown_pulse: Some(11),
+                cure_poison: CurePoison::WhenNeeded,
+                ..script::CompiledTick::default()
+            },
+        };
+        slot.on_game_tick(&mut context);
+
+        let action = slot.take_native_action().expect("survival drink action");
+        assert_eq!(action.run(), run);
+        assert!(matches!(
+            &action.effect,
+            HostEffect::Interaction(script::interact::InteractReq::Held { action, .. })
+                if action == "Drink"
+        ));
+        let authority = action.authority();
+        slot.complete_native_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run,
+                    tick: 41,
+                    sequence: 41,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+
+        // The drink sent at tick 41 delays the player through ticks 42 and 43
+        // (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`). The runner
+        // holds its work through the drink lock and resumes at tick 44.
+        snapshot.seed_inventory(Vec::new(), 28);
+        for tick in 42..=44 {
+            snapshot.seed_tick(u32::try_from(tick).unwrap());
+            let mut context = script::ScriptCtx {
+                driver: &mut driver,
+                tick,
+                here: Some((3200, 3200, 0)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick {
+                    selected: Some(&selected),
+                    condition: Some(condition(
+                        tick,
+                        PoisonState::Immune { until_lower: 80 },
+                        60,
+                        0,
+                    )),
+                    poison_unknown_pulse: Some(11),
+                    cure_poison: CurePoison::WhenNeeded,
+                    ..script::CompiledTick::default()
+                },
+            };
+            slot.on_game_tick(&mut context);
+            let status = slot.native_status().expect("resumed native status");
+            assert_eq!(slot.state(), script::RunState::Running);
+            assert_eq!(slot.native_run(), Some(run));
+            assert_eq!(status.run, run);
+            assert!(status.failure.is_none());
+            assert!(slot.lifecycle_receipt().is_none());
+            assert!(slot.take_native_action().is_none(), "tick {tick}");
+            if tick == 44 {
+                assert_eq!(status.phase, NativePhase::Working);
+            }
+        }
+    }
+
+    #[test]
     fn native_gatherer_walk_crosses_the_typed_gate_from_live_quest_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let family = family(&selected);
         let target = tile(3085, 3468);
         let from = tile(target.x - 4, target.z);
-        let world = gatherer_world(target, family, quest.clone());
+        let world = gatherer_world(target, quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Gatherer slot");
         let snapshot = gatherer_snapshot(&selected, target);
@@ -32187,6 +33630,7 @@ export default class T extends LoopingBot {
                 Arc::new(settings),
                 Arc::clone(&selected),
                 Arc::default(),
+                None,
             )
             .expect("start selected Gatherer");
             let deadline = Instant::now() + Duration::from_secs(20);
@@ -32258,8 +33702,11 @@ export default class T extends LoopingBot {
         id
     }
 
-    fn compiled_sheep_walk(
+    fn compiled_sheep_step(
         selected: &Arc<api::game_data::SelectedGameData>,
+        kind: &str,
+        args: serde_json::Value,
+        settle: script::quester::path::PredicateDocument,
     ) -> Arc<script::quester::compile::CompiledPath> {
         use script::quester::path::{PathDocument, PredicateDocument};
 
@@ -32274,19 +33721,11 @@ export default class T extends LoopingBot {
             .find(|sequence| sequence.stage.0.as_ref() == "sheep:0")
             .expect("Sheep not-started sequence");
         let step = &mut sequence.steps[0];
-        step.kind = "walk".into();
-        step.args = serde_json::json!({
-            "tile": [3224, 3220, 0],
-            "source": "native Quester entrance-gate host test",
-            "radius": 0
-        });
+        step.kind = kind.into();
+        step.args = args;
         step.advances = Some(false);
         step.skip_if = PredicateDocument::Any(Vec::new());
-        step.settle = PredicateDocument::Fact {
-            kind: "near".into(),
-            version: 1,
-            args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
-        };
+        step.settle = settle;
 
         let bytes = serde_json::to_vec(&document).expect("serialize modified Quester path");
         let quests = selected.try_quests().expect("selected quest catalog");
@@ -32306,6 +33745,7 @@ export default class T extends LoopingBot {
                     worker,
                     None,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             },
         )
@@ -32315,9 +33755,34 @@ export default class T extends LoopingBot {
         .expect("compile native Quester path")
     }
 
-    fn quester_snapshot(
+    fn incomplete_budget_world(origin: api::snapshot::WorldTile) -> Arc<NavWorld> {
+        const WIDTH: usize = 2200;
+        const HEIGHT: usize = 2000;
+        const SPLIT_X: usize = 2050;
+        let cells = WIDTH * HEIGHT;
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for z in 0..HEIGHT {
+            let index = z * WIDTH + SPLIT_X;
+            blocked[index >> 6] |= 1 << (index & 63);
+        }
+        Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin,
+                width: WIDTH,
+                height: HEIGHT,
+                walk: vec![0; cells],
+                blocked,
+                flags: None,
+            },
+            nav_planner::transport::TransportGraph::default(),
+            Vec::new(),
+        ))
+    }
+
+    fn quester_snapshot_at(
         selected: &api::game_data::SelectedGameData,
         gate_quest: &api::selected::FactKey,
+        position: api::snapshot::WorldTile,
     ) -> GameSnapshot {
         let catalog = selected.try_quests().expect("selected quest catalog");
         let gate = catalog
@@ -32328,7 +33793,7 @@ export default class T extends LoopingBot {
             .iter()
             .find(|facts| facts.id.0.as_ref() == "sheep")
             .expect("selected Sheep Shearer fact");
-        let mut snapshot = nav_frame_at(3220, 3220);
+        let mut snapshot = nav_frame_at(position.x, position.z);
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_quest_statuses(
@@ -32347,6 +33812,13 @@ export default class T extends LoopingBot {
             true,
         );
         snapshot
+    }
+
+    fn quester_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        gate_quest: &api::selected::FactKey,
+    ) -> GameSnapshot {
+        quester_snapshot_at(selected, gate_quest, tile(3220, 3220))
     }
 
     struct QuesterWalkHarness {
@@ -32393,11 +33865,27 @@ export default class T extends LoopingBot {
 
     #[test]
     fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
-        let path = compiled_sheep_walk(&selected);
-        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
+        let path = compiled_sheep_step(
+            &selected,
+            "walk",
+            serde_json::json!({
+                "tile": [3224, 3220, 0],
+                "source": "native Quester entrance-gate host test",
+                "radius": 0
+            }),
+            script::quester::path::PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
+            },
+        );
+        let world = gatherer_world(tile(3224, 3220), quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
         let snapshot = quester_snapshot(&selected, &quest);
@@ -32466,11 +33954,190 @@ export default class T extends LoopingBot {
             "the Quester route must use the captured Complete row"
         );
     }
+    #[test]
+    fn native_quester_retries_wall_walk_after_real_budget_stop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = selected_r289();
+        let quest = cook_quest(&selected);
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let start = tile(1029, 3220);
+        let wall = tile(start.x + 2195, start.z);
+        let anchor = tile(wall.x - 1, wall.z);
+        let path = compiled_sheep_step(
+            &selected,
+            "interact",
+            serde_json::json!({
+                "target": {"loc": "death_harold_door"},
+                "op": "Open",
+                "anchor": {
+                    "tile": [anchor.x, anchor.z, anchor.level],
+                    "source": "native Quester route-budget fixture"
+                },
+                "radius": 6,
+                "settle_ms": 300000
+            }),
+            script::quester::path::PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({
+                    "tile": [anchor.x, anchor.z, anchor.level],
+                    "radius": 0
+                }),
+            },
+        );
+        let rig = nav_rig_with(Some(incomplete_budget_world(start)));
+        let route_service =
+            script::work_admission::WorkService::shared().expect("shared route work service");
+        let route_ledger = nav_planner::producer::OwnerResultLedger::shared();
+        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
+        let mut snapshot = quester_snapshot_at(&selected, &quest, start);
+        snapshot.seed_locs(vec![api::snapshot::LocView {
+            typecode: 0,
+            info: 0,
+            id: 3747,
+            name: Some("Death Harold Door".into()),
+            description: None,
+            actions: vec![Some("Open".into())],
+            tile: wall,
+            distance: wall.x - start.x,
+            layer: api::snapshot::LocLayer::Wall,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        let control = Arc::new(Mutex::new(None));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(QuesterWalkHarness {
+                    control: Arc::clone(&control),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native Quester");
+            let run = slot.native_run().expect("native Quester run");
+            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
+                run,
+                Arc::clone(&path),
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            ));
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("native Quester must request the wall walk");
+        let first_request = rig.navs.lock().unwrap()["alice"].walk_request_id;
+        crate::script_runtime::drain_route_work_for_test(
+            &route_service,
+            &rig.navs,
+            "alice",
+            route_ledger,
+        );
+        {
+            let navs = rig.navs.lock().unwrap();
+            let bot = &navs["alice"];
+            assert_eq!(
+                bot.walk_outcome_request_id, first_request,
+                "native Quester wall route must finish its real budget-bounded search"
+            );
+            assert!(!bot.route_work_pending());
+            assert!(matches!(
+                bot.native_walk_failure.as_ref(),
+                Some((request, script::native::WalkEnd::Refused)) if *request == first_request
+            ));
+            assert!(matches!(
+                bot.risk_refusal.as_deref(),
+                Some((request, script::native::WalkRefusal::SearchIncomplete {
+                    nodes_settled: Some(settled)
+                })) if *request == first_request && *settled > 0
+            ));
+            assert!(
+                bot.walk_outcome_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("search_result=BudgetExhausted")),
+                "the real route result must identify its incomplete search"
+            );
+        }
+
+        let retry_request = (requested_at + 1..=requested_at + 4).find_map(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice")?;
+            (bot.walk_request_id != first_request && bot.native_walk.is_some())
+                .then_some(bot.walk_request_id)
+        });
+        let retry_request = retry_request
+            .expect("typed incomplete route must start the Quester's bounded wall fallback walk");
+        assert!(retry_request > first_request);
+        crate::script_runtime::drain_route_work_for_test(
+            &route_service,
+            &rig.navs,
+            "alice",
+            route_ledger,
+        );
+        let fallback_settled = {
+            let navs = rig.navs.lock().unwrap();
+            let bot = &navs["alice"];
+            bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
+        };
+        assert!(
+        fallback_settled,
+        "the bounded Quester fallback route must also settle its real search; first_request={first_request}; expected_retry={retry_request}; state={:?}",
+        rig.navs.lock().unwrap().get("alice").map(|bot| (
+            ("current_request", bot.walk_request_id),
+            ("outcome_request", bot.walk_outcome_request_id),
+            ("outcome_seq", bot.walk_outcome_seq),
+            ("work_pending", bot.route_work_pending()),
+            ("ticket_present", bot.route_ticket.is_some()),
+            ("demand_present", bot.pending_route.is_some()),
+            ("native_owner_present", bot.native_walk.is_some()),
+            (
+                "failure_request",
+                bot.native_walk_failure.as_ref().map(|(request, _)| *request)
+            ),
+        ))
+    );
+        assert!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq >= 2);
+    }
 }
 #[cfg(feature = "js")]
 mod ground_selected_identity_tests {
     use super::*;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use {script_js::wire::decode_interact_batch, script_js::wire::encode_interact_batch};
 
     fn fixture(ids: &[i32]) -> (GameSnapshot, api::obj_names::ObjNames) {

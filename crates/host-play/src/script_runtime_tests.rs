@@ -313,7 +313,7 @@ impl script::native::Script for QueueMove {
         &mut self,
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        ctx.queue_test_interaction(script::shim::InteractReq::PuzzleMove {
+        ctx.queue_test_interaction(script::interact::InteractReq::PuzzleMove {
             id: PIECE_MOVE,
             slot: 0,
             component: MOVE_BOARD as i32,
@@ -591,8 +591,8 @@ fn puzzle_move_client() -> Client {
     c
 }
 
-fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::shim::InteractReq {
-    script::shim::InteractReq::PuzzleMove {
+fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::interact::InteractReq {
+    script::interact::InteractReq::PuzzleMove {
         id,
         slot,
         component,
@@ -734,6 +734,9 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
 /// dispatch must invalidate the drained requests before any Driver call.
 #[test]
 fn observe_dispatch_refuses_requests_after_stop_race() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -793,6 +796,9 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
 /// slot objects must not authorize the old batch against the replacement.
 #[test]
 fn observe_dispatch_refuses_requests_after_slot_replacement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -853,6 +859,9 @@ fn observe_dispatch_refuses_requests_after_slot_replacement() {
 
 #[test]
 fn observe_treats_a_poisoned_script_slot_as_retiring() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let slot = script_slot_or_insert(&scripts, "alice");
     slot.lock()
@@ -896,6 +905,9 @@ fn observe_treats_a_poisoned_script_slot_as_retiring() {
 /// Nothing sends while paused; Resume dispatches that exact batch once.
 #[test]
 fn observe_dispatch_restores_requests_after_pause_race() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -1351,6 +1363,7 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("the surface starts");
     factory

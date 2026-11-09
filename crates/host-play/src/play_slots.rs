@@ -47,10 +47,13 @@ use crate::script_runtime::{
 };
 use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
-    reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
-    script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
+    publish_script_survival, reset_script_nav, script_active, script_frame,
+    script_observe_cached_with_channels, script_paint_of, script_slot, script_slot_or_insert,
+    script_state_is_active, script_survival_of, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
+#[cfg(feature = "test-support")]
+use crate::tick_engine_test_support::TickEngineTestHook;
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
@@ -131,6 +134,21 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
         script_state,
         Some(script::RunState::Starting | script::RunState::Running)
     )
+}
+
+/// Queue one host-owned client frame under the slot lock, then wait for its
+/// isolate receipt after releasing that lock.
+pub(crate) fn dispatch_client_frame(slot: &Arc<Mutex<script::SlotScript>>, _name: &str) -> bool {
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_begin(_name);
+    let dispatch = {
+        let mut slot = slot.lock().unwrap();
+        slot.begin_client_frame()
+    };
+    let delivered = dispatch.is_some_and(|dispatch| dispatch.wait_for_ack());
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_end(_name, delivered);
+    delivered
 }
 
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
@@ -866,6 +884,13 @@ pub(super) fn sync_script_login(arm: &SlotArm, scripts: &ScriptWall, name: &str)
     arm.set_script_active(script_active(scripts, name));
 }
 
+fn active_guardian_event_name(status: &RandomStatus) -> Option<&str> {
+    status
+        .name
+        .as_deref()
+        .filter(|_| status.ours || status.handling)
+}
+
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
 /// receives last frame's `client_frame` `RandomStatus`.
 fn bounded_guardian_fact(status: &RandomStatus) -> catalog_core::BoundedGuardian {
@@ -905,7 +930,7 @@ pub(super) fn observe_slot_catalog_and_paired(
     lifecycle_receipt: impl FnOnce() -> Option<script::ScriptLifecycleReceipt>,
     guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
     inspect: Option<catalog_core::RouteInspectPublished>,
-    paint: Option<&script::shim::ScriptPaint>,
+    paint: Option<&script::paint::ScriptPaint>,
     acts: Option<catalog_core::ScriptActsPublished>,
 ) {
     if catalog.configured() {
@@ -1516,6 +1541,8 @@ fn spawn_slot_thread(
                         // gates on its facts; the follow surface reads the
                         // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
+                        let mut nav_world_state_cache =
+                            super::script_runtime::NavWorldStateCache::default();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
                         let mut debug_replies = super::debug_replies::DebugReplies::default();
@@ -1524,6 +1551,12 @@ fn spawn_slot_thread(
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) =
+                                TickEngineTestHook::bind_current_for_account(name)
+                            {
+                                test_hook.bind_client(c, name, Arc::clone(&slot_input));
+                            }
                             if !c.ingame {
                                 // The live title pump owns offline script/latch
                                 // synchronization. A hosted title click is only
@@ -1569,6 +1602,7 @@ fn spawn_slot_thread(
                             if session_boundary {
                                 debug_replies = super::debug_replies::DebugReplies::default();
                                 session_epoch = session_epoch.wrapping_add(1);
+                                nav_world_state_cache.clear();
                                 if c.ingame {
                                     arm_latch_obs.set_script_active(script_active(&slot_scripts, name));
                                     reset_slot_session_boundary(
@@ -1606,6 +1640,8 @@ fn spawn_slot_thread(
                                 }
                                 last_nav_step = None;
                             }
+                            nav_snapshot
+                                .set_loc_projection_wanted(run_policy.loc_projection_wanted());
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
@@ -1782,6 +1818,11 @@ fn spawn_slot_thread(
                             );
                             let frame = script_frame(&slot_scripts, name);
                             let script_state = frame.state;
+                            // A bot with no script behaves like the Java
+                            // client: its idle timer runs, and the server's
+                            // idle logout parks it. A running or paused
+                            // script keeps the host's suppression.
+                            c.set_host_idle_timer(!script_state_is_active(script_state));
                             let running = script_state == Some(script::RunState::Running);
                             host::set_service_class(capacity_service_class(
                                 c.ingame,
@@ -1798,6 +1839,21 @@ fn spawn_slot_thread(
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
+                            // Operator pause parks ScriptRunner work, not
+                            // BotHost client frames (`BotHost.ts:48-55`).
+                            let mut frame_delivered = false;
+                            if matches!(
+                                script_state,
+                                Some(
+                                    script::RunState::Starting
+                                        | script::RunState::Running
+                                        | script::RunState::Paused,
+                                )
+                            ) {
+                                if let Some(slot) = script_slot(&slot_scripts, name) {
+                                    frame_delivered = dispatch_client_frame(&slot, name);
+                                }
+                            }
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1807,10 +1863,24 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 *script_tick = script_tick.wrapping_add(1);
                             }
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) = TickEngineTestHook::current() {
+                                let tick_engine_suppressed_openchat =
+                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
+                                test_hook.before_frame(
+                                    c,
+                                    name,
+                                    &nav_snapshot,
+                                    *script_tick as u32,
+                                    tick_edge,
+                                    tick_engine_suppressed_openchat,
+                                );
+                            }
                             // The slot's paint frame is read before the
                             // status lock (scripts -> statuses is the only
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
+                            let survival = script_survival_of(&slot_scripts, name);
                             let login_latch_reason = arm_latch_obs.login_latch_reason();
                             let (up, here, active_world) = {
                                 let mut all = lock_statuses(&slot_statuses);
@@ -1842,6 +1912,7 @@ fn spawn_slot_thread(
                                         s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
                                         s.condition = condition;
+                                        publish_script_survival(s, survival, session_boundary);
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
@@ -1869,12 +1940,18 @@ fn spawn_slot_thread(
                                 super::script_channels::BrokerWorld::Local
                             };
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
+                            #[cfg(feature = "test-support")]
+                            let test_inv = inv.map(<[_]>::to_vec);
+                            #[cfg(feature = "test-support")]
+                            let inv = test_inv.as_deref();
                             let nav_state = nav_world_state_for_observe(
+                                &mut nav_world_state_cache,
                                 here,
                                 &nav_snapshot,
                                 nav_facts,
                                 nav_armed,
                                 map_members,
+                                session_epoch,
                             );
                             #[cfg(feature = "js")]
                             let npc_boxes = project_npc_boxes_for_isolate_snapshot(
@@ -1886,7 +1963,14 @@ fn spawn_slot_thread(
                             // The observer borrows the account's bank memory
                             // for the compiled tick alone; the slot's own
                             // write for the frame already happened above.
-                            let mut observe = |c: &mut Client, tick_edge, evidence_dirty, state| {
+                            let mut observe = |
+                                c: &mut Client,
+                                tick_edge,
+                                evidence_dirty,
+                                state,
+                                #[cfg(feature = "test-support")] snapshot: &mut GameSnapshot,
+                                #[cfg(not(feature = "test-support"))] snapshot: &GameSnapshot,
+                            | {
                                 script_observe_cached_with_channels(
                                 c,
                                 name,
@@ -1897,7 +1981,10 @@ fn spawn_slot_thread(
                                 here,
                                 inv,
                                 state,
-                                Some(&nav_snapshot),
+                                #[cfg(feature = "test-support")]
+                                snapshot,
+                                #[cfg(not(feature = "test-support"))]
+                                Some(snapshot),
                                 Some(slot_bank.memory()),
                                 #[cfg(feature = "js")]
                                 npc_boxes.as_deref(),
@@ -1909,6 +1996,7 @@ fn spawn_slot_thread(
                                 hold,
                                 guardian_hold,
                                 status.ours,
+                                active_guardian_event_name(status),
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
                                 Some(Arc::clone(&slot_cache)),
@@ -1932,7 +2020,17 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
+                                #[cfg(feature = "test-support")]
+                                &mut nav_snapshot,
+                                #[cfg(not(feature = "test-support"))]
+                                &nav_snapshot,
                             );
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) = TickEngineTestHook::current() {
+                                let status = script_slot(&slot_scripts, name)
+                                    .and_then(|slot| slot.lock().ok()?.native_status());
+                                test_hook.after_frame(name, tick_edge, status);
+                            }
                             #[cfg(feature = "test-support")]
                             if let Some(observer) = &post_host_frame {
                                 observer(c, name);
@@ -2040,8 +2138,18 @@ fn spawn_slot_thread(
                                         false,
                                         false,
                                         nav_world_state_for_observe(
-                                            here, &nav_snapshot, nav_facts, true, map_members,
+                                            &mut nav_world_state_cache,
+                                            here,
+                                            &nav_snapshot,
+                                            nav_facts,
+                                            true,
+                                            map_members,
+                                            session_epoch,
                                         ),
+                                        #[cfg(feature = "test-support")]
+                                        &mut nav_snapshot,
+                                        #[cfg(not(feature = "test-support"))]
+                                        &nav_snapshot,
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
                                 }
@@ -2061,10 +2169,12 @@ fn spawn_slot_thread(
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with
-                            // a running script, queued cheats, or an armed
-                            // nav bot must keep ticking (never parked), so
-                            // the observe hook reports it every frame.
-                            running
+                            // a running script, a frame listener (also while
+                            // paused: one callback per 20 ms client loop),
+                            // queued cheats, or an armed nav bot must keep
+                            // ticking (never parked), so the observe hook
+                            // reports it every frame.
+                            slot_busy_requires_tick(running, frame_delivered)
                                 || slot_cheats
                                     .lock()
                                     .unwrap()
@@ -2210,6 +2320,10 @@ pub(super) fn update_transfer_title(
     true
 }
 
+fn slot_busy_requires_tick(running: bool, frame_delivered: bool) -> bool {
+    running || frame_delivered
+}
+
 #[cfg(test)]
 mod capacity_class_tests {
     use super::capacity_service_class;
@@ -2266,6 +2380,77 @@ mod capacity_class_tests {
         assert_eq!(
             capacity_service_class(true, false, quiet),
             ServiceClass::Quiet
+        );
+    }
+    #[test]
+    fn delivered_frame_keeps_even_a_paused_slot_busy() {
+        assert!(!super::slot_busy_requires_tick(false, false));
+        assert!(super::slot_busy_requires_tick(false, true));
+        assert!(super::slot_busy_requires_tick(true, false));
+    }
+}
+#[cfg(test)]
+mod active_guardian_event_tests {
+    use super::*;
+
+    #[test]
+    fn only_owned_or_handled_events_reach_script_context() {
+        let mut status = RandomStatus {
+            name: Some("abyssal guardian".into()),
+            ..RandomStatus::default()
+        };
+        assert_eq!(active_guardian_event_name(&status), None);
+
+        status.ours = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
+        );
+
+        status.ours = false;
+        status.handling = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
+        );
+    }
+}
+#[cfg(test)]
+mod loc_projection_tests {
+    use super::*;
+    use client::client::ClientConfig;
+    use client::io::ClientRevision;
+
+    #[test]
+    fn slot_without_js_surface_does_not_build_projection_locs() {
+        let script = script::SlotScript::new();
+        assert!(!script.loc_projection_wanted());
+        let mut run_policy = ScriptRunPolicy::default();
+        run_policy.set_loc_projection_wanted(script.loc_projection_wanted());
+        assert!(!run_policy.loc_projection_wanted());
+
+        let mut client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.set_loc_projection_wanted(run_policy.loc_projection_wanted());
+        snapshot.rebuild_family(&client, api::snapshot::Family::Loc);
+        assert!(
+            snapshot.projection_scene().locs.is_empty(),
+            "a slot without a JavaScript surface does not request loc projection data"
         );
     }
 }

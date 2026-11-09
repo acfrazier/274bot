@@ -1,0 +1,180 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "fortress",
+  "display_name": "Black Knight's Fortress",
+  "required": ["quest-points-12"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [
+      { "id": "quest-points-12", "kind": { "QuestPoints": 12 }, "at": "start", "source": "C:scripts/areas/area_falador/scripts/sir_amik_varze.rs2:8-19" }
+    ],
+    "items": [
+      { "obj": "bronze_med_helm", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "iron_chainbody", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "cabbage", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {
+      "acquire:cabbage": [
+        {
+          "id": "pick-normal-cabbage", "kind": "interact", "version": 1, "advances": false,
+          "args": { "target": { "loc": "cabbage" }, "op": "Pick", "anchor": { "tile": [3050, 3503, 0], "source": "C:maps/m47_54.jm2:5911-5915; C:pack/loc.pack:1162" }, "radius": 3 },
+          "comment": "C:scripts/general_use/scripts/pickables.rs2:42-51 picks the ordinary cabbage object. C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:90-97 distinguishes it from magic_cabbage.",
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cabbage" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cabbage" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 234,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:bronze_med_helm", "obj:iron_chainbody", "obj:cabbage"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:fortress",
+    "progress": {
+      "colour": { "not_started": "fortress:0", "in_progress": "fortress:1", "complete": "fortress:4" },
+      "rules": [
+        { "stage": "fortress:3", "all": ["now that i have sabotaged the witch's potion"], "any": [], "not": [], "varp": 3 },
+        { "stage": "fortress:2", "all": ["i eavesdropped on a witch and the black knight captain"], "any": [], "not": [], "varp": 2 },
+        { "stage": "fortress:1", "all": ["sir amik varze", "asked me to investigate the"], "any": [], "not": [], "varp": 1 }
+      ],
+      "flags": [], "monotonic": true
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "fortress:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "sir_amik_varze", "anchor": { "tile": [2962, 3338, 2], "source": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:1-3" }, "leash": 8, "prefer": ["I seek a quest!", "I laugh in the face of danger!"], "strict": true },
+          "comment": "C:scripts/areas/area_falador/scripts/sir_amik_varze.rs2:8-33,48-57 starts spy stage 1 after 12 quest points.",
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "fortress", "any": ["fortress:1"] } } }
+        }]
+      },
+      {
+        "stage": "fortress:1", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "cross": [
+          { "id": "aggressive_black_knight@3030,3502,0", "name": "Black Knight (3030,3502,0)", "reason": "The route from the cabbage patch to the entrance crosses this zone. Content maps/m47_54.jm2:7539; QUEST-CAMPAIGN/fortress/proof-2/debug.log:1351-1354." },
+          { "id": "aggressive_black_knight@3015,3515,1", "name": "Black Knight (3015,3515,1)", "reason": "The route to the grill door crosses the first floor. Content maps/m47_54.jm2:7552; QUEST-CAMPAIGN/triage/batch-4.md:140-142." },
+          { "id": "aggressive_black_knight@3023,3512,1", "name": "Black Knight (3023,3512,1)", "reason": "The route to the grill door crosses the first floor. Content maps/m47_54.jm2:7553; QUEST-CAMPAIGN/triage/batch-4.md:140-142." },
+          { "id": "aggressive_black_knight@3023,3516,1", "name": "Black Knight (3023,3516,1)", "reason": "The route to the grill door crosses the first floor. Content maps/m47_54.jm2:7554; QUEST-CAMPAIGN/triage/batch-4.md:140-142." },
+          { "id": "aggressive_black_knight@3024,3510,1", "name": "Black Knight (3024,3510,1)", "reason": "The grill door alerts knights near the ladder. Content maps/m47_54.jm2:7555; scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:24-31,159-170." },
+          { "id": "aggressive_black_knight@3014,3516,2", "name": "Black Knight (3014,3516,2)", "reason": "The route to the grill door crosses the second floor. Content maps/m47_54.jm2:7560; QUEST-CAMPAIGN/triage/batch-4.md:140-142." },
+          { "id": "aggressive_black_knight@3023,3514,2", "name": "Black Knight (3023,3514,2)", "reason": "The route to the grill door crosses the second floor. Content maps/m47_54.jm2:7561; QUEST-CAMPAIGN/triage/batch-4.md:140-142." },
+          { "id": "aggressive_black_knight@3026,3507,2", "name": "Black Knight (3026,3507,2)", "reason": "The route to the grill door crosses the second floor. Content maps/m47_54.jm2:7562; QUEST-CAMPAIGN/triage/batch-4.md:140-142." }
+        ],
+        "steps": [
+          {
+            "id": "buy-helm", "kind": "buy", "version": 1,
+            "args": {"shop": {"npc": "peksa", "anchor": {"tile": [3076, 3429, 0], "source": "content/maps/m48_53.jm2:8100"}}, "obj": "bronze_med_helm", "qty": 1, "est_gp": 24},
+            "comment": "content/scripts/areas/area_barbarian_village/configs/barbarian_village.inv:9; content/scripts/areas/area_barbarian_village/configs/barbarian_village.npc:29-34; content/scripts/skill_combat/configs/melee/medhelms.obj:31-34; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+            "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_med_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_med_helm"}}}]},
+            "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_med_helm"}}}
+          },
+          {
+            "id": "buy-chainbody", "kind": "buy", "version": 1,
+            "args": {"shop": {"npc": "wayne", "anchor": {"tile": [2973, 3312, 0], "source": "content/maps/m46_51.jm2:6353"}}, "obj": "iron_chainbody", "qty": 1, "est_gp": 210},
+            "comment": "content/scripts/areas/area_falador/configs/falador.inv:44-49; content/scripts/areas/area_falador/configs/falador.npc:238-243; content/scripts/skill_combat/configs/melee/chainbodies.obj:1-4; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+            "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_chainbody"}}}]},
+            "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_chainbody"}}}
+          },
+          {
+            "id": "pick-cabbage-for-entry", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "cabbage" }, "op": "Pick", "anchor": { "tile": [3050, 3503, 0], "source": "C:maps/m47_54.jm2:5911-5966; C:pack/loc.pack:1162" }, "radius": 3, "until": { "obj": "cabbage", "qty": 12 } },
+            "comment": "C:scripts/general_use/scripts/pickables.rs2:42-51 picks ordinary cabbage. C:scripts/player/configs/consumption/consume_normal.dbrow:32-37 makes it food healing one Hitpoint. Twelve is an uncalibrated candidate including the sabotage cabbage; C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:90-114 consumes one.",
+            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 12 } } },
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 12 } } }
+          },
+          {
+            "id": "wear-helm", "kind": "equip", "version": 1, "args": { "obj": "bronze_med_helm" },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:14-22 checks the worn bronze medium helmet.",
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_med_helm" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_med_helm" } } }
+          },
+          {
+            "id": "wear-chainbody", "kind": "equip", "version": 1, "args": { "obj": "iron_chainbody" },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:14-22 checks the worn iron chainbody.",
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_chainbody" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "iron_chainbody" } } }
+          },
+          {
+            "id": "open-guard-entrance", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "bkfortressdoor1" }, "op": "Open", "anchor": { "tile": [3016, 3514, 0], "source": "C:maps/m47_54.jm2:5081; C:pack/loc.pack:2338" }, "radius": 2 },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:14-22 opens the guard entrance in the disguise.",
+            "skip_if": { "Any": [] }, "settle": { "All": [] }
+          },
+          {
+            "id": "push-ground-wall", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "bksecretdoor" }, "op": "Push", "anchor": { "tile": [3016, 3517, 0], "source": "C:maps/m47_54.jm2:5082; C:pack/loc.pack:2342" }, "radius": 2 },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:85-88 emits the message before the passage opens. C:scripts/doors/scripts/door_procs.rs2:90-100 and C:scripts/doors/scripts/open_and_close_doors.rs2:52-62 move the player from [3016,3516,0] to [3016,3517,0]. Settle and skip on the inside tile.",
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3016, 3517, 0], "radius": 0 } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3016, 3517, 0], "radius": 0 } } }
+          },
+          {
+            "id": "open-grill-door", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "bkfortressdoor3", "tile": [3025, 3511, 1], "source": "C:maps/m47_54.jm2:6609; C:pack/loc.pack:2340" }, "op": "Open", "anchor": { "tile": [3025, 3511, 1], "source": "C:maps/m47_54.jm2:6609" }, "radius": 1 },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:24-31,159-170 alerts nearby Black Knights when entering. From the reachable east side the door puts the player on [3025,3511,1]; QUEST-CAMPAIGN/triage/review-batch-4.md:98-121.",
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3025, 3511, 1], "radius": 0 } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3025, 3511, 1], "radius": 0 } } }
+          },
+          {
+            "id": "listen-at-grill", "kind": "interact", "version": 1, "advances": true,
+            "args": { "target": { "loc": "witchgrill" }, "op": "Listen-at", "anchor": { "tile": [3025, 3507, 0], "source": "C:maps/m47_54.jm2:5228-5229; C:pack/loc.pack:2343" }, "radius": 2, "dialogue": "continue" },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:131-150 advances spy 1 to 2 after the conversation. The map places the grill at [3025,3507,0].",
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "fortress", "any": ["fortress:2"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "fortress:2", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "steps": [
+          {
+            "id": "replace-cabbage", "kind": "acquire", "version": 1, "args": { "recipe": "acquire:cabbage" },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:90-114 consumes one ordinary cabbage.",
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cabbage" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cabbage" } } }
+          },
+          {
+            "id": "open-meeting-door", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "bkfortressdoor2" }, "op": "Open", "anchor": { "tile": [3020, 3515, 0], "source": "C:maps/m47_54.jm2:5140; C:pack/loc.pack:2339" }, "radius": 2, "dialogue": { "prefer": ["I don't care. I'm going in anyway."], "strict": true } },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:56-80: choose to enter despite the warning. The door also alerts nearby knights.",
+            "skip_if": { "Any": [] }, "settle": { "All": [] }
+          },
+          {
+            "id": "push-upper-wall", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "bksecretdoor" }, "op": "Push", "anchor": { "tile": [3030, 3510, 1], "source": "C:maps/m47_54.jm2:6680; C:pack/loc.pack:2342" }, "radius": 2 },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:85-88 opens the secret wall. The upper wall is map loc 2341.",
+            "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you push against the wall"] } } }
+          },
+          {
+            "id": "sabotage", "kind": "use_on", "version": 1, "advances": true,
+            "args": { "item": "cabbage", "target": { "loc": "blackknighthole" }, "anchor": { "tile": [3031, 3507, 1], "source": "C:maps/m47_54.jm2:6689; C:pack/loc.pack:2337" }, "radius": 2, "dialogue": "continue" },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:90-114 consumes cabbage, emits four messages separated by p_delay(2), advances spy to 3, and opens a player dialogue.",
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "fortress", "any": ["fortress:3"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "fortress:3", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "report-to-amik", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "sir_amik_varze", "anchor": { "tile": [2962, 3338, 2], "source": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:1-3" }, "leash": 8, "prefer": [] },
+          "comment": "C:scripts/areas/area_falador/scripts/sir_amik_varze.rs2:67-73 reports the sabotage and queues completion. C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:152-157 awards 3 quest points and coins.",
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "fortress", "is": "complete" } } }
+        }]
+      },
+      { "stage": "fortress:4", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

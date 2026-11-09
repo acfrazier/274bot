@@ -16,12 +16,18 @@ use std::sync::Arc;
 
 const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
-const MAX_PROTECTED_IDS: usize = 8 + UNBANKABLE_ALIASES.len();
+const MAX_PROTECTED_IDS: usize = 10 + UNBANKABLE_ALIASES.len();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItemFact {
     pub id: i32,
     pub name: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickKit {
+    pub knife: SupplyItemFact,
+    pub logs: SupplyItemFact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,8 @@ pub struct PreparedSupply {
     pub coin_name: Option<Arc<str>>,
     /// Selected spell and its selected-cache rune costs; absent for `Off`.
     pub reserve: Option<ReserveSpell>,
+    /// Fixed knife and normal-log kit, resolved without method applicability.
+    pub tick_kit: Option<TickKit>,
 }
 
 impl PreparedSupply {
@@ -82,13 +90,48 @@ impl PreparedSupply {
             ));
         }
         let reserve = resolve_reserve(settings, selected)?;
+        let tick_kit = resolve_tick_kit(settings, selected)?;
         Ok(Self {
             food,
             bait,
             coin_name,
             reserve,
+            tick_kit,
         })
     }
+}
+
+fn resolve_tick_kit(
+    settings: &GathererSettings,
+    selected: &SelectedGameData,
+) -> Result<Option<TickKit>, ConfigError> {
+    if settings.tick_method != "Knife" {
+        return Ok(None);
+    }
+    let resolve = |alias| {
+        selected
+            .resolve_item_name(alias)
+            .and_then(|item| {
+                item.name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .map(|name| SupplyItemFact {
+                        id: item.id,
+                        name: Arc::from(name),
+                    })
+            })
+            .ok_or_else(|| {
+                ConfigError::new(
+                    "tickMethod",
+                    "item-unavailable",
+                    format!("the selected cache has no named {alias} item"),
+                )
+            })
+    };
+    Ok(Some(TickKit {
+        knife: resolve("knife")?,
+        logs: resolve("logs")?,
+    }))
 }
 
 fn resolve_food(
@@ -546,19 +589,30 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
             }
         }
     }
+    if let Some(kit) = &prepared.supply.tick_kit {
+        ids.push(kit.knife.id);
+        ids.push(kit.logs.id);
+    }
     ids
 }
 
 /// Return every observed positive-count inventory item ID except gathering
-/// tools, prepared supplies and content-defined unbankable items. Bankable
-/// incidental non-products are deposited too.
+/// tools, prepared supplies, held antipoison doses and content-defined
+/// unbankable items. Bankable incidental non-products are deposited too. The
+/// deposit moves only these ids (`DepositProducts` is `only: Some(products)`,
+/// `native_bank.rs` `deposit_spec`), so a held antipoison or super antipoison
+/// dose stays in the pack for the next poison.
 pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
     let mut protected = protected_ids(prepared, tool_id);
     protected.keep_unbankable(&prepared.selected, inventory);
+    let tables = crate::combat::guard::shared_tables_ref();
     let mut ids = Vec::with_capacity(inventory.len());
     for item in inventory {
         let id = item.def.id;
         if id < 0 || item.count <= 0 || protected.as_slice().contains(&id) || ids.contains(&id) {
+            continue;
+        }
+        if tables.is_some_and(|tables| crate::survival::cure::is_antipoison_dose(tables, id)) {
             continue;
         }
         let gathering_tool = prepared.methods.iter().any(|&index| {
@@ -590,6 +644,17 @@ impl SupplyPlan {
             || selected_tool
                 .is_some_and(|tool| !tool.worn && can_wield(prepared, tool.id, inventory, stats))
             || supplies_due(&prepared.supply, &prepared.settings, stock)
+    }
+
+    /// The optional technique kit cannot reach one knife and one log from the
+    /// pack and the bank. It never becomes a gating missing item or a trip by
+    /// itself. An unknown bank count reads as none.
+    pub fn tick_kit_missing(prepared: &Prepared, stock: Stock<'_>) -> bool {
+        prepared
+            .supply
+            .tick_kit
+            .as_ref()
+            .is_some_and(|kit| !tick_kit_reachable(kit, stock))
     }
 
     /// List immutable acquisition needs for the current selected supply facts.
@@ -669,6 +734,25 @@ impl SupplyPlan {
                             alternatives: Arc::<[i32]>::from([]),
                         });
                     }
+                }
+            }
+        }
+        if let Some(kit) = &prepared.supply.tick_kit {
+            // The technique kit is optional: it is withdrawn only when the held
+            // and banked counts can complete it, so a missing half never blocks
+            // the run and never leaves a lone Knife or lone Logs in the pack.
+            if tick_kit_reachable(kit, stock) {
+                for (item, target) in [(&kit.knife, 1), (&kit.logs, 3)] {
+                    needs.push(Need {
+                        item: item.id,
+                        name: Arc::clone(&item.name),
+                        target,
+                        minimum: 1,
+                        presence: Presence::Held,
+                        kind: NeedKind::Optional,
+                        sources: SourceSet::PACK | SourceSet::BANK,
+                        alternatives: Arc::<[i32]>::from([]),
+                    });
                 }
             }
         }
@@ -804,6 +888,38 @@ fn supplies_due(supply: &PreparedSupply, settings: &GathererSettings, stock: Sto
                 .reserve
                 .as_ref()
                 .is_some_and(|reserve| !can_afford_cast(reserve, stock)))
+        || supply
+            .tick_kit
+            .as_ref()
+            .is_some_and(|kit| tick_kit_due(kit, stock))
+}
+
+/// One knife and one log are reachable from the pack and a known bank.
+fn tick_kit_reachable(kit: &TickKit, stock: Stock<'_>) -> bool {
+    let held = |id| stock.held(id).unwrap_or(0).max(0);
+    let banked = |id| {
+        stock
+            .bank
+            .filter(|bank| bank.known())
+            .and_then(|bank| bank.count(id))
+            .unwrap_or(0)
+            .max(0)
+    };
+    held(kit.knife.id).saturating_add(banked(kit.knife.id)) >= 1
+        && held(kit.logs.id).saturating_add(banked(kit.logs.id)) >= 1
+}
+
+fn tick_kit_due(kit: &TickKit, stock: Stock<'_>) -> bool {
+    let (Some(knife), Some(logs)) = (stock.held(kit.knife.id), stock.held(kit.logs.id)) else {
+        return false;
+    };
+    if knife >= 1 && logs >= 1 {
+        return false;
+    }
+    stock.bank.filter(|bank| bank.known()).is_none_or(|bank| {
+        (knife >= 1 || bank.count(kit.knife.id).is_some_and(|count| count >= 1))
+            && (logs >= 1 || bank.count(kit.logs.id).is_some_and(|count| count >= 1))
+    })
 }
 
 /// Runes are consumed from the pack; worn runes never pay a cast.
@@ -1092,6 +1208,9 @@ mod tests {
 
     #[test]
     fn food_setting_resolves_alias_or_case_insensitive_name() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let (item_id, alias, name) = selected
             .items()
@@ -1786,6 +1905,9 @@ mod tests {
 
     #[test]
     fn bank_unbankable_aliases_resolve_and_stay_out_of_the_deposit_plan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut inventory = Vec::new();
         for (index, alias) in UNBANKABLE_ALIASES.iter().enumerate() {
@@ -1817,7 +1939,7 @@ mod tests {
     #[test]
     fn bank_unbankable_set_covers_engine_content_refusals() {
         let Some(engine) =
-            crate::ctx::test_support::local_asset_path("ENGINE_DIR", "", "289 engine content")
+            api::test_support::local_asset_path("ENGINE_DIR", "", "289 engine content")
         else {
             return;
         };
@@ -1916,6 +2038,9 @@ mod tests {
 
     #[test]
     fn bank_deposit_ids_include_incidental_items_and_protect_current_supplies() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -1992,6 +2117,9 @@ mod tests {
 
     #[test]
     fn bank_deposit_keeps_alternate_content_defined_gathering_tools() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let tools = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools);
         assert!(
@@ -2009,8 +2137,157 @@ mod tests {
         );
     }
 
+    /// A bank trip keeps every held antipoison dose (Argon review finding 2):
+    /// antipoison and super antipoison doses of any count are not deposit
+    /// products, so the next poison still finds them. Strange fruit stays an
+    /// incidental random-event item that the trip banks (the fish bank soak
+    /// oracle, `host-play/tests/gatherer_live.rs` `bank_conservation_tests`).
+    #[test]
+    fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        for (skill, method) in [
+            ("Woodcutting", "woodcutting.normal"),
+            ("Mining", "mining.copper"),
+            ("Fishing", "fishing.category_633.op1"),
+        ] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!(skill));
+            settings.insert("tickMethod".into(), json!("Knife"));
+            let mut settings = GathererSettings::from_bag(&settings).unwrap();
+            let index = prepared
+                .catalog
+                .methods()
+                .iter()
+                .position(|row| row.id.0.as_ref() == method)
+                .unwrap();
+            // Exercise the supply boundary directly: the full card still
+            // rejects incomplete native methods for their existing reasons.
+            let supply = PreparedSupply::prepare(
+                &mut settings,
+                &prepared.selected,
+                &prepared.catalog,
+                &[index],
+            )
+            .unwrap();
+            let kit = supply.tick_kit.as_ref().unwrap();
+            assert_eq!(kit.knife.name.as_ref(), "Knife");
+            assert_eq!(kit.logs.name.as_ref(), "Logs");
+            assert_ne!(kit.knife.id, kit.logs.id);
+        }
+        assert!(prepared.supply.tick_kit.is_none());
+    }
+
+    #[test]
+    fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("tickMethod".into(), json!("Knife"));
+        let prepared = prepare(settings);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let stats = stats(&prepared);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        // The tool is worn, so only the optional kit can admit a trip.
+        let worn = [item(tool_id, &tool_name, 1, ItemContainer::Equipment)];
+        let held: [ItemView; 0] = [];
+        for origin in [Origin::Hint, Origin::Session] {
+            for logs in [1, 10] {
+                let bank = memory(&[(kit.knife.id, 1), (kit.logs.id, logs)], origin);
+                let stock = with_bank(&held, &worn, &bank);
+                assert!(
+                    SupplyPlan::due(&prepared, &stats, stock),
+                    "a bank holding the usable kit must admit its trip"
+                );
+                let plan = planned(core_plan(&prepared, &stats, stock));
+                assert_eq!(
+                    targets(&plan),
+                    vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]
+                );
+                assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+            }
+            for rows in [vec![], vec![(kit.knife.id, 1)], vec![(kit.logs.id, 3)]] {
+                let bank = memory(&rows, origin);
+                let stock = with_bank(&held, &worn, &bank);
+                assert!(
+                    !SupplyPlan::due(&prepared, &stats, stock),
+                    "a known incomplete kit is not a trip or a gating missing item"
+                );
+                assert!(SupplyPlan::tick_kit_missing(&prepared, stock));
+                let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+                assert!(needs
+                    .iter()
+                    .all(|need| need.item != kit.knife.id && need.item != kit.logs.id));
+            }
+        }
+        let unknown = memory(&[], Origin::Unknown);
+        assert!(
+            SupplyPlan::due(&prepared, &stats, with_bank(&held, &worn, &unknown)),
+            "an unknown bank is learned by walking"
+        );
+        let empty = memory(&[], Origin::Session);
+        let stocked = [
+            item(kit.knife.id, &kit.knife.name, 1, ItemContainer::Inventory),
+            item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
+        ];
+        let stock = with_bank(&stocked, &worn, &empty);
+        assert!(!SupplyPlan::due(&prepared, &stats, stock));
+        assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+        let knife_held = &stocked[..1];
+        let logs_banked = memory(&[(kit.logs.id, 3)], Origin::Session);
+        let stock = with_bank(knife_held, &worn, &logs_banked);
+        assert!(
+            SupplyPlan::due(&prepared, &stats, stock),
+            "a held knife and banked logs form a usable kit"
+        );
+        assert_eq!(
+            targets(&planned(core_plan(&prepared, &stats, stock))),
+            vec![(kit.logs.id, 3)]
+        );
+        assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+    }
+
+    #[test]
+    fn bank_deposit_keeps_held_antipoison_doses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let tables = crate::combat::guard::shared_tables().unwrap();
+        let mut inventory = vec![item(405, "Casket", 1, ItemContainer::Inventory)];
+        let mut doses = Vec::new();
+        for kind in [
+            crate::combat::tables::PotionKind::Antipoison,
+            crate::combat::tables::PotionKind::SuperAntipoison,
+        ] {
+            for dose in tables.potion(kind).unwrap().doses.iter().flatten() {
+                doses.push(dose.id);
+                inventory.push(item(dose.id, "Cure dose", 1, ItemContainer::Inventory));
+            }
+        }
+        assert_eq!(doses.len(), 8, "four doses of each antipoison");
+        let fruit = prepared
+            .selected
+            .item_by_alias("macro_triffidfruit")
+            .unwrap()
+            .id;
+        inventory.push(item(fruit, "Strange fruit", 1, ItemContainer::Inventory));
+
+        let deposit_ids = bank_deposit_ids(&prepared, -1, &inventory);
+        assert_eq!(deposit_ids.as_ref(), &[405, fruit]);
+        for id in doses {
+            assert!(!deposit_ids.contains(&id), "dose {id} would be deposited");
+        }
+    }
+
     #[test]
     fn a_worn_requirement_item_satisfies_method_ready() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         const AMULET: i32 = 1704;
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.as_ref().unwrap();

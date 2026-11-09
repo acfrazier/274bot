@@ -1,287 +1,125 @@
-// Thin reader/actions (ClientAdapter shape). Scene views read the posted
-// snapshot; missing members throw `not impl` — never a fake value.
-import { snap, queue, proxy, optionalText, notImpl, notImplValue } from '../shim/_kernel.js';
+// Thin ClientAdapter reader and action boundary. Readers use one typed native
+// projection from the latest posted snapshot; actions queue typed requests.
+import { queue, proxy } from '../shim/_kernel.js';
 
-export function invalidateLocSnapshots() { throw notImpl('invalidateLocSnapshots'); }
-export function detach() { throw notImpl('detach'); }
-export function activeStatsReady(baseLevels) { throw notImpl('activeStatsReady'); }
-export function currentLoginStatsReady(baseLevels, seenGenerations, sessionGeneration) { throw notImpl('currentLoginStatsReady'); }
-export function locHullHeight(model) { throw notImpl('locHullHeight'); }
-export function resolveLocModelExtents(src) { throw notImpl('resolveLocModelExtents'); }
-export function attach(client) { throw notImpl('attach'); }
-export function setPacketListener(cb) { throw notImpl('setPacketListener'); }
-export function resetObjCatalog() { throw notImpl('resetObjCatalog'); }
-export function readRetaliateControls() { throw notImpl('readRetaliateControls'); }
-export function readModalButtons(rootComId) { throw notImpl('readModalButtons'); }
-export function readSelectButtonLabelsByVarp(rootComId, varp) { throw notImpl('readSelectButtonLabelsByVarp'); }
-export function combatShowingThreshold(deltimeMs) { throw notImpl('combatShowingThreshold'); }
-export const WELCOME_SCREEN = notImplValue('WELCOME_SCREEN');
+const nativeReader = (method, ...args) =>
+    globalThis.__rs2b0t_selected_facts('client-adapter-reader', method, ...args);
 
-const host = () => globalThis.__rs2b0t_host || {};
-
-function varp(index) {
-    const row = (snap().varps || []).find((v) => v && v.index === index);
-    return row ? row.value : 0;
-}
-
-function finiteInt(n) {
-    return typeof n === 'number' && Number.isInteger(n);
-}
-
-// Posted native scene origin/dims/level. Missing, unavailable, or a
-// zero-dim old buffer must not convert through a silent zero base.
-function sceneReach() {
-    const reach = snap().reach;
-    if (!reach || reach.available !== true) return null;
-    if (
-        !finiteInt(reach.base_x) ||
-        !finiteInt(reach.base_z) ||
-        !finiteInt(reach.level) ||
-        !finiteInt(reach.width) ||
-        !finiteInt(reach.height)
-    ) {
-        return null;
-    }
-    if (reach.width <= 0 || reach.height <= 0) return null;
-    return reach;
-}
-
-function inScene(lx, lz, reach) {
-    return lx >= 0 && lz >= 0 && lx < reach.width && lz < reach.height;
-}
-
-// Posted native item rows only. Fresh objects/ops so a caller
-// cannot mutate the shared snapshot. Missing component identity is -1,
-// never a hardcoded valid component. Occupied native slots include
-// item id 0; empty/malformed rows are omitted.
-function inventoryItems(rows) {
-    if (!Array.isArray(rows)) return [];
-    const out = [];
-    for (const row of rows) {
-        if (!row || typeof row !== 'object') continue;
-        const slot = row.slot;
-        const id = row.id;
-        if (!finiteInt(slot) || slot < 0 || !finiteInt(id) || id < 0) continue;
-        const count = finiteInt(row.count) ? row.count : 0;
-        const comId = finiteInt(row.component_id) ? row.component_id : -1;
-        out.push({
-            slot,
-            id,
-            name: typeof row.name === 'string' ? row.name : null,
-            count,
-            ops: Array.isArray(row.ops) ? row.ops.slice() : [],
-            comId,
-        });
-    }
-    return out;
-}
+// One native decision per action: it reads the posted snapshot and answers
+// with what to queue, or `null` when the action must not be queued.
+const nativeAction = (method, ...args) =>
+    globalThis.__rs2b0t_selected_facts('client-adapter-action', method, ...args);
 
 export const reader = proxy('reader', {
-    worldTile() {
-        return host().tile || snap().here || null;
-    },
-    serverTile() {
-        return snap().here || null;
-    },
-    selfSlot() {
-        return finiteInt(snap().self_slot) ? snap().self_slot : -1;
-    },
-    inventorySize() {
-        return typeof host().invSize === 'number' ? host().invSize : 0;
-    },
-    inventory() {
-        return inventoryItems(snap().inv);
-    },
-    bankSideItems() {
-        return inventoryItems(snap().bank_side);
-    },
-    sceneState() {
-        return typeof snap().scene_state === 'number' ? snap().scene_state : 0;
-    },
-    ingame() {
-        return snap().ingame === true;
-    },
-    npcs() {
-        return snap().npcs || [];
-    },
-    locs() {
-        return snap().locs || [];
-    },
-    players() {
-        return snap().players || [];
-    },
-    groundItems() {
-        return snap().ground || [];
-    },
-    equipment() {
-        return snap().equipment || [];
-    },
-    modals() {
-        const s = snap();
-        return {
-            main: typeof s.main_modal_id === 'number' ? s.main_modal_id : -1,
-            chat: typeof s.chat_modal_id === 'number' ? s.chat_modal_id : -1,
-            side: -1,
-        };
-    },
-    chatContinueComId() {
-        throw notImpl('reader.chatContinueComId');
-    },
-    chatOptions() {
-        return (snap().chat_options || []).map((o) => ({
-            text: o.text,
-            comId: typeof o.comId === 'number' ? o.comId : -1,
-        }));
-    },
-    chatModalTexts() {
-        const t = optionalText(snap().chat_text);
-        return t ? [t] : [];
-    },
-    activeSideTab() {
-        return typeof snap().side_tab === 'number' ? snap().side_tab : -1;
-    },
-    localPlayerName() {
-        return optionalText(snap().my_name);
-    },
-    combatLevel() {
-        if (snap().ingame !== true) return 0;
-        const level = snap().combat_level;
-        return typeof level === 'number' && Number.isInteger(level) ? level : 0;
-    },
-    selfChat() {
-        return optionalText(snap().self_chat);
-    },
-    hintTile() {
-        const tile = snap().hint_tile;
-        if (!tile || !finiteInt(tile.x) || !finiteInt(tile.z)) return null;
-        return { x: tile.x, z: tile.z };
-    },
-    npcBox(index) {
-        if (!finiteInt(index) || index < 0) return null;
-        const rows = snap().npc_boxes;
-        if (!Array.isArray(rows)) return null;
-        const row = rows.find((candidate) => candidate && candidate.index === index);
-        if (!row || !Array.isArray(row.points) || row.points.length !== 8) return null;
-        const out = [];
-        for (const point of row.points) {
-            if (!point || !finiteInt(point.x) || !finiteInt(point.y)) return null;
-            out.push({ x: point.x, y: point.y });
-        }
-        return out;
-    },
-    retaliateControls() {
-        const controls = snap().retaliate_controls;
-        if (!controls || !finiteInt(controls.onComId) || !finiteInt(controls.offComId)) {
-            return null;
-        }
-        return { onComId: controls.onComId, offComId: controls.offComId };
-    },
-    inCombat() {
-        return snap().in_combat === true;
-    },
-    selfAnim() {
-        return snap().self_anim ?? -1;
-    },
-    selfTarget() {
-        const kind = snap().self_target_kind;
-        const index = snap().self_target_index;
-        const k = finiteInt(kind) ? kind : 0;
-        if (k === 0) return { kind: 0, index: -1 };
-        const i = finiteInt(index) ? index : -1;
-        return { kind: k, index: i };
-    },
-    selfFaceEntity() {
-        const t = this.selfTarget();
-        if (t.kind === 1) return t.index;
-        if (t.kind === 2) return t.index + 32768;
-        return -1;
-    },
-    energy() {
-        return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
-    },
-    varp(index) {
-        return varp(index);
-    },
-    stat(i) {
-        const row = (snap().stats || [])[i];
-        if (!row) return { name: '', xp: 0, base: 0, effective: 0 };
-        return {
-            name: row.name,
-            xp: row.xp ?? 0,
-            base: row.base ?? 0,
-            effective: row.effective ?? 0,
-        };
-    },
-    skillCount() {
-        return (snap().stats || []).length;
-    },
-    sideTabInterface(tab) {
-        const rows = snap().side_tab_ifaces;
-        if (!Array.isArray(rows)) {
-            throw notImpl('reader.sideTabInterface');
-        }
-        const row = rows.find((r) => r && r.index === tab);
-        if (!row || typeof row.id !== 'number') {
-            throw notImpl('reader.sideTabInterface');
-        }
-        return row.id;
-    },
-    selectButtonLabelsByVarp(_root, _varp) {
-        return (snap().combat_styles || []).map((s) => ({ mode: s.mode, label: s.label }));
-    },
-    selectButtonByVarp(_root, _varp, mode) {
-        const row = (snap().combat_styles || []).find((s) => s.mode === mode);
-        return row ? row.component_id : -1;
-    },
-    targetButtonByBase(_root, label) {
-        const wanted = String(label).toLowerCase();
-        const row = (snap().combat_styles || []).find(
-            (s) => s.label && String(s.label).toLowerCase() === wanted,
-        );
-        return row ? row.component_id : -1;
-    },
-    objCatalog() {
-        return globalThis.__rs2b0t_selected_facts('obj-records');
-    },
-
-    bankComId() {
-        throw notImpl('reader.bankComId');
-    },
-    ifText(comId) {
-        const id = Number(comId);
-        if (!Number.isInteger(id)) return null;
-        const row = (snap().widgets || []).find((w) => w && w.component_id === id);
-        if (!row || typeof row.text !== 'string') return null;
-        return row.text;
-    },
-    // Posted native count-dialog fact. False, missing, or malformed is
-    // real closed state — never a missing-op throw or a synthetic open.
-    countDialogOpen() {
-        return snap().count_dialog_open === true;
-    },
-    makeProducts() {
-        return (snap().make_products || []).map((p) => ({
-            name: p.name,
-            buttons: (p.buttons || []).map((b) => ({ qty: b.qty, comId: b.comId })),
-        }));
-    },
-    toLocal(x, z) {
-        if (!finiteInt(x) || !finiteInt(z)) return null;
-        const reach = sceneReach();
-        if (!reach) return null;
-        const lx = x - reach.base_x;
-        const lz = z - reach.base_z;
-        if (!inScene(lx, lz, reach)) return null;
-        return { lx, lz };
-    },
+    worldTile: () => nativeReader('worldTile'),
+    serverTile: () => nativeReader('serverTile'),
+    selfSlot: () => nativeReader('selfSlot'),
+    inventorySize: () => nativeReader('inventorySize'),
+    inventory: () => nativeReader('inventory'),
+    bankSideItems: () => nativeReader('bankSideItems'),
+    bankItems: () => globalThis.__rs2b0t_bank_items(),
+    sceneState: () => nativeReader('sceneState'),
+    ingame: () => nativeReader('ingame'),
+    npcs: () => nativeReader('npcs'),
+    locs: () => nativeReader('locs'),
+    players: () => nativeReader('players'),
+    groundItems: () => nativeReader('groundItems'),
+    equipment: () => nativeReader('equipment'),
+    modals: () => nativeReader('modals'),
+    chatContinueComId: () => nativeReader('chatContinueComId'),
+    chatOptions: () => nativeReader('chatOptions'),
+    chatModalTexts: () => nativeReader('chatModalTexts'),
+    activeSideTab: () => nativeReader('activeSideTab'),
+    localPlayerName: () => nativeReader('localPlayerName'),
+    combatLevel: () => nativeReader('combatLevel'),
+    selfChat: () => nativeReader('selfChat'),
+    hintTile: () => nativeReader('hintTile'),
+    npcBox: (index) => nativeReader('npcBox', index),
+    retaliateControls: () => nativeReader('retaliateControls'),
+    inCombat: () => nativeReader('inCombat'),
+    selfAnim: () => nativeReader('selfAnim'),
+    selfFaceEntity: () => nativeReader('selfFaceEntity'),
+    energy: () => nativeReader('energy'),
+    varp: (index) => nativeReader('varp', index),
+    stat: (index) => nativeReader('stat', index),
+    skillCount: () => nativeReader('skillCount'),
+    skillUsed: (index) => nativeReader('skillUsed', index),
+    statsReady: () => nativeReader('statsReady'),
+    sideTabInterface: (tab) => nativeReader('sideTabInterface', tab),
+    selectButtonLabelsByVarp: (root, varp) =>
+        nativeReader('selectButtonLabelsByVarp', root, varp),
+    selectButtonByVarp: (root, varp, mode) =>
+        nativeReader('selectButtonByVarp', root, varp, mode),
+    targetButtonByBase: (root, label) => nativeReader('targetButtonByBase', root, label),
+    objCatalog: () => globalThis.__rs2b0t_selected_facts('obj-records'),
+    bankComId: () => nativeReader('bankComId'),
+    ifText: (componentId) => nativeReader('ifText', componentId),
+    countDialogOpen: () => nativeReader('countDialogOpen'),
+    makeProducts: () => nativeReader('makeProducts'),
+    toLocal: (x, z) => nativeReader('toLocal', x, z),
+    weight: () => nativeReader('weight'),
+    chat: (index) => nativeReader('chat', index),
+    playerCount: () => nativeReader('playerCount'),
+    npcCount: () => nativeReader('npcCount'),
+    cameraYaw: () => nativeReader('cameraYaw'),
+    cameraPitch: () => nativeReader('cameraPitch'),
+    takingDamage: () => nativeReader('takingDamage'),
+    inventorySnapshotReady: () => nativeReader('inventorySnapshotReady'),
+    bankSnapshotReady: () => nativeReader('bankSnapshotReady'),
+    bankSideSnapshotReady: () => nativeReader('bankSideSnapshotReady'),
+    bankSnapshotGeneration: () => nativeReader('bankSnapshotGeneration'),
+    runControls: () => nativeReader('runControls'),
+    toWorld: (x, z) => nativeReader('toWorld', x, z),
+    collisionFlags: (x, z) => nativeReader('collisionFlags', x, z),
+    lastWalkPathWorld: () => nativeReader('lastWalkPathWorld'),
+    loginMessage: () => nativeReader('loginMessage'),
+    menuEntries: () => nativeReader('menuEntries'),
+    shopInv: (componentId) => nativeReader('shopInv', componentId),
+    puzzleBoardComId: () => nativeReader('puzzleBoardComId'),
+    puzzleBoard: () => nativeReader('puzzleBoard'),
+    puzzleBoardSize: () => nativeReader('puzzleBoardSize'),
+    duelOffers: () => nativeReader('duelOffers'),
+    tradeOfferOpen: () => nativeReader('tradeOfferOpen'),
+    tradeConfirmOpen: () => nativeReader('tradeConfirmOpen'),
+    tradeMyOffer: () => nativeReader('tradeMyOffer'),
+    tradeTheirOffer: () => nativeReader('tradeTheirOffer'),
+    tradeSidePack: () => nativeReader('tradeSidePack'),
+    tradePartner: () => nativeReader('tradePartner'),
+    tradeConfirmOffers: () => nativeReader('tradeConfirmOffers'),
+    tradeConfirmReady: () => nativeReader('tradeConfirmReady'),
+    closeButtonComId: (root) => nativeReader('closeButtonComId', root),
+    mainModalTexts: () => nativeReader('mainModalTexts'),
+    ifModelObjId: (componentId) => nativeReader('ifModelObjId', componentId),
+    modalButtons: (root) => nativeReader('modalButtons', root),
+    buttonByText: (root, text) => nativeReader('buttonByText', root, text),
+    mainModalButtonNearText: (text) => nativeReader('mainModalButtonNearText', text),
+    mainSkillMultiItems: () => nativeReader('mainSkillMultiItems'),
+    questStatuses: () => nativeReader('questStatuses'),
+    itemIconPixels: (id) => nativeReader('itemIconPixels', id),
+    attached: () => nativeReader('attached'),
+    mapBuildBase: () => nativeReader('mapBuildBase'),
+    modalCloseObservation: () => nativeReader('modalCloseObservation'),
+    overlayPosWorld: (x, z, height = 0, u = 0.5, v = 0.5) =>
+        nativeReader('overlayPosWorld', x, z, height, u, v),
+    projectAreaGameWorld: (x, z, height = 0, u = 0.5, v = 0.5) =>
+        nativeReader('projectAreaGameWorld', x, z, height, u, v),
+    locBox: (opts, areaGame = false) => nativeReader('locBox', opts, areaGame),
 });
-
 export const actions = proxy('actions', {
+    sayPublic(value) {
+        const text = nativeAction('sayPublic', value);
+        if (text === null) return false;
+        queue({ op: 'say-public', text });
+        return true;
+    },
+    continueDialog() {
+        const componentId = nativeAction('continueDialog');
+        if (componentId === null) return false;
+        queue({ op: 'continue', component_id: componentId });
+        return true;
+    },
     closeModal() {
-        const s = snap();
-        const main = typeof s.main_modal_id === 'number' ? s.main_modal_id : -1;
-        const chat = typeof s.chat_modal_id === 'number' ? s.chat_modal_id : -1;
-        if (main === -1 && chat === -1) return false;
+        if (nativeAction('closeModal') !== true) return false;
         queue({ op: 'close-modal' });
         return true;
     },
@@ -302,25 +140,17 @@ export const actions = proxy('actions', {
         return true;
     },
     walkTo(lx, lz) {
-        if (!finiteInt(lx) || !finiteInt(lz)) return false;
-        const reach = sceneReach();
-        if (!reach) return false;
-        if (!inScene(lx, lz, reach)) return false;
-        queue({
-            op: 'walk-to',
-            x: reach.base_x + lx,
-            z: reach.base_z + lz,
-            level: reach.level,
-        });
+        const tile = nativeAction('walkTo', lx, lz);
+        if (tile === null) return false;
+        const [x, z, level] = tile;
+        queue({ op: 'walk-to', x, z, level });
         return true;
     },
-    // Queue the existing host answer-count. Integer validation matches
-    // Interactions::answer_count (non-negative i32). No dialog, or a
-    // malformed count, returns false and queues nothing; Rust still
-    // owns stale/closed/logout refusal if a later tick dispatches.
+    // Queue the existing host answer-count. Rust validates the count and the
+    // open dialog (Interactions::answer_count: non-negative i32) and still owns
+    // stale/closed/logout refusal if a later tick dispatches.
     answerCountDialog(value) {
-        if (!finiteInt(value) || value < 0 || value > 2147483647) return false;
-        if (snap().count_dialog_open !== true) return false;
+        if (nativeAction('answerCountDialog', value) !== true) return false;
         queue({ op: 'answer-count', value });
         return true;
     },

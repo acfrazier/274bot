@@ -1,0 +1,10 @@
+{
+  "stage": "itexam:first",
+  "stand": [3357, 3344, 0],
+  "loadout": null,
+  "extra_items": [["rock_sample2", 1], ["rock_sample3", 1]],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["itexam:second"],
+  "mode": "stage"
+}

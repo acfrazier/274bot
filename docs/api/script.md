@@ -89,6 +89,20 @@ preserves that typed error and abandons the unconsumed job. An already
 published terminal remains consumable without waiting. This refusal does
 not mark the service unavailable.
 
+G2b's WorkAdmission detector warns once when an active step has not returned
+for 60 seconds. Elapsed time alone does not make the service unavailable.
+A worker that never returns publishes `ProgressLost` only when the bounded
+shutdown wait expires, not while the application continues to run. Worker
+start failure and an uncontained worker panic still publish an immediate
+permanent condition. A late return never clears a published condition, and
+resource custody stays charged until actual return and terminal consumption.
+
+The slow-step warning is log-only. There is no persistent operator health
+banner for a worker that never returns; session file logging is optional.
+`WorkService::wait_terminal` and `PreparedTask::join` have no overall timeout
+for a pending preparation. Frontend callers check completion before joining,
+but a hung preparation can remain pending until process exit.
+
 `NativeTick` borrows the frame/evidence/pin/recovery views and the shared
 status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain
@@ -124,6 +138,11 @@ F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
 activation retain the real lifecycle, promise, encoder and family proof duties.
 Core `script` carries no JS dependencies (`deno_ast`, the V8 and isolate crates and the
 FlatBuffer wire live in `script-js`).
+
+Rust callers use Core types through `script::interact`, `script::paint`,
+`script::card`, `script::native::seat_rows`, and
+`script::native::snapshot_source`. `script_js::wire` owns the JS isolate
+codec; it does not re-export Core interaction, paint, card, or snapshot types.
 
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
@@ -258,9 +277,9 @@ A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session; `api.combat.fight` runs one
 fight of the native Combat machine the same way, and `api.snapshot.combat`
-reports its live session. `api.questPaths()` is a sync read of the release Path
-index for the twenty-five bundled Paths (twenty released, five draft guides; each
-row's `draft` says which), needing no seat;
+reports its live session. `api.questPaths()` synchronously reads the embedded Path
+index without a seat. Each row reports its authored `draft` status. Listing a Path
+does not grant permission to start it in a release build.
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the
@@ -304,16 +323,20 @@ scripts end their live step at either boundary.
 ### Quester queue and provisioning
 
 Quester uses the ordered `crates/script/paths/289/index.json` release roster.
-`quests` selects quest IDs. An empty list queues every available Path except
-rows marked `"status": "draft"`. The off-by-default `include_draft_guides` setting
-(**Include draft guides when no quests are picked**) adds those bundled drafts
-in release-roster order; quest pickers label them `[draft]`. Explicit quest
-picks always run; with an empty quest
-selection, a draft listed in `order_override` is also an explicit pick.
-`order_override` prioritizes selected IDs and `skip` excludes
-IDs. `partner_account` and `gang` are per-account settings, not bulk-copy
-settings. Partner selection uses configured vault identities, including saved
-accounts not currently loaded.
+Release builds accept only rows with `"status": "qualified"`. Currently, only
+The Restless Ghost is qualified. `quests` selects quest IDs. An empty list
+queues all qualified Paths in roster order. An explicit draft quest or
+priority pick refuses Start with the typed `unqualified-path` reason.
+`order_override` prioritizes selected IDs and `skip` excludes IDs.
+
+The former `include_draft_guides` setting is no longer offered. Saved values
+still load, but cannot enable drafts in a release build. Qualification tests
+can admit drafts through `host-play/test-support`, which enables
+`script/test-hooks`. Interactive quest pickers remain qualified-only.
+
+`partner_account` and `gang` are per-account settings, not bulk-copy settings.
+Partner selection uses configured vault identities, including saved accounts
+not currently loaded.
 
 A roster row can be unavailable on this server: it carries `name` and an
 end-user `unavailable` reason instead of being released (it may keep its
@@ -328,17 +351,10 @@ begins, without specializing the shared compiled Path. Omitted saved values use
 `chaos`, and unknown or random values are refused.
 
 In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
-For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
-The bundled Path IDs in roster order are `cook` (Cook's Assistant), `sheep`
-(Sheep Shearer), `runemysteries` (Rune Mysteries), `romeojuliet` (Romeo &
-Juliet), `imp` (Imp Catcher), `vampire` (Vampire Slayer), `doric` (Doric's
-Quest), `gobdip` (Goblin Diplomacy), `hetty` (Witch's Potion), `prince` (Prince
-Ali Rescue), `hunt` (Pirate's Treasure), `demon` (Demon Slayer), `squire` (The
-Knight's Sword), `death` (Death Plateau), `desertrescue` (The Tourist Trap),
-`priestperil` (Priest in Peril), `cog` (Clock Tower), `drunkmonk` (Monk's
-Friend), `hazeelcult` (Hazeel Cult), `elena` (Plague City), `druid` (Druidic
-Ritual, draft), `fluffs` (Gertrude's Cat, draft), `junglepotion` (Jungle Potion,
-draft), `seaslug` (Sea Slug Quest, draft), and `totem` (Tribal Totem, draft).
+For The Restless Ghost alone, set `quests` to `priest` while stopped, then Start.
+The embedded index also retains drafted Paths for qualification work.
+`api.questPaths()` lists their metadata, but release Start accepts only explicitly
+qualified rows. Embedding a Path does not qualify it.
 The roster also carries one unavailable row, Haunted Mine, which pickers list
 as non-selectable with its reason.
 
@@ -403,9 +419,13 @@ joined role, or a peer bound to the same compiled pair, can extend a phase's
 ten-minute inactivity bound, never its sixty-minute wall-clock total bound.
 Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
 Retryable trade-start conditions keep the planned transfer and wait for the next
-eligible frame. A failed, still-owned trade enters bounded decline/close cleanup
-and retains the original failure until screen closure is observed and debounced
-or the cleanup deadline expires. Revoked owners cannot send cleanup input.
+eligible frame. A trade's own limits (`timeout_ticks`, the waits for the other
+account's accept and for the screen to close, and the cleanup limit) count observed
+game ticks on which the run is driven and its pair is ready: a transient hold
+spends none of them. A failed, still-owned trade enters bounded cleanup, one
+close-modal request, and retains the original failure until screen closure is
+observed and debounced or the cleanup deadline expires. Revoked owners cannot
+send cleanup input.
 
 Miniquest Paths use an owned typed progress reader instead of inventing a quest-tab
 row. The reader runs initially and after advancing steps, and only matching fresh
@@ -566,6 +586,14 @@ route successfully and fails closed otherwise. Compatibility bank selection
 and `WalkNearestBank` retain their frozen four-tile shortcut,
 500,000-expansion budget, five-second timeout and air fallback.
 
+If strict native bank selection finds no route, it can diagnose an `Unknown`
+quest gate that a catalog-backed journal can establish. The existing prerequisite
+owner reads and closes that journal, then reissues selection with the original
+arguments and grants. Gatherer, acquisition and bank-opening callers share this
+owner. A proven-false gate stays closed, and a strictly reachable candidate wins
+without a journal read. Failed or inconclusive reads do not select a bank.
+The journal and reissue limits do not change. A genuine `NoPath` keeps its detail.
+
 An authored Path bank tile is not an exclusive destination by default:
 `{"tile": [3092, 3242, 0], "source": "author reference"}` still selects the
 cheapest routable bank. Add `"required": true` only when that particular bank
@@ -690,6 +718,12 @@ its own `prefer`/`choose`/`line_rules`, never the default last option.
 `continue_only: true` omits `npc` and drains an already-open conversation
 without talking or walking, under the same adopted-page rule.
 
+On revision 377, a nameless placed NPC config can use its observed current
+form. Declared static operations must include Talk-to; the current snapshot
+must also expose Talk-to for that exact placed type before interaction.
+Null or non-talkable current forms cannot be opened. Compilation never
+replaces the configured type with a static leaf. Revision 274/289 is unchanged.
+
 `interact` and `use_on` share one dialogue policy. `"continue"` drives strict
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
@@ -789,6 +823,13 @@ bound can avoid that exact ID/tile/plane for ten ticks. The third true failure
 excludes the key for the run. Capacity and duplicate refusals remain typed.
 Exact-ground reach refusals never enter the legacy door fallback.
 
+`use_on.target.npc` accepts one symbolic config name or a nonempty array of
+fungible alternatives, for example `["sheepunsheered", "sheepunsheered3"]`.
+All names resolve in the selected revision. The same reachable-target chooser
+ranks every authored type together and keeps the placed NPC index on dispatch;
+a same-name NPC outside the selected types is not eligible. A string keeps
+its existing single-type behavior.
+
 `use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
 "source": "content provenance"}`. The optional tile selects an exact ground
 stack; source and target item ids remain explicit. Inventory-item targets
@@ -873,6 +914,21 @@ Offline magic replay stops at the same first full readiness predicate as the liv
 harness and also reports the verdict over the entire retained capture. Later
 timeout-tail activity is not erased or relabelled as a fresh live pass.
 
+### Quester player targets and the opt-in
+
+A `combat` step may start a fight with a named player: `target: {"player":
+"bob"}`, with the optional root `pvp: true`. The game allows player combat
+only in the Wilderness and in a Duel Arena fight pen. Starting such a fight
+needs one opt-in: the step's `pvp: true`, or the operator's global setting
+"Start fights with players" (`pvp.start_fights` in the shared preferences, off
+by default, in both the panel and the TUI). Without either the step fails with
+the typed refusal `PvpRefused(NotOptedIn)`. The step reads the setting only when
+it begins. A step that only defends (`target: {"attacker": {"players": true}}`),
+and the bot's defence against a player who attacks it during any step, never
+read `pvp` or the setting. The attack verb is the label the game gives the
+player: `Attack` in the Wilderness, `Fight` in a duel. `target.player` takes
+no `pick` or `not_targeting_others`.
+
 ### Exact loc use-on targets
 
 Item/widget use-on dispatch keeps the exact loc tile and applies every supplied
@@ -920,12 +976,15 @@ parking the step. Threat evidence requires an NPC facing or targeting the local
 player together with an attack animation, attack spot, or recent hitmark on the
 player; NPC health-bar visibility is not required. Product and live-proof
 receipts use the same evidence predicate.
-Abort walks retain food upkeep and the step's crossing permissions. They request
-protection only when prayer is allowed and the player's Prayer level can use
-Protect; otherwise they set the walk request's explicit `food_guard` flag and
-the host runs a food-only guard without refusing the walk. Only combat abort
-walks set `food_guard`. Ordinary script and Quester walks, which default to
-`allow.food = true`, start no host guard unless they request `protect`.
+Ordinary abort walks retain food upkeep and the step's crossing permissions.
+They request protection only when prayer is allowed and the player's Prayer
+level can use Protect. Otherwise the explicit `food_guard` flag starts
+food-only upkeep without prayer admission.
+An exhausted escape sets `cure_guard` and disallows food. The host keeps held
+cures usable under the slot's Cure poison policy, without eating or fetching
+food. Named crossings do not restore food permission for that explicit request.
+Other walk owners keep their existing guard settings. Disallowing food alone
+does not create a host guard.
 If no engaged actor was recorded, or the engaged actor is no longer observed,
 retreat geometry uses the heaviest observed live attacker (the same shared
 threat predicate). Retreat direction compares packet-time network tiles (the
@@ -981,7 +1040,7 @@ hold. The hold continues eating and permitted protection even at high HP, and
 ends only after three consecutive
 ticks without threat evidence. There is no tick-based hold timeout. If no food
 remains, protection is unavailable or disallowed, and an attacker is still
-live, the hold instead starts one more pass of unguarded escape requests,
+live, the hold instead starts one more pass of food-disabled escape requests,
 planned from the position the hold observed, before parking. Without a live
 attacker it parks after the threat-free horizon instead. The step never starts
 a third pass. An abort makes at most six requests with a stand and four
@@ -990,9 +1049,10 @@ No claim is made that a reachable escape exists. When no tier routes, the hold
 and its food are the last resort.
 A combat step whose target is `attacker` and whose report is
 `Aborted(Unattackable)` completes once the bot is safe: when a guarded escape
-walk arrives with no live attacker, when the hold ends threat-free, or when an
-unguarded escape walk arrives and the step observes that no attacker is live.
-The unguarded pass has neither prayer nor food, so arrival alone is not safety.
+walk arrives with no live attacker, when the hold ends threat-free, or when a
+food-disabled escape walk arrives and the step observes that no attacker is live.
+The exhausted pass has neither prayer nor food, but can drink a needed held
+cure. Arrival alone is not safety.
 If an attacker is live or unobserved on arrival, the step plans the next tier,
 and it ends with the failure "combat abort escape walk arrived without proof
 that the attacker is gone" when no tier is left. The step keeps its combat
@@ -1031,6 +1091,15 @@ authored with radius six cannot acquire a target nine tiles away. Ranged live
 qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
+
+On 377, a green row for the active quest supersedes an in-flight stage
+journal transaction. The native context and selected game data must both
+select 377. The runner cancels the obsolete read, releases its quiet lease,
+and uses the existing terminal-colour resolver. It neither closes the
+completion scroll nor fabricates journal lines.
+
+Another quest's green row cannot trigger this handover. The 274/289 reader
+path and foreign-root/title checks are unchanged.
 
 Native Quester dialogue completion requires its end gap of observed game ticks
 with chat closed (one by default, or the step's `gap_ticks`), rather than an
@@ -1360,6 +1429,56 @@ allows one new plan. Relog retains the park. Pause and Stop still work.
 Only gameplay recovery waits: scheduler, transport and session checks stay
 active. The panel, terminal and fleet show the parked reason and bank origin.
 
+`tickMethod` is one restart-required setting for Woodcutting, Mining and
+Fishing. It defaults to `Off`; the other value is `Knife`. `Knife` prepares
+one selected-cache Knife and normal Logs: held targets 1 and 3, with at least
+one of each needed for the technique. Both item IDs are protected from
+deposits and product disposal. Preparation does not decide whether the
+selected method or observed tool can use the technique.
+
+An unknown bank admits the existing trip to learn its stock. A known bank
+without a usable knife-and-log kit does not cause a trip or `supply-missing`
+for that optional kit; ordinary gathering can continue. At an open bank,
+available stock tops up the kit only when both minimums can be met.
+The built-in Gatherer can use the kit in revision 289. External scripts do not
+get an unseen-button request from this setting. Shared server-ordered script
+authoring remains a separate capability.
+
+The knife technique shortens supported mining, fishing and oak-or-higher
+woodcutting cycles to three ticks when its inputs land on schedule. Normal
+trees are not in this release. A rune pickaxe has no gain, and karambwan
+fishing has no usable action-delay variable; those methods gather normally.
+The kit needs a members world, one knife and at least one normal log in the
+pack. A members-only refusal turns the technique off for the run. Eating
+uses the existing checked eat operation and pauses one technique cycle.
+
+A continuing cycle sends four user-event packets: knife on log, Make 1,
+movement intent and the resource click. An ending fishing cycle sends two
+packets to arm, then a checked movement-and-click pair two edges later.
+The ideal schedule sends 33.33% more user-event packets per second than the
+human-attainable schedule. Late or refused inputs can require one checked
+fallback click; the host's packet receipts are not server acknowledgements.
+A normal-rock success can delay the player through the next tick. The server
+refuses a batch it handles during that delay; `tick_delayed` counts the
+observed delayed cycles, not refused packets.
+A confirmed depleting cycle keeps its idle timing while targets change. A live
+loc replacement can arm from the current tile only when that tile is an exact
+loc-operation stand. When the loc needs an approach walk, the runner completes
+that walk before it re-adopts the parked cycle.
+
+A built-in fishing arm requires a generator-proven ordinary spot type on
+its click tick. Whirlpool, Big fish and unknown types are not armed. The
+remaining transform race within that server tick is accepted, as for an
+ordinary Gatherer click; the guardian still owns event handling. Other
+server-ordered callers keep the stricter transform-closure rule.
+
+Status shows `tick_method` (`Off`, `Knife`, or `Knife (off: reason)`),
+`tick_cycle` (last verified or unobserved interval, or -1), and run counters
+`tick_verified`, `tick_unobserved`, `tick_slips`, `tick_lost`, `tick_delayed`,
+`tick_paused`, `tick_fallbacks`, `tick_fallback_failed` and `tick_events`.
+The event counter sums actual host dispatch receipts plus two user events
+per accepted checked technique click. It does not claim server acceptance.
+
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank
 trip tops it up to the target. `food` is an optional selected-cache item name;
@@ -1432,10 +1551,10 @@ unchanged.
    Sherlock was meant to be native. In practice it became a port of the compatibility
    clue machine, so it needs the JS runtime build until the native clue rewrite replaces
    that machine. Sherlock itself never creates a V8 isolate. Sherlock's schema version 1
-   carries only the three
-   walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
-   `allow_danger_zones`), distinct from unavailable metadata or an unsupported
-   saved schema. Compiled names remain reserved. Native v2 scripts use the
+   carries the walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
+   `allow_danger_zones`, `allow_prereq_dialogue`, `allow_quest_start`).
+   These differ from unavailable metadata or an unsupported saved schema.
+   Compiled names remain reserved. Native v2 scripts use the
    typed declarations in `crates/script-js/host-js/index.d.ts`
    ([js-api-v2.md](js-api-v2.md)).
 - Catalog cards are **Catalog** source: static parse of
@@ -1705,9 +1824,18 @@ Either may allow the walk, while a walk-local `false` forbids it even when a glo
 per-script setting allows it. Native script settings (**Script prefs** in the
 panel, **Params** in the TUI) default off and use `allow_teleports`,
 `allow_wilderness` and `allow_danger_zones` (Gatherer exposes camelCase ids).
-Path `walk` steps accept the same three optional
-booleans, so omitted bits inherit and `true` opts in for only that step. Native
-script walking never exposes bank fetch.
+Path `walk` steps accept these three optional booleans and
+`allow_prereq_dialogue` and `allow_quest_start`. An omitted field inherits.
+`true` allows that permission for the step. `false` forbids it for the step,
+even when a global or script grant allows it.
+Native script walking never exposes bank fetch.
+
+Two more global grants cover prerequisite steps: **Allow dialogue steps on
+walks** (`allow_prereq_dialogue`) and **Allow starting quests on walks**
+(`allow_quest_start`). Both default on, including on a first run; an
+unreadable or malformed preferences file denies them until the next save.
+They compose like the other grants: the global switch or the script's own
+grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
@@ -1947,6 +2075,12 @@ those approach endpoints directly.
   (the navigator names only the fare as missing), it earns the fare at
   Luthas's plantation and walks once more. Teleport id lists, ship or
   shortcut exclusion, `pathFollow` and `forceRepath` fail with `not impl`.
+- **`WalkExecutor.probeDest(dest, maxExpansions)`** checks for a route from
+  the current tile to an integer destination with the default policy (no
+  teleports or bank fetch; wilderness is allowed) and a 30 s request bound.
+  `level` defaults to 0. `maxExpansions` must be a positive safe integer for
+  compatibility, but cannot lower the host's full route-search budget.
+  Invalid input returns `{ ok: false, terminal: null }`.
 - The host owns a script's active route. Operator Pause ends the follow
   and keeps the route as carried state, as a reconnect does; the first
   dispatch after Resume sends it once more under its own request id,
@@ -2016,22 +2150,33 @@ flight settles false (a deposit loop does nothing).
   bank-side row with the name, by id, slot and component, and answers whether
   it pressed. A row without the label presses nothing; it is never an All.
 - **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
-  each matching row's All op by id and wait up to eight fresh game updates for
-  that id to leave the pack. A side row is clicked only while its item remains
-  in the current pack. The loop ends when no matching pack items remain or a
-  click's eight-update bound expires; if a current pack candidate has no
+  each matching row's All op by id and wait for that id to leave the pack.
+  If a transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer. A deposit may make one second transfer attempt after a no-op
+  click, with the same timeout bound. A side row is clicked only while its
+  item remains in the current pack. The loop ends when no matching pack items
+  remain or a click's wait expires; if a current pack candidate has no
   matching posted side row, the loop waits up to 1.2 s and then fails rather
   than reporting success with items still held. `depositAllExcept(names)`
   keeps every id whose display name is kept, noted or not. A nameless row is
   still an item the matcher decides.
 - **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
-  true once more pack slots are used, the pack is full or that row emptied,
-  within eight fresh game updates; a row without All is withdrawn as
-  `withdrawX` of the free slots. A full pack is true with no press.
+  true once more pack slots are used, the pack is full or that row emptied.
+  If the transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
 - **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
   Close is true only when the bank is shut, its old side root is released
   and the bank session generation moved on, within `timeoutMs` (4 s when
   omitted). A reopened or logged-out session is false.
+
+`Bank.items()` and `reader.bankItems()` return a read-only snapshot. The
+outer array, item rows, and nested `ops` arrays are frozen. Repeated reads in
+one bank session and item generation reuse the same array identity; a new
+session or posted item generation produces a new array. A closed bank returns
+a frozen empty list.
 
 NativeApi v2 scripts can use `withdraw-x` with the number of free inventory
 slots, or compatibility `Bank.withdrawLoad(name)`.

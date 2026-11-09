@@ -1,8 +1,8 @@
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav_bake::pack::{encode, encode_reach_sidecar};
+use nav_bake::pack::encode_reach_sidecar;
 use nav_planner::collision::WorldCollision;
-use nav_planner::pack::{decode_reach_sidecar, sha256_hex};
+use nav_planner::pack::decode_reach_sidecar;
 use nav_planner::paint::bake_reach;
 use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -78,8 +78,6 @@ fn graph(edges: Vec<TransportEdge>, teleports: Vec<TransportEdge>) -> TransportG
 }
 #[test]
 fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
-    use sha2::{Digest, Sha256};
-
     let disconnected = (
         disconnected_world(),
         graph(
@@ -98,9 +96,7 @@ fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
     );
     for (name, (c, g)) in [("disconnected", disconnected), ("courtyard", courtyard)] {
         let expected = bake_reach(&c, &g);
-        let pack = encode(&c, &g, &[]).unwrap();
-        let digest: [u8; 32] = Sha256::digest(&pack).into();
-        let bytes = encode_reach_sidecar(c.origin, c.width, c.height, &expected, &digest);
+        let bytes = encode_reach_sidecar(c.origin, c.width, c.height, &expected);
         let side = decode_reach_sidecar(&bytes).unwrap();
         assert_eq!(
             side.bits, expected,
@@ -109,14 +105,11 @@ fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
         assert_eq!(side.word_count, expected.len());
         assert_eq!(side.origin, c.origin);
         assert_eq!((side.width, side.height), (c.width, c.height));
-        assert_eq!(sha256_hex(&side.binding), sha256_hex(&digest));
     }
 }
 
 #[test]
-fn same_geometry_different_transport_does_not_reuse_reach_binding() {
-    use sha2::{Digest, Sha256};
-
+fn same_geometry_different_transport_has_distinct_reach_bits() {
     let c = disconnected_world();
     let corner = graph(
         vec![edge(
@@ -142,14 +135,11 @@ fn same_geometry_different_transport_does_not_reuse_reach_binding() {
         bits_a, bits_b,
         "different seeds must produce different reach"
     );
-    let pack_a = encode(&c, &corner, &[]).unwrap();
-    let pack_b = encode(&c, &island, &[]).unwrap();
-    let digest_a: [u8; 32] = Sha256::digest(&pack_a).into();
-    let digest_b: [u8; 32] = Sha256::digest(&pack_b).into();
-    assert_ne!(digest_a, digest_b);
-    let side_a = encode_reach_sidecar(c.origin, c.width, c.height, &bits_a, &digest_a);
-    let decoded_a = decode_reach_sidecar(&side_a).unwrap();
-    assert_eq!(sha256_hex(&decoded_a.binding), sha256_hex(&digest_a));
-    assert_ne!(sha256_hex(&decoded_a.binding), sha256_hex(&digest_b));
-    assert_ne!(decoded_a.bits, bits_b);
+    let bytes_a = encode_reach_sidecar(c.origin, c.width, c.height, &bits_a);
+    let bytes_b = encode_reach_sidecar(c.origin, c.width, c.height, &bits_b);
+    let decoded_a = decode_reach_sidecar(&bytes_a).unwrap();
+    let decoded_b = decode_reach_sidecar(&bytes_b).unwrap();
+    assert_eq!(decoded_a.bits, bits_a);
+    assert_eq!(decoded_b.bits, bits_b);
+    assert_ne!(decoded_a.bits, decoded_b.bits);
 }

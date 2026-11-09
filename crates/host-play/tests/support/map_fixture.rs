@@ -3,12 +3,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use nav_planner::collision::WorldCollision;
-use nav_planner::map::identity::Digest;
 use nav_planner::tile::Tile;
 use nav_planner::world::NavWorld;
 
 use super::map_host;
-use map_host::profile::{CacheManifest, NavManifest, ProfileEnvironment};
+use map_host::profile::ProfileEnvironment;
 use map_host::{Play, ProfileOptions, SharedClientTemplate, SlotArm, SlotStatus};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -39,7 +38,6 @@ impl MapFixture {
             "textures",
             "wordenc",
             "sounds",
-            "manifest-289.json",
         ] {
             std::fs::copy(source.join(name), root.join(name)).unwrap();
         }
@@ -69,55 +67,29 @@ impl MapFixture {
         let bytes = nav_bake::pack::encode(collision, &world.graph, world.banks()).unwrap();
         let pack = root.join("selected.navpack");
         std::fs::write(&pack, &bytes).unwrap();
-        let manifest = NavManifest {
-            revision: 289,
-            cache_id: CacheManifest::capture(289, &root).unwrap().identity(),
-            content_id: None,
-            source_sha256: None,
-            nav_sha256: Digest::of(&bytes).to_string(),
-            flags_sha256: None,
-            reach_sha256: None,
-            canlight_sha256: None,
-            pois_sha256: None,
-            zone_count: world
-                .graph
-                .zones
-                .as_ref()
-                .map_or(0, |table| table.zones().len() as u32),
-            zone_npc_count: world.graph.zones.as_ref().map_or(0, |table| {
-                table
-                    .zones()
-                    .iter()
-                    .filter(|zone| table.kinds()[usize::from(zone.kind)].npc_id >= 0)
-                    .count() as u32
-            }),
-        };
-        std::fs::write(
-            map_host::profile::nav_manifest_path(&pack),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        let profile = ProfileOptions {
+        let mut options = ProfileOptions {
             profile: Some(profile.into()),
             revision: Some("289".into()),
             cache_dir: Some(root.clone()),
-            cache_manifest: Some(root.join("manifest-289.json")),
             nav_pack: Some(pack),
             ..Default::default()
+        };
+        let environment = ProfileEnvironment {
+            home: Some(root.clone()),
+            engine_dir: Some(root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        };
+        let mut selected = options.resolve_with_env(None, &environment).unwrap();
+        if selected.transport() == client::Transport::Tcp {
+            // Local fixtures have no guarded world.json, so keep their asset
+            // endpoint explicit. WSS profiles retain the selected roster pair.
+            options.asset_host = Some("127.0.0.1".into());
+            options.http_port = Some(9);
+            selected = options.resolve_with_env(None, &environment).unwrap();
         }
-        .resolve_with_env(
-            None,
-            &ProfileEnvironment {
-                home: Some(root.clone()),
-                engine_dir: Some(root.join("engine")),
-                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .bind()
-        .unwrap();
+        let profile = selected.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
         Self { root, template }
     }

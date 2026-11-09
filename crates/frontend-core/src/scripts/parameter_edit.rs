@@ -225,7 +225,7 @@ pub fn resolve_parameter_options(
     bag: &serde_json::Map<String, Value>,
     loadouts: &super::Loadouts,
     game_data: Option<&api::game_data::SelectedGameData>,
-) -> ParameterOptions {
+) -> Result<ParameterOptions, api::selected::FactError> {
     let def = def.def();
     resolve_parameter_options_with_registry(def, bag, loadouts.store(), game_data, None)
 }
@@ -236,17 +236,17 @@ fn resolve_parameter_options_with_registry(
     loadouts: &script::LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
     path_registry: Option<&script::quester::registry::PathRegistry>,
-) -> ParameterOptions {
+) -> Result<ParameterOptions, api::selected::FactError> {
     let source = def.options_from.as_deref().unwrap_or_default();
     if source == "released-paths" || source == "released-path-order" {
         if let Some(registry) = path_registry {
-            return resolve_released_path_options(def, bag, registry);
+            return Ok(resolve_released_path_options(def, bag, registry));
         }
         let registry = script::quester::registry::snapshot();
-        return resolve_released_path_options(def, bag, &registry);
+        return Ok(resolve_released_path_options(def, bag, &registry));
     }
 
-    let base = script::resolve_setting_options_with_labels(def, loadouts, game_data);
+    let base = script::resolve_setting_options_with_labels(def, loadouts, game_data)?;
     let mut options = ParameterOptions {
         values: base.values,
         labels: base.labels,
@@ -262,7 +262,7 @@ fn resolve_parameter_options_with_registry(
         } else {
             preserve_unknown_values(def, bag, &mut options);
         }
-        return options;
+        return Ok(options);
     }
 
     if let (Some(skill), Some(data)) = (source.strip_prefix("gather:"), game_data) {
@@ -282,7 +282,12 @@ fn resolve_parameter_options_with_registry(
     if source.starts_with("gather:") || source == "gatherer-food" {
         preserve_unknown_values(def, bag, &mut options);
     }
-    options
+    Ok(options)
+}
+
+fn qualified_path_row(row: &script::quester::registry::PathRow) -> bool {
+    row.unavailable.is_none()
+        && row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
 }
 
 fn resolve_released_path_options(
@@ -297,12 +302,21 @@ fn resolve_released_path_options(
     if source == "released-paths" {
         for row in rows {
             options.values.push(row.id.clone());
-            options.labels.push(row.label.clone());
+            let label = if row.unavailable.is_none() && !qualified_path_row(row) {
+                format!(
+                    "{} — {}",
+                    row.label,
+                    script::quester::queue::UNQUALIFIED_PATH_REASON
+                )
+            } else {
+                row.label.clone()
+            };
+            options.labels.push(label);
         }
         move_unselectable_to_preserved(&mut options, |id| {
             rows.iter()
                 .find(|row| row.id == id)
-                .is_some_and(|row| row.unavailable.is_none())
+                .is_some_and(qualified_path_row)
         });
         preserve_unknown_values(def, bag, &mut options);
         return options;
@@ -327,7 +341,8 @@ fn resolve_released_path_options(
         if !ids.contains(id)
             && rows
                 .iter()
-                .any(|row| row.id == *id && row.unavailable.is_some())
+                .find(|row| row.id == *id)
+                .is_some_and(|row| !qualified_path_row(row))
         {
             ids.push(id.clone());
         }
@@ -336,7 +351,7 @@ fn resolve_released_path_options(
         let Some(row) = rows.iter().find(|row| row.id == id) else {
             continue;
         };
-        let display = if row.source == script::quester::registry::PathSource::Bundled
+        let mut display = if row.source == script::quester::registry::PathSource::Bundled
             && row.unavailable.is_none()
         {
             let display = def
@@ -355,6 +370,10 @@ fn resolve_released_path_options(
         } else {
             row.label.clone()
         };
+        if row.unavailable.is_none() && !qualified_path_row(row) {
+            display.push_str(" — ");
+            display.push_str(script::quester::queue::UNQUALIFIED_PATH_REASON);
+        }
         let label = priority
             .iter()
             .position(|selected| selected == &id)
@@ -368,7 +387,7 @@ fn resolve_released_path_options(
     move_unselectable_to_preserved(&mut options, |id| {
         rows.iter()
             .find(|row| row.id == id)
-            .is_some_and(|row| row.unavailable.is_none())
+            .is_some_and(qualified_path_row)
     });
     preserve_unknown_values(def, bag, &mut options);
     options
@@ -1353,7 +1372,30 @@ mod tests {
     }
 
     #[test]
+    fn fact_backed_option_errors_are_propagated() {
+        let def = source_setting("bank", "string", "named-banks");
+        let options = resolve_parameter_options(
+            SettingView::new(&def),
+            &serde_json::Map::new(),
+            &Loadouts::default(),
+            None,
+        );
+        if api::game_data::local_game_data_available() {
+            assert!(options.is_ok());
+        } else {
+            assert!(matches!(
+                options,
+                Err(api::selected::FactError::FamilyUnavailable(_))
+            ));
+        }
+    }
+
+    #[test]
     fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
         let loadouts = Loadouts::default();
 
@@ -1368,7 +1410,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(
             options.preserved, 2,
             "Jungle is refused and the saved resource is unknown"
@@ -1413,7 +1456,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         let group = data
             .gather_option("fishing", "fishing.saltfish.op1")
             .expect("legacy fishing id resolves");
@@ -1434,7 +1478,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(food_options.values.first().map(String::as_str), Some(""));
         assert_eq!(
             food_options.labels.first().map(String::as_str),
@@ -1444,37 +1489,33 @@ mod tests {
         assert_eq!(food_options.label_for("LOBSTER"), "Lobster");
 
         let mut order = source_setting("order_override", "string[]", "released-path-order");
-        order.options = vec!["cook".into(), "sheep".into()];
-        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
-        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        order.options = vec!["arena".into(), "ball".into()];
+        order.option_labels = vec!["Arena display".into(), "Ball display".into()];
+        bag.insert("quests".into(), serde_json::json!(["ball", "arena"]));
         bag.insert(
             "order_override".into(),
-            serde_json::json!(["cook", "sheep"]),
+            serde_json::json!(["arena", "ball"]),
         );
         let order_options =
-            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None);
-        assert_eq!(order_options.values, ["sheep", "cook"]);
+            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();
+        assert_eq!(order_options.values, ["ball", "arena"]);
         assert_eq!(order_options.labels.len(), 2);
-        assert_eq!(order_options.labels[0], "2. Sheep display");
-        // A concurrent Path reload may replace the process-wide cook label;
-        // its display name changes, but the requested order never does.
+        assert!(order_options.labels[0].starts_with("2. Ball display"));
+        assert!(order_options.labels[0].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
+        // Both ids are bundled drafts that no Path reload test replaces.
         assert!(
-            [
-                "1. Cook display",
-                "1. Folder Cook [folder]",
-                "1. Edited Again [folder]",
-            ]
-            .contains(&order_options.labels[1].as_str()),
+            order_options.labels[1].starts_with("1. Arena display"),
             "{:?}",
             order_options.labels
         );
+        assert!(order_options.labels[1].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
 
         let mut paths = source_setting("quests", "string[]", "released-paths");
-        paths.options = vec!["cook".into(), "sheep".into()];
-        paths.option_labels = vec!["Cook display".into(), "Sheep display".into()];
+        paths.options = vec!["arena".into(), "ball".into()];
+        paths.option_labels = vec!["Arena display".into(), "Ball display".into()];
         bag.insert("quests".into(), serde_json::json!(["removed-path"]));
         let quest_options =
-            resolve_parameter_options(SettingView::new(&paths), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&paths), &bag, &loadouts, None).unwrap();
         assert!(quest_options.values.contains(&"removed-path".to_string()));
         assert_eq!(
             quest_options.label_for("removed-path"),
@@ -1489,19 +1530,19 @@ mod tests {
         let skip = source_setting("skip", "string[]", "released-paths");
         bag.insert("skip".into(), serde_json::json!(["removed-path"]));
         let skip_options =
-            resolve_parameter_options(SettingView::new(&skip), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&skip), &bag, &loadouts, None).unwrap();
         assert_eq!(
             skip_options.label_for("removed-path"),
             "Unknown: removed-path"
         );
 
         let mut order = source_setting("order_override", "string[]", "released-path-order");
-        order.options = vec!["cook".into(), "sheep".into()];
-        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
-        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        order.options = vec!["arena".into(), "ball".into()];
+        order.option_labels = vec!["Arena display".into(), "Ball display".into()];
+        bag.insert("quests".into(), serde_json::json!(["ball", "arena"]));
         bag.insert("order_override".into(), serde_json::json!(["removed-path"]));
         let order_options =
-            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();
         assert_eq!(
             order_options.label_for("removed-path"),
             "Unknown: removed-path"
@@ -1512,7 +1553,8 @@ mod tests {
             &serde_json::Map::new(),
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
         assert!(
             unavailable.is_empty(),
             "unresolved list sources do not become text fields"
@@ -1539,15 +1581,16 @@ mod tests {
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
         let loadouts = Loadouts::default();
         let mut bag = serde_json::Map::new();
-        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        bag.insert("quests".into(), serde_json::json!(["priest"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
         let order = resolve_parameter_options(
             SettingView::new(quester_setting("order_override")),
             &bag,
             &loadouts,
             None,
-        );
-        assert_eq!(order.selectable(), ["cook"]);
+        )
+        .unwrap();
+        assert_eq!(order.selectable(), ["priest"]);
         assert_eq!(
             order.label_for("hauntedmine"),
             format!("1. Haunted Mine — {reason}")
@@ -1558,22 +1601,28 @@ mod tests {
     fn array_toggle_adds_choices_and_only_removes_preserved_rows() {
         let loadouts = Loadouts::default();
         let mut bag = serde_json::Map::new();
-        bag.insert("quests".into(), serde_json::json!(["cook"]));
+        bag.insert("quests".into(), serde_json::json!(["priest"]));
         let options = resolve_parameter_options(
             SettingView::new(quester_setting("quests")),
             &bag,
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
         let index_of = |id: &str| options.values.iter().position(|value| value == id).unwrap();
         let haunted = index_of("hauntedmine");
         assert!(!options.is_selectable_index(haunted));
-        let mut selected = vec!["cook".to_owned()];
+        let draft = index_of("druid");
+        assert!(!options.is_selectable_index(draft));
+        let qualified = index_of("priest");
+        let mut selected = vec!["priest".to_owned()];
         assert!(!options.toggle_array_choice(&mut selected, haunted));
-        assert_eq!(selected, ["cook"]);
-        assert!(options.toggle_array_choice(&mut selected, index_of("sheep")));
-        assert!(options.toggle_array_choice(&mut selected, index_of("cook")));
-        assert_eq!(selected, ["sheep"]);
+        assert!(!options.toggle_array_choice(&mut selected, draft));
+        assert_eq!(selected, ["priest"]);
+        assert!(options.toggle_array_choice(&mut selected, qualified));
+        assert!(selected.is_empty());
+        assert!(options.toggle_array_choice(&mut selected, qualified));
+        assert_eq!(selected, ["priest"]);
 
         let mut stored = vec!["hauntedmine".to_owned()];
         assert!(options.toggle_array_choice(&mut stored, haunted));
@@ -1595,7 +1644,8 @@ mod tests {
             &bag,
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
 
         assert!(
             options.is_empty(),
@@ -1643,8 +1693,9 @@ mod tests {
             }
             let mut empty = bag.clone();
             empty.insert("quests".into(), serde_json::json!([]));
-            let offered = resolve_parameter_options(SettingView::new(def), &empty, &loadouts, None);
-            assert!(offered.selectable().iter().any(|value| value == "cook"));
+            let offered =
+                resolve_parameter_options(SettingView::new(def), &empty, &loadouts, None).unwrap();
+            assert!(offered.selectable().iter().any(|value| value == "priest"));
             assert!(
                 offered
                     .selectable()
@@ -1657,7 +1708,8 @@ mod tests {
                 .iter()
                 .any(|value| value == "hauntedmine"));
 
-            let stored = resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None);
+            let stored =
+                resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None).unwrap();
             assert!(stored
                 .selectable()
                 .iter()
@@ -1674,6 +1726,10 @@ mod tests {
 
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let site = script::gatherer::settings::schema()
@@ -1681,14 +1737,16 @@ mod tests {
             .find(|field| field.id == "site")
             .expect("the Gatherer Site field uses shared options");
         let mut bag = serde_json::Map::new();
-        let bagless = resolve_parameter_options(SettingView::new(site), &bag, &loadouts, None);
+        let bagless =
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, None).unwrap();
         assert!(
             bagless.is_empty(),
             "script options remain empty without facts"
         );
 
         let woodcutting =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             woodcutting
                 .selectable()
@@ -1699,7 +1757,8 @@ mod tests {
 
         bag.insert("skill".into(), serde_json::json!("Mining"));
         let mining =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             mining
                 .selectable()
@@ -1726,7 +1785,8 @@ mod tests {
             .map(|site| site.id.clone())
             .collect::<Vec<_>>();
         let fishing =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert_eq!(fishing.selectable(), expected.as_slice());
         assert!(
             bag.get("fishingMethod")
@@ -1737,6 +1797,10 @@ mod tests {
 
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let site = script::gatherer::settings::schema()
@@ -1749,7 +1813,8 @@ mod tests {
         bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
 
         let options =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(options.is_empty(), "no surface site offers rune stones");
         assert_eq!(options.preserved, 1);
         assert_eq!(
@@ -1768,7 +1833,8 @@ mod tests {
             serde_json::json!("mining.barbarian_village.e"),
         );
         let choices =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(!choices.is_empty());
         assert!(choices
             .selectable()
@@ -1784,20 +1850,26 @@ mod tests {
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("site".into(), serde_json::json!("fishing.catherby"));
         let wrong_skill =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(wrong_skill
             .label_for("fishing.catherby")
             .ends_with("not a Mining site"));
 
         bag.insert("site".into(), serde_json::json!("removed-site"));
         let unknown =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert_eq!(unknown.label_for("removed-site"), "Unknown: removed-site");
         assert!(unknown.is_empty());
     }
 
     #[test]
     fn gather_sites_exclude_unselectable_resource_keys() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let refused = data
             .gather_resources_for("fishing")
@@ -1827,7 +1899,8 @@ mod tests {
         bag.insert("fishingMethod".into(), serde_json::json!(refused.key));
 
         let options =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             refused_site_ids
                 .iter()
@@ -1864,6 +1937,10 @@ mod tests {
 
     #[test]
     fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let fishing = source_setting("fishingMethod", "string", "gather:fishing");
@@ -1872,7 +1949,8 @@ mod tests {
             &serde_json::Map::new(),
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         let selectable = data
             .gather_resources_for("fishing")
             .filter(|row| row.selectable)
@@ -1920,6 +1998,18 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let Some(cook_path) = api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../script/paths/289/cook.json"),
+            "real 289 cook Path template",
+        ) else {
+            return;
+        };
+        let cook_template = std::fs::read(cook_path).unwrap();
+
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "parameter-path-rows-{}-{}",
@@ -1934,13 +2024,24 @@ mod tests {
             }
         }
         let _remove = RemoveFolder(folder.clone());
+        let qualified_id = PathRegistry::Bundled
+            .rows()
+            .iter()
+            .find(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+                    && row.unavailable.is_none()
+            })
+            .expect("the bundled registry has a qualified Path")
+            .id
+            .clone();
 
         let write_path = |id: &str, display_name: &str, invalid: bool| {
-            let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../script/paths/289/cook.json"
-            )))
-            .unwrap();
+            let template = if id == qualified_id {
+                script::quester::registry::bundled_path(id).expect("qualified Path bytes")
+            } else {
+                cook_template.as_slice()
+            };
+            let mut document: serde_json::Value = serde_json::from_slice(template).unwrap();
             document["id"] = serde_json::json!(id);
             document["display_name"] = serde_json::json!(display_name);
             document["roles"][0]["sequences"][0]["steps"][0]["comment"] =
@@ -1955,7 +2056,7 @@ mod tests {
             )
             .unwrap();
         };
-        write_path("cook", "Folder Cook", false);
+        write_path(&qualified_id, "Folder Qualified", false);
         write_path("fresh-draft", "Fresh Draft", false);
         write_path("broken-draft", "Broken Draft", true);
         std::fs::write(
@@ -1985,7 +2086,7 @@ mod tests {
         let registry = FamilyPreparation::run(move |worker| {
             let quests =
                 api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-            PathRegistry::load(&source, &selected, &quests, worker).unwrap()
+            PathRegistry::load(&source, &selected, &quests, worker, None).unwrap()
         })
         .expect("spawn Path compilation")
         .join()
@@ -1995,7 +2096,7 @@ mod tests {
         let mut bag = serde_json::Map::new();
         bag.insert(
             "quests".into(),
-            serde_json::json!(["cook", "fresh-draft", "broken-draft"]),
+            serde_json::json!([qualified_id.as_str(), "fresh-draft", "broken-draft"]),
         );
         let mut paths = source_setting("quests", "string[]", "released-paths");
         paths.options = vec!["stale-schema-option".into()];
@@ -2006,24 +2107,30 @@ mod tests {
             loadouts.store(),
             None,
             Some(&registry),
-        );
+        )
+        .unwrap();
         assert!(!options
             .values
             .iter()
             .any(|value| value == "stale-schema-option"));
-        let cook = options
+        let qualified = options
             .values
             .iter()
-            .position(|value| value == "cook")
+            .position(|value| value == &qualified_id)
             .unwrap();
-        assert_eq!(options.labels[cook], "Folder Cook [folder]");
+        assert_eq!(options.labels[qualified], "Folder Qualified [folder]");
+        assert!(options.is_selectable_index(qualified));
         let draft = options
             .values
             .iter()
             .position(|value| value == "fresh-draft")
             .unwrap();
-        assert_eq!(options.labels[draft], "Fresh Draft [draft]");
-        assert!(options.is_selectable_index(draft));
+        assert!(
+            options.labels[draft].contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+            "{}",
+            options.labels[draft]
+        );
+        assert!(!options.is_selectable_index(draft));
         let broken = options
             .values
             .iter()
@@ -2049,7 +2156,7 @@ mod tests {
         order.option_labels = vec!["Stale schema label".into()];
         bag.insert(
             "order_override".into(),
-            serde_json::json!(["fresh-draft", "cook", "broken-draft"]),
+            serde_json::json!(["fresh-draft", qualified_id.as_str(), "broken-draft"]),
         );
         let ordered = resolve_parameter_options_with_registry(
             &order,
@@ -2057,53 +2164,114 @@ mod tests {
             loadouts.store(),
             None,
             Some(&registry),
-        );
+        )
+        .unwrap();
         assert!(!ordered
             .values
             .iter()
             .any(|value| value == "stale-schema-option"));
-        assert_eq!(ordered.label_for("fresh-draft"), "1. Fresh Draft [draft]");
-        assert_eq!(ordered.label_for("cook"), "2. Folder Cook [folder]");
+        assert!(ordered
+            .label_for("fresh-draft")
+            .contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
+        assert_eq!(
+            ordered.label_for(&qualified_id),
+            "2. Folder Qualified [folder]"
+        );
         assert!(!ordered
             .selectable()
             .iter()
-            .any(|value| value == "broken-draft"));
+            .any(|value| value == "fresh-draft" || value == "broken-draft"));
         assert!(ordered.label_for("broken-draft").contains("invalid-args"));
+        assert!(!ordered
+            .label_for("broken-draft")
+            .contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
     }
+
     #[test]
-    fn bundled_drafts_are_marked_in_both_quest_and_priority_pickers() {
+    fn bundled_drafts_are_refused_in_both_quest_and_priority_pickers() {
         use script::quester::registry::PathRegistry;
 
         let loadouts = Loadouts::default();
         let registry = PathRegistry::Bundled;
-        let bag = serde_json::Map::new();
-        let quests = resolve_parameter_options_with_registry(
-            quester_setting("quests"),
-            &bag,
-            loadouts.store(),
-            None,
-            Some(&registry),
-        );
-        let priorities = resolve_parameter_options_with_registry(
-            quester_setting("order_override"),
-            &bag,
-            loadouts.store(),
-            None,
-            Some(&registry),
-        );
-        for id in ["druid", "fluffs", "junglepotion", "seaslug", "totem"] {
-            for options in [&quests, &priorities] {
-                let position = options
-                    .values
-                    .iter()
-                    .position(|value| value == id)
-                    .unwrap_or_else(|| panic!("{id} missing from picker"));
-                assert!(
-                    options.labels[position].ends_with("[draft]"),
-                    "{id} label was {}",
-                    options.labels[position]
-                );
-            }
+        let qualified = registry
+            .rows()
+            .iter()
+            .find(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+                    && row.unavailable.is_none()
+            })
+            .expect("the bundled registry has a qualified Path")
+            .id
+            .clone();
+        let drafts: Vec<_> = registry
+            .rows()
+            .iter()
+            .filter(|row| {
+                row.status == Some(script::quester::queue::ReleasePathStatus::Draft)
+                    && row.unavailable.is_none()
+            })
+            .map(|row| row.id.clone())
+            .collect();
+        assert!(!drafts.is_empty(), "the bundled registry has draft Paths");
+        for draft in drafts {
+            let mut bag = serde_json::Map::new();
+            bag.insert(
+                "quests".into(),
+                serde_json::json!([qualified.as_str(), draft.as_str()]),
+            );
+            let quests = resolve_parameter_options_with_registry(
+                quester_setting("quests"),
+                &bag,
+                loadouts.store(),
+                None,
+                Some(&registry),
+            )
+            .unwrap();
+            assert!(quests.selectable().contains(&qualified));
+            assert!(!quests.selectable().contains(&draft));
+            assert!(
+                quests
+                    .label_for(&draft)
+                    .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+                "{}",
+                quests.label_for(&draft)
+            );
+            assert!(registry.rows().iter().all(|row| {
+                quests.selectable().iter().all(|id| {
+                    id != &row.id
+                        || (row.unavailable.is_none()
+                            && row.status
+                                == Some(script::quester::queue::ReleasePathStatus::Qualified))
+                })
+            }));
+            println!(
+                "release-refusal picker quests: {}",
+                quests.label_for(&draft)
+            );
+
+            bag.insert("quests".into(), serde_json::json!([qualified.as_str()]));
+            bag.insert("order_override".into(), serde_json::json!([draft.as_str()]));
+            let priorities = resolve_parameter_options_with_registry(
+                quester_setting("order_override"),
+                &bag,
+                loadouts.store(),
+                None,
+                Some(&registry),
+            )
+            .unwrap();
+            assert!(priorities.selectable().contains(&qualified));
+            assert!(!priorities.selectable().contains(&draft));
+            assert!(
+                priorities
+                    .label_for(&draft)
+                    .contains(script::quester::queue::UNQUALIFIED_PATH_REASON),
+                "{}",
+                priorities.label_for(&draft)
+            );
+            println!(
+                "release-refusal picker order_override: {}",
+                priorities.label_for(&draft)
+            );
         }
     }
 
@@ -2138,7 +2306,8 @@ export const SETTINGS: SettingsSchema = {
         let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
         let options =
-            resolve_parameter_options(SettingView::new(loadout_def), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(loadout_def), &bag, &loadouts, None)
+                .unwrap();
         assert_eq!(
             options.selectable(),
             &[
@@ -2281,7 +2450,8 @@ export const SETTINGS: SettingsSchema = {
                 refusal.to_string().contains("no loadouts exist"),
                 "{name}: {refusal}"
             );
-            let options = resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None);
+            let options =
+                resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None).unwrap();
             assert_eq!(
                 options.selectable(),
                 ["First choice", "Second choice"],

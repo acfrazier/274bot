@@ -1,0 +1,118 @@
+{
+  "$schema":"../path.schema.json",
+  "schema":3,
+  "id":"chompybird",
+  "display_name":"Big Chompy Bird Hunting",
+  "required":["fletching-5","crafting-5"],
+  "tested_stats":null,
+  "partner":null,
+  "quest":{
+    "members":true,
+    "quest_points":2,
+    "requirements":[
+      {"id":"fletching-5","kind":{"Skill":{"skill":"fletching","level":5}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:8-14"},
+      {"id":"crafting-5","kind":{"Skill":{"skill":"crafting","level":5}},"at":"start","source":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67"}
+    ],
+    "items":[],
+    "acquire":{},"bank":"nearest","coin_float":50,"loadouts":{},"areas":{},"tools":["obj:bronze_axe","obj:knife","obj:chisel","obj:wolf_bones","obj:achey_tree_logs","obj:feather","obj:ogre_arrow_shaft","obj:ogre_headless_arrow","obj:wolfbone_arrowheads","obj:ogre_arrow"],"owns_inventory":true
+  },
+  "roles":[{
+    "role":null,"progress_binding":"journal:chompybird",
+    "progress":{"colour":{"not_started":"chompybird:0","in_progress":"chompybird:5","complete":"chompybird:65"},
+      "rules":[
+        {"stage":"chompybird:30","all":["i dropped a fatsy toady"],"any":[],"not":[],"varp":30},
+        {"stage":"chompybird:25","all":["i should drop a toad"],"any":[],"not":[],"varp":25},
+        {"stage":"chompybird:15","all":["rantz told me", "grow fat on swamp gas"],"any":[],"not":["i managed to trap some"],"varp":15},
+        {"stage":"chompybird:10","all":["rantz says i need to get some"],"any":[],"not":[],"varp":10},
+        {"stage":"chompybird:5","all":["i agreed to get","some"],"any":[],"not":[],"varp":5}
+      ],"flags":[],"monotonic":false},
+    "prelude":[],"sequences":[
+      {"stage":"chompybird:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start-rantz","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:24-49; content/maps/m41_46.jm2:4491-4492; content/scripts/quests/quest_chompybird/configs/quest_chompybird.npc:1-8",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["Ok, I'll make you some 'stabbers'."]}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"in_progress"}}}}
+      ]},
+      {"stage":"chompybird:5","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
+        {"id":"enter-cave-for-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:1-3; content/maps/m41_46.jm2:4198.",
+         "args":{"target":{"loc":"rantzogrecaveentrance"},"op":"Enter","anchor":{"tile":[2629,2998,0],"source":"content/maps/m41_46.jm2:4198"},"radius":5},
+         "skip_if":{"Any":[{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}},{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}}]},
+         "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}}},
+        {"id":"buy-fycie-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/fycie.rs2:11-40. Fycie sells 25 feathers for 50 coins.",
+         "args":{"target":{"npc":"fycie"},"op":"Talk","anchor":{"tile":[2650,9393,0],"source":"content/maps/m41_146.jm2:6419; content/pack/npc.pack:1012"},"radius":8,"dialogue":{"prefer":["Ok, I'll give you 50 bright pretties."],"strict":true}},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}}},
+        {"id":"leave-cave-with-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:5-10; content/maps/m41_146.jm2:5229.",
+         "args":{"target":{"loc":"rantzogrecaveexitl"},"op":"Walk through","anchor":{"tile":[2647,9377,0],"source":"content/maps/m41_146.jm2:5229"},"radius":5},
+         "skip_if":{"Not":{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}}},
+         "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2630,2997,0],"radius":3}}}},
+        {"id":"cut-three-achey-logs","kind":"gather","version":1,"advances":false,
+         "comment":"content/scripts/skill_woodcutting/configs/trees.dbrow:70-83; content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40. Three logs yield at least six shafts.",
+         "args":{"skill":"woodcutting","resource":"achey","until":{"obj":"achey_tree_logs","qty":3},"anchor":{"tile":[2624,2948,0],"source":"content/maps/m41_46.jm2:4101; content/pack/loc.pack:2024"},"radius":12},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"achey_tree_logs","qty":3}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"achey_tree_logs","qty":3}}}},
+        {"id":"collect-three-wolf-bones","kind":"combat","version":1,"advances":false,
+         "comment":"content/scripts/_unpack/225/all.npc:2379-2403 gives the level-64 Feldip wolf 69 hitpoints and a guaranteed wolf-bones death drop. Three bones yield at least six tips: content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.",
+         "args":{"target":{"npc":"wolf","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[2610,2961,0],"source":"content/maps/m40_46.jm2:5503; content/pack/npc.pack:96"},"lost_radius":20,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":12,"auto_retaliate":true},"loot":[{"obj":"wolf_bones","qty":3}],"until":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}}},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}}},
+        {"id":"cut-shafts-1","kind":"use_on","version":1,"advances":false,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":2}}}},
+        {"id":"cut-shafts-2","kind":"use_on","version":1,"advances":false,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":4}}}},
+        {"id":"cut-shafts-3","kind":"use_on","version":1,"advances":false,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":6}}}},
+        {"id":"chisel-tips-1","kind":"use_on","version":1,"advances":false,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":2}}}},
+        {"id":"chisel-tips-2","kind":"use_on","version":1,"advances":false,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":4}}}},
+        {"id":"chisel-tips-3","kind":"use_on","version":1,"advances":false,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":6}}}},
+        {"id":"feather-shafts","kind":"use_on","version":1,"advances":false,"args":{"item":"feather","target":{"item":"ogre_arrow_shaft"},"product":"ogre_headless_arrow"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:70-105. Six shafts consume 24 feathers.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_headless_arrow","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_headless_arrow","qty":6}}}},
+        {"id":"fletch-ogre-arrows","kind":"use_on","version":1,"advances":false,
+         "comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:13-15,110-142. This action sets the made-arrows bit required by Rantz.",
+         "args":{"item":"wolfbone_arrowheads","target":{"item":"ogre_headless_arrow"},"product":"ogre_arrow"},
+         "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ogre_headless_arrow"}}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow","qty":6}}}},
+        {"id":"give-arrows","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:238-245,263-285,287-315; content/scripts/quests/quest_chompybird/configs/quest_chompybird.npc:1-8",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["How do we make the chompys come?","Ok, thanks."],"answer_once":true,"strict":true}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"chompybird","any":["chompybird:15"]}}}}
+      ]},
+      {"stage":"chompybird:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"ask-about-bait","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:62-69,287-296,313-315.",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["How do we make the chompys come?","Ok, thanks."],"answer_once":true,"strict":true}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"chompybird","any":["chompybird:15"]}}}}
+      ]},
+      {"stage":"chompybird:15","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
+        {"id":"enter-rantz-cave","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:1-3; content/maps/m41_46.jm2:4198.",
+         "args":{"target":{"loc":"rantzogrecaveentrance"},"op":"Enter","anchor":{"tile":[2629,2998,0],"source":"content/maps/m41_46.jm2:4198"},"radius":5},
+         "skip_if":{"Any":[{"Fact":{"kind":"near","version":1,"args":{"tile":[2637,9398,0],"radius":22}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"empty_ogre_bellows"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filled_ogre_bellow3"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}}]},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2637,9398,0],"radius":22}}}},
+        {"id":"open-ogre-chest","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_chompybird/scripts/ogre_chest.rs2:1-30. The strength roll can fail and lower Strength.",
+         "args":{"target":{"loc":"chompybird_chest"},"op":"Unlock","anchor":{"tile":[2637,9398,0],"source":"content/maps/m41_146.jm2:4838"},"radius":4},
+         "skip_if":{"Any":[{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"chompybird_chest_open"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"empty_ogre_bellows"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filled_ogre_bellow3"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}}]},"settle":{"Fact":{"kind":"loc_present","version":1,"args":{"loc":"chompybird_chest_open"}}}},
+        {"id":"take-bellows","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_chompybird/scripts/ogre_chest.rs2:32-44; the chest refuses another pair if one is banked.",
+         "args":{"target":{"loc":"chompybird_chest_open"},"op":"Search","anchor":{"tile":[2637,9398,0],"source":"content/maps/m41_146.jm2:4838"},"radius":4},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"empty_ogre_bellows"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filled_ogre_bellow3"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"empty_ogre_bellows"}}}},
+        {"id":"leave-rantz-cave","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:5-10; content/maps/m41_146.jm2:5229.",
+         "args":{"target":{"loc":"rantzogrecaveexitl"},"op":"Walk through","anchor":{"tile":[2647,9377,0],"source":"content/maps/m41_146.jm2:5229"},"radius":5},
+         "skip_if":{"Not":{"Fact":{"kind":"near","version":1,"args":{"tile":[2637,9398,0],"radius":22}}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2630,2997,0],"radius":3}}}},
+        {"id":"fill-ogre-bellows","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:12-39; content/maps/m40_46.jm2:4957.",
+         "args":{"item":"empty_ogre_bellows","target":{"loc":"swampbubbles"},"anchor":{"tile":[2598,2965,0],"source":"content/maps/m40_46.jm2:4957"},"radius":5,"product":"filled_ogre_bellow3"},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filled_ogre_bellow3"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filled_ogre_bellow3"}}}},
+        {"id":"inflate-toad","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_chompybird/scripts/swamp_toad.rs2:24-69; content/maps/m40_46.jm2:5489-5497.",
+         "args":{"item":"filled_ogre_bellow3","target":{"npc":"toad"},"anchor":{"tile":[2599,2962,0],"source":"content/maps/m40_46.jm2:5493"},"radius":10,"product":"bloated_toad"},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bloated_toad"}}}},
+        {"id":"show-toad","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:62-74,317-329.",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"chompybird","any":["chompybird:25"]}}}}
+      ]},
+      {"stage":"chompybird:25","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"walk-to-bait-clearing","kind":"walk","version":1,"args":{"tile":[2636,2966,0],"radius":0,"source":"content/scripts/quests/quest_chompybird/scripts/bloated_toad.rs2:40-44"},"skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2636,2966,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2636,2966,0],"radius":0}}}},
+        {"id":"place-toad","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_chompybird/scripts/bloated_toad.rs2:34-74.",
+         "args":{"target":{"held":"bloated_toad"},"op":"Drop"},"skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"chompybird","any":["chompybird:30"]}}}}
+      ]},
+      {"stage":"chompybird:30","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"GAP-rebait-owned-chompy","kind":"wait","version":1,"advances":true,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}},"max_ticks":120,"park_on_timeout":true},"comment":"GAP REBAIT AND OWNERSHIP: content/scripts/quests/quest_chompybird/scripts/bloated_toad.rs2:89-116 can expire without spawning a bird. chompy_bird.rs2:86-128 restricts attacks to the bait owner. The path cannot yet coordinate replacement bait and an owned target.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}}}
+      ]},
+      {"stage":"chompybird:65","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

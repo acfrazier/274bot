@@ -1,7 +1,7 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use {
-    script_js::wire::encode_snapshot, script_js::wire::ReachViewInput,
-    script_js::wire::SceneEntityInput, script_js::wire::SnapshotInput, script_js::wire::TileInput,
+    script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput},
+    script_js::wire::encode_snapshot,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 
@@ -143,7 +143,7 @@ export default class EntityFamilyBot extends LoopingBot {
         const npcs = Npcs.all();
         const npc = npcs[0];
         const loc = Locs.query().first();
-        const players = Players.all();
+        const players = Players.query().results();
         const player = players[0];
         const item = GroundItems.query().first();
         const stale = new Npc({ index: npc.index, id: npc.id, name: 'changed' });

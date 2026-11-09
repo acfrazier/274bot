@@ -1,9 +1,9 @@
 use super::owner::Owner;
 use super::{ActionError, AssessReceipt, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
+use crate::interact::InteractReq;
 use crate::native_bank::{
     BankPickReceipt, BankPickRequest, ServicePickReceipt, ServicePickRequest,
 };
-use crate::shim::InteractReq;
 use api::identity::ActiveClock;
 use api::selected::RunKey;
 use std::num::NonZeroU64;
@@ -42,6 +42,21 @@ impl Runtime {
     /// run/session. A stale marker is never carried into the current run.
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
+    }
+
+    /// The live modal wait of this runtime's owner, sampled at `now` on the
+    /// owner's own active clock: the clock its machines read as
+    /// `ActionContext::active_now` (`slot/compiled.rs:411`).
+    pub fn modal_wait_tick(&mut self, now: Instant, tick: u64) -> Option<(NonZeroU64, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.modal_wait_tick(active_now, tick)
+    }
+
+    /// The live quiet read of this runtime's owner, sampled at `now` on the
+    /// owner's own clocks, as [`Self::modal_wait_tick`].
+    pub fn quiet_read_wait(&mut self, now: Instant, tick: u64) -> Option<(QuietReadOwner, u64)> {
+        let active_now = self.clock.now(now).as_duration();
+        self.ledger.as_mut()?.quiet_read_wait(now, active_now, tick)
     }
 }
 
@@ -109,12 +124,68 @@ pub struct BankDepositTrace {
 }
 
 pub struct HostAction {
-    pub(crate) owner: Arc<Owner>,
+    pub(crate) custody: HostCustody,
     pub request_id: NonZeroU64,
     pub batch: u64,
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
     pub bank_deposit: Option<Arc<BankDepositTrace>>,
+}
+
+/// The owner of one queued host action, and the host's custody of a single
+/// interaction or walk. The host takes queued work only through
+/// `SlotScript::take_native_action`, which releases the custody, and it
+/// records the interaction's receipt in that same observation pass. Every
+/// other way out of the queue drops the action unsent: a held tick
+/// (`SlotScript::seat_held_tick`, `GameplaySeat::held_tick`), a guardian
+/// hold (`GameplaySeat::hold`), a seat refusal, a session reset or a
+/// cancellation. Dropping armed custody marks the owner's current interaction
+/// as unsent, so a machine can tell a request that still waits for an eligible
+/// dispatch pass from one that no pass will ever send. A cancelled or
+/// superseded request is no longer the owner's current interaction, so the
+/// mark ignores it: `ActionContext::interaction_dispatch` already reports it
+/// unsent from that ownership.
+pub(crate) struct HostCustody {
+    owner: Arc<Owner>,
+    unsent: Option<NonZeroU64>,
+}
+
+impl HostCustody {
+    /// Custody of a single interaction: the request is marked unsent if it
+    /// leaves the queue other than through the host's take.
+    pub(crate) fn interaction(owner: Arc<Owner>, request: NonZeroU64) -> Self {
+        Self {
+            owner,
+            unsent: Some(request),
+        }
+    }
+
+    /// Custody of a walk: the request is marked unsent if it leaves the queue
+    /// other than through the host's take, so its machine can tell a route the
+    /// host never armed from one that is still being followed.
+    pub(crate) fn walk(owner: Arc<Owner>, request: NonZeroU64) -> Self {
+        Self {
+            owner,
+            unsent: Some(request),
+        }
+    }
+
+    /// Owner-only custody: batches, picks and assessments keep their own
+    /// receipt rules.
+    pub(crate) fn owner(owner: Arc<Owner>) -> Self {
+        Self {
+            owner,
+            unsent: None,
+        }
+    }
+}
+
+impl Drop for HostCustody {
+    fn drop(&mut self) {
+        if let Some(request) = self.unsent {
+            self.owner.note_unsent(request);
+        }
+    }
 }
 
 pub enum HostEffect {
@@ -177,28 +248,55 @@ pub struct QuietReadOwner {
 
 impl HostAction {
     pub fn live(&self) -> bool {
+        let owner = &self.custody.owner;
         match &self.effect {
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
             | HostEffect::ServicePick(_)
-            | HostEffect::AssessWalk(_) => self.owner.interaction_live(self.request_id),
-            HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
-            HostEffect::ServerOrdered(_) => self.owner.batch_live(self.request_id),
+            | HostEffect::AssessWalk(_) => owner.interaction_live(self.request_id),
+            HostEffect::Walk(_) => owner.walk_live(self.request_id),
+            HostEffect::ServerOrdered(_) => owner.batch_live(self.request_id),
         }
     }
     pub fn run(&self) -> RunKey {
-        self.owner.run
+        self.custody.owner.run
     }
     pub fn action_id(&self) -> NonZeroU64 {
-        self.owner.id
+        self.custody.owner.id
     }
     pub fn authority(&self) -> HostAuthority {
         HostAuthority {
-            owner: Arc::clone(&self.owner),
+            owner: Arc::clone(&self.custody.owner),
             request: self.request_id,
             walk: matches!(self.effect, HostEffect::Walk(_)),
         }
     }
+    /// The host has taken this action for dispatch in an eligible pass.
+    pub(crate) fn release_custody(&mut self) {
+        self.custody.unsent = None;
+    }
+}
+
+/// The quiet-read lease's wall bound. It is the paint-hide cap from the
+/// begin, and the hold's own bound from the begin and from each window the
+/// owner arms: a paused or stranded reader stops hiding the page, and stops
+/// holding the host, after this, whatever its owner does.
+pub(super) const QUIET_READ_WALL_BOUND: Duration = Duration::from_secs(10);
+
+/// The ledger's record of the live quiet read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QuietRead {
+    pub request: NonZeroU64,
+    pub lease: NonZeroU64,
+    /// Wall time of the begin. The paint-hide cap runs from here and never
+    /// moves.
+    pub since: Instant,
+    /// The lease's wall bound for the hold. It starts at the begin and each
+    /// window the owner arms (its click, its capture, its close) takes a
+    /// fresh bound from that poll, so a click never goes out against a lease
+    /// whose bound passes in the frame that sends it. The same rule as the
+    /// compatibility read's `renew_hold`.
+    pub hold_until: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +347,7 @@ pub struct Ledger {
     next_id: u64,
     pub(crate) outbox: Vec<HostAction>,
     pub(crate) walk: Option<WalkReceipt>,
+    pub(crate) walk_prereq_allow: Option<(NonZeroU64, super::PrereqAllow)>,
     pub(crate) walk_events: Vec<WalkEvent>,
     pub(crate) interaction: Option<InteractionReceipt>,
     pub(crate) interaction_request: Option<NonZeroU64>,
@@ -262,12 +361,33 @@ pub struct Ledger {
     pub(crate) assess_request: Option<NonZeroU64>,
     pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
-    pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
-    /// The open bank session (login run, snapshot session generation) known
-    /// to be in Item withdraw mode: a native machine opened it (the server
-    /// resets `%bankcert` on open) or pressed Item in it. It outlives one
-    /// machine so a later verb in the same session skips the press.
-    pub(crate) bank_item_session: Option<(RunKey, u64)>,
+    pub(crate) quiet_lease: Option<QuietRead>,
+    /// The quiet read's lease and the window its owner enforces.
+    pub(crate) quiet_deadline: Option<(NonZeroU64, super::WaitDeadline)>,
+    /// Last modal-wait lease number. A separate sequence, so a lease does not
+    /// shift the request ids that receipts and traces carry.
+    pub(crate) modal_wait_seq: u64,
+    /// The latest modal-wait lease and the bound its owner enforces.
+    pub(crate) modal_wait_deadline: Option<(NonZeroU64, super::WaitDeadline)>,
+    /// The latest open bank session a native machine of this account touched.
+    /// It outlives one machine, so a later verb in the same session skips the
+    /// Item press and a later reader can tell whose open it was.
+    pub(crate) bank_session: Option<BankSessionMark>,
+}
+
+/// What a native machine knows about one open bank session: the login run and
+/// the snapshot session generation it names, and two separate facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BankSessionMark {
+    pub(crate) run: RunKey,
+    pub(crate) generation: u64,
+    /// The session withdraws as items: a native machine opened it (the server
+    /// resets `%bankcert` on open) or pressed Item in it.
+    pub(crate) item_mode: bool,
+    /// A native bank machine of this account sent its own open request, and
+    /// this is the session that appeared after it. A session that a player
+    /// opened, or that a machine only found already open, never has this.
+    pub(crate) opened_by_machine: bool,
 }
 
 impl Default for Ledger {
@@ -277,6 +397,7 @@ impl Default for Ledger {
             next_id: 1,
             outbox: Vec::with_capacity(6),
             walk: None,
+            walk_prereq_allow: None,
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
@@ -289,13 +410,39 @@ impl Default for Ledger {
             assess_request: None,
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
-            quiet_since: None,
-            bank_item_session: None,
+            quiet_lease: None,
+            quiet_deadline: None,
+            modal_wait_seq: 0,
+            modal_wait_deadline: None,
+            bank_session: None,
         }
     }
 }
 
 impl Ledger {
+    /// Freeze consent on this live walk request, not its later terminal frame.
+    pub(crate) fn capture_walk_prereq_allow(
+        &mut self,
+        authority: &HostAuthority,
+        allow: super::PrereqAllow,
+    ) -> bool {
+        if !authority.walk
+            || !authority.live()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return false;
+        }
+        if let Some((request, captured)) = self.walk_prereq_allow {
+            if request == authority.request_id() {
+                return captured == allow;
+            }
+        }
+        self.walk_prereq_allow = Some((authority.request_id(), allow));
+        true
+    }
+
     /// Test-only borrow of the real queued host actions.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn test_outbox(&self) -> &[HostAction] {
@@ -338,23 +485,107 @@ impl Ledger {
         self.next_id = first.get().checked_add(count as u64).unwrap_or(0);
     }
 
+    /// The live quiet read. The lease ends at its wall bound: the begin's, or
+    /// the last window the owner armed.
+    ///
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). The owner renews the bound from its poll, but the
+    /// host reads the wall time later in the same frame, and a stall of the
+    /// process (a suspended or sleeping machine) can put the whole bound
+    /// between the two. The click that the poll queued is then still live in
+    /// the interaction authority, which this lease does not own. The sample
+    /// that releases the lease by expiry therefore also cancels the click or
+    /// close that the owner queued and the host has not yet dispatched: it
+    /// never goes out without a hold. A dispatched one is unchanged, and so is
+    /// its receipt. The owner learns of it at its next poll, where the lease
+    /// is no longer live ([`QuietReadLease::live`]): it fails its read, and
+    /// its own retry and timeout apply.
     pub fn quiet_read(&mut self, now: Instant) -> Option<QuietReadOwner> {
-        let (request, lease, since) = self.quiet_since?;
-        let owner = self.owner.as_ref()?;
+        let quiet = self.quiet_lease?;
+        let owner = Arc::clone(self.owner.as_ref()?);
         // Independent of the active action clock: a paused or stranded
         // reader must not keep hiding a modal indefinitely.
-        if now.saturating_duration_since(since) >= Duration::from_secs(10) {
-            owner.release_quiet(lease);
+        if now >= quiet.hold_until && owner.quiet(quiet.lease) {
+            owner.release_quiet(quiet.lease);
+            self.cancel_undispatched_interaction(&owner);
         }
-        if !owner.quiet(lease) {
-            self.quiet_since = None;
+        if !owner.quiet(quiet.lease) {
+            self.quiet_lease = None;
+            self.quiet_deadline = None;
             return None;
         }
         Some(QuietReadOwner {
             run: owner.run,
             action_id: owner.id,
-            request_id: request,
+            request_id: quiet.request,
         })
+    }
+
+    /// Cancel the owner's interaction that is queued and not yet dispatched:
+    /// the host's fence ([`HostAction::live`], [`HostAuthority::live`]) then
+    /// drops it, wherever it waits. A dispatched interaction has its receipt
+    /// (`complete_interaction`) and is not touched.
+    fn cancel_undispatched_interaction(&mut self, owner: &Owner) {
+        let Some(request) = self.interaction_request else {
+            return;
+        };
+        if self.interaction.is_none() && owner.interaction_live(request) {
+            owner.cancel_interaction(request);
+            self.outbox.retain(|action| action.request_id != request);
+        }
+    }
+
+    /// Whether the live quiet read still hides the journal page: the lease is
+    /// live and its paint-hide cap, [`QUIET_READ_WALL_BOUND`] from the begin,
+    /// has not passed. A later window of the owner does not move the cap.
+    pub fn quiet_paint_hidden(&mut self, now: Instant) -> bool {
+        self.quiet_read(now).is_some()
+            && self.quiet_lease.is_some_and(|quiet| {
+                now.saturating_duration_since(quiet.since) < QUIET_READ_WALL_BOUND
+            })
+    }
+
+    /// The live quiet read and the observed tick by which its owner ends it:
+    /// the window the owner armed last, or else the lease's own wall bound,
+    /// which [`Self::quiet_read`] enforces itself. `active_now` is the
+    /// owner's active clock at `now` ([`Runtime::quiet_read_wait`]).
+    pub(crate) fn quiet_read_wait(
+        &mut self,
+        now: Instant,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(QuietReadOwner, u64)> {
+        let quiet = self.quiet_read(now)?;
+        let lease = self.quiet_lease?;
+        let deadline_tick = match self.quiet_deadline.as_mut() {
+            Some((id, deadline)) if *id == lease.lease => deadline.owner_tick(active_now, tick),
+            _ => super::WaitDeadline::self_ending_tick(lease.hold_until, now, tick),
+        };
+        Some((quiet, deadline_tick))
+    }
+
+    /// The live foreground owner's modal-wait lease id: it waits for the page
+    /// its own interaction opens. Revocation clears it.
+    pub fn modal_wait(&self) -> Option<NonZeroU64> {
+        self.owner.as_ref()?.modal_wait()
+    }
+
+    /// The live modal wait and the observed tick by which its owner ends it.
+    /// Every lease is taken with its deadline
+    /// (`ActionContext::begin_modal_wait`). `active_now` is the owner's
+    /// active clock at the sample ([`Runtime::modal_wait_tick`]).
+    pub(crate) fn modal_wait_tick(
+        &mut self,
+        active_now: Duration,
+        tick: u64,
+    ) -> Option<(NonZeroU64, u64)> {
+        let lease = self.modal_wait()?;
+        let deadline_tick = match self.modal_wait_deadline.as_mut() {
+            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
+            // Unreachable: a lease without its deadline ends at the host's margin.
+            _ => 0,
+        };
+        Some((lease, deadline_tick))
     }
 
     pub fn revoke_foreground(&mut self) {
@@ -364,6 +595,7 @@ impl Ledger {
         self.outbox
             .retain(|action| matches!(action.effect, HostEffect::AssessWalk(_)));
         self.walk = None;
+        self.walk_prereq_allow = None;
         self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;
@@ -373,7 +605,7 @@ impl Ledger {
         self.server_ordered_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
-        self.quiet_since = None;
+        self.quiet_lease = None;
     }
 
     pub fn revoke(&mut self) {
@@ -384,7 +616,7 @@ impl Ledger {
         self.outbox.clear();
         self.assess_receipt = None;
         self.assess_request = None;
-        self.bank_item_session = None;
+        self.bank_session = None;
     }
 
     pub fn complete_assess_walk(&mut self, authority: &HostAuthority, receipt: AssessReceipt) {
@@ -490,12 +722,126 @@ impl Drop for Ledger {
 
 /// The observed tick, not the caller's polling rate, replenishes the allowance.
 /// This value is slot-owned even when there is no native action ledger.
-#[derive(Default)]
+///
+/// It also holds the slot's view of a guardian hold, in the spare bytes of its
+/// 24-byte layout (`scene_fence_uses_four_bytes_and_tick_budget_stays_compact`):
+/// where the hold stands, whether the player was teleported while it lasted,
+/// and the last observed player position that the teleport rule compares.
 pub(crate) struct TickBudget {
-    tick: Option<u64>,
+    /// The last observed tick, or [`NO_TICK`] before the first one.
+    tick: u64,
+    scene: SceneFence,
+    /// The tick (low 32 bits) and packed tile of the last host frame's player
+    /// fix ([`pack_fix`]); `fix == 0` means none was observed.
+    fix_tick: u32,
+    fix: u32,
     transitions: u8,
     pub(super) events: u8,
-    scene: SceneFence,
+    /// [`HOLD_PHASE_MASK`] bits: where the guardian hold stands; and
+    /// [`HOLD_TELEPORTED`].
+    hold: u8,
+}
+
+const NO_TICK: u64 = u64::MAX;
+
+impl Default for TickBudget {
+    fn default() -> Self {
+        Self {
+            tick: NO_TICK,
+            scene: SceneFence::default(),
+            fix_tick: 0,
+            fix: 0,
+            transitions: 0,
+            events: 0,
+            hold: 0,
+        }
+    }
+}
+
+/// No hold is pending for the actions.
+const HOLD_NONE: u8 = 0;
+/// The guardian holds the slot: no script tick runs.
+const HOLD_HELD: u8 = 1;
+/// The hold ended and no script tick has run since.
+const HOLD_ENDED: u8 = 2;
+/// The first observed tick after the hold. An in-flight server effect of the
+/// guardian's last packet can still land in it, so an interrupted action
+/// waits ([`AfterHold::Settling`]).
+const HOLD_SETTLE: u8 = 3;
+/// A later observed tick: the interrupted action re-checks its goal and
+/// resumes once ([`AfterHold::Resume`]).
+const HOLD_RESUME: u8 = 4;
+const HOLD_PHASE_MASK: u8 = 0b111;
+/// The player's position changed by a teleport while the hold lasted.
+const HOLD_TELEPORTED: u8 = 0x80;
+
+/// Where an action's own tick stands after a guardian hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterHold {
+    /// No guardian hold is pending for the actions.
+    None,
+    /// The first observed tick after the hold: the guardian's last request may
+    /// still be taking effect, so an interrupted action only waits.
+    Settling,
+    /// A later observed tick: an interrupted action re-checks its goal and
+    /// re-issues its request at most once (consume with
+    /// [`ActionContext::take_hold_resume`](super::ActionContext)).
+    Resume,
+}
+
+/// Most tiles a player walks in one engine cycle: running advances two
+/// (`PathingEntity.ts:135-149`).
+pub const WALK_TILES_PER_TICK: u32 = 2;
+
+/// Whether the player's observed position changed by a teleport instead of by
+/// walking, between two observations `ticks` engine cycles apart. A plane
+/// change is always one (stairs and ladders are the player's own click, and
+/// the guardian climbs none). On a plane, a jump beyond what running covers in
+/// the observed cycles is one, plus one cycle of slack: the position reaches
+/// the client in the PLAYER_INFO that follows the tick marker (`World.ts:
+/// 1108-1123`, `dialogue.rs` `DIALOGUE_APPROACH_SLACK_TICKS`).
+///
+/// Content that moves the player this way: the Maze and Mime events
+/// (`macro_event_maze.rs2:15-18` `p_telejump`, `macro_event_mime.rs2:9-11`
+/// `p_teleport`), the teleport of an ignored Genie or Mysterious Old Man
+/// (`macro_events.rs2:120-137` `macro_event_fail_teleport`), and the return
+/// to Lumbridge when the tile the player left is blocked or gone
+/// (`macro_events.rs2:235-241`). A guardian walk away from a hostile event
+/// covers a few tiles at running speed, which this rule never calls a
+/// teleport.
+pub fn is_teleport(from: api::WorldTile, to: api::WorldTile, ticks: u32) -> bool {
+    if from.level != to.level {
+        return true;
+    }
+    let distance = (from.x - to.x)
+        .unsigned_abs()
+        .max((from.z - to.z).unsigned_abs());
+    distance > WALK_TILES_PER_TICK.saturating_mul(ticks.saturating_add(1))
+}
+
+const FIX_COORD_BITS: u32 = 14;
+const FIX_COORD_MASK: u32 = (1 << FIX_COORD_BITS) - 1;
+const FIX_VALID: u32 = 1 << 31;
+
+/// A tile in 31 bits: x and z in 14 bits each, the plane in 2. A tile outside
+/// that range packs to `None`.
+fn pack_fix(tile: api::WorldTile) -> Option<u32> {
+    let coord = |value: i32| u32::try_from(value).ok().filter(|v| *v <= FIX_COORD_MASK);
+    let level = u32::try_from(tile.level).ok().filter(|level| *level <= 3)?;
+    Some(
+        FIX_VALID
+            | coord(tile.x)?
+            | (coord(tile.z)? << FIX_COORD_BITS)
+            | (level << (2 * FIX_COORD_BITS)),
+    )
+}
+
+fn unpack_fix(fix: u32) -> api::WorldTile {
+    api::WorldTile {
+        x: (fix & FIX_COORD_MASK) as i32,
+        z: ((fix >> FIX_COORD_BITS) & FIX_COORD_MASK) as i32,
+        level: ((fix >> (2 * FIX_COORD_BITS)) & 0b11) as i32,
+    }
 }
 
 const SCENE_KEY_BITS: u32 = 25;
@@ -596,12 +942,100 @@ impl TickBudget {
     const MAX_TRANSITIONS: u8 = 32;
 
     pub fn observe(&mut self, tick: u64) {
-        if self.tick != Some(tick) {
-            self.tick = Some(tick);
+        if self.tick != tick {
+            self.tick = tick;
             self.transitions = 0;
             self.events = 0;
             self.scene.next_tick();
+            // Each new observed tick moves a finished hold one step on: the
+            // first is the settle tick, the next one resumes.
+            match self.hold & HOLD_PHASE_MASK {
+                HOLD_ENDED => self.set_hold_phase(HOLD_SETTLE),
+                HOLD_SETTLE => self.set_hold_phase(HOLD_RESUME),
+                _ => {}
+            }
         }
+    }
+
+    fn set_hold_phase(&mut self, phase: u8) {
+        self.hold = (self.hold & !HOLD_PHASE_MASK) | phase;
+    }
+
+    /// The guardian took the slot (the seat's rising edge).
+    pub fn hold_begin(&mut self) {
+        self.set_hold_phase(HOLD_HELD);
+    }
+
+    /// The guardian released the slot (the seat's falling edge).
+    pub fn hold_end(&mut self) {
+        if self.hold & HOLD_PHASE_MASK == HOLD_HELD {
+            self.set_hold_phase(HOLD_ENDED);
+        }
+    }
+
+    /// Forget a pending hold: a machine that begins now has not been
+    /// interrupted by it.
+    pub fn clear_hold(&mut self) {
+        self.hold = HOLD_NONE;
+    }
+
+    pub fn after_hold(&self) -> AfterHold {
+        match self.hold & HOLD_PHASE_MASK {
+            HOLD_SETTLE => AfterHold::Settling,
+            HOLD_RESUME => AfterHold::Resume,
+            _ => AfterHold::None,
+        }
+    }
+
+    /// Consume the one resume that follows a hold.
+    pub fn take_hold_resume(&mut self) -> bool {
+        let resume = self.hold & HOLD_PHASE_MASK == HOLD_RESUME;
+        if resume {
+            self.set_hold_phase(HOLD_NONE);
+        }
+        resume
+    }
+
+    /// Consume the teleport that the finished hold observed, once.
+    pub fn take_hold_teleport(&mut self) -> bool {
+        let finished = self.hold & HOLD_PHASE_MASK != HOLD_HELD;
+        let teleported = self.hold & HOLD_TELEPORTED != 0;
+        if finished && teleported {
+            self.hold &= !HOLD_TELEPORTED;
+            return true;
+        }
+        false
+    }
+
+    /// Whether a teleport is latched and not yet taken; reading it takes
+    /// nothing.
+    #[cfg(test)]
+    pub(crate) fn hold_teleport_latched(&self) -> bool {
+        self.hold & HOLD_TELEPORTED != 0
+    }
+
+    /// One host frame's player position. The frame before a hold, every frame
+    /// of it and the first after it are compared pairwise: a teleport between
+    /// two of them is remembered for [`Self::take_hold_teleport`]. The
+    /// position is kept on every frame, held or not, and stays as it was on a
+    /// frame with no usable position.
+    pub fn observe_fix(&mut self, tick: u64, tile: Option<api::WorldTile>) {
+        let Some(fix) = tile.and_then(pack_fix) else {
+            return;
+        };
+        let tick = tick as u32;
+        let watching = matches!(self.hold & HOLD_PHASE_MASK, HOLD_HELD | HOLD_ENDED);
+        if self.fix != 0 && watching {
+            let elapsed = tick.wrapping_sub(self.fix_tick);
+            // A wrapped (negative) elapsed count is a restarted tick clock,
+            // not time that passed.
+            if elapsed < u32::MAX / 2 && is_teleport(unpack_fix(self.fix), unpack_fix(fix), elapsed)
+            {
+                self.hold |= HOLD_TELEPORTED;
+            }
+        }
+        self.fix_tick = tick;
+        self.fix = fix;
     }
 
     /// One host frame: replenish on a new tick, and mark the tick that first
@@ -654,6 +1088,87 @@ impl TickBudget {
 mod tests {
     use super::*;
     use crate::native::QuietReadLease;
+
+    #[test]
+    fn walk_consent_capture_is_frozen_and_fenced_to_the_live_request_and_run() {
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
+        let mut ledger = Ledger::default();
+        assert!(ledger.walk_prereq_allow.is_none());
+        let owner = Owner::new(run, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let request = ledger.next_id().unwrap();
+        owner.set_walk(request);
+        let current = HostAuthority {
+            owner: Arc::clone(&owner),
+            request,
+            walk: true,
+        };
+        let allowed = super::super::PrereqAllow {
+            dialogue: true,
+            quest_start: false,
+        };
+        assert!(ledger.capture_walk_prereq_allow(&current, allowed));
+        assert!(ledger.capture_walk_prereq_allow(&current, allowed));
+        assert!(!ledger.capture_walk_prereq_allow(&current, super::super::PrereqAllow::default(),));
+        assert_eq!(ledger.walk_prereq_allow, Some((request, allowed)));
+
+        owner.set_interaction(request);
+        let interaction = HostAuthority {
+            walk: false,
+            ..current.clone()
+        };
+        assert!(interaction.live());
+        assert!(!ledger.capture_walk_prereq_allow(&interaction, allowed));
+
+        let next_request = ledger.next_id().unwrap();
+        owner.set_walk(next_request);
+        let next = HostAuthority {
+            request: next_request,
+            ..current.clone()
+        };
+        assert!(!ledger.capture_walk_prereq_allow(&current, allowed));
+        let denied = super::super::PrereqAllow::default();
+        assert!(ledger.capture_walk_prereq_allow(&next, denied));
+        for foreign_run in [
+            RunKey {
+                slot: run.slot + 1,
+                ..run
+            },
+            RunKey {
+                run: run.run + 1,
+                ..run
+            },
+            RunKey {
+                session: run.session + 1,
+                ..run
+            },
+        ] {
+            let foreign_owner = Owner::new(foreign_run, owner.id);
+            foreign_owner.set_walk(next_request);
+            let foreign = HostAuthority {
+                owner: foreign_owner,
+                request: next_request,
+                walk: true,
+            };
+            assert!(foreign.live());
+            assert!(!ledger.capture_walk_prereq_allow(&foreign, allowed));
+            assert_eq!(ledger.walk_prereq_allow, Some((next_request, denied)));
+        }
+
+        let capture_bytes = std::mem::size_of_val(&ledger.walk_prereq_allow);
+        println!(
+            "native_walk_consent_layout ledger={} capture={capture_bytes}",
+            std::mem::size_of::<Ledger>(),
+        );
+        assert!(capture_bytes <= 16);
+        ledger.revoke();
+        assert!(ledger.walk_prereq_allow.is_none());
+        assert!(!ledger.capture_walk_prereq_allow(&next, allowed));
+    }
 
     #[test]
     fn interaction_receipts_reject_old_requests_sessions_and_revoked_owners() {
@@ -774,16 +1289,18 @@ mod tests {
                 tick: 4,
                 sequence: 4,
             },
-            selected: crate::native_bank::SelectedBank {
-                bank_index: 7,
-                access_tile: api::snapshot::WorldTile {
-                    x: 100,
-                    z: 200,
-                    level: 0,
+            outcome: crate::native_bank::BankPickOutcome::Selected(
+                crate::native_bank::SelectedBank {
+                    bank_index: 7,
+                    access_tile: api::snapshot::WorldTile {
+                        x: 100,
+                        z: 200,
+                        level: 0,
+                    },
+                    kind: crate::native_bank::PickKind::Reachable,
+                    access: None,
                 },
-                kind: crate::native_bank::PickKind::Reachable,
-                access: None,
-            },
+            ),
         };
         ledger.complete_bank_pick(
             &old,
@@ -809,9 +1326,16 @@ mod tests {
         ledger.complete_bank_pick(
             &current,
             BankPickReceipt {
-                selected: crate::native_bank::SelectedBank {
-                    bank_index: 8,
-                    ..receipt.selected.clone()
+                outcome: match &receipt.outcome {
+                    crate::native_bank::BankPickOutcome::Selected(selected) => {
+                        crate::native_bank::BankPickOutcome::Selected(
+                            crate::native_bank::SelectedBank {
+                                bank_index: 8,
+                                ..selected.clone()
+                            },
+                        )
+                    }
+                    _ => unreachable!("the fixture receipt is a selected bank"),
                 },
                 ..receipt.clone()
             },
@@ -875,16 +1399,18 @@ mod tests {
             BankPickReceipt {
                 request_id: receipt.request_id,
                 evidence: receipt.evidence,
-                selected: crate::native_bank::SelectedBank {
-                    bank_index: 7,
-                    access_tile: api::snapshot::WorldTile {
-                        x: 100,
-                        z: 200,
-                        level: 0,
+                outcome: crate::native_bank::BankPickOutcome::Selected(
+                    crate::native_bank::SelectedBank {
+                        bank_index: 7,
+                        access_tile: api::snapshot::WorldTile {
+                            x: 100,
+                            z: 200,
+                            level: 0,
+                        },
+                        kind: crate::native_bank::PickKind::Reachable,
+                        access: None,
                     },
-                    kind: crate::native_bank::PickKind::Reachable,
-                    access: None,
-                },
+                ),
             },
         );
         assert!(
@@ -941,7 +1467,12 @@ mod tests {
         let first = ledger.next_id().unwrap();
         let now = Instant::now();
         assert!(owner.acquire_quiet(first));
-        ledger.quiet_since = Some((request, first, now));
+        ledger.quiet_lease = Some(QuietRead {
+            request,
+            lease: first,
+            since: now,
+            hold_until: now + QUIET_READ_WALL_BOUND,
+        });
         let old_guard = QuietReadLease {
             owner: Arc::clone(&owner),
             lease_id: first,
@@ -951,7 +1482,13 @@ mod tests {
         assert!(ledger.quiet_read(now + Duration::from_secs(10)).is_none());
         let replacement = ledger.next_id().unwrap();
         assert!(owner.acquire_quiet(replacement));
-        ledger.quiet_since = Some((request, replacement, now + Duration::from_secs(10)));
+        let replaced = now + Duration::from_secs(10);
+        ledger.quiet_lease = Some(QuietRead {
+            request,
+            lease: replacement,
+            since: replaced,
+            hold_until: replaced + QUIET_READ_WALL_BOUND,
+        });
         drop(old_guard);
         assert_eq!(
             ledger
@@ -1003,6 +1540,129 @@ mod tests {
         assert!(budget.batch(), "the next observed tick starts uncharged");
         assert_eq!(budget.events, 5);
     }
+    #[test]
+    fn a_finished_guardian_hold_settles_for_one_observed_tick_then_resumes_once() {
+        let mut budget = TickBudget::default();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_begin();
+        // Ticks that pass while the guardian holds move nothing on.
+        budget.observe(6);
+        budget.observe(7);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_end();
+        assert_eq!(budget.after_hold(), AfterHold::None, "no tick has run yet");
+        budget.observe(8);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.observe(8);
+        assert_eq!(
+            budget.after_hold(),
+            AfterHold::Settling,
+            "a second poll of the same tick does not move it"
+        );
+        assert!(!budget.take_hold_resume());
+        budget.observe(9);
+        assert_eq!(budget.after_hold(), AfterHold::Resume);
+        assert!(budget.take_hold_resume());
+        assert!(!budget.take_hold_resume(), "the resume is consumed once");
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn a_new_hold_restarts_the_settle_and_an_action_begun_after_one_is_not_resumed() {
+        let mut budget = TickBudget::default();
+        budget.observe(1);
+        budget.hold_begin();
+        budget.hold_end();
+        budget.observe(2);
+        budget.hold_begin();
+        budget.observe(3);
+        assert_eq!(budget.after_hold(), AfterHold::None, "held again");
+        budget.hold_end();
+        budget.observe(4);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.clear_hold();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn the_teleport_rule_separates_a_walk_from_a_jump() {
+        let at = |x, z, level| api::WorldTile { x, z, level };
+        // Running covers two tiles a cycle; one cycle of slack on the count.
+        assert!(!is_teleport(at(3200, 3200, 0), at(3204, 3200, 0), 1));
+        assert!(is_teleport(at(3200, 3200, 0), at(3205, 3200, 0), 1));
+        assert!(!is_teleport(at(3200, 3200, 0), at(3220, 3200, 0), 9));
+        assert!(is_teleport(at(3200, 3200, 0), at(3231, 3200, 0), 9));
+        // A plane change is a teleport at any distance.
+        assert!(is_teleport(at(3200, 3200, 0), at(3200, 3200, 1), 50));
+        // The Maze and Mime squares are far from anywhere a player is sent from.
+        assert!(is_teleport(at(3200, 3200, 0), at(2900, 4555, 0), 30));
+    }
+
+    #[test]
+    fn only_frames_of_a_hold_can_report_a_teleport() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        // A teleport the player makes on their own (a spell, a lodestone) with
+        // no guardian hold is not reported.
+        budget.observe_fix(1, at(3200, 3200));
+        budget.observe_fix(2, at(3000, 3500));
+        assert!(!budget.take_hold_teleport());
+        budget.hold_begin();
+        budget.observe_fix(3, at(3002, 3500));
+        budget.observe_fix(4, at(3004, 3500));
+        budget.hold_end();
+        budget.observe_fix(5, at(3005, 3500));
+        assert!(!budget.take_hold_teleport(), "a few tiles of walking");
+        budget.hold_begin();
+        budget.observe_fix(6, at(2900, 4555));
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(7, at(3005, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport(), "out and back is a teleport");
+        assert!(!budget.take_hold_teleport(), "reported once");
+        // A frame with no player keeps the last position.
+        budget.hold_begin();
+        budget.observe_fix(8, None);
+        budget.observe_fix(9, at(3500, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport());
+    }
+
+    /// Two frames with the same observed tick number are zero ticks apart,
+    /// not an invalid pair: a jump out and back inside one tick is latched,
+    /// the return frame does not clear it, and it is taken once after the
+    /// hold. The start, the jump and the return all carry tick 11, so only
+    /// the zero-elapsed comparison can see the jump.
+    #[test]
+    fn a_jump_out_and_back_inside_one_observed_tick_is_latched_and_taken_once() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        budget.observe_fix(11, at(3209, 3215));
+        budget.hold_begin();
+        budget.observe_fix(11, at(2893, 4555));
+        budget.observe_fix(11, at(3209, 3215));
+        assert!(budget.hold_teleport_latched(), "latched inside the tick");
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(12, at(3209, 3215));
+        budget.hold_end();
+        budget.observe_fix(12, at(3209, 3215));
+        assert!(
+            budget.hold_teleport_latched(),
+            "the return did not clear it"
+        );
+        assert!(budget.take_hold_teleport());
+        assert!(!budget.take_hold_teleport(), "taken once");
+        assert!(!budget.hold_teleport_latched());
+        // Inside one tick, two tiles of running is still a walk.
+        budget.hold_begin();
+        budget.observe_fix(13, at(3211, 3215));
+        budget.observe_fix(13, at(3209, 3215));
+        budget.hold_end();
+        assert!(!budget.take_hold_teleport());
+    }
+
     #[test]
     fn scene_fence_uses_four_bytes_and_tick_budget_stays_compact() {
         assert_eq!(std::mem::size_of::<SceneFence>(), 4);

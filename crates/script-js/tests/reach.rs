@@ -1,13 +1,15 @@
 //! Reach.npcDialog: shim marshals into the Rust sequencer; queued verbs are
 //! the existing FlatBuffer walk-near / npc actions.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_with_native},
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
@@ -253,6 +255,8 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -1685,4 +1689,81 @@ fn loc_op_zero_negative_or_non_finite_expect_ms_waits_without_a_bound() {
     for no_bound in ["0", "-1", "-0.5", "NaN", "Infinity"] {
         assert_eq!(loc_op_clicks_after_a_wait(no_bound, false), 0, "{no_bound}");
     }
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_walking__reachability_probeable__contract() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probeable = (tile) => Reachability.probeable(tile);
+        globalThis.__walkable = (tile) => Reachability.walkable(tile);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let mut snap = base(stand());
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 4,
+        base_z: 4,
+        level: 0,
+        width: 4,
+        height: 4,
+        walkable: &[0],
+        reachable: &[],
+        reachable_adj: &[],
+        exact_rank: &[],
+        adjacent_rank: &[],
+        step: &[],
+        canlight: &[],
+        stamp: 1,
+    };
+    post_native(&iso, &snap, NativeFactsInput::default());
+    tick(&iso, 1);
+
+    let blocked = "{ x: 6, z: 5, level: 0 }";
+    assert!(
+        iso.probe(&format!("__probeable({blocked})"))
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "an available in-bounds blocked tile is probeable"
+    );
+    assert!(
+        !iso.probe(&format!("__walkable({blocked})"))
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "probeable does not mean walkable"
+    );
+    assert!(
+        !iso.probe("__probeable({ x: 8, z: 5, level: 0 })")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "out-of-scene tiles are not probeable"
+    );
+    assert!(
+        !iso.probe("__probeable({ x: 6, z: 5, level: 1 })")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "another plane is not probeable"
+    );
+
+    snap.tick = 2;
+    snap.reach = ReachViewInput::UNAVAILABLE;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert!(
+        !iso.probe(&format!("__probeable({blocked})"))
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "an unavailable scene is not probeable"
+    );
+    iso.join();
 }

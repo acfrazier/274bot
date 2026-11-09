@@ -1,8 +1,11 @@
 use api::game_data::{self, SelectedGameData};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey};
-use script::quester::compile::{compile_uncached_for_test, CompileError};
-use script::quester::path::PathDocument;
+use script::quester::compile::{
+    compile_uncached_for_test, compile_uncached_for_test_as_with_zones,
+    compile_uncached_for_test_with_zones, CompileError,
+};
+use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
 use serde_json::{json, Value};
@@ -13,10 +16,123 @@ fn paths_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289")
 }
 
-fn selected_and_quests() -> (std::sync::Arc<SelectedGameData>, QuestCatalog) {
+fn selected_and_quests() -> Option<(std::sync::Arc<SelectedGameData>, QuestCatalog)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../api/data/game-data/289.json");
+    let path = path.to_string_lossy();
+    api::test_support::local_asset_path("", &path, "R289 game data")?;
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
     let quests = QuestCatalog::from_identity(selected.quest_identity()).expect("289 quest catalog");
-    (selected, quests)
+    Some((selected, quests))
+}
+
+fn nested_step_parts(value: &Value) -> Option<(&str, &Value)> {
+    let object = value.as_object()?;
+    let max_attempts = object.get("max_attempts").filter(|value| !value.is_null());
+    let stop = object.get("stop").filter(|value| !value.is_null());
+    if object.keys().any(|key| {
+        ![
+            "id",
+            "kind",
+            "version",
+            "args",
+            "comment",
+            "advances",
+            "max_attempts",
+            "stop",
+            "skip_if",
+            "settle",
+        ]
+        .contains(&key.as_str())
+    }) || object.get("id").and_then(Value::as_str).is_none()
+        || !object.contains_key("skip_if")
+        || !object.contains_key("settle")
+        || object
+            .get("version")
+            .and_then(Value::as_u64)
+            .is_none_or(|version| version > u64::from(u16::MAX))
+        || object
+            .get("comment")
+            .is_some_and(|comment| !comment.is_null() && !comment.is_string())
+        || object
+            .get("advances")
+            .is_some_and(|advances| !advances.is_null() && !advances.is_boolean())
+        || max_attempts.is_some_and(|attempts| {
+            attempts.as_u64().is_none_or(|attempts| {
+                attempts == 0 || attempts > u64::from(script::quester::path::MAX_STEP_ATTEMPTS)
+            })
+        })
+        || stop.is_some_and(|stop| stop.as_str().is_none_or(|stop| stop.trim().is_empty()))
+        || max_attempts.is_some() != stop.is_some()
+    {
+        return None;
+    }
+    Some((object.get("kind")?.as_str()?, object.get("args")?))
+}
+
+fn nested_route_step_has_cross(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            if let Some((kind, args)) = nested_step_parts(value) {
+                (matches!(kind, "walk" | "combat")
+                    && args
+                        .get("cross")
+                        .and_then(Value::as_array)
+                        .is_some_and(|ids| !ids.is_empty()))
+                    || nested_route_step_has_cross(args)
+            } else {
+                object.values().any(nested_route_step_has_cross)
+            }
+        }
+        Value::Array(values) => values.iter().any(nested_route_step_has_cross),
+        _ => false,
+    }
+}
+
+fn step_has_cross_declaration(step: &script::quester::path::StepDocument) -> bool {
+    (matches!(step.kind.as_str(), "walk" | "combat")
+        && step
+            .args
+            .get("cross")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| !ids.is_empty()))
+        || nested_route_step_has_cross(&step.args)
+}
+
+fn path_has_cross_declaration(document: &PathDocument) -> bool {
+    document.roles.iter().any(|role| {
+        role.prelude.iter().any(step_has_cross_declaration)
+            || role
+                .progress_reader
+                .as_ref()
+                .is_some_and(step_has_cross_declaration)
+            || role.sequences.iter().any(|sequence| {
+                !sequence.cross.is_empty() || sequence.steps.iter().any(step_has_cross_declaration)
+            })
+    }) || document.quest.as_ref().is_some_and(|header| {
+        header
+            .acquire
+            .values()
+            .flatten()
+            .any(step_has_cross_declaration)
+    })
+}
+
+fn compile_document(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+) -> Result<std::sync::Arc<script::quester::compile::CompiledPath>, CompileError> {
+    if path_has_cross_declaration(document) {
+        let nav = real_nav_lease().ok_or_else(|| CompileError::code("nav-pack-unavailable"))?;
+        compile_uncached_for_test_with_zones(
+            document,
+            selected,
+            quests,
+            nav.zones().expect("real 289 zone catalog"),
+        )
+    } else {
+        compile_uncached_for_test(document, selected, quests)
+    }
 }
 
 fn compile_value(
@@ -25,7 +141,7 @@ fn compile_value(
     quests: &QuestCatalog,
 ) -> Result<std::sync::Arc<script::quester::compile::CompiledPath>, CompileError> {
     let document: PathDocument = serde_json::from_value(value).expect("Path envelope decodes");
-    compile_uncached_for_test(&document, selected, quests)
+    compile_document(&document, selected, quests)
 }
 
 fn read_path(path: &Path) -> Value {
@@ -164,7 +280,9 @@ fn squire_pie_pass_empties_a_burnt_pie_then_prefers_a_banked_one() {
     use script::quester::probe::{known_empty_bank, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-squire-pie");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -173,8 +291,7 @@ fn squire_pie_pass_empties_a_burnt_pie_then_prefers_a_banked_one() {
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("squire.json")))
             .expect("squire decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("squire compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("squire compiles");
     let pie = selected
         .item_by_alias("redberry_pie")
         .expect("redberry_pie")
@@ -232,7 +349,9 @@ fn squire_pie_retry_with_spares_skips_the_varrock_legs() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-squire-pie-retry");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -241,10 +360,9 @@ fn squire_pie_retry_with_spares_skips_the_varrock_legs() {
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("squire.json")))
             .expect("squire decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("squire compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("squire compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "squire:2", &[])];
+    let progress = [progress_for_stage(&compiled, "squire:2", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -330,6 +448,91 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     assert_eq!(radius["minimum"], json!(0));
     assert_eq!(radius["maximum"], json!(65535));
     assert!(radius.get("format").is_none());
+    assert!(
+        schema["$defs"]["WalkArgs"]["properties"]
+            .get("allow_danger_zones")
+            .is_none(),
+        "stage danger grants are not a walk-step option"
+    );
+    let step = &schema["$defs"]["step.walk.v1"];
+    assert_eq!(step["properties"]["max_attempts"]["minimum"], json!(1));
+    assert_eq!(
+        step["properties"]["max_attempts"]["maximum"],
+        json!(script::quester::path::MAX_STEP_ATTEMPTS)
+    );
+    assert_eq!(step["properties"]["stop"]["pattern"], json!("\\S"));
+    assert_eq!(step["dependentRequired"]["max_attempts"], json!(["stop"]));
+    assert_eq!(step["dependentRequired"]["stop"], json!(["max_attempts"]));
+}
+
+#[test]
+fn generated_schema_rejects_blank_make_source_and_until_drop_stop() {
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    assert_eq!(
+        schema["$defs"]["MakeMenu"]["properties"]["source"]["pattern"],
+        json!("\\S")
+    );
+    assert_eq!(
+        schema["$defs"]["UntilDropArgs"]["properties"]["stop"]["pattern"],
+        json!("\\S")
+    );
+}
+
+#[test]
+fn generated_step_schema_accepts_optional_hazard() {
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    let interact = &schema["$defs"]["step.interact.v1"];
+    let hazard = &interact["properties"]["hazard"];
+    assert_eq!(hazard["anyOf"][0]["$ref"], json!("#/$defs/HazardDocument"));
+    assert_eq!(hazard["anyOf"][1]["type"], json!("null"));
+    assert!(!interact["required"]
+        .as_array()
+        .expect("required step fields")
+        .contains(&json!("hazard")));
+
+    let hazard_schema = &schema["$defs"]["HazardDocument"];
+    assert_eq!(hazard_schema["required"], json!(["of", "source"]));
+    assert_eq!(hazard_schema["properties"]["mul"]["default"], json!(0));
+    assert_eq!(hazard_schema["properties"]["div"]["default"], json!(1));
+    assert_eq!(hazard_schema["properties"]["plus"]["default"], json!(0));
+    assert_eq!(
+        hazard_schema["properties"]["cap"]["type"],
+        json!(["integer", "null"])
+    );
+
+    let authored = json!({
+        "id": "hazard-schema",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []},
+        "hazard": {
+            "of": "none",
+            "plus": 7,
+            "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:271"
+        }
+    });
+    let decoded: StepDocument =
+        serde_json::from_value(authored).expect("optional hazard step decodes");
+    let decoded_hazard = decoded.hazard.expect("authored hazard is present");
+    assert_eq!(decoded_hazard.mul, 0);
+    assert_eq!(decoded_hazard.div, 1);
+    assert_eq!(decoded_hazard.plus, 7);
+    assert_eq!(decoded_hazard.cap, None);
+
+    let omitted: StepDocument = serde_json::from_value(json!({
+        "id": "no-hazard",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []}
+    }))
+    .expect("hazard omission stays valid");
+    assert!(omitted.hazard.is_none());
 }
 #[test]
 #[ignore]
@@ -349,12 +552,20 @@ fn bundled_paths_decode_and_compile() {
     .unwrap_or_else(|error| panic!("decode {}: {error}", index_path.display()));
     assert_eq!(index.schema, 1, "the release index has its own schema");
 
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let zones = nav.zones().expect("real 289 zone catalog");
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
     })
     .expect("289 gather catalog");
+    // Report every failing Path at once, so one broken draft does not hide the next.
+    let mut failures = Vec::new();
     for entry in index.paths {
         // Unavailable rows may keep their authored Path validated here.
         let Some(file) = entry.file else {
@@ -363,16 +574,48 @@ fn bundled_paths_decode_and_compile() {
         let path = root.join(&file);
         let bytes =
             std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        let document: PathDocument = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
-        assert_eq!(document.id.0.as_ref(), entry.id, "{file} id mismatch");
-        compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
-            panic!(
+        let document: PathDocument = match serde_json::from_slice(&bytes) {
+            Ok(document) => document,
+            Err(error) => {
+                failures.push(format!("{file} decode: {error}"));
+                continue;
+            }
+        };
+        if document.id.0.as_ref() != entry.id {
+            failures.push(format!(
+                "{file} id mismatch: {} != {}",
+                document.id.0, entry.id
+            ));
+            continue;
+        }
+        // A partner Path compiles only for a gang member, so check it as each declared gang.
+        let results = match &document.partner {
+            Some(declaration) => declaration
+                .roles
+                .iter()
+                .map(|role| {
+                    compile_uncached_for_test_as_with_zones(
+                        &document, &selected, &quests, role.gang, zones,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            None => vec![compile_uncached_for_test_with_zones(
+                &document, &selected, &quests, zones,
+            )],
+        };
+        for error in results.into_iter().filter_map(Result::err) {
+            failures.push(format!(
                 "{file} path={} step={:?} code={} detail={:?}",
                 error.path.0, error.step, error.code, error.detail
-            )
-        });
+            ));
+        }
     }
+    assert!(
+        failures.is_empty(),
+        "{} bundled Paths failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
     let fixture_dir = root.join("fixtures");
     let mut fixtures = std::fs::read_dir(&fixture_dir)
         .unwrap_or_else(|error| panic!("read {}: {error}", fixture_dir.display()))
@@ -386,24 +629,160 @@ fn bundled_paths_decode_and_compile() {
             std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         let document: PathDocument = serde_json::from_slice(&bytes)
             .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
-        compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
-            panic!(
-                "{} path={} step={:?} code={} detail={:?}",
-                path.display(),
-                error.path.0,
-                error.step,
-                error.code,
-                error.detail
-            )
-        });
+        compile_uncached_for_test_with_zones(&document, &selected, &quests, zones).unwrap_or_else(
+            |error| {
+                panic!(
+                    "{} path={} step={:?} code={} detail={:?}",
+                    path.display(),
+                    error.path.0,
+                    error.step,
+                    error.code,
+                    error.detail
+                )
+            },
+        );
     }
+}
+
+/// Prince Ali Rescue works inside Draynor jail from stage 20 on (key imprint,
+/// Keli, the cell). The jail guards hunt as `aggressive_melee`
+/// (`area_draynor/configs/draynor.npc:152-190`), so a stage that walks to Keli
+/// is refused unless it declares the baked `draynor-jail-guards` group.
+/// QUESTER-QUALIFY-029 live run 1 blocked at `prince:20` step `20-key`
+/// (`search_result=Danger ... [draynor-jail-guards]`) with no declaration.
+#[test]
+fn prince_jail_stages_declare_the_draynor_jail_guard_group() {
+    let _home = script::IsolatedEnv::enter("path-schema-prince-jail");
+    let path = paths_dir().join("prince.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read prince.json"))
+            .expect("decode prince.json");
+    let role = &document.roles[0];
+    for stage in [
+        "prince:20",
+        "prince:30",
+        "prince:40",
+        "prince:50",
+        "prince:100",
+    ] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["draynor-jail-guards"], "{stage} danger declaration");
+    }
+    for stage in ["prince:0", "prince:10"] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        assert!(
+            sequence.cross.is_empty(),
+            "{stage} stays outside the jail and declares no danger zone"
+        );
+    }
+    // The group id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "prince.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
+}
+
+/// Monk's Friend stage 10 walks through the blanket cave (ladder 2561,3222 to
+/// the blanket at 2570,9604). The baked zone catalog lists the cave's hobgoblins
+/// and head thief, and the combined admission refuses the route when they are
+/// undeclared. QUESTER-QUALIFY-029 live run 1 stopped at tick 87 with
+/// `NoWayOut: ends inside Head Thief (L26) ... standing inside Hobgoblin (L28)`.
+/// Run 3 passed the whole quest with these three declarations.
+#[test]
+fn drunkmonk_cave_stage_declares_the_blanket_cave_zones() {
+    let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-cave");
+    let path = paths_dir().join("drunkmonk.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read drunkmonk.json"))
+            .expect("decode drunkmonk.json");
+    for sequence in &document.roles[0].sequences {
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        if sequence.stage.0.as_ref() == "drunkmonk:10" {
+            assert_eq!(
+                ids,
+                [
+                    "hobgoblin_unarmed@2566,9632,0",
+                    "hobgoblin_unarmed@2573,9626,0",
+                    "headthief_blanket@2569,9606,0",
+                ]
+            );
+        } else {
+            assert!(
+                ids.is_empty(),
+                "{} stays outside the cave",
+                sequence.stage.0
+            );
+        }
+    }
+    // Every id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "drunkmonk.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
 }
 
 #[test]
 fn unknown_talk_arguments_are_rejected_with_step_context() {
     let _home = script::IsolatedEnv::enter("path-schema-talk-errors");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
 
     let mut value = read_path(&root.join("cook.json"));
     let step = find_step_mut(&mut value, "start").expect("Cook start step");
@@ -446,7 +825,9 @@ fn unknown_talk_arguments_are_rejected_with_step_context() {
 fn invalid_args_keep_step_context_in_recipes_and_prelude() {
     let _home = script::IsolatedEnv::enter("path-schema-nested-errors");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
 
     let mut value = read_path(&root.join("cook.json"));
     let step = find_step_mut(&mut value, "take-egg").expect("Cook recipe step");
@@ -484,7 +865,9 @@ fn invalid_args_keep_step_context_in_recipes_and_prelude() {
 fn advances_checks_cover_historical_and_dynamic_quantity_cases() {
     let _home = script::IsolatedEnv::enter("path-schema-advances-checks");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/paths/runemysteries-ec8f29ad1.json");
@@ -522,7 +905,9 @@ fn advances_checks_cover_historical_and_dynamic_quantity_cases() {
 fn default_advance_class_defaults_false_and_accepts_true() {
     let _home = script::IsolatedEnv::enter("path-schema-default-advances");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&root.join("cook.json"));
     let step = json!({
         "id": "schema-default-walk",
@@ -547,7 +932,9 @@ fn default_advance_class_defaults_false_and_accepts_true() {
 fn schema_3_envelope_corrections_are_typed() {
     let _home = script::IsolatedEnv::enter("path-schema-envelope");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
 
     let mut value = read_path(&root.join("cook.json"));
     value["quest"]["bank"] = json!("anywhere");
@@ -590,7 +977,9 @@ fn schema_3_envelope_corrections_are_typed() {
 fn recursive_wait_predicate_inside_recipe_compiles() {
     let _home = script::IsolatedEnv::enter("path-schema-recursive-wait");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&root.join("cook.json"));
     let wait = json!({
         "id": "wait-for-egg",
@@ -617,7 +1006,9 @@ fn recursive_wait_predicate_inside_recipe_compiles() {
 fn symbolic_skill_requirement_uses_stats_index() {
     let _home = script::IsolatedEnv::enter("path-schema-symbolic-skill");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&root.join("cook.json"));
     value["quest"]["requirements"] = json!([{
         "id": "agility",
@@ -664,16 +1055,41 @@ fn bundled_documents() -> Vec<(String, PathDocument)> {
 #[test]
 fn bundled_paths_have_no_shadowed_journal_rules() {
     let _home = script::IsolatedEnv::enter("path-schema-shadows");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let zones = nav.zones().expect("real 289 zone catalog");
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
     })
     .expect("289 gather catalog");
     for (file, document) in bundled_documents() {
-        let compiled = compile_uncached_for_test(&document, &selected, &quests)
-            .unwrap_or_else(|error| panic!("{file}: {}", error.code));
-        script::quester::probe::assert_no_shadowed_rules(&compiled);
+        // A partner Path compiles only for a gang member, so check it as each declared gang.
+        let compiled: Vec<_> = match &document.partner {
+            Some(declaration) => declaration
+                .roles
+                .iter()
+                .map(|role| {
+                    compile_uncached_for_test_as_with_zones(
+                        &document, &selected, &quests, role.gang, zones,
+                    )
+                    .unwrap_or_else(|error| panic!("{file}: {}", error.code))
+                })
+                .collect(),
+            None => {
+                vec![
+                    compile_uncached_for_test_with_zones(&document, &selected, &quests, zones)
+                        .unwrap_or_else(|error| panic!("{file}: {}", error.code)),
+                ]
+            }
+        };
+        for path in &compiled {
+            script::quester::probe::assert_no_shadowed_rules(path);
+        }
     }
 }
 
@@ -686,7 +1102,9 @@ fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
     use script::quester::probe::{known_empty_bank, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-probe");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("cook.json"))).expect("cook decodes");
     let bank = known_empty_bank();
@@ -720,7 +1138,7 @@ fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
     );
     holding_egg.seed_equipment(Vec::new());
 
-    let compiled = compile_uncached_for_test(&document, &selected, &quests).expect("cook compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("cook compiles");
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -740,8 +1158,7 @@ fn selection_probe_follows_cook_inventory_and_ordered_cursor() {
 
     // The same sequence in ordered form resumes at the cursor instead.
     document.roles[0].sequences[1].order = SequenceOrder::Ordered;
-    let ordered =
-        compile_uncached_for_test(&document, &selected, &quests).expect("ordered cook compiles");
+    let ordered = compile_document(&document, &selected, &quests).expect("ordered cook compiles");
     let probe = Probe {
         path: &ordered,
         selected: &selected,
@@ -788,7 +1205,9 @@ fn elena_stage_24_25_merge_and_area_boxes_resolve() {
 
     let _home = script::IsolatedEnv::enter("path-schema-elena-24-25");
     let root = paths_dir();
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
 
     let elena_value = read_path(&root.join("elena.json"));
     let elena = compile_value(elena_value.clone(), &selected, &quests).expect("elena compiles");
@@ -940,19 +1359,15 @@ fn ordered_hazeel_valves_run_once_each_and_reach_the_fight() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-hazeel-valves");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("hazeelcult.json")))
             .expect("hazeelcult decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("hazeelcult compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("hazeelcult compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:4",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:4", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1075,22 +1490,18 @@ fn hazeel_cave_entry_runs_on_surface_and_skips_underground() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-hazeel-cave-entry");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("hazeelcult.json")))
             .expect("hazeelcult decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("hazeelcult compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("hazeelcult compiles");
     let bank = known_empty_bank();
     let on_surface = snapshot_at(2565, 3271);
     let in_cave = snapshot_at(2570, 9682);
 
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:2",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:2", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1107,12 +1518,7 @@ fn hazeel_cave_entry_runs_on_surface_and_skips_underground() {
         Choice::Step(FactKey::new("meet-clivet"))
     );
 
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:3",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:3", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1141,13 +1547,14 @@ fn elena_mud_refill_fetches_on_interrupted_fill_and_pours_on_resume() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-elena-mud-refill");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:03-06", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:03-06", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1211,13 +1618,14 @@ fn ordered_plague_city_clerk_door_bravek_runs_once_each() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-elena-2425");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:24-25", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:24-25", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1264,13 +1672,14 @@ fn plague_city_cellar_return_skips_the_gate_outside_the_basement() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-cellar-return");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("elena compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:28", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:28", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1312,7 +1721,9 @@ fn plague_city_cellar_return_skips_the_gate_outside_the_basement() {
 #[test]
 fn members_a_paths_have_no_shadowed_journal_rules() {
     let _home = script::IsolatedEnv::enter("path-schema-members-a-shadows");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     // Monk's Friend gathers a log, so its compile needs the gather catalog.
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
@@ -1322,7 +1733,7 @@ fn members_a_paths_have_no_shadowed_journal_rules() {
     for file in ["drunkmonk.json", "hazeelcult.json", "elena.json"] {
         let document: PathDocument = serde_json::from_value(read_path(&paths_dir().join(file)))
             .unwrap_or_else(|error| panic!("decode {file}: {error}"));
-        let compiled = compile_uncached_for_test(&document, &selected, &quests)
+        let compiled = compile_document(&document, &selected, &quests)
             .unwrap_or_else(|error| panic!("{file}: {}", error.code));
         script::quester::probe::assert_no_shadowed_rules(&compiled);
     }
@@ -1337,7 +1748,9 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-wood");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -1346,15 +1759,9 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("drunkmonk.json")))
             .expect("drunkmonk decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("drunkmonk compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("drunkmonk compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "drunkmonk:50",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "drunkmonk:50", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1391,6 +1798,53 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
     );
 }
 
+#[test]
+fn open_morytania_recipe_uses_only_the_shared_a1_prerequisite_walk() {
+    use script::quester::probe::{known_empty_bank, Choice, Probe};
+
+    let _home = script::IsolatedEnv::enter("path-schema-morytania-prerequisite");
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    let document = read_path(&paths_dir().join("priestperil.json"));
+    let recipe = document["quest"]["acquire"]["open:morytania"]
+        .as_array()
+        .expect("Morytania recipe");
+    assert_eq!(
+        recipe.len(),
+        1,
+        "the catalog is the only Drezel dialogue plan"
+    );
+    assert_eq!(recipe[0]["kind"], "walk");
+    assert_eq!(
+        recipe[0]["args"]["tile"],
+        serde_json::json!([3423, 3485, 0])
+    );
+    assert_eq!(recipe[0]["args"]["allow_quest_start"], false);
+    let document: PathDocument = serde_json::from_value(document).expect("priestperil decodes");
+    let compiled =
+        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &compiled,
+        selected: &selected,
+        quests: &quests,
+        progress: &[],
+        bank: &bank,
+    };
+    for (x, z) in [(3408, 3489), (3440, 9895)] {
+        assert_eq!(
+            probe.recipe_choice("open:morytania", &snapshot_at(x, z)),
+            Choice::Step(FactKey::new("pass-holy-barrier"))
+        );
+    }
+}
+
 /// DIAG-CRYPT-GATE-NAV: nav has no edge through either Priest in Peril crypt
 /// gate, and Gate 2's west stand (3431,9897) is outside `monuments` and north
 /// of Gate 1's wall line, so Gate 1's Open approach from there targets the
@@ -1401,7 +1855,9 @@ fn priestperil_leave_crypt_walks_to_gate_1_south_from_the_gate_2_west_stand() {
     use script::quester::probe::{known_empty_bank, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-priestperil-gates");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -1410,8 +1866,7 @@ fn priestperil_leave_crypt_walks_to_gate_1_south_from_the_gate_2_west_stand() {
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("priestperil.json")))
             .expect("priestperil decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("priestperil compiles");
     let bank = known_empty_bank();
     let probe = Probe {
         path: &compiled,
@@ -1442,7 +1897,9 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
     use script::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
 
     let _home = script::IsolatedEnv::enter("path-schema-priestperil-walkway");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -1451,15 +1908,9 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
     let document: PathDocument =
         serde_json::from_value(read_path(&paths_dir().join("priestperil.json")))
             .expect("priestperil decodes");
-    let compiled =
-        compile_uncached_for_test(&document, &selected, &quests).expect("priestperil compiles");
+    let compiled = compile_document(&document, &selected, &quests).expect("priestperil compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "priestperil:6",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "priestperil:6", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1487,7 +1938,9 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
 #[test]
 fn druid_rat_hunt_targets_both_giantrat_configs() {
     let _home = script::IsolatedEnv::enter("path-schema-druid-rats");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&paths_dir().join("druid.json"));
     let step = find_step_mut(&mut value, "hunt-rat-for-meat").expect("hunt step");
     let npc = step
@@ -1519,7 +1972,9 @@ fn druid_rat_hunt_targets_both_giantrat_configs() {
 #[test]
 fn junglepotion_pick_snake_does_not_advance() {
     let _home = script::IsolatedEnv::enter("path-schema-jungle-snake");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&paths_dir().join("junglepotion.json"));
     let step = find_step_mut(&mut value, "pick-snake").expect("pick-snake");
     assert_eq!(
@@ -1536,7 +1991,9 @@ fn junglepotion_pick_snake_does_not_advance() {
 #[test]
 fn fluffs_kitten_handoff_advances() {
     let _home = script::IsolatedEnv::enter("path-schema-fluffs-kitten");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
     let mut value = read_path(&paths_dir().join("fluffs.json"));
     let step = find_step_mut(&mut value, "give-fluffs-her-kitten").expect("kitten handoff");
     assert_eq!(
@@ -1561,7 +2018,12 @@ fn fluffs_kitten_handoff_advances() {
 #[test]
 fn totem_coin_float_covers_the_round_trip_fare() {
     let _home = script::IsolatedEnv::enter("path-schema-totem-fare");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(_nav) = real_nav_lease() else {
+        return;
+    };
     let value = read_path(&paths_dir().join("totem.json"));
     /// Brimhaven/Karamja anchors sit near x 2790; every mainland anchor sits
     /// near x 2640-2680, so the sea falls between them.
@@ -1670,7 +2132,6 @@ fn totem_coin_float_covers_the_round_trip_fare() {
 /// `solve-combination` anchors east of the door while `disarm-trap`
 /// anchors west of it with no nav edge between.
 #[test]
-#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn totem_mansion_descent_reaches_the_return_boat() {
     use api::WorldTile;
     use nav_planner::router::{find_with, FindOptions, Leg};
@@ -1679,7 +2140,12 @@ fn totem_mansion_descent_reaches_the_return_boat() {
     use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-totem-descent-pack");
-    let (selected, quests) = selected_and_quests();
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(pack) = real_nav_pack_with_flags() else {
+        return;
+    };
     let value = read_path(&paths_dir().join("totem.json"));
 
     // The step sequence reaches the landing: climb-down, then the stair-room
@@ -1827,7 +2293,6 @@ fn totem_mansion_descent_reaches_the_return_boat() {
     );
     compile_value(value, &selected, &quests).expect("totem compiles");
 
-    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -1923,7 +2388,6 @@ fn totem_mansion_descent_reaches_the_return_boat() {
 /// must end outside it at (3305,3492); the old (3305,3496) target is NoPath
 /// from outside even with zones exempt.
 #[test]
-#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn fluffs_yard_entry_walks_end_outside_the_fence() {
     use api::WorldTile;
     use nav_planner::router::{find_with, FindOptions};
@@ -1932,6 +2396,9 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
     use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-fluffs-fence-pack");
+    let Some(pack) = real_nav_pack_with_flags() else {
+        return;
+    };
     let mut value = read_path(&paths_dir().join("fluffs.json"));
     for id in ["walk-to-yard-entry", "walk-to-yard-entry-for-sardine"] {
         let step = find_step_mut(&mut value, id).expect("yard walk");
@@ -1943,7 +2410,6 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
         );
     }
 
-    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -2000,7 +2466,6 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
 /// site back to Trufitus, cave back to the exit rocks) and the druid
 /// missing-meat recovery walk, which now carry the outbound grants.
 #[test]
-#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn danger_cross_grants_route_low_combat_legs() {
     use api::WorldTile;
     use nav_planner::router::{find_with, FindOptions};
@@ -2009,6 +2474,9 @@ fn danger_cross_grants_route_low_combat_legs() {
     use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
+    let Some(pack) = real_nav_pack_with_flags() else {
+        return;
+    };
     let mut druid = read_path(&paths_dir().join("druid.json"));
     for id in [
         "walk-to-prison-door",
@@ -2114,7 +2582,6 @@ fn danger_cross_grants_route_low_combat_legs() {
         );
     }
 
-    let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
     let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
@@ -2255,7 +2722,40 @@ fn danger_cross_grants_route_low_combat_legs() {
     }
 }
 
-/// The real 289 nav pack for the ignored route tests, from `NAV_PACK`.
-fn real_nav_pack() -> PathBuf {
-    PathBuf::from(std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"))
+/// The real 289 nav pack for guide validation and route tests comes from
+/// `NAV_PACK`.
+fn real_nav_pack() -> Option<PathBuf> {
+    api::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real R289 nav pack (generate with `python tools/local-data/build.py`)",
+    )
+}
+
+fn real_nav_pack_with_flags() -> Option<PathBuf> {
+    let pack = real_nav_pack()?;
+    let flags = pack.with_extension("navflags");
+    let flags = flags.to_string_lossy();
+    api::test_support::local_asset_path(
+        "",
+        &flags,
+        "R289 navflags sidecar (generate with `python tools/local-data/build.py`)",
+    )?;
+    Some(pack)
+}
+
+fn real_nav_lease() -> Option<&'static nav_planner::contract::NavLease> {
+    static NAV: std::sync::LazyLock<Option<nav_planner::contract::NavLease>> =
+        std::sync::LazyLock::new(|| {
+            let pack = real_nav_pack()?;
+            let bytes = std::fs::read(&pack)
+                .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
+            let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+                .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
+            Some(
+                nav_planner::contract::NavLease::wrap(Arc::new(world))
+                    .expect("create a lease for the real 289 zone catalog"),
+            )
+        });
+    NAV.as_ref()
 }

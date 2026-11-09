@@ -12,7 +12,6 @@ use host::Pump;
 use host_play::walk_map::{ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
 use nav_planner::bank_fetch::BankRows;
-use nav_planner::map::identity::Digest;
 use nav_planner::router::{FindOptions, Leg};
 use nav_planner::tile::Tile;
 use nav_planner::transport::DoorDir;
@@ -82,11 +81,11 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         .expect("bind");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("template");
     let world = template.world().expect("bundled world");
-    let identity = profile.nav_identity().expect("bundled nav identity");
+    let pack_id = profile.nav_pack_id().expect("navigation pack ownership id");
     println!(
         "{}",
-        json!({"phase":"identity", "nav_sha256":identity.nav_sha256,
-        "format":nav_planner::pack::FORMAT_ID, "game_port":port, "http_port":http_port})
+        json!({"phase":"profile", "format":nav_planner::pack::FORMAT_ID,
+        "game_port":port, "http_port":http_port})
     );
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -115,7 +114,7 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
 
     let context = MapContext {
         focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
-        nav: Digest::from_hex(&identity.nav_sha256).unwrap(),
+        nav: pack_id,
         overlay: None,
         generation: 1,
     };
@@ -159,7 +158,13 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         let state = WorldState::from_snapshot(&snapshot);
         let admission = host_play::admission::Admission::manual(
             command.options(),
-            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            host_play::admission::capture(
+                &snapshot,
+                state.map_members,
+                Default::default(),
+                false,
+                None,
+            ),
             0,
             host_play::WalkGlobals::default(),
         );

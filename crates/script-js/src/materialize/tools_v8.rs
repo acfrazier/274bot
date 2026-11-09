@@ -11,7 +11,7 @@ use super::callback_v8::{
 use rustyscript::Runtime;
 use script::gather_tools::{self, ToolKind};
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_tools", tools)
 }
 

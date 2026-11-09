@@ -1,18 +1,33 @@
 //! Typed V8 marshalling for v1 `PartnerTrade.js`: one native call per export
-//! (`__rs2b0t_partner_trade(name, …args)`), deciding in `crate::partner_trade`.
+//! (`__rs2b0t_partner_trade(name, …args)`), deciding in `crate::compat::partner_trade`.
 
-use crate::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
+use crate::compat::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
 use rustyscript::Runtime;
-
+use script::trade_screen::{ScreenKind, StableClosedPoll};
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
     let name = v8::String::new(&mut scope, "__rs2b0t_partner_trade")
         .ok_or_else(|| "partner trade name".to_string())?;
-    let func = v8::Function::new(&mut scope, partner_trade_callback)
+    let predicate = v8::FunctionTemplate::new(&mut scope, stable_closed_poll_callback)
+        .get_function(&mut scope)
+        .ok_or_else(|| "stableClosedPoll predicate template".to_string())?;
+    let bind_name = v8::String::new(&mut scope, "bind")
+        .ok_or_else(|| "stableClosedPoll bind name".to_string())?;
+    let bind = predicate
+        .get(&mut scope, bind_name.into())
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll bind function".to_string())?;
+    let callback_data = v8::Object::new(&mut scope);
+    set_key(&mut scope, callback_data, "predicate", predicate.into());
+    set_key(&mut scope, callback_data, "bind", bind.into());
+    let func = v8::FunctionTemplate::builder(partner_trade_callback)
+        .data(callback_data.into())
+        .build(&mut scope)
+        .get_function(&mut scope)
         .ok_or_else(|| "partner trade fn".to_string())?;
     global
         .set(&mut scope, name.into(), func.into())
@@ -55,15 +70,10 @@ fn run<'s>(
             }
         }
         "tradeScreenState" => {
-            let snapshot = args.get(1);
-            let offer_open = field(scope, snapshot, "trade_offer_open")?.is_true();
-            let confirm_open = if offer_open {
-                false
-            } else {
-                field(scope, snapshot, "trade_confirm_open")?.is_true()
-            };
-            v8_str(scope, pt::trade_screen_state(offer_open, confirm_open))?
+            let (screen, _) = observed_trade_screen_and_tick();
+            v8_str(scope, screen.label())?
         }
+        "stableClosedPoll" => stable_closed_poll(scope, args.data(), args.get(1), args.get(2))?,
         "namesMatch" => {
             let a = js_string(scope, args.get(1))?;
             let b = js_string(scope, args.get(2))?;
@@ -111,6 +121,105 @@ fn run<'s>(
         _ => return Err(format!("not impl: PartnerTrade.{export}")),
     };
     Ok(value)
+}
+
+fn observed_trade_screen_and_tick() -> (ScreenKind, u64) {
+    crate::scene::observed::with(|scene| {
+        let session = scene.since_login();
+        (
+            ScreenKind::observed(
+                session.trade_offer_open().unwrap_or(false),
+                session.trade_confirm_open().unwrap_or(false),
+            ),
+            scene.tick().unwrap_or(0),
+        )
+    })
+}
+
+fn stable_closed_poll<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    callback_data: v8::Local<'s, v8::Value>,
+    min_ms: v8::Local<'s, v8::Value>,
+    now_fn: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let state = v8::Object::new(scope);
+    set_key(scope, state, "minMs", min_ms);
+    set_key(scope, state, "nowFn", now_fn);
+    let inactive_since_ms = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
+    let inactive_since_tick = v8::Number::new(scope, -1.0).into();
+    set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
+    let predicate = field(scope, callback_data, "predicate")
+        .ok()
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll predicate template is unavailable".to_string())?;
+    let bind = field(scope, callback_data, "bind")
+        .ok()
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .ok_or_else(|| "stableClosedPoll bind function is unavailable".to_string())?;
+    bind.call(scope, predicate.into(), &[state.into()])
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+        .map(Into::into)
+        .ok_or_else(|| "could not bind stableClosedPoll state".to_string())
+}
+
+fn stable_closed_poll_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let state_value: v8::Local<v8::Value> = args.this().into();
+        let state = state_value
+            .to_object(scope)
+            .ok_or_else(|| PENDING.to_string())?;
+        let min_ms = field(scope, state_value, "minMs")?;
+        let now_fn = field(scope, state_value, "nowFn")?;
+        let inactive_since_ms_value = field(scope, state_value, "inactiveSinceMs")?;
+        let inactive_since_ms = number(scope, inactive_since_ms_value);
+        let inactive_since_tick_value = field(scope, state_value, "inactiveSinceTick")?;
+        let inactive_since_tick = number(scope, inactive_since_tick_value);
+        let (screen, tick) = observed_trade_screen_and_tick();
+        let explicit_clock = !now_fn.is_null_or_undefined();
+        let now = if screen.active() {
+            0.0
+        } else if explicit_clock {
+            let Ok(now_fn) = v8::Local::<v8::Function>::try_from(now_fn) else {
+                let message = v8::String::new(scope, "nowFn is not a function")
+                    .ok_or_else(|| PENDING.to_string())?;
+                let exception = v8::Exception::type_error(scope, message);
+                scope.throw_exception(exception);
+                return Err(PENDING.to_string());
+            };
+            let receiver = v8::undefined(scope).into();
+            let Some(now) = now_fn.call(scope, receiver, &[]) else {
+                return Err(PENDING.to_string());
+            };
+            number(scope, now)
+        } else {
+            tick as f64
+        };
+        let mut poll = StableClosedPoll::from_baselines(inactive_since_ms, inactive_since_tick);
+        let closed = if screen.active() {
+            poll.reset();
+            false
+        } else if explicit_clock {
+            poll.poll_at(screen, now, number(scope, min_ms))
+        } else {
+            poll.poll_tick(screen, now, number(scope, min_ms))
+        };
+        let (inactive_since_ms, inactive_since_tick) = poll.baselines();
+        let inactive_since_ms = v8::Number::new(scope, inactive_since_ms).into();
+        set_key(scope, state, "inactiveSinceMs", inactive_since_ms);
+        let inactive_since_tick = v8::Number::new(scope, inactive_since_tick).into();
+        set_key(scope, state, "inactiveSinceTick", inactive_since_tick);
+        Ok(v8::Boolean::new(scope, closed).into())
+    })();
+    match result {
+        Ok(value) => rv.set(value),
+        Err(error) if error == PENDING => {}
+        Err(error) => throw_error(scope, &error),
+    }
 }
 
 /// `{ partnerHeader, partners, myOfferSlots, theirProductCount }` to the
@@ -319,3 +428,7 @@ fn throw_error(scope: &mut v8::HandleScope, message: &str) {
         scope.throw_exception(exc);
     }
 }
+
+#[cfg(test)]
+#[path = "partner_trade_v8_tests.rs"]
+mod tests;

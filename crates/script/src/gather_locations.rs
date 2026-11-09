@@ -11,20 +11,71 @@ use std::ops::ControlFlow;
 pub const DEFAULT_BOOTH_NAME: &str = "Bank booth";
 pub const DEFAULT_BOOTH_OP: &str = "Use-quickly";
 pub const MAP_SQUARE: f64 = 64.0;
+/// Legacy alias kept for saves that stored `Auto` (`gatheringLocations.ts:86`).
+pub const AUTO_LEGACY: &str = "Auto";
+/// Rank every camp by distance (`gatheringLocations.ts:82`).
+pub const USE_CLOSEST: &str = "Use Closest";
+/// Fish or gather around the start tile, no preset (`gatheringLocations.ts:83`).
+pub const USE_START_POSITION: &str = "Use Start Position";
+/// Gather around a custom tile, no preset (`gatheringLocations.ts:84`).
+pub const USE_CUSTOM_POSITION: &str = "Use Custom Position";
+/// Legacy power-drop value kept so a saved `None` is not re-parsed (`gatheringLocations.ts:89`).
+pub const NONE_LEGACY: &str = "None";
 pub const OPTION_PREFIX: [&str; 5] = [
-    "Auto",
-    "Use Closest",
-    "Use Start Position",
-    "Use Custom Position",
-    "None",
+    AUTO_LEGACY,
+    USE_CLOSEST,
+    USE_START_POSITION,
+    USE_CUSTOM_POSITION,
+    NONE_LEGACY,
 ];
+/// Camp membership radius when a named camp sets none (`gatheringLocations.ts:47`).
+pub const DEFAULT_CAMP_RADIUS: f64 = 64.0;
+/// Soft prefer-near-player radius for named camps (`gatheringLocations.ts:53`).
+pub const DEFAULT_CHASE_RADIUS: f64 = 40.0;
+/// Smallest radius either resolver returns (`gatheringLocations.ts:57,62`).
+pub const MIN_RADIUS: f64 = 2.0;
 const CUSTOM_POSITION: &str = "use custom position";
 pub const MAX_ALIAS_LEN: usize = CUSTOM_POSITION.len();
+
+/// JavaScript `Math.max` of two numbers: NaN wins, as `Math.max(2, NaN)` is NaN.
+pub fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
+}
+
+/// JavaScript `Math.min` of two numbers: NaN wins.
+pub fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.min(b)
+    }
+}
+
+/// Frozen `resolveCampRadius` / `resolveChaseRadius` (`gatheringLocations.ts:55-63`): a finite input, else the
+/// fallback, floored and at least [`MIN_RADIUS`]. `finite_input` is `Some` only for a finite number; the fallback
+/// is the caller's already-numeric default.
+pub fn resolve_radius(finite_input: Option<f64>, fallback: f64) -> f64 {
+    js_max(MIN_RADIUS, finite_input.unwrap_or(fallback).floor())
+}
 
 /// The immutable facts required from a native preset row.
 pub trait Location {
     fn name(&self) -> &str;
     fn spot(&self) -> WorldTile;
+}
+
+impl Location for api::gather_camps::GatherCamp {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn spot(&self) -> WorldTile {
+        self.spot
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -490,5 +541,79 @@ mod tests {
                 Read::Spot("Other plane")
             ]
         );
+    }
+    #[test]
+    fn radius_resolvers_floor_and_clamp_like_the_frozen_helpers() {
+        assert_eq!(resolve_radius(Some(80.9), DEFAULT_CAMP_RADIUS), 80.0);
+        assert_eq!(resolve_radius(Some(-5.0), DEFAULT_CAMP_RADIUS), MIN_RADIUS);
+        assert_eq!(resolve_radius(None, DEFAULT_CHASE_RADIUS), 40.0);
+        assert_eq!(resolve_radius(None, 12.7), 12.0);
+        assert_eq!(resolve_radius(Some(1.0), DEFAULT_CAMP_RADIUS), MIN_RADIUS);
+        assert!(
+            resolve_radius(None, f64::NAN).is_nan(),
+            "Math.max(2, NaN) is NaN"
+        );
+        assert_eq!(resolve_radius(None, f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_max(2.0, 3.0), 3.0);
+        assert!(js_min(f64::NAN, 1.0).is_nan());
+        assert_eq!(js_min(2.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn published_option_values_and_defaults() {
+        assert_eq!(
+            [
+                AUTO_LEGACY,
+                USE_CLOSEST,
+                USE_START_POSITION,
+                USE_CUSTOM_POSITION,
+                NONE_LEGACY
+            ],
+            OPTION_PREFIX
+        );
+        assert_eq!((DEFAULT_CAMP_RADIUS, DEFAULT_CHASE_RADIUS), (64.0, 40.0));
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
+        assert_eq!(
+            location_options(api::gather_camps::mining_camps().expect("mining camps")).count(),
+            5 + 24
+        );
+    }
+
+    #[test]
+    fn the_generated_camp_tables_resolve_like_any_preset_table() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
+        let camps = api::gather_camps::mining_camps().expect("mining camps");
+        let start = WorldTile {
+            x: 3290,
+            z: 3370,
+            level: 0,
+        };
+        let closest = resolve("Use Closest", start, camps).expect("closest camp");
+        assert_eq!(closest.name, "Southeast Varrock Mine");
+        assert_eq!(
+            resolve("auto", start, camps).map(|camp| camp.name),
+            Some("Southeast Varrock Mine")
+        );
+        assert_eq!(
+            resolve(" dwarven mine ", start, camps).map(|camp| camp.name),
+            Some("Dwarven Mine")
+        );
+        assert!(resolve("Use Start Position", start, camps).is_none());
+        assert!(resolve("Use Custom Position", start, camps).is_none());
+        assert!(resolve("nowhere", start, camps).is_none());
+        let remote = WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        };
+        assert!(
+            resolve("Auto", remote, camps).is_none(),
+            "Auto has no remote fallback"
+        );
+        assert!(resolve("Use Closest", remote, camps).is_some());
     }
 }

@@ -1,0 +1,2489 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "itwatchtower",
+  "display_name": "Watch Tower",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 4,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 150,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:stolen_gold",
+      "obj:toban_key"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:itwatchtower",
+      "progress": {
+        "colour": {
+          "not_started": "itwatchtower:0",
+          "in_progress": "itwatchtower:1",
+          "complete": "itwatchtower:done"
+        },
+        "rules": [
+          {
+            "stage": "itwatchtower:map",
+            "all": [
+              "i was given a map by the guard"
+            ],
+            "any": [],
+            "not": [
+              "i found my way into the skavid caves"
+            ],
+            "varp": 6
+          },
+          {
+            "stage": "itwatchtower:tribes",
+            "all": [
+              "now i need to deal with the tribal ogres"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "itwatchtower:1",
+            "all": [
+              "i accepted the challenge of finding the lost crystals"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [
+          {
+            "flag": "og-asked",
+            "any": [
+              "og wants me to",
+              "i have og's"
+            ],
+            "all": []
+          },
+          {
+            "flag": "og-helped",
+            "any": [
+              "i returned og's stolen gold"
+            ],
+            "all": []
+          },
+          {
+            "flag": "toban-asked",
+            "any": [
+              "toban wants",
+              "i have the dragon bones"
+            ],
+            "all": []
+          },
+          {
+            "flag": "toban-helped",
+            "any": [
+              "i gave the bones to toban"
+            ],
+            "all": []
+          },
+          {
+            "flag": "grew-asked",
+            "any": [
+              "grew wants",
+              "i have one of gorad"
+            ],
+            "all": []
+          },
+          {
+            "flag": "grew-helped",
+            "any": [
+              "i knocked out one of gorad's teeth"
+            ],
+            "all": []
+          },
+          {
+            "flag": "given-relic",
+            "any": [
+              "i gave the ogre relic to the north west guard"
+            ],
+            "all": []
+          },
+          {
+            "flag": "market-asked",
+            "any": [
+              "the north-east guard wants a surprise gift"
+            ],
+            "all": []
+          },
+          {
+            "flag": "market-given",
+            "any": [
+              "i gave the north-east guard a rock cake"
+            ],
+            "all": []
+          },
+          {
+            "flag": "riddle",
+            "any": [
+              "some guards gave me a puzzle to solve"
+            ],
+            "all": []
+          },
+          {
+            "flag": "language",
+            "any": [
+              "i have been taught a few words of the skavid language"
+            ],
+            "all": []
+          },
+          {
+            "flag": "ig",
+            "any": [
+              "'cur bidith' - 'ig'"
+            ],
+            "all": []
+          },
+          {
+            "flag": "ar",
+            "any": [
+              "'gor cur' - 'ar'"
+            ],
+            "all": []
+          },
+          {
+            "flag": "cur",
+            "any": [
+              "'bidith tanath' - 'cur'"
+            ],
+            "all": []
+          },
+          {
+            "flag": "nod",
+            "any": [
+              "'gor nod' - 'nod'"
+            ],
+            "all": []
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "itwatchtower:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "cross": [
+            { "id": "scorpion@2865,3156,0", "name": "Scorpion (2865,3156,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2870,3159,0", "name": "Scorpion (2870,3159,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "snake@2875,3164,0", "name": "Snake (2875,3164,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2861,3165,0", "name": "Scorpion (2861,3165,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2863,3169,0", "name": "Scorpion (2863,3169,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2862,3180,0", "name": "Scorpion (2862,3180,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." }
+          ],
+          "steps": [
+            {
+              "id": "buy-death-rune",
+              "kind": "buy",
+              "version": 1,
+              "args": {
+                "shop": {
+                  "npc": "betty",
+                  "anchor": {
+                    "tile": [3012, 3259, 0],
+                    "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"
+                  }
+                },
+                "obj": "deathrune",
+                "qty": 1,
+                "est_gp": 30
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "deathrune" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "deathrune" }
+                }
+              },
+              "comment": "Betty stocks death runes: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:49. Base cost 30 and sell multiplier 1000 give 30 at full stock: content/scripts/skill_magic/configs/runes.obj:74-78; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:219-222; content/scripts/shop/scripts/shop.rs2:131-147,183-192.",
+              "advances": false
+            },
+            {
+              "id": "return-to-tower-window",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [2548, 3119, 0],
+                "radius": 2,
+                "source": "content/maps/m39_48.jm2:6087; QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-70,98,115"
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2548, 3119, 0], "radius": 2 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2548, 3119, 0], "radius": 2 } } },
+              "comment": "Return by Captain Tobias from Port Sarim to Karamja for 30 coins. Cross Karamja through the six declared zones. Pay the Brimhaven customs officer 30 coins for Ardougne, then walk to the tower window near Yanille. Fares and NPCs: content/scripts/areas/area_port_sarim/scripts/sailors.rs2:1-31; content/maps/m47_50.jm2:10010; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,45-84; content/maps/m43_50.jm2:4911-4913; QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-70,98.",
+              "advances": false
+            },
+            {
+              "id": "GAP-itwatchtower-tower-reentry",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+                "max_ticks": 1,
+                "park_on_timeout": true
+              },
+              "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+              "comment": "GAP: after buying the rune, the return to the wizard needs loc 2299 and the pre-completion loc 2796 ladder branch. The v17 pack lacks both edges. The window requires Agility 18: content/maps/m39_48.jm2:6087; content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:1-8,261-266; QUEST-CAMPAIGN/triage/review-batch-5.md:283-297. The one-tick wait parks before re-entry.",
+              "advances": false
+            },
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "watchtower_wizard",
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3112,
+                    2
+                  ],
+                  "source": "content/maps/m39_48.jm2:7365; pack/npc.pack:873"
+                },
+                "leash": 10,
+                "prefer": [
+                  "What's the matter?",
+                  "So how come the spell doesn't work?",
+                  "Can I be of help?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/watchtower_wizard.rs2:177-188,332-349; maps/m39_48.jm2:7365",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itwatchtower:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "find-fingernails",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "watchtowerbushnail"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3134,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:5936; pack/loc.pack:2800"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "fingernails"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "fingernails"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:17-26",
+              "advances": false
+            },
+            {
+              "id": "give-fingernails",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "watchtower_wizard",
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3112,
+                    2
+                  ],
+                  "source": "content/maps/m39_48.jm2:7365; pack/npc.pack:873"
+                },
+                "leash": 10,
+                "prefer": [
+                  "What do you suggest I do?",
+                  "So what do I do?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "any": [
+                      "itwatchtower:tribes"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/watchtower_wizard.rs2:154-157,358-389",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itwatchtower:tribes",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "ask-og",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "og",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3116,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:7330; pack/npc.pack:854"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I seek entrance to the city of ogres."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "og-asked"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "og-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "og-asked"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/og.rs2:19-33; scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:62-69",
+              "advances": true
+            },
+            {
+              "id": "enter-toban",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tobancave"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2499,
+                    2989,
+                    0
+                  ],
+                  "source": "content/maps/m39_46.jm2:4162; pack/loc.pack:2812"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2576,
+                          3027,
+                          0
+                        ],
+                        "radius": 16
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "toban-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2576,
+                      3027,
+                      0
+                    ],
+                    "radius": 16
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:233-236",
+              "advances": false
+            },
+            {
+              "id": "open-toban-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tobanchest"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2575,
+                    3031,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:4594; pack/loc.pack:2791"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "stolen_gold"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "og-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stolen_gold"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:200-205,222-231",
+              "advances": false
+            },
+            {
+              "id": "ask-toban",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "toban",
+                "anchor": {
+                  "tile": [
+                    2576,
+                    3027,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:5263; pack/npc.pack:856"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I seek entrance to the city of ogres.",
+                  "I could do something for you"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "toban-asked"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "toban-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "toban-asked"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/toban.rs2:19-25,50-61",
+              "advances": true
+            },
+            {
+              "id": "GAP-itwatchtower-dragon-bone",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": { "obj": "dragon_bones" }
+                  }
+                },
+                "max_ticks": 1,
+                "park_on_timeout": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "dragon_bones" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "dragon_bones" }
+                }
+              },
+              "comment": "GAP: content/scripts/quests/quest_itwatchtower/scripts/toban.rs2:36-41,57-61 requires one dragon bone. A green dragon drops one, but the fight needs a measured minimum combat seed: content/maps/m48_59.jm2:5754-5759; content/scripts/_unpack/225/all.npc:5430-5465; content/scripts/drop tables/scripts/green_dragon.rs2:1-9; content/scripts/npc/scripts/dragon.rs2:99-130. The one-tick wait deliberately parks before the exchange.",
+              "advances": false
+            },
+            {
+              "id": "give-dragon-bones",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "toban",
+                "anchor": {
+                  "tile": [
+                    2576,
+                    3027,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:5263; pack/npc.pack:856"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "toban-helped"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "toban-helped"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/toban.rs2:19-20,36-44",
+              "advances": true
+            },
+            {
+              "id": "leave-toban",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tobanladderdown"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2575,
+                    3029,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:4590; pack/loc.pack:2813"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2576,
+                        3027,
+                        0
+                      ],
+                      "radius": 16
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2500,
+                      2988,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:238-240",
+              "advances": false
+            },
+            {
+              "id": "return-og-gold",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "og",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3116,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:7330; pack/npc.pack:854"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "og-helped"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "og-helped"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/og.rs2:44-53",
+              "advances": true
+            },
+            {
+              "id": "swing-to-grew",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "rope",
+                "target": {
+                  "loc": "tree_ropeswing4_norope"
+                },
+                "anchor": {
+                  "tile": [
+                    2499,
+                    3087,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:4598; pack/loc.pack:2327"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2513,
+                          3084,
+                          0
+                        ],
+                        "radius": 12
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "grew-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2513,
+                      3084,
+                      0
+                    ],
+                    "radius": 12
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:289-308",
+              "advances": false
+            },
+            {
+              "id": "ask-grew",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grew",
+                "anchor": {
+                  "tile": [
+                    2513,
+                    3084,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:7335; pack/npc.pack:855"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Don't eat me; I can help you."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "grew-asked"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "grew-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "grew-asked"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/grew.rs2:48-59",
+              "advances": true
+            },
+            {
+              "id": "return-to-gorad-island",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tobancave"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2499,
+                    2989,
+                    0
+                  ],
+                  "source": "content/maps/m39_46.jm2:4162; pack/loc.pack:2812"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2577,
+                          3021,
+                          0
+                        ],
+                        "radius": 16
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ogretooth"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "grew-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2577,
+                      3021,
+                      0
+                    ],
+                    "radius": 16
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:233-236",
+              "advances": false
+            },
+            {
+              "id": "defeat-gorad",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "gorad",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2577,
+                    3021,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:5264; pack/npc.pack:857"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 240,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "win": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "ogretooth"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ogretooth"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "grew-helped"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "ogretooth"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/gorad.rs2:22-34",
+              "advances": false
+            },
+            {
+              "id": "leave-gorad-island",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tobanladderdown"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2575,
+                    3029,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:4590; pack/loc.pack:2813"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2577,
+                        3021,
+                        0
+                      ],
+                      "radius": 16
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2500,
+                      2988,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:238-240",
+              "advances": false
+            },
+            {
+              "id": "give-tooth",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grew",
+                "anchor": {
+                  "tile": [
+                    2513,
+                    3084,
+                    0
+                  ],
+                  "source": "content/maps/m39_48.jm2:7335; pack/npc.pack:855"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "grew-helped"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "grew-helped"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/grew.rs2:33-44",
+              "advances": true
+            },
+            {
+              "id": "give-relic-part-1",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "relicpart1",
+                "target": {
+                  "npc": "watchtower_wizard"
+                },
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3112,
+                    2
+                  ],
+                  "source": "content/maps/m39_48.jm2:7365; pack/npc.pack:873"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "relicpart1"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/watchtower_wizard.rs2:244-277,312-322",
+              "advances": true
+            },
+            {
+              "id": "give-relic-part-2",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "relicpart2",
+                "target": {
+                  "npc": "watchtower_wizard"
+                },
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3112,
+                    2
+                  ],
+                  "source": "content/maps/m39_48.jm2:7365; pack/npc.pack:873"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "relicpart2"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/watchtower_wizard.rs2:244-277,312-322",
+              "advances": true
+            },
+            {
+              "id": "give-relic-part-3",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "relicpart3",
+                "target": {
+                  "npc": "watchtower_wizard"
+                },
+                "anchor": {
+                  "tile": [
+                    2544,
+                    3112,
+                    2
+                  ],
+                  "source": "content/maps/m39_48.jm2:7365; pack/npc.pack:873"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "relicpart3"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/watchtower_wizard.rs2:244-277,312-322",
+              "advances": true
+            },
+            {
+              "id": "show-relic",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "ogrerelic",
+                "target": {
+                  "npc": "ogre_guard2"
+                },
+                "anchor": {
+                  "tile": [
+                    2505,
+                    3062,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6521; pack/npc.pack:860"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "given-relic"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "given-relic"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/ogre_guard.rs2:60-80",
+              "advances": true
+            },
+            {
+              "id": "steal-rockcake",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "rockcounter_withcakes"
+                },
+                "op": "Steal-From",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3023,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:4611; pack/loc.pack:2794"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "rockcake"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "market-given"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rockcake"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_yanille/scripts/ogre_trader.rs2:21-39",
+              "advances": false
+            },
+            {
+              "id": "ask-market-guard",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "ogre_guard3",
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3012,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6518; pack/npc.pack:861"
+                },
+                "leash": 10,
+                "prefer": [
+                  "But I am a friend to ogres"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "market-asked"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "market-given"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "market-asked"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/ogre_guard.rs2:113-132",
+              "advances": true
+            },
+            {
+              "id": "give-rockcake",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "rockcake",
+                "target": {
+                  "npc": "ogre_guard3"
+                },
+                "anchor": {
+                  "tile": [
+                    2501,
+                    3012,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6518; pack/npc.pack:861"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "market-given"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "market-given"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/ogre_guard.rs2:90-92,106-111",
+              "advances": true
+            },
+            {
+              "id": "cross-ogre-bridge",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "tanothjump1"
+                },
+                "op": "Jump-From",
+                "anchor": {
+                  "tile": [
+                    2530,
+                    3026,
+                    1
+                  ],
+                  "source": "content/maps/m39_47.jm2:6427; pack/loc.pack:2831"
+                },
+                "radius": 12,
+                "dialogue": {
+                  "prefer": [
+                    "Okay, I'll pay it."
+                  ],
+                  "strict": true
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "riddle"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2530,
+                          3029,
+                          0
+                        ],
+                        "radius": 6
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2530,
+                      3029,
+                      0
+                    ],
+                    "radius": 6
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:392-414",
+              "advances": false
+            },
+            {
+              "id": "ask-city-guard",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "city_guard",
+                "anchor": {
+                  "tile": [
+                    2541,
+                    3029,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6543; pack/npc.pack:863"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I seek passage into the skavid caves."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "riddle"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "riddle"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/city_guard.rs2:28-44",
+              "advances": true
+            },
+            {
+              "id": "solve-map-riddle",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "deathrune",
+                "target": {
+                  "npc": "city_guard"
+                },
+                "anchor": {
+                  "tile": [
+                    2541,
+                    3029,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6543; pack/npc.pack:863"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "skavidmap"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "any": [
+                      "itwatchtower:map"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/city_guard.rs2:47-55",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itwatchtower:map",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "enter-learn-start",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave5"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2553,
+                    3033,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6184"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "language"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2504,
+                          9441,
+                          0
+                        ],
+                        "radius": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2504,
+                      9441,
+                      0
+                    ],
+                    "radius": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:96-175",
+              "advances": false
+            },
+            {
+              "id": "learn-start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "scared_skavid",
+                "anchor": {
+                  "tile": [
+                    2499,
+                    9433,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:7347"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Okay, okay, I'm not going to hurt you."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "language"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "language"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/skavid.rs2:2-96,106-143",
+              "advances": true
+            },
+            {
+              "id": "exit-learn-start",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "cave5exit"
+                },
+                "op": "Leave",
+                "anchor": {
+                  "tile": [
+                    2504,
+                    9442,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:4874"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2504,
+                        9442,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2504,
+                        9442,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:122-123,133-134,144-145,155-156,166-167",
+              "advances": false
+            },
+            {
+              "id": "enter-learn-nod",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave1"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2560,
+                    3022,
+                    0
+                  ],
+                  "source": "content/maps/m40_47.jm2:4126"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "nod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2498,
+                          9418,
+                          0
+                        ],
+                        "radius": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2498,
+                      9418,
+                      0
+                    ],
+                    "radius": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:96-175",
+              "advances": false
+            },
+            {
+              "id": "learn-nod",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "skavidtalker4",
+                "anchor": {
+                  "tile": [
+                    2503,
+                    9415,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:7351"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Nod."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "nod"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "nod"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/skavid.rs2:2-96,106-143",
+              "advances": true
+            },
+            {
+              "id": "exit-learn-nod",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "cave1exit"
+                },
+                "op": "Leave",
+                "anchor": {
+                  "tile": [
+                    2497,
+                    9418,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:4505"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2497,
+                        9418,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2497,
+                        9418,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:122-123,133-134,144-145,155-156,166-167",
+              "advances": false
+            },
+            {
+              "id": "enter-learn-ig",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave2"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2522,
+                    3068,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:5169"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "ig"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2532,
+                          9469,
+                          0
+                        ],
+                        "radius": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2532,
+                      9469,
+                      0
+                    ],
+                    "radius": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:96-175",
+              "advances": false
+            },
+            {
+              "id": "learn-ig",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "skavidtalker1",
+                "anchor": {
+                  "tile": [
+                    2530,
+                    9465,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:7361"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ig."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "ig"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "ig"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/skavid.rs2:2-96,106-143",
+              "advances": true
+            },
+            {
+              "id": "exit-learn-ig",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "cave2exit"
+                },
+                "op": "Leave",
+                "anchor": {
+                  "tile": [
+                    2532,
+                    9470,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:6071"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2532,
+                        9470,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2532,
+                        9470,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:122-123,133-134,144-145,155-156,166-167",
+              "advances": false
+            },
+            {
+              "id": "enter-learn-ar",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave3"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2539,
+                    3052,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:5730"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "ar"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2518,
+                          9455,
+                          0
+                        ],
+                        "radius": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2518,
+                      9455,
+                      0
+                    ],
+                    "radius": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:96-175",
+              "advances": false
+            },
+            {
+              "id": "learn-ar",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "skavidtalker2",
+                "anchor": {
+                  "tile": [
+                    2515,
+                    9452,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:7356"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Ar."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "ar"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "ar"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/skavid.rs2:2-96,106-143",
+              "advances": true
+            },
+            {
+              "id": "exit-learn-ar",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "cave3exit"
+                },
+                "op": "Leave",
+                "anchor": {
+                  "tile": [
+                    2518,
+                    9456,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:5577"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2518,
+                        9456,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2518,
+                        9456,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:122-123,133-134,144-145,155-156,166-167",
+              "advances": false
+            },
+            {
+              "id": "enter-learn-cur",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave4"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2552,
+                    3052,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:6176"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itwatchtower",
+                        "flag": "cur"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2498,
+                          9451,
+                          0
+                        ],
+                        "radius": 10
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2498,
+                      9451,
+                      0
+                    ],
+                    "radius": 10
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:96-175",
+              "advances": false
+            },
+            {
+              "id": "learn-cur",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "skavidtalker3",
+                "anchor": {
+                  "tile": [
+                    2500,
+                    9451,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:7348"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Cur."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "cur"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itwatchtower",
+                    "flag": "cur"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/skavid.rs2:2-96,106-143",
+              "advances": true
+            },
+            {
+              "id": "exit-learn-cur",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "cave4exit"
+                },
+                "op": "Leave",
+                "anchor": {
+                  "tile": [
+                    2497,
+                    9451,
+                    0
+                  ],
+                  "source": "content/maps/m39_147.jm2:4538"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2497,
+                        9451,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "near",
+                    "version": 1,
+                    "args": {
+                      "tile": [
+                        2497,
+                        9451,
+                        0
+                      ],
+                      "radius": 20
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:122-123,133-134,144-145,155-156,166-167",
+              "advances": false
+            },
+            {
+              "id": "enter-mad-skavid-cave",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "skavid_cave6"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2527,
+                    3011,
+                    0
+                  ],
+                  "source": "content/maps/m39_47.jm2:5306"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2522,
+                      9411,
+                      0
+                    ],
+                    "radius": 12
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2522,
+                      9411,
+                      0
+                    ],
+                    "radius": 12
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:169-175; scripts/quests/quest_itwatchtower/scripts/skavid.rs2:145-193",
+              "advances": false
+            }
+          ]
+        },
+        {
+          "stage": "itwatchtower:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

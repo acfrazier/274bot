@@ -1,0 +1,10 @@
+{
+  "stage": "priest:0",
+  "stand": [3243, 3206, 0],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [["prieststart", 0]],
+  "before_relog": [],
+  "expect": ["priest:1"],
+  "mode": "stage"
+}

@@ -31,6 +31,49 @@ pub enum BankSeatOperation {
     WaitReady,
     WaitSnapshotAfter,
     BankNearest,
+    /// `purgePackAtBank`: open, deposit every unkept row, close, verify.
+    PurgePack,
+    /// `withdrawCoins`: withdraw toward a held coin target in an open bank.
+    WithdrawCoins,
+    /// `bankPace`: one observed game tick in the accepted session.
+    Pace,
+    /// `Bank.backpackReady`: side backpack readiness and optional match.
+    BackpackReady,
+    /// `sortBank`: reorder the open bank by the native category plan.
+    Sort,
+}
+
+/// Most item rows a backpack expectation can name. The 289 backpack has 28
+/// slots (`player/configs/player.inv:1-3`, `[inv] size=28`); a longer
+/// expectation can never match and is carried as [`IMPOSSIBLE_PACK_ROW`].
+pub const MAX_EXPECTED_PACK_ROWS: usize = 28;
+
+/// One row of a caller's backpack expectation (`BackpackItem` slot/id/count).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BankPackRow {
+    pub slot: i32,
+    pub id: i32,
+    pub count: i32,
+}
+
+/// The single row that stands for an expectation longer than any backpack:
+/// no posted slot is negative, so it never matches.
+pub const IMPOSSIBLE_PACK_ROW: BankPackRow = BankPackRow {
+    slot: -1,
+    id: -1,
+    count: -1,
+};
+
+/// Most category overrides one `sortBank` call carries: the 289 bank holds
+/// `^bank_total_slots = 288` rows (`interface_bank/configs/bank.constant:1`),
+/// so an override beyond that many distinct ids cannot name another row.
+pub const MAX_SORT_OVERRIDES: usize = 288;
+
+/// One `categoryOverrides` entry: an item id and its native category index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BankCategoryOverride {
+    pub id: i32,
+    pub category: u8,
 }
 /// A failure while validating one native bank request.
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +135,15 @@ pub enum BankRequestError {
     TooManyStrings,
     #[error("bank start text exceeds {max_bytes} bytes")]
     TextTooLong { max_bytes: usize },
+    #[error("{operation:?} requires {field}")]
+    MissingField {
+        operation: BankSeatOperation,
+        field: &'static str,
+    },
+    #[error("backpack expectation has more than {MAX_EXPECTED_PACK_ROWS} rows")]
+    TooManyExpectedRows,
+    #[error("sort category overrides exceed {MAX_SORT_OVERRIDES} entries")]
+    TooManyOverrides,
 }
 
 /// Optional menu access for a named world object.
@@ -243,6 +295,10 @@ pub struct BankSeatArgs {
     pub(crate) deposit_all: bool,
     pub(crate) common_junk: bool,
     pub(crate) hooks_present: u32,
+    /// `BackpackReady` expectation; `None` checks readiness only.
+    pub(crate) expected_pack: Option<Vec<BankPackRow>>,
+    /// `Sort` category overrides in caller order.
+    pub(crate) category_overrides: Vec<BankCategoryOverride>,
 }
 
 /// Hook presence bit for methods with one synchronous `log` callback.
@@ -284,6 +340,8 @@ impl BankSeatArgs {
             note_mode: false,
             deposit_all: false,
             common_junk: true,
+            expected_pack: None,
+            category_overrides: Vec::new(),
             hooks_present: 0,
         }
     }
@@ -542,6 +600,26 @@ impl BankSeatArgs {
         self.hooks_present = hooks_present;
     }
 
+    /// Return the optional `BackpackReady` expectation.
+    pub fn expected_pack(&self) -> Option<&[BankPackRow]> {
+        self.expected_pack.as_deref()
+    }
+
+    /// Set the optional `BackpackReady` expectation.
+    pub fn set_expected_pack(&mut self, expected_pack: Option<Vec<BankPackRow>>) {
+        self.expected_pack = expected_pack;
+    }
+
+    /// Return the `Sort` category overrides in caller order.
+    pub fn category_overrides(&self) -> &[BankCategoryOverride] {
+        &self.category_overrides
+    }
+
+    /// Set the `Sort` category overrides.
+    pub fn set_category_overrides(&mut self, overrides: Vec<BankCategoryOverride>) {
+        self.category_overrides = overrides;
+    }
+
     /// Validate the operation, native family, callback mask, and every field
     /// before the request enters or leaves the FlatBuffer codec.
     pub fn validate(&self, kind: NativeKind) -> Result<(), BankRequestError> {
@@ -572,6 +650,7 @@ impl BankSeatArgs {
                     | BankSeatOperation::OpenNearest
                     | BankSeatOperation::Open
                     | BankSeatOperation::BankNearest
+                    | BankSeatOperation::PurgePack
             )
         {
             return Err(BankRequestError::OpenFirstNotAccepted {
@@ -632,6 +711,19 @@ impl BankSeatArgs {
                     | F_COMMON_JUNK
                     | F_HOOKS
             }
+            BankSeatOperation::PurgePack => {
+                F_STAND
+                    | F_DESTINATION
+                    | F_OBJECT_ACCESS
+                    | F_PREFER_NEARBY
+                    | F_OBSTACLES
+                    | F_KEEP_NAMES
+                    | F_HOOKS
+            }
+            BankSeatOperation::WithdrawCoins => F_ITEM_NAME | F_QUANTITY | F_HOOKS,
+            BankSeatOperation::Pace => 0,
+            BankSeatOperation::BackpackReady => F_EXPECTED_PACK | F_HOOKS,
+            BankSeatOperation::Sort => F_CATEGORY_OVERRIDES | F_HOOKS,
         };
         let populated_fields = self.populated_fields();
         if populated_fields & !allowed_fields != 0 {
@@ -661,7 +753,39 @@ impl BankSeatArgs {
             | BankSeatOperation::SetNoteMode
             | BankSeatOperation::Close
             | BankSeatOperation::WaitReady
-            | BankSeatOperation::BankNearest => {}
+            | BankSeatOperation::BankNearest
+            | BankSeatOperation::PurgePack
+            | BankSeatOperation::Pace => {}
+            BankSeatOperation::WithdrawCoins => {
+                require(
+                    self.item_name.is_some(),
+                    BankRequestError::MissingField {
+                        operation: self.operation,
+                        field: "item_name",
+                    },
+                )?;
+                require(
+                    self.quantity.is_some(),
+                    BankRequestError::MissingField {
+                        operation: self.operation,
+                        field: "quantity",
+                    },
+                )?;
+            }
+            BankSeatOperation::BackpackReady => {
+                require(
+                    self.expected_pack
+                        .as_ref()
+                        .is_none_or(|rows| rows.len() <= MAX_EXPECTED_PACK_ROWS),
+                    BankRequestError::TooManyExpectedRows,
+                )?;
+            }
+            BankSeatOperation::Sort => {
+                require(
+                    self.category_overrides.len() <= MAX_SORT_OVERRIDES,
+                    BankRequestError::TooManyOverrides,
+                )?;
+            }
             BankSeatOperation::OpenObject if self.object_access.is_none() => {
                 return Err(BankRequestError::OpenObjectMissingAccess);
             }
@@ -788,6 +912,12 @@ impl BankSeatArgs {
         if self.hooks_present != 0 {
             fields |= F_HOOKS;
         }
+        if self.expected_pack.is_some() {
+            fields |= F_EXPECTED_PACK;
+        }
+        if !self.category_overrides.is_empty() {
+            fields |= F_CATEGORY_OVERRIDES;
+        }
         fields
     }
 
@@ -862,6 +992,8 @@ const F_DEPOSIT_ALL: u64 = 1 << 21;
 const F_COMMON_JUNK: u64 = 1 << 22;
 const F_HOOKS: u64 = 1 << 23;
 const F_WITHDRAW_LOAD_SELECTOR: u64 = 1 << 24;
+const F_EXPECTED_PACK: u64 = 1 << 25;
+const F_CATEGORY_OVERRIDES: u64 = 1 << 26;
 
 fn hook_mask(operation: BankSeatOperation) -> u32 {
     match operation {
@@ -869,7 +1001,11 @@ fn hook_mask(operation: BankSeatOperation) -> u32 {
         | BankSeatOperation::OpenNpc
         | BankSeatOperation::OpenAccess
         | BankSeatOperation::Open
-        | BankSeatOperation::WaitReady => HOOK_LOG,
+        | BankSeatOperation::WaitReady
+        | BankSeatOperation::PurgePack
+        | BankSeatOperation::WithdrawCoins
+        | BankSeatOperation::BackpackReady
+        | BankSeatOperation::Sort => HOOK_LOG,
         BankSeatOperation::DepositMatch => DEPOSIT_MATCH_HOOK_MATCH | DEPOSIT_MATCH_HOOK_LOG,
         BankSeatOperation::BankNearest => {
             BANK_NEAREST_HOOK_DEPOSIT | BANK_NEAREST_HOOK_AFTER_DEPOSIT | BANK_NEAREST_HOOK_LOG

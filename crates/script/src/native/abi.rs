@@ -663,6 +663,15 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         "$TS/api/bank/Bank.ts:86-94; $JS/shim/bank.js; $S/bank/seat_transfer.rs",
     ),
     hook(
+        &["bank_task"],
+        "log",
+        "purgePackAtBank, withdrawCoins, Bank.backpackReady and sortBank synchronous log notifications",
+        HookPath::CallSync,
+        HookValue::Ignored,
+        NO_DISCREPANCY,
+        "$TS/api/bank/Banking.ts:62-111,354-390; $TS/api/bank/Bank.ts:124-146; $TS/api/bank/bankSort.ts:55-126; $S/slot/bank.rs",
+    ),
+    hook(
         &["partner-trade"],
         "setStatus",
         "Partner trade ordered notification queue",

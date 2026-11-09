@@ -1,6 +1,5 @@
 import argparse
 import contextlib
-import hashlib
 import importlib.util
 import io
 import json
@@ -78,74 +77,41 @@ def make_package_archive(root, platform, commit="a" * 40):
     return archive
 
 
-class DigestTests(unittest.TestCase):
-    def test_tree_digest_is_stable_and_excludes_git_metadata(self):
+class ReleaseInputTests(unittest.TestCase):
+    def test_inputs_archive_transports_all_local_roots_without_game_input_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "nested").mkdir()
-            (root / "nested/b.txt").write_bytes(b"two")
-            (root / "a.txt").write_bytes(b"one")
-            (root / ".git").mkdir()
-            (root / ".git/ignored").write_bytes(b"private")
-
-            first = release.tree_digest(root)
-            (root / ".git/ignored").write_bytes(b"changed")
-            second = release.tree_digest(root)
-
-            self.assertEqual(first, second)
-            self.assertEqual(first["files"], 2)
-            rows = {
-                "a.txt": hashlib.sha256(b"one").hexdigest(),
-                "nested/b.txt": hashlib.sha256(b"two").hexdigest(),
-            }
-            expected = hashlib.sha256()
-            for name in sorted(rows):
-                expected.update(name.encode() + b"\0" + rows[name].encode() + b"\n")
-            self.assertEqual(first["sha256"], expected.hexdigest())
-
-    def test_input_verification_rejects_changed_content(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            pack = root / "engine/data/pack/client"
-            content = root / "content"
-            snapshot = root / "snapshots/snapshot-id"
-            for directory in (pack, content, snapshot):
-                directory.mkdir(parents=True)
-                (directory / "value").write_text(directory.name)
-            expect = {
-                "snapshot_version": "snapshot-id",
-                "inputs": {
-                    name: release.tree_digest(path)
-                    for name, path in release.input_paths(root, {"snapshot_version": "snapshot-id"}).items()
-                },
-            }
-            self.assertEqual(release.verify_input_digests(root, expect), expect["inputs"])
-            (content / "value").write_text("different")
-            with self.assertRaisesRegex(release.ReleaseError, "content"):
-                release.verify_input_digests(root, expect)
-
-    def test_inputs_archive_omits_git_metadata(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            engine = root / "engine"
-            pack = engine / "data/pack/client"
-            content = root / "content"
+            game_data_roots = {}
+            for revision in ("274", "289"):
+                engine = root / f"engine-{revision}"
+                content = root / f"content-{revision}"
+                for directory in (engine, content):
+                    directory.mkdir(parents=True)
+                    (directory / "value").write_text(directory.name)
+                (content / ".git").write_text("gitdir: elsewhere")
+                game_data_roots[f"GAME_DATA_{revision}_ENGINE"] = engine
+                game_data_roots[f"GAME_DATA_{revision}_CONTENT"] = content
+            rs2b0t = root / "rs2b0t"
+            (rs2b0t / "src").mkdir(parents=True)
+            (rs2b0t / "src/query.ts").write_text("local query")
             snapshot_root = root / "snapshots"
             snapshot = snapshot_root / "snapshot-id"
-            for directory in (pack, content, snapshot):
-                directory.mkdir(parents=True)
-                (directory / "value").write_text(directory.name)
-            (content / ".git").write_text("gitdir: elsewhere")
+            snapshot.mkdir(parents=True)
+            (snapshot / "versionlist").write_bytes(b"versionlist")
             archive = root / "inputs.tar.gz"
 
-            inputs, _record = release.create_inputs_archive(
-                engine, content, snapshot_root, "snapshot-id", archive
+            release.create_inputs_archive(
+                game_data_roots, rs2b0t, snapshot_root, "snapshot-id", archive
             )
 
             with tarfile.open(archive) as source:
                 names = {member.name for member in source.getmembers()}
-            self.assertNotIn("content/.git", names)
-            self.assertEqual(inputs["content"]["files"], 1)
+            for revision in ("274", "289"):
+                self.assertIn(f"game-data/{revision}/engine/value", names)
+                self.assertIn(f"game-data/{revision}/content/value", names)
+                self.assertNotIn(f"game-data/{revision}/content/.git", names)
+            self.assertIn("rs2b0t/src/query.ts", names)
+            self.assertIn("snapshots/snapshot-id/versionlist", names)
 
     def test_source_export_replaces_gitlink_with_exact_client_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -190,17 +156,9 @@ class DigestTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "dirty"):
                 release.require_clean_checkout(client, client_commit, "client")
 
-    def test_prepared_payload_is_reused_after_digest_verification(self):
+    def test_prepared_payload_is_reused_without_game_input_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            engine = root / "engine"
-            content = root / "content"
-            snapshots = root / "snapshots"
-            for directory in (
-                engine / "data/pack/client", content, snapshots / "snapshot-id"
-            ):
-                directory.mkdir(parents=True)
-                (directory / "value").write_text(directory.name)
             commit = "a" * 40
             prepared = root / "work" / commit / "prepared"
             prepared.mkdir(parents=True)
@@ -208,44 +166,97 @@ class DigestTests(unittest.TestCase):
             inputs = prepared / "inputs.tar.gz"
             payload = prepared / "payload.tar.gz"
             source.write_bytes(b"source")
-            inputs.write_bytes(b"inputs")
+            inputs.write_bytes(b"local game data")
             payload.write_bytes(b"payload")
             args = argparse.Namespace(
-                work_dir=root / "work", engine_dir=engine, content_dir=content,
-                snapshot_root=snapshots, snapshot_version="snapshot-id",
-                client_root=root / "client", revision="289", jobs=4,
+                work_dir=root / "work",
+                game_data_274_engine=root / "engine-274",
+                game_data_274_content=root / "content-274",
+                game_data_289_engine=root / "engine-289",
+                game_data_289_content=root / "content-289",
+                rs2b0t=root / "rs2b0t",
+                snapshot_root=root / "snapshots",
+                snapshot_version="snapshot-id",
+                client_root=root / "client",
+                revision="289",
+                jobs=4,
             )
-            expected_inputs = {
-                "pack": release.tree_digest(engine / "data/pack/client"),
-                "content": release.tree_digest(content),
-                "snapshot": release.tree_digest(snapshots / "snapshot-id"),
-            }
-            release.write_json(prepared / "expect.json", {
-                "schema": 1, "host_commit": commit, "client_commit": "b" * 40,
-                "version": "0.1.9", "release": "Alpha 4", "revision": 289,
-                "snapshot_version": "snapshot-id", "features": "default", "jobs": 4,
-                "inputs": expected_inputs,
+            expect = {
+                "schema": 2,
+                "host_commit": commit,
+                "client_commit": "b" * 40,
+                "version": "0.1.9",
+                "release": "Alpha 4",
+                "revision": 289,
+                "features": "default",
+                "jobs": 4,
                 "archives": {
                     "source.tar.gz": {
-                        "sha256": release.sha256_file(source), "bytes": source.stat().st_size,
-                    },
-                    "inputs.tar.gz": {
-                        "sha256": release.sha256_file(inputs), "bytes": inputs.stat().st_size,
+                        "sha256": release.sha256_file(source),
+                        "bytes": source.stat().st_size,
                     },
                 },
-            })
+            }
+            release.write_json(prepared / "expect.json", expect)
             with mock.patch.object(release, "require_committed_tools"), \
                     mock.patch.object(release, "require_clean_checkout"), \
                     mock.patch.object(release, "release_name_at", return_value="Alpha 4"), \
                     mock.patch.object(release, "run_git", return_value="commit"):
-                _commit_root, reused, _expect = release.prepare_payload(
+                _commit_root, reused, loaded = release.prepare_payload(
                     args, root, commit, "b" * 40, "0.1.9"
                 )
             self.assertEqual(reused, payload.resolve())
+            self.assertNotIn("inputs", loaded)
+
+
+class EmbeddedGameDataTests(unittest.TestCase):
+    def test_release_refuses_hosted_ci_cfg_even_when_local_inputs_exist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for revision in ("274", "289"):
+                for kind in ("engine", "content"):
+                    directory = root / "inputs/game-data" / revision / kind
+                    directory.mkdir(parents=True)
+                    (directory / "local-source").write_text("present")
+            rs2b0t = root / "inputs/rs2b0t"
+            rs2b0t.mkdir(parents=True)
+            (rs2b0t / "local-query").write_text("present")
+
+            package_id = "path+file:///workspace/crates/api#api@0.1.0"
+            messages = (
+                {
+                    "reason": "compiler-artifact",
+                    "package_id": package_id,
+                    "target": {"name": "api", "kind": ["lib"]},
+                    "features": ["embedded-game-data"],
+                },
+                {
+                    "reason": "build-script-executed",
+                    "package_id": package_id,
+                    "cfgs": ["no_local_game_data"],
+                },
+            )
+            build_log = root / "build.json"
+            build_log.write_text("".join(json.dumps(message) + "\n" for message in messages))
+
+            with self.assertRaisesRegex(release.ReleaseError, "no_local_game_data"):
+                release.require_embedded_game_data(build_log)
+
+    def test_release_requires_api_embedded_feature_and_build_script_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            build_log = Path(temporary) / "build.json"
+            build_log.write_text(json.dumps({
+                "reason": "compiler-artifact",
+                "package_id": "path+file:///workspace/crates/api#api@0.1.0",
+                "target": {"name": "api", "kind": ["lib"]},
+                "features": [],
+            }) + "\n")
+            with self.assertRaisesRegex(release.ReleaseError, "embedded-game-data"):
+                release.require_embedded_game_data(build_log)
 
 
 class ParameterTests(unittest.TestCase):
-    def test_all_platform_plan_contains_pinned_gates_and_transports(self):
+    def test_all_platform_plan_contains_local_bootstrap_and_transport(self):
         arguments = argparse.Namespace(
             platform="all",
             revision="289",
@@ -267,6 +278,13 @@ class ParameterTests(unittest.TestCase):
         self.assertIn("windows-ssh.py", encoded)
         self.assertIn("${RELEASE_WINDOWS_HOST}", encoded)
         self.assertIn("${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION}", encoded)
+        self.assertIn("tools/local-data/build.py", encoded)
+        self.assertIn("GAME_DATA_274_ENGINE", encoded)
+        self.assertIn("GAME_DATA_289_CONTENT", encoded)
+        self.assertIn("RS2B0T", encoded)
+        self.assertIn("embedded-game-data", encoded)
+        self.assertIn("no_local_game_data", encoded)
+        self.assertNotIn("tree digest", encoded)
 
     def test_remote_roots_must_be_relative_and_cannot_escape(self):
         self.assertEqual(release.validate_remote_root("release/cache", "root"), "release/cache")
@@ -274,9 +292,19 @@ class ParameterTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(release.ReleaseError):
                 release.validate_remote_root(value, "root")
 
-    def test_packager_has_no_operator_filesystem_defaults(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(release_package.nav_build_inputs("289"), (None, None))
+    def test_packager_map_defaults_use_the_289_generator_source(self):
+        with mock.patch.dict(os.environ, {
+            "GAME_DATA_289_ENGINE": "/inputs/game-data/289/engine",
+            "BOT_NAV_SNAPSHOT_ROOT": "/inputs/snapshots",
+            "ENGINE_DIR": "/obsolete/selected/tree",
+        }, clear=True):
+            self.assertEqual(
+                release_package.nav_build_inputs(),
+                (
+                    Path("/inputs/game-data/289/engine/data/pack/client"),
+                    Path("/inputs/snapshots"),
+                ),
+            )
 
     def test_windows_transport_has_no_embedded_host_or_key_path(self):
         options = windows_ssh.ssh_options("key-file", "known-hosts", 8)
@@ -375,13 +403,23 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         "SHELL": "/opt/local/bin/zsh",
         "SSH_AUTH_SOCK": "/tmp/agent.sock",
         "FPATH": "/opt/homebrew/share/zsh/site-functions",
+        "BOT_NAV_ENGINE_DIR": "/old/selected-engine",
+        "BOT_NAV_CONTENT_DIR": "/old/selected-content",
+        "ENGINE_DIR": "/old/engine",
+        "CONTENT_DIR": "/old/content",
+        "GAME_DATA_274_ENGINE": "/old/game-data",
+        "GAME_DATA_274_CONTENT": "/old/game-content",
+        "GAME_DATA_289_ENGINE": "/old/game-data",
+        "GAME_DATA_289_CONTENT": "/old/game-content",
+        "RS2B0T": "/old/queries",
     }
     # Keys native_build_environment itself pins for every platform.
     WORKER_KEYS = {
         "GIT_COMMIT", "CLIENT_COMMIT", "GIT_DIRTY", "BOT_NAV_REVISION",
-        "BOT_NAV_BUILD", "BOT_NAV_ENGINE_DIR", "BOT_NAV_CONTENT_DIR",
-        "BOT_NAV_SNAPSHOT_ROOT", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS",
-        "CARGO_INCREMENTAL",
+        "BOT_NAV_BUILD", "BOT_NAV_SNAPSHOT_ROOT", "RS2B0T",
+        "GAME_DATA_274_ENGINE", "GAME_DATA_274_CONTENT",
+        "GAME_DATA_289_ENGINE", "GAME_DATA_289_CONTENT",
+        "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
     }
 
     def test_macos_build_path_is_fixed_and_minimal(self):
@@ -436,6 +474,17 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
         self.assertEqual(mac["GIT_DIRTY"], "0")
 
+        for revision in ("274", "289"):
+            self.assertEqual(
+                mac[f"GAME_DATA_{revision}_ENGINE"],
+                f"/inputs/game-data/{revision}/engine",
+            )
+            self.assertEqual(
+                mac[f"GAME_DATA_{revision}_CONTENT"],
+                f"/inputs/game-data/{revision}/content",
+            )
+        self.assertEqual(mac["RS2B0T"], "/inputs/rs2b0t")
+
     def test_developer_dir_must_be_an_existing_apple_dir(self):
         with mock.patch.object(Path, "is_dir", lambda path: True):
             self.assertTrue(release.valid_macos_developer_dir(
@@ -475,6 +524,24 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         # The allowlist and deployment pin are macOS-only.
         self.assertEqual(linux["RUSTUP_TOOLCHAIN"], "nightly-2099-01-01")
         self.assertEqual(linux["MACOSX_DEPLOYMENT_TARGET"], "14.0")
+
+        for revision in ("274", "289"):
+            self.assertEqual(
+                linux[f"GAME_DATA_{revision}_ENGINE"],
+                f"/inputs/game-data/{revision}/engine",
+            )
+            self.assertEqual(
+                linux[f"GAME_DATA_{revision}_CONTENT"],
+                f"/inputs/game-data/{revision}/content",
+            )
+        self.assertEqual(linux["RS2B0T"], "/inputs/rs2b0t")
+        for obsolete in (
+            "BOT_NAV_ENGINE_DIR",
+            "BOT_NAV_CONTENT_DIR",
+            "ENGINE_DIR",
+            "CONTENT_DIR",
+        ):
+            self.assertNotIn(obsolete, linux)
 
 OTOOL_L = """\
 /pkg/panel-play:
@@ -1084,6 +1151,78 @@ class MacosLinkageTests(unittest.TestCase):
                 release.verify_macos_linkage(base)
 
 
+class PackageReceiptTests(unittest.TestCase):
+    def test_same_build_receipt_accepts_matching_and_rejects_wrong_shipped_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "input"
+            nav = inputs / "nav/274"
+            nav.mkdir(parents=True)
+            artifacts = {}
+            for name in ("panel-play", "tui-play"):
+                path = inputs / name
+                path.write_bytes(name.encode())
+                artifacts[name] = path
+            for name in release.NAV_NAMES:
+                path = nav / name
+                path.write_bytes(name.encode())
+                artifacts[f"nav/274/{name}"] = path
+            receipt = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "target": "x86_64-unknown-linux-gnu",
+                "rustc": "rustc test",
+                "features": "default",
+                "built_at": "2026-01-01T00:00:00+00:00",
+                "files": {
+                    name: release_package.digest(path)
+                    for name, path in artifacts.items()
+                },
+            }
+            receipt_path = root / "build-receipt.json"
+            receipt_path.write_text(json.dumps(receipt))
+            metadata = json.dumps({
+                "packages": [{"name": "panel", "version": "0.1.9"}],
+            })
+
+            for output_name, expected_error in (
+                ("matching", None),
+                ("wrong-bytes", "artifact does not match build receipt"),
+            ):
+                with self.subTest(output=output_name):
+                    if expected_error:
+                        wrong = dict(receipt)
+                        wrong["files"] = dict(receipt["files"])
+                        wrong["files"]["nav/274/274bot.navpack"] = "0" * 64
+                        receipt_path.write_text(json.dumps(wrong))
+                    else:
+                        receipt_path.write_text(json.dumps(receipt))
+                    output = root / output_name
+                    arguments = [
+                        "package.py",
+                        "--platform", "linux",
+                        "--input", str(inputs),
+                        "--output", str(output),
+                        "--build-receipt", str(receipt_path),
+                        "--revision", "274",
+                    ]
+                    stderr = io.StringIO()
+                    with mock.patch.object(release_package, "run", return_value=metadata), \
+                            mock.patch.object(sys, "argv", arguments), \
+                            contextlib.redirect_stdout(io.StringIO()), \
+                            contextlib.redirect_stderr(stderr):
+                        if expected_error:
+                            with self.assertRaises(SystemExit):
+                                release_package.main()
+                            self.assertIn(expected_error, stderr.getvalue())
+                        else:
+                            release_package.main()
+                            for name, path in artifacts.items():
+                                self.assertEqual(
+                                    (output / name).read_bytes(), path.read_bytes()
+                                )
+
+
 class ManifestTests(unittest.TestCase):
     def test_finalize_manifest_rehashes_notes_and_package_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1235,24 +1374,23 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "mismatch"):
                 release.verify_sha256s(root, {"linux": candidate})
 
-    def test_nav_comparison_requires_all_three_platforms(self):
-        nav = {"274bot.navpack": {"sha256": "a", "bytes": 1}}
-        self.assertIn("not compared", release.compare_nav_sets({"linux": nav}))
-        self.assertIn("byte-identical", release.compare_nav_sets({
-            "macos": nav, "linux": nav, "windows": nav,
-        }))
-        with self.assertRaisesRegex(release.ReleaseError, "navigation differs"):
-            release.compare_nav_sets({
-                "macos": nav,
-                "linux": nav,
-                "windows": {"274bot.navpack": {"sha256": "b", "bytes": 1}},
-            })
+    def test_nav_package_names_exclude_the_identity_manifest(self):
+        self.assertEqual(
+            release.NAV_NAMES,
+            (
+                "274bot.navpack",
+                "274bot.navflags",
+                "274bot.navreach",
+                "274bot.navcanlight",
+                "274bot.navpois",
+            ),
+        )
 
     def test_retain_cleanup_keeps_only_packages_and_receipts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             expect = {
-                "schema": 1, "host_commit": "a" * 40, "client_commit": "b" * 40,
+                "schema": 2, "host_commit": "a" * 40, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
             }
             release.write_json(root / "expect.json", expect)
@@ -1272,7 +1410,7 @@ class ManifestTests(unittest.TestCase):
             root = Path(temporary)
             commit = "a" * 40
             release.write_json(root / "expect.json", {
-                "schema": 1, "host_commit": commit, "client_commit": "b" * 40,
+                "schema": 2, "host_commit": commit, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
             })
             package = root / "274bot-0.1.9-macos-arm64"
@@ -1352,7 +1490,7 @@ class ControllerTests(unittest.TestCase):
             prepared = args.work_dir / args.commit / "prepared"
             prepared.mkdir(parents=True)
             expect = {
-                "schema": 1, "host_commit": args.commit, "client_commit": "b" * 40,
+                "schema": 2, "host_commit": args.commit, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
             }
             release.write_json(prepared / "expect.json", expect)
@@ -1383,7 +1521,7 @@ class ControllerTests(unittest.TestCase):
             rows = (args.artifact_dir / "SHA256SUMS").read_text().splitlines()
             self.assertEqual(len(rows), 3)
 
-    def test_verify_all_sets_local_worker_platform_and_compares_three_nav_sets(self):
+    def test_verify_all_sets_local_worker_platform_without_nav_comparison(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             artifacts = root / "artifacts"
@@ -1407,8 +1545,9 @@ class ControllerTests(unittest.TestCase):
                 release.verify_controller(args)
 
             self.assertEqual(seen, ["macos"])
-            self.assertIn(
-                "byte-identical across macos, linux, and windows", output.getvalue()
+            self.assertEqual(
+                json.loads(output.getvalue())["verified"],
+                sorted(release.PLATFORMS),
             )
 
 if __name__ == "__main__":

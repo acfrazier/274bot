@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "npc_377.rs"]
+mod npc_377;
+
 impl NpcView {
     fn from_slot(
         index: usize,
@@ -8,17 +11,30 @@ impl NpcView {
         level: i32,
         distance: i32,
         loop_cycle: i32,
-        cache: &Cache,
+        client: &Client,
     ) -> Self {
         let entity = &npc.entity;
-        let (name, actions, npc_level, size) = match npc.r#type.and_then(|t| cache.npcs.get(t)) {
-            Some(t) => (
-                Some(t.name.clone()),
-                t.op.clone(),
-                t.vislevel.max(0),
-                t.size,
-            ),
-            None => (None, Vec::new(), 0, entity.size),
+        let cache = &client.cache;
+        let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
+        let is_377 = client.revision() == client::io::ClientRevision::R377;
+        let form = if is_377 {
+            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
+        } else {
+            placed
+        };
+        let (name, actions) = match form {
+            Some(form) => (Some(form.name.clone()), form.op.clone()),
+            None => (None, Vec::new()),
+        };
+        let (npc_level, size) = if is_377 {
+            (
+                form.map(|form| form.vislevel.max(0)).unwrap_or(0),
+                placed.map(|placed| placed.size).unwrap_or(entity.size),
+            )
+        } else {
+            placed
+                .map(|placed| (placed.vislevel.max(0), placed.size))
+                .unwrap_or((0, entity.size))
         };
         NpcView {
             index,
@@ -68,6 +84,12 @@ impl GameSnapshot {
                 used: Skill::used[i],
             })
             .collect();
+        // The client publishes one generation for skill, energy, and weight
+        // updates. Its packet history is shorter than the packets drained per
+        // cycle, and skill values survive logout, so current values cannot
+        // prove which skills received a stat update in this session.
+        // Preserve the reader's documented no-readiness-signal fallback.
+        self.stats_ready = false;
         true
     }
 
@@ -152,7 +174,7 @@ impl GameSnapshot {
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
-                headicons: lp.headicons,
+                headicons: i32::from(lp.headicons),
                 weapon: player_weapon(&lp.appearance),
             },
             energy: client.runenergy,
@@ -188,7 +210,7 @@ impl GameSnapshot {
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
-                    headicons: player.headicons,
+                    headicons: i32::from(player.headicons),
                     weapon: player_weapon(&player.appearance),
                 });
             }
@@ -200,6 +222,11 @@ impl GameSnapshot {
     /// Refresh native observations that may change without a packet-family
     /// generation. Clone the overhead string only when its value changes.
     pub(super) fn refresh_native_facts(&mut self, client: &Client) {
+        if !client.try_move_path.is_empty()
+            && self.last_walk_path_local.as_slice() != client.try_move_path.as_slice()
+        {
+            self.last_walk_path_local.clone_from(&client.try_move_path);
+        }
         let local_overhead_text = client
             .ingame
             .then(|| client.local_player.as_ref()?.entity.chat_message.as_deref())
@@ -210,6 +237,7 @@ impl GameSnapshot {
         self.hint_tile = (client.ingame && client.hint_type == 2).then_some(HintTileView {
             x: client.hint_tile_x,
             z: client.hint_tile_z,
+            level: client.minusedlevel,
         });
         // Hitmarks live on the local entity and expire against loop_cycle;
         // neither event bumps a packet family, so recompute every read.
@@ -385,13 +413,15 @@ impl GameSnapshot {
         }
         self.inventory.clear();
         self.inventory_packet_generation = None;
+        self.inventory_ready = false;
         let Some(inv_id) = tab_inv_component(client, 3) else {
             self.inventory_size = 0;
             return true;
         };
-        self.inventory_packet_generation = client
-            .inventory_packet_state(inv_id)
-            .map(|state| state.generation);
+        let state = client.inventory_packet_state(inv_id);
+        self.inventory_packet_generation = state.map(|state| state.generation);
+        self.inventory_ready =
+            state.is_some_and(|state| state.transmitting && state.full_generation > 0);
         let Some(inv) = client.if_(inv_id as usize) else {
             self.inventory_size = 0;
             return true;
@@ -603,6 +633,13 @@ impl GameSnapshot {
             self.bank_prev_inv_com = com_id;
             self.bank_prev_inv_generation = generation;
         }
+        // The side component closes with the session (`bank.rs2:25-27`); a
+        // later open counts only side updates newer than this generation.
+        if self.bank_side_com >= 0 {
+            self.bank_prev_side_com = self.bank_side_com;
+            self.bank_prev_side_generation = self.bank_side_last_generation;
+        }
+        self.bank_side_ready = false;
         self.bank_inventory_session = None;
     }
 
@@ -625,6 +662,7 @@ impl GameSnapshot {
             return false;
         }
         self.bank_side_packet_generation = None;
+        self.bank_side_ready = false;
         if client.side_modal_id == -1 {
             self.bank_side = Vec::new();
         } else {
@@ -634,16 +672,54 @@ impl GameSnapshot {
                     .as_deref()
                     .is_some_and(|s| s.to_ascii_lowercase().contains("deposit"))
             });
-            self.bank_side_packet_generation = component.and_then(|com_id| {
+            let state = component.and_then(|com_id| {
                 client
                     .inventory_packet_state(com_id)
-                    .map(|state| state.generation)
+                    .map(|state| (com_id, state))
             });
+            self.bank_side_packet_generation = state.map(|(_, state)| state.generation);
+            if let Some((com_id, state)) = state {
+                self.note_bank_side_state(com_id, state);
+            }
             self.bank_side = component
                 .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
                 .unwrap_or_default();
         }
         true
+    }
+
+    /// Side readiness mirrors the main table's session rule: the side
+    /// component transmits, and its last full update is at least the side
+    /// generation recorded when the previous bank session closed. The content
+    /// sends that full update with every opening (`bank.rs2:20`).
+    fn note_bank_side_state(
+        &mut self,
+        com_id: i32,
+        state: client::client::client::InventoryPacketState,
+    ) {
+        if !state.transmitting {
+            self.bank_side_full_generation = 0;
+        } else if self.bank_side_com != com_id
+            || self.bank_side_last_full_observation != state.full_observation
+        {
+            self.bank_side_full_generation = if state.full_generation > 0 {
+                state.generation
+            } else {
+                0
+            };
+        }
+        self.bank_side_com = com_id;
+        self.bank_side_last_generation = state.generation;
+        self.bank_side_last_full_observation = state.full_observation;
+        let opened_at = if self.bank_prev_side_com == com_id {
+            self.bank_prev_side_generation
+        } else {
+            0
+        };
+        self.bank_side_ready = self.bank_inventory_session.is_some()
+            && state.transmitting
+            && self.bank_side_full_generation > 0
+            && self.bank_side_full_generation >= opened_at;
     }
 
     /// Trade rebuild: the 274 trade ifaces' state and containers. The
@@ -680,9 +756,29 @@ impl GameSnapshot {
         let side_pack =
             inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
         let (accept_component_id, decline_component_id) = trade_controls(client);
+        let confirm_open = client.main_modal_id == TRADECONFIRM;
+        // The engine stops the offer containers at the mutual accept
+        // (`trade.rs2:80-86`) and the client empties a stopped container, so
+        // the confirm lists are the only record of the agreed trade.
+        let confirm = confirm_open.then(|| {
+            Box::new(TradeConfirmView {
+                mine: confirm_rows(
+                    client,
+                    TRADECONFIRM_INV1,
+                    TRADECONFIRM_INV2,
+                    ItemContainer::TradeMyOffer,
+                ),
+                theirs: confirm_rows(
+                    client,
+                    TRADECONFIRM_OTHER_INV1,
+                    TRADECONFIRM_OTHER_INV2,
+                    ItemContainer::TradeTheirOffer,
+                ),
+            })
+        });
         self.trade = TradeView {
             offer_open: client.main_modal_id == TRADEMAIN,
-            confirm_open: client.main_modal_id == TRADECONFIRM,
+            confirm_open,
             my_offer,
             their_offer,
             side_pack,
@@ -699,6 +795,7 @@ impl GameSnapshot {
             their_offer_stopped,
             my_offer_available,
             their_offer_available,
+            confirm,
         };
         true
     }
@@ -1076,10 +1173,21 @@ impl GameSnapshot {
     }
 
     fn publish_scene_from_client(&mut self, client: &Client) {
+        self.projection_scene_wanted = self.projection_locs_wanted;
         if !client.ingame || client.scene_state != 2 {
             self.scene = SceneView::default();
+            self.projection_scene = ProjectionSceneView::default();
+            self.projection_locs_built = false;
             return;
         }
+        // The height and link grids serve only the synchronous projection
+        // readers; build them only for a run that asked for them.
+        self.projection_scene = if self.projection_locs_wanted {
+            Self::projection_scene_view(client).unwrap_or_default()
+        } else {
+            ProjectionSceneView::default()
+        };
+        self.projection_locs_built = false;
         let level = client.minusedlevel;
         match client.collision.get(level as usize) {
             Some(cmap) => {
@@ -1103,6 +1211,58 @@ impl GameSnapshot {
                 };
             }
         }
+    }
+
+    fn projection_scene_view(client: &Client) -> Option<ProjectionSceneView> {
+        use ::client::dash3d::MapFlag;
+
+        let level = client.minusedlevel;
+        if !(0..=3).contains(&level) {
+            return None;
+        }
+        let mut heights = Vec::with_capacity(105 * 105);
+        let ground = client.groundh.get(level as usize)?;
+        for x in 0..=104 {
+            let row = ground.get(x)?;
+            for z in 0..=104 {
+                heights.push(*row.get(z)?);
+            }
+        }
+        let mut heights_above = Vec::new();
+        if level < 3 {
+            heights_above.reserve(105 * 105);
+            let ground_above = client.groundh.get((level + 1) as usize)?;
+            for x in 0..=104 {
+                let row = ground_above.get(x)?;
+                for z in 0..=104 {
+                    heights_above.push(*row.get(z)?);
+                }
+            }
+        }
+        let link_map = client.mapl.get(1)?;
+        let mut link_below = Vec::with_capacity(104 * 104);
+        for x in 0..104 {
+            let row = link_map.get(x)?;
+            for z in 0..104 {
+                let flags = *row.get(z)?;
+                link_below.push(u8::from(flags & (MapFlag::LINK_BELOW as u8) != 0));
+            }
+        }
+        Some(ProjectionSceneView {
+            available: true,
+            level,
+            camera_x: client.cam_x,
+            camera_y: client.cam_y,
+            camera_z: client.cam_z,
+            sin_pitch: client::graphics::Pix3D::sin_table()[(client.cam_pitch & 0x7ff) as usize],
+            cos_pitch: client::graphics::Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize],
+            sin_yaw: client::graphics::Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize],
+            cos_yaw: client::graphics::Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize],
+            heights: heights.into(),
+            heights_above: heights_above.into(),
+            link_below: link_below.into(),
+            locs: Vec::new().into(),
+        })
     }
 
     /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
@@ -1144,7 +1304,8 @@ impl GameSnapshot {
             || self.scene.level != client.minusedlevel
             || self.scene.base_x != client.map_build_base_x
             || self.scene.base_z != client.map_build_base_z;
-        if moved || loc_dirty || identity_stale {
+        let projection_stale = self.projection_locs_wanted != self.projection_scene_wanted;
+        if moved || loc_dirty || identity_stale || projection_stale {
             self.publish_scene_from_client(client);
         }
         moved
@@ -1160,12 +1321,23 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     pub(super) fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.loc_varp_gen);
         let standalone = self.loc_bits_prelude.is_none();
         let (stamp, static_gen) = self.loc_bits(client);
-        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
+        let projection_state_dirty = self.projection_locs_wanted != self.projection_locs_built;
+        if !moved
+            && !morph_changed
+            && stamp == self.loc_model_stamp
+            && static_gen == self.loc_static_gen
+            && !projection_state_dirty
+        {
             return false;
         }
-        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let dirty = moved
+            || morph_changed
+            || stamp != self.loc_model_stamp
+            || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
         if standalone && client.ingame && client.scene_state == 2 {
@@ -1175,6 +1347,7 @@ impl GameSnapshot {
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
         self.loc.clear();
+        self.projection_scene.locs = Default::default();
         for sx in 0..104 {
             for sz in 0..104 {
                 // Per-tile layer order matches the m8aq sweep: wall,
@@ -1189,7 +1362,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(sprite) = client.world.get_scene(level, sx, sz) {
@@ -1202,7 +1375,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(gd) = client.world.get_gd(level, sx, sz) {
@@ -1215,7 +1388,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(decor) = client.world.get_decor(level, sx, sz) {
@@ -1228,12 +1401,102 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
             }
         }
+        self.rebuild_projection_locs(client);
         dirty
+    }
+
+    fn projection_locs_should_build(scene_available: bool, demanded: bool) -> bool {
+        scene_available && demanded
+    }
+
+    fn rebuild_projection_locs(&mut self, client: &Client) {
+        if !Self::projection_locs_should_build(
+            self.projection_scene.available,
+            self.projection_locs_wanted,
+        ) {
+            self.projection_scene.locs = std::sync::Arc::from([]);
+            // Settled for this state: an unwanted list stays empty, and a
+            // wanted one waits for the next scene publish (which clears this).
+            self.projection_locs_built = self.projection_locs_wanted;
+            return;
+        }
+        let mut locs = Vec::new();
+        let cache = &client.cache;
+        for plane in 0..4 {
+            let level = plane;
+            for sx in 0..104 {
+                for sz in 0..104 {
+                    if let Some(wall) = client.world.get_wall(level, sx, sz) {
+                        locs.push(projection_loc_view(
+                            cache,
+                            wall.typecode,
+                            wall.typecode2 & 0xff,
+                            LocLayer::Wall,
+                            level,
+                            wall.x,
+                            wall.z,
+                            (sx, sx, sz, sz),
+                            Some(wall.angle1),
+                            [wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw],
+                        ));
+                    }
+                    if let Some(sprite) = client.world.get_scene(level, sx, sz) {
+                        locs.push(projection_loc_view(
+                            cache,
+                            sprite.typecode,
+                            sprite.typecode2 & 0xff,
+                            LocLayer::Ground,
+                            level,
+                            sprite.x,
+                            sprite.z,
+                            (
+                                sprite.min_tile_x,
+                                sprite.max_tile_x,
+                                sprite.min_tile_z,
+                                sprite.max_tile_z,
+                            ),
+                            None,
+                            [sprite.h_sw, sprite.h_se, sprite.h_ne, sprite.h_nw],
+                        ));
+                    }
+                    if let Some(gd) = client.world.get_gd(level, sx, sz) {
+                        locs.push(projection_loc_view(
+                            cache,
+                            gd.typecode,
+                            gd.typecode2 & 0xff,
+                            LocLayer::GroundDecoration,
+                            level,
+                            gd.x,
+                            gd.z,
+                            (sx, sx, sz, sz),
+                            None,
+                            [gd.h_sw, gd.h_se, gd.h_ne, gd.h_nw],
+                        ));
+                    }
+                    if let Some(decor) = client.world.get_decor(level, sx, sz) {
+                        locs.push(projection_loc_view(
+                            cache,
+                            decor.typecode,
+                            decor.typecode2 & 0xff,
+                            LocLayer::WallDecoration,
+                            level,
+                            decor.x,
+                            decor.z,
+                            (sx, sx, sz, sz),
+                            None,
+                            [decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw],
+                        ));
+                    }
+                }
+            }
+        }
+        self.projection_scene.locs = locs.into();
+        self.projection_locs_built = self.projection_locs_wanted && self.projection_scene.available;
     }
 
     /// Ground-item rebuild: iterate each `ground_obj` list at
@@ -1310,6 +1573,19 @@ impl GameSnapshot {
             orbit_yaw: client.orbit_camera_yaw,
             cinematic: client.cinema_cam,
         };
+        if self.projection_scene.available {
+            self.projection_scene.camera_x = client.cam_x;
+            self.projection_scene.camera_y = client.cam_y;
+            self.projection_scene.camera_z = client.cam_z;
+            self.projection_scene.sin_pitch =
+                ::client::graphics::Pix3D::sin_table()[(client.cam_pitch & 0x7ff) as usize];
+            self.projection_scene.cos_pitch =
+                ::client::graphics::Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize];
+            self.projection_scene.sin_yaw =
+                ::client::graphics::Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize];
+            self.projection_scene.cos_yaw =
+                ::client::graphics::Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize];
+        }
         moved
     }
 
@@ -1326,10 +1602,13 @@ impl GameSnapshot {
     }
 
     pub(super) fn rebuild_npcs(&mut self, client: &Client) -> bool {
-        if client.gens.npc == self.gens.npc {
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.npc_varp_gen);
+        let moved = track(client.gens.npc, &mut self.gens.npc);
+        if !moved && !morph_changed {
             return false;
         }
-        self.gens.npc = client.gens.npc;
+        self.gens.npc_info = client.gens.npc_info;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
         let base = (client.map_build_base_x, client.map_build_base_z);
@@ -1349,7 +1628,7 @@ impl GameSnapshot {
                     level,
                     distance,
                     client.loop_cycle,
-                    &client.cache,
+                    client,
                 ));
             }
         }
@@ -1528,17 +1807,31 @@ fn loc_view(
     sx: i32,
     sz: i32,
     local_tile: Option<(i32, i32)>,
-    cache: &Cache,
+    client: &Client,
 ) -> LocView {
     let id = (typecode >> 14) & 0x7fff;
     let shape = info & 0x1f;
     let angle = (info >> 6) & 0x3;
     let x = base.0 + sx;
     let z = base.1 + sz;
+    let base_loc = client.cache.locs.get(id as usize);
+    // Java 377 Client:4133-4176 resolves only menu text/options (including
+    // the Examine target). Routing keeps the base size/forceapproach at
+    // Client:6979-6993; World:795-858 keeps base placement/collision/anim.
+    let display_loc = if client.revision() == client::io::ClientRevision::R377 {
+        client.cache.resolve_loc(id as usize, &client.var)
+    } else {
+        base_loc
+    };
+    let (name, description, actions) = match display_loc {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+        ),
+        None => (None, None, Vec::new()),
+    };
     let (
-        name,
-        description,
-        actions,
         width,
         length,
         block_walk,
@@ -1548,11 +1841,8 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
-    ) = match cache.locs.get(id as usize) {
+    ) = match base_loc {
         Some(loc) => (
-            (!loc.name.is_empty()).then(|| loc.name.clone()),
-            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
-            loc.op.clone(),
             loc.width,
             loc.length,
             loc.blockwalk,
@@ -1563,20 +1853,7 @@ fn loc_view(
             loc.mapscene,
             loc.forceapproach,
         ),
-        None => (
-            None,
-            None,
-            Vec::new(),
-            1,
-            1,
-            true,
-            true,
-            false,
-            -1,
-            -1,
-            -1,
-            0,
-        ),
+        None => (1, 1, true, true, false, -1, -1, -1, 0),
     };
     LocView {
         typecode,
@@ -1612,6 +1889,151 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
+    }
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one decoded loc row carries each geometry field the projection needs"
+)]
+fn projection_loc_view(
+    cache: &Cache,
+    typecode: i32,
+    info: i32,
+    layer: LocLayer,
+    level: i32,
+    scene_x: i32,
+    scene_z: i32,
+    tiles: (i32, i32, i32, i32),
+    wall_angle: Option<i32>,
+    heights: [i32; 4],
+) -> ProjectionLocView {
+    use ::client::dash3d::LocShape;
+
+    let id = (typecode >> 14) & 0x7fff;
+    let shape = info & 0x1f;
+    let angle = (info >> 6) & 0x3;
+    let (min_tile_x, max_tile_x, min_tile_z, max_tile_z) = tiles;
+    let def = cache.locs.get(id as usize);
+    let name = def.and_then(|def| {
+        (!def.name.is_empty()).then(|| std::sync::Arc::<str>::from(def.name.as_str()))
+    });
+    let width = def.map_or(1, |def| def.width);
+    let length = def.map_or(1, |def| def.length);
+    let used_scene_footprint = layer == LocLayer::Ground;
+    let rank = match layer {
+        LocLayer::Wall => 0,
+        LocLayer::Ground => 1,
+        LocLayer::WallDecoration => 2,
+        LocLayer::GroundDecoration => 3,
+    };
+    let (mut half_width, mut half_length) = if used_scene_footprint {
+        (
+            max_tile_x
+                .saturating_sub(min_tile_x)
+                .saturating_add(1)
+                .saturating_mul(64)
+                .max(32),
+            max_tile_z
+                .saturating_sub(min_tile_z)
+                .saturating_add(1)
+                .saturating_mul(64)
+                .max(32),
+        )
+    } else {
+        (
+            width.saturating_mul(64).max(32),
+            length.saturating_mul(64).max(32),
+        )
+    };
+    let mut top_height = 128;
+    if let Some(def) = def {
+        if let Some(angle) = wall_angle {
+            let thin = if def.wallwidth == 0 {
+                16
+            } else {
+                def.wallwidth
+            }
+            .clamp(8, 40);
+            let angle = angle.rem_euclid(2048);
+            if angle < 256 || (896..1152).contains(&angle) || angle >= 1792 {
+                half_length = thin;
+            } else {
+                half_width = thin;
+            }
+        }
+        let model_shape = match layer {
+            LocLayer::Wall => shape,
+            LocLayer::Ground if shape == LocShape::CENTREPIECE_DIAGONAL => {
+                LocShape::CENTREPIECE_STRAIGHT
+            }
+            LocLayer::Ground => shape,
+            LocLayer::GroundDecoration => LocShape::GROUND_DECOR,
+            LocLayer::WallDecoration => LocShape::WALLDECOR_STRAIGHT_NOOFFSET,
+        };
+        let model_angle = match layer {
+            LocLayer::Wall if shape == LocShape::WALL_L => angle + 4,
+            LocLayer::Wall | LocLayer::Ground | LocLayer::GroundDecoration => angle,
+            LocLayer::WallDecoration => 0,
+        };
+        let model = def
+            .get_model_shared(
+                cache,
+                model_shape,
+                model_angle,
+                heights[0],
+                heights[1],
+                heights[2],
+                heights[3],
+                -1,
+            )
+            .or_else(|| {
+                (layer == LocLayer::Wall && shape == LocShape::WALL_L).then(|| {
+                    def.get_model_shared(
+                        cache,
+                        LocShape::WALL_L,
+                        (angle + 1) & 0x3,
+                        heights[0],
+                        heights[1],
+                        heights[2],
+                        heights[3],
+                        -1,
+                    )
+                })?
+            });
+        if let Some(model) = model {
+            top_height = if model.min_y > 0 {
+                model.min_y
+            } else if model.max_y > 0 {
+                model.max_y
+            } else {
+                128
+            };
+            if !used_scene_footprint
+                && model.radius > 0
+                && def.width <= 1
+                && def.length <= 1
+                && wall_angle.is_none()
+            {
+                let radius = model.radius.min(192);
+                half_width = half_width.max(radius);
+                half_length = half_length.max(radius);
+            }
+        }
+    }
+    ProjectionLocView {
+        id,
+        name,
+        level,
+        rank,
+        scene_x,
+        scene_z,
+        min_tile_x,
+        max_tile_x,
+        min_tile_z,
+        max_tile_z,
+        half_width,
+        half_length,
+        top_height,
     }
 }
 
@@ -1839,6 +2261,9 @@ fn widget_view(
         width: com.width,
         height: com.height,
         scroll_height: com.scroll_height,
+        inventory_ready: client
+            .inventory_packet_state(component_id)
+            .is_some_and(|state| state.transmitting && state.full_generation > 0),
         scroll_position: com.scroll_pos,
         hidden: com.hide,
         text: non_empty(com.text),
@@ -1951,6 +2376,40 @@ fn read_inv_component(cache: &Cache, com: &IfTypeView, container: ItemContainer)
     out
 }
 
+/// One confirm-screen list: the rows of the `small` component followed by
+/// those of the `large` one. The engine fills exactly one of them
+/// (`trade.rs2:111-145`), so the other adds nothing. The rows are display
+/// only: no action family and no ops, and a list with no rows allocates
+/// nothing.
+fn confirm_rows(
+    client: &Client,
+    small: i32,
+    large: i32,
+    container: ItemContainer,
+) -> Vec<ItemView> {
+    let mut rows = Vec::new();
+    for com_id in [small, large] {
+        let Some(com) = client.if_(com_id as usize) else {
+            continue;
+        };
+        let Some(ids) = &com.link_obj_type else {
+            continue;
+        };
+        let n = com.link_obj_number.as_ref().map_or(0, |n| n.len());
+        for slot in 0..ids.len().min(n) {
+            rows.extend(item_view(
+                &client.cache,
+                &com,
+                slot,
+                container,
+                ItemActionFamily::None,
+                Vec::new(),
+            ));
+        }
+    }
+    rows
+}
+
 /// The items of the iface-table component `com_id` (component ops).
 fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<Vec<ItemView>> {
     if com_id < 0 {
@@ -2037,6 +2496,13 @@ const TRADEMAIN_INV: i32 = 3415;
 const TRADEMAIN_OTHER_INV: i32 = 3416;
 const TRADEMAIN_OTHER_PLAYER: i32 = 3417;
 const TRADESIDE_INV: i32 = 3322;
+/// The confirm screen's four lists (`interface.pack:3543, 3539, 3533, 3540`).
+/// `trade.rs2:111-145` transmits each offer to `inv1`/`otherinv1` when it
+/// holds fewer than 14 items and to `inv2`/`otherinv2` otherwise.
+const TRADECONFIRM_INV1: i32 = 3542;
+const TRADECONFIRM_INV2: i32 = 3538;
+const TRADECONFIRM_OTHER_INV1: i32 = 3532;
+const TRADECONFIRM_OTHER_INV2: i32 = 3539;
 
 /// The trade partner's name: the `otherplayer` label ("Trading With: X")
 /// with the prefix stripped and whitespace trimmed (m8aq
@@ -2306,6 +2772,111 @@ mod tests {
     }
 
     #[test]
+    fn projection_loc_build_gate_requires_demand_even_when_scene_is_available() {
+        assert!(!GameSnapshot::projection_locs_should_build(true, false));
+        assert!(GameSnapshot::projection_locs_should_build(true, true));
+        assert!(!GameSnapshot::projection_locs_should_build(false, true));
+    }
+    #[test]
+    fn projection_locs_follow_demand_independently_of_loc_generation() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.loc_bits_prelude = Some((0, 0));
+        snapshot.projection_scene.available = true;
+
+        assert!(snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(!snapshot.projection_locs_built);
+
+        snapshot.set_loc_projection_wanted(true);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(snapshot.projection_locs_built);
+        snapshot.projection_scene.locs = vec![ProjectionLocView::default()].into();
+
+        snapshot.set_loc_projection_wanted(false);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(snapshot.projection_scene().locs.is_empty());
+        assert!(!snapshot.projection_locs_built);
+    }
+
+    #[test]
+    fn projection_loc_list_is_built_only_when_a_ready_scene_is_demanded() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.world.set_wall(
+            0,
+            3,
+            4,
+            0,
+            0,
+            0,
+            0x4000_0000 + (1 << 14) + 3 + (4 << 7),
+            1 << 6,
+            0,
+            0,
+            0,
+            0,
+        );
+
+        let mut snapshot = GameSnapshot::new();
+        // Keep this test on the same scene/loc rebuild seam as the full
+        // snapshot path, where the scene bundle may remain published while a
+        // run changes its projection-loc demand.
+        snapshot.loc_bits_prelude = Some((0, 0));
+        snapshot.set_loc_projection_wanted(true);
+        snapshot.rebuild_scene(&client);
+        assert!(snapshot.projection_scene().available);
+        assert!(snapshot.rebuild_loc(&client));
+        assert_eq!(snapshot.projection_scene().locs.len(), 1);
+
+        snapshot.set_loc_projection_wanted(false);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert!(
+            snapshot.projection_scene().locs.is_empty(),
+            "a ready scene without a run requesting projection locs must publish none"
+        );
+
+        snapshot.set_loc_projection_wanted(true);
+        assert!(!snapshot.rebuild_loc(&client));
+        assert_eq!(snapshot.projection_scene().locs.len(), 1);
+    }
+
+    /// The projection height and link grids (about 99 KB per scene) are built
+    /// only while a reader asks for them, and a change of demand republishes
+    /// the scene without a scene generation move.
+    #[test]
+    fn projection_scene_grids_follow_demand() {
+        let mut client = r289_client();
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild_scene(&client);
+        assert!(!snapshot.projection_scene().available);
+        assert!(snapshot.projection_scene().heights.is_empty());
+        assert!(snapshot.projection_scene().link_below.is_empty());
+
+        snapshot.set_loc_projection_wanted(true);
+        snapshot.rebuild_scene(&client);
+        assert!(snapshot.projection_scene().available);
+        assert_eq!(snapshot.projection_scene().heights.len(), 105 * 105);
+        assert_eq!(snapshot.projection_scene().link_below.len(), 104 * 104);
+
+        snapshot.set_loc_projection_wanted(false);
+        snapshot.rebuild_scene(&client);
+        assert!(!snapshot.projection_scene().available);
+        assert!(snapshot.projection_scene().heights.is_empty());
+    }
+
+    #[test]
     fn tutorial_pending_follows_the_pending_box() {
         let mut client = r289_client();
         let mut snapshot = GameSnapshot::new();
@@ -2330,5 +2901,158 @@ mod tests {
             !snapshot.tutorial_pending(),
             "the clear path bumps no gen — a gated copy would stick true"
         );
+    }
+    const VIEW_RESOLUTION_ITERATIONS: usize = 128;
+    const ALLOCATION_ROUNDING_UNIT_BYTES: usize = 8;
+    // R274, R289 and R377 share this Linux-measured 128-resolution baseline.
+    const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
+
+    fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
+        use client::config::runtime_377::{
+            CacheFields377, InterfaceFields377, LocFields377, NpcFields377,
+        };
+        use client::config::{CacheRevision377, LocType, NpcType};
+
+        let mut cache = Cache::default();
+        let loc = LocType {
+            name: "loc name with a heap-backed payload".to_owned(),
+            desc: "location description with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Open the location".to_owned()),
+                Some("Search the location".to_owned()),
+            ],
+            ..LocType::default()
+        };
+        cache.locs.push(loc);
+
+        let npc_type = NpcType {
+            name: "npc name with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Talk to the npc".to_owned()),
+                Some("Attack the npc".to_owned()),
+            ],
+            ..NpcType::default()
+        };
+        cache.npcs.push(npc_type);
+        if revision == ClientRevision::R377 {
+            cache.revision_377 = Some(Box::new(CacheRevision377 {
+                config: CacheFields377 {
+                    locs: vec![LocFields377 { morph: None }],
+                    npcs: vec![NpcFields377 {
+                        field_1451: -1,
+                        field_1430: -1,
+                        field_1440: -1,
+                        field_1434: true,
+                        morph: None,
+                    }],
+                    ..Default::default()
+                },
+                interfaces: InterfaceFields377 {
+                    client_code_layers: Default::default(),
+                    type1_fields: Vec::new(),
+                    null_string_masks: Vec::new(),
+                    initial_overlays: Vec::new(),
+                },
+            }));
+        }
+
+        let client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(cache),
+            Arc::new(vec![]),
+            Vec::new(),
+            revision,
+        );
+        let mut npc = client::client::ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
+        npc.entity.chat_message = Some("npc overhead text with heap-backed storage".to_owned());
+
+        let resolve_loc = || {
+            std::hint::black_box(loc_view(
+                9,
+                (2 << 6) | 10,
+                LocLayer::Wall,
+                (3_200, 3_400),
+                1,
+                12,
+                18,
+                Some((3_210, 3_405)),
+                &client,
+            ));
+        };
+        let resolve_npc = || {
+            std::hint::black_box(NpcView::from_slot(
+                17,
+                &npc,
+                (3_200, 3_400),
+                1,
+                6,
+                100,
+                &client,
+            ));
+        };
+
+        for _ in 0..2 {
+            resolve_loc();
+            resolve_npc();
+        }
+
+        let loc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_loc();
+            }
+        });
+        let npc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_npc();
+            }
+        });
+        [
+            loc.count_total as usize,
+            loc.bytes_total as usize,
+            npc.count_total as usize,
+            npc.bytes_total as usize,
+        ]
+    }
+
+    #[test]
+    fn loc_and_npc_view_resolution_allocation_gate_for_each_revision() {
+        for revision in [
+            ClientRevision::R274,
+            ClientRevision::R289,
+            ClientRevision::R377,
+        ] {
+            let allocations = snapshot_view_resolution_allocations(revision);
+            let expected = VIEW_RESOLUTION_BASELINE;
+            assert_eq!(
+                allocations[0], expected[0],
+                "{revision:?} LocView allocation count changed across 128 unchanged resolutions"
+            );
+            assert!(
+                allocations[1] <= expected[1] + ALLOCATION_ROUNDING_UNIT_BYTES,
+                "{revision:?} LocView allocated {} bytes across 128 resolutions; baseline {} plus one allocator rounding unit",
+                allocations[1],
+                expected[1]
+            );
+            assert_eq!(
+                allocations[2], expected[2],
+                "{revision:?} NpcView allocation count changed across 128 unchanged resolutions"
+            );
+            assert!(
+                allocations[3] <= expected[3] + ALLOCATION_ROUNDING_UNIT_BYTES,
+                "{revision:?} NpcView allocated {} bytes across 128 resolutions; baseline {} plus one allocator rounding unit",
+                allocations[3],
+                expected[3]
+            );
+            eprintln!("snapshot view allocations {revision:?}: {allocations:?}");
+        }
     }
 }

@@ -67,8 +67,10 @@ export function searchCatalog() {
     throw notImpl('searchCatalog');
 }
 
-export function resolveByName() {
-    throw notImpl('resolveByName');
+export function resolveByName(cat, query, opts = {}) {
+    // Preserve upstream's TypeError for non-string queries (`src/bot/api/market/catalog.ts:203`).
+    query.trim();
+    return facts('obj-resolve-by-name', cat, query, Boolean(opts.exactOnly));
 }
 
 export function resetLiveCatalog() {

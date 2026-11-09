@@ -1,32 +1,29 @@
 //! The current files behind the state service (T5.2): the operator's
 //! `loadouts.json` and `panel-ui.json` preferences, and one
-//! `bank-hints/<profile>/<account>.json` per account. Each backend reads the
-//! file its old private reader read and writes the shape its old private
-//! writer wrote, so a file written before this service is read by it, and a
-//! file it writes is read by an older build.
+//! `bank-hints/<profile>/<account>.json` per account.
+//! Each backend reads and writes the shared saved format used by 0.2.8 and
+//! 0.2.9, whichever release wrote the bytes.
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it. Two refusals the service repairs, under
-//! the file's lock, keeping the file's exact bytes first in a new copy
-//! beside it ([`quarantine_copy`]). A loadouts file whose rows share a name
-//! (an older editor could save one; names key the rows) is renamed apart
-//! once, losing nothing, before anything leases or writes it
-//! ([`loadouts_sharing_names`], [`rename_apart`]). A preferences file whose
-//! content is malformed (not JSON, or JSON that is not an object) is moved
-//! aside when a save reads it, and fresh preferences are started
-//! ([`corrupt_preferences`]); every other read refuses it. A file whose
-//! content the service cannot represent whole (a hint field it does not
-//! know, a loadout row it cannot write back as read, a preference it
-//! cannot hold as a row) is read but never rewritten ([`Rewrite::Refused`]),
-//! the same rule in every domain: for preferences the rule is lossless
-//! representability, so a member this build does not know (a version
-//! marker among them) is held and written back like any other. What a
-//! write publishes is durable before it is acknowledged: the bytes are
-//! flushed in their staging file, renamed over the target, and then the
+//! until a later read accepts it.
+//! A preferences or runtime settings file whose content is malformed (not
+//! JSON, or JSON that is not an object) is quarantined on a save-path read
+//! and a fresh document is started ([`corrupt_preferences`],
+//! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
+//! unchanged. Duplicate loadout names are refused rather than renamed apart.
+//! Recognized pre-0.2.8 shapes are refused as a whole, never rewritten or
+//! partially loaded. The service logs each changed refusal with its file path.
+//! A file whose content the service cannot represent whole (a hint field it
+//! does not know, a loadout row it cannot write back as read, a preference or
+//! setting it cannot hold as a row) is read but never rewritten
+//! ([`Rewrite::Refused`]). Preferences and runtime settings use lossless
+//! representability, so an unknown member is held and written back.
+//! What a write publishes is durable before it is acknowledged: the bytes
+//! are flushed in their staging file, renamed over the target, and then the
 //! directory entries are flushed.
 //!
 //! Every writer this product runs holds the file's [`WriteLock`] across its
@@ -34,7 +31,7 @@
 //! processes on one `HOME`, or two compositions in one process) never
 //! interleave on one file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -44,11 +41,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
-use api::loadout::{parse_loadout, Loadout};
+use api::loadout::{loadouts_have_pre_0_2_8_shape, parse_loadout, Loadout};
 use api::local_state::{
-    DomainIdentity, FailureReason, LeaseSnapshot, LoadoutEdit, LoadoutOp, LocalStateDomain,
-    PreferenceChange, PreferenceRow,
+    AccountKey, ContentScope, DomainIdentity, ErrorCode, FailureReason, LeaseSnapshot, LoadoutEdit,
+    LoadoutOp, LocalStateDomain, PreferenceChange, PreferenceRow, RuntimeSettingsEdit,
+    RuntimeSettingsRow, ValidationReason, MAX_RUNTIME_SETTINGS_ROWS,
 };
+use script::native::PvpGlobals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -91,21 +90,34 @@ impl StateRoot {
             .join(profile)
             .join(format!("{account}.json"))
     }
+
+    /// `<root>/script-runtime-settings/<profile>/<account>/<revision>-<content>.json`.
+    pub fn script_runtime_settings_file(
+        &self,
+        profile: &str,
+        account: &str,
+        revision: i32,
+        content: &str,
+    ) -> PathBuf {
+        self.0
+            .join("script-runtime-settings")
+            .join(profile)
+            .join(account)
+            .join(format!("{revision}-{content}.json"))
+    }
 }
 
-/// The on-disk hint format this build writes and the only one it reads.
-/// Since T5.2 r2 a written document also carries the content scope it was
-/// observed under (`revision`, `content`); readers before r2 ignore the two
-/// fields, and a document without them (written before r2) is read under
-/// the scope that asks for it.
+/// The schema-1 hint format this build writes and reads. Documents carry
+/// the content scope they were observed under (`revision`, `content`);
+/// unstamped pre-scope documents are unsupported.
 pub const HINT_SCHEMA_VERSION: u32 = 1;
 
 /// The largest hint file read: the row cap at the widest JSON a row takes
 /// plus the header, with room to spare.
-const MAX_HINT_BYTES: u64 = 64 * 1024;
+pub const MAX_HINT_BYTES: u64 = 64 * 1024;
 
 /// The largest loadouts file read, and the largest the service writes.
-pub(super) const MAX_LOADOUTS_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_LOADOUTS_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The most loadout rows an edit may leave in the file.
 pub(super) const MAX_LOADOUT_ROWS: usize = 512;
@@ -115,6 +127,12 @@ pub(super) const MAX_LOADOUT_ROW_BYTES: usize = 64 * 1024;
 
 /// The largest preferences file read, and the largest the service writes.
 pub const MAX_PREFERENCES_BYTES: u64 = 1024 * 1024;
+
+/// The on-disk script settings format this build writes and reads.
+pub const SCRIPT_RUNTIME_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+/// The largest script runtime settings file read, and the largest written.
+pub const MAX_SCRIPT_RUNTIME_SETTINGS_BYTES: u64 = 1024 * 1024;
 
 /// The fields a schema-1 hint document carries. Any other field is content
 /// the service cannot write back, so a document carrying one is read but
@@ -128,6 +146,16 @@ const HINT_FIELDS: [&str; 7] = [
     "observed_at_unix",
     "rows",
 ];
+
+const SCRIPT_RUNTIME_SETTINGS_FIELDS: [&str; 6] = [
+    "schema_version",
+    "profile",
+    "account",
+    "revision",
+    "content",
+    "rows",
+];
+const SCRIPT_RUNTIME_SETTING_ROW_FIELDS: [&str; 3] = ["namespace", "key", "raw"];
 
 /// Which current file a store is, and under which identity it is read.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -149,6 +177,13 @@ pub(super) enum StoreKey {
         revision: i32,
         content: String,
     },
+    /// One box-scoped settings file under its account and content identity.
+    ScriptRuntimeSettings {
+        profile: String,
+        account: String,
+        revision: i32,
+        content: String,
+    },
 }
 
 impl StoreKey {
@@ -165,6 +200,12 @@ impl StoreKey {
                 content: identity.scope().content().to_string(),
             }),
             LocalStateDomain::Knowledge => None,
+            LocalStateDomain::ScriptRuntimeSettings => Some(StoreKey::ScriptRuntimeSettings {
+                profile: identity.account().profile().to_string(),
+                account: identity.account().account().to_string(),
+                revision: identity.scope().revision().as_i32(),
+                content: identity.scope().content().to_string(),
+            }),
         }
     }
 
@@ -173,6 +214,7 @@ impl StoreKey {
             StoreKey::Loadouts => LocalStateDomain::LoadoutsReferences,
             StoreKey::Preferences => LocalStateDomain::Preferences,
             StoreKey::BankHint { .. } => LocalStateDomain::BankHints,
+            StoreKey::ScriptRuntimeSettings { .. } => LocalStateDomain::ScriptRuntimeSettings,
         }
     }
 
@@ -183,6 +225,12 @@ impl StoreKey {
             StoreKey::BankHint {
                 profile, account, ..
             } => root.bank_hint_file(profile, account),
+            StoreKey::ScriptRuntimeSettings {
+                profile,
+                account,
+                revision,
+                content,
+            } => root.script_runtime_settings_file(profile, account, *revision, content),
         }
     }
 
@@ -213,8 +261,9 @@ pub(super) enum Rewrite {
     /// Every row was read and writes back as it was read.
     Lossless,
     /// Some rows could not be read (`unreadable`) or would not write back
-    /// as they were read (`lossy`: unknown fields, a legacy shape): the
-    /// rows read are leased, but the service never rewrites the file.
+    /// as they were read (`lossy`: unknown fields or current values that do
+    /// not round-trip); the rows read are leased, but the service never
+    /// rewrites the file.
     Refused { unreadable: usize, lossy: usize },
 }
 
@@ -223,6 +272,9 @@ pub(super) enum Rewrite {
 pub(super) struct PreferenceProjection {
     pub(super) document: Arc<Map<String, Value>>,
     pub(super) walk_globals: Result<WalkGlobals, Arc<str>>,
+    /// The `pvp` member (`pvp.start_fights`): a non-object member or a
+    /// non-boolean value is a projection error, which readers treat as off.
+    pub(super) pvp_globals: Result<PvpGlobals, Arc<str>>,
 }
 
 impl Default for PreferenceProjection {
@@ -230,6 +282,7 @@ impl Default for PreferenceProjection {
         Self {
             document: Arc::default(),
             walk_globals: Ok(WalkGlobals::default()),
+            pvp_globals: Ok(PvpGlobals::default()),
         }
     }
 }
@@ -239,10 +292,29 @@ pub(super) fn project_preferences(document: Map<String, Value>) -> PreferencePro
         Some(value) => project_walk_globals(value).map_err(Arc::<str>::from),
         None => Ok(WalkGlobals::default()),
     };
+    let pvp_globals = match document.get("pvp") {
+        Some(value) => project_pvp_globals(value).map_err(Arc::<str>::from),
+        None => Ok(PvpGlobals::default()),
+    };
     PreferenceProjection {
         document: Arc::new(document),
         walk_globals,
+        pvp_globals,
     }
+}
+
+fn project_pvp_globals(value: &Value) -> Result<PvpGlobals, &'static str> {
+    let Some(pvp) = value.as_object() else {
+        return Err("pvp preferences must be an object");
+    };
+    Ok(PvpGlobals {
+        start_fights: walk_boolean(
+            pvp,
+            "start_fights",
+            PvpGlobals::default().start_fights,
+            "pvp.start_fights must be a boolean",
+        )?,
+    })
 }
 
 fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
@@ -280,6 +352,18 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
             "survivable_routing",
             defaults.survivable_routing,
             "nav.survivable_routing must be a boolean",
+        )?,
+        allow_prereq_dialogue: walk_boolean(
+            nav,
+            "allow_prereq_dialogue",
+            defaults.allow_prereq_dialogue,
+            "nav.allow_prereq_dialogue must be a boolean",
+        )?,
+        allow_quest_start: walk_boolean(
+            nav,
+            "allow_quest_start",
+            defaults.allow_quest_start,
+            "nav.allow_quest_start must be a boolean",
         )?,
     })
 }
@@ -331,8 +415,14 @@ pub(super) enum ReadError {
     NotAnArray,
     #[error("not a JSON object of preferences")]
     NotAnObject,
+    #[error("not a JSON object of script runtime settings")]
+    NotScriptSettingsObject,
+    #[error("saved data is in a format from before 0.2.8")]
+    UnsupportedSavedFormat,
     #[error("schema_version {found} (this build reads {HINT_SCHEMA_VERSION})")]
     Schema { found: u32 },
+    #[error("script runtime settings schema_version {found}")]
+    ScriptSettingsSchema { found: u32 },
     #[error("file names profile {profile:?} account {account:?}")]
     Identity { profile: String, account: String },
     #[error(
@@ -343,12 +433,20 @@ pub(super) enum ReadError {
         revision: Option<i32>,
         content: Option<String>,
     },
+    #[error("script runtime settings file identity is invalid")]
+    ScriptSettingsIdentity,
+    #[error("script runtime settings file scope is invalid")]
+    ScriptSettingsScope,
+    #[error("script runtime settings has {rows} rows (maximum {MAX_RUNTIME_SETTINGS_ROWS})")]
+    TooManyScriptSettings { rows: usize },
+    #[error("script runtime settings row {index} is invalid")]
+    ScriptSettingsRow { index: usize },
+    #[error("script runtime settings contains a duplicate namespace/key")]
+    DuplicateScriptSetting,
     #[error("rows: {0}")]
     Rows(#[from] HintRowsError),
-    /// Loadout rows that share a name with an earlier row: names key the
-    /// rows, so no edit of such a file names one row. The service renames
-    /// them apart before it leases or writes the file, and refuses it while
-    /// that cannot be done.
+    /// Loadout names key the rows, so no edit can safely identify a row in
+    /// a file whose loadouts share a name. The file remains refused whole.
     #[error("{rows} loadout row(s) share a name with an earlier row")]
     SharedNames { rows: usize },
 }
@@ -359,28 +457,45 @@ impl ReadError {
     pub(super) fn reason(&self) -> FailureReason {
         match self {
             ReadError::Io(_) => FailureReason::Io,
+            ReadError::UnsupportedSavedFormat => FailureReason::UnsupportedSavedFormat,
             ReadError::Json(_)
             | ReadError::NotAnArray
             | ReadError::NotAnObject
+            | ReadError::NotScriptSettingsObject
             | ReadError::Schema { .. }
+            | ReadError::ScriptSettingsSchema { .. }
+            | ReadError::TooManyScriptSettings { .. }
+            | ReadError::ScriptSettingsRow { .. }
+            | ReadError::DuplicateScriptSetting
             | ReadError::Rows(_)
             | ReadError::SharedNames { .. } => FailureReason::Schema,
-            ReadError::Identity { .. } | ReadError::Scope { .. } => FailureReason::Identity,
+            ReadError::Identity { .. }
+            | ReadError::Scope { .. }
+            | ReadError::ScriptSettingsIdentity
+            | ReadError::ScriptSettingsScope => FailureReason::Identity,
         }
     }
 
-    /// Whether the read was refused for what the file says rather than for
-    /// the file itself: not UTF-8 or not JSON, or JSON of the wrong shape.
-    /// Never an owner, mode, size or I/O refusal (those read as
-    /// `PermissionDenied` or another I/O kind, not `InvalidData`).
+    /// Whether the read was refused for malformed content rather than the
+    /// file itself: not UTF-8, not JSON, or JSON of the wrong shape.
     pub(super) fn is_malformed(&self) -> bool {
         match self {
-            ReadError::Json(_) | ReadError::NotAnArray | ReadError::NotAnObject => true,
+            ReadError::Json(_)
+            | ReadError::NotAnArray
+            | ReadError::NotAnObject
+            | ReadError::NotScriptSettingsObject => true,
             ReadError::Io(error) => error.kind() == io::ErrorKind::InvalidData,
-            ReadError::Schema { .. }
+            ReadError::UnsupportedSavedFormat
+            | ReadError::Schema { .. }
+            | ReadError::ScriptSettingsSchema { .. }
             | ReadError::Rows(_)
             | ReadError::Identity { .. }
             | ReadError::Scope { .. }
+            | ReadError::ScriptSettingsIdentity
+            | ReadError::ScriptSettingsScope
+            | ReadError::TooManyScriptSettings { .. }
+            | ReadError::ScriptSettingsRow { .. }
+            | ReadError::DuplicateScriptSetting
             | ReadError::SharedNames { .. } => false,
         }
     }
@@ -406,10 +521,64 @@ struct HintDocument {
     rows: Vec<(i32, i32)>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ScriptRuntimeSettingsDocument {
+    schema_version: u32,
+    profile: String,
+    account: String,
+    revision: i32,
+    content: String,
+    rows: Vec<ScriptRuntimeSettingDocumentRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ScriptRuntimeSettingDocumentRow {
+    namespace: String,
+    key: String,
+    raw: String,
+}
+
+#[derive(Serialize)]
+struct ScriptRuntimeSettingsWriteDocument<'a> {
+    schema_version: u32,
+    profile: &'a str,
+    account: &'a str,
+    revision: i32,
+    content: &'a str,
+    rows: Vec<ScriptRuntimeSettingsWriteRow<'a>>,
+}
+
+#[derive(Serialize)]
+struct ScriptRuntimeSettingsWriteRow<'a> {
+    namespace: &'a str,
+    key: &'a str,
+    raw: &'a str,
+}
+
+fn script_runtime_settings_identity(
+    profile: &str,
+    account: &str,
+    revision: i32,
+    content: &str,
+) -> Result<DomainIdentity, ReadError> {
+    let account =
+        AccountKey::try_new(profile, account).map_err(|_| ReadError::ScriptSettingsIdentity)?;
+    let revision = match revision {
+        274 => client::io::ClientRevision::R274,
+        289 => client::io::ClientRevision::R289,
+        _ => return Err(ReadError::ScriptSettingsScope),
+    };
+    let scope =
+        ContentScope::try_new(revision, content).map_err(|_| ReadError::ScriptSettingsScope)?;
+    Ok(DomainIdentity::new(
+        LocalStateDomain::ScriptRuntimeSettings,
+        account,
+        scope,
+    ))
+}
+
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
-/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file. A
-/// loadouts file whose rows share a name is refused
-/// ([`ReadError::SharedNames`]): the service renames them apart first.
+/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
 pub(super) fn read(
     key: &StoreKey,
     root: &StateRoot,
@@ -469,6 +638,15 @@ pub(super) fn read(
             content,
         } => {
             let value: Value = serde_json::from_str(&raw)?;
+            if let Some((found_profile, found_account)) = unversioned_hint_identity(&value) {
+                if found_profile != profile || found_account != account {
+                    return Err(ReadError::Identity {
+                        profile: found_profile.to_owned(),
+                        account: found_account.to_owned(),
+                    });
+                }
+                return Err(ReadError::UnsupportedSavedFormat);
+            }
             // A field this build does not know is content a rewrite would
             // drop: the hint is read, but never rewritten (the loadouts
             // rule).
@@ -493,9 +671,7 @@ pub(super) fn read(
             match (&document.revision, &document.content) {
                 (Some(found_revision), Some(found_content))
                     if found_revision == revision && found_content == content => {}
-                // Written before r2: no scope recorded. Read under the scope
-                // that asks; the first write stamps it.
-                (None, None) => {}
+                (None, None) => return Err(ReadError::UnsupportedSavedFormat),
                 _ => {
                     return Err(ReadError::Scope {
                         revision: document.revision,
@@ -522,7 +698,108 @@ pub(super) fn read(
                 },
             }))
         }
+        StoreKey::ScriptRuntimeSettings {
+            profile,
+            account,
+            revision,
+            content,
+        } => {
+            let value: Value = serde_json::from_str(&raw)?;
+            let Some(fields) = value.as_object() else {
+                return Err(ReadError::NotScriptSettingsObject);
+            };
+            let unknown = fields
+                .keys()
+                .filter(|field| !SCRIPT_RUNTIME_SETTINGS_FIELDS.contains(&field.as_str()))
+                .count();
+            let unknown_rows = value
+                .get("rows")
+                .and_then(Value::as_array)
+                .map_or(0, |rows| {
+                    rows.iter()
+                        .map(|row| {
+                            row.as_object().map_or(0, |fields| {
+                                fields
+                                    .keys()
+                                    .filter(|field| {
+                                        !SCRIPT_RUNTIME_SETTING_ROW_FIELDS.contains(&field.as_str())
+                                    })
+                                    .count()
+                            })
+                        })
+                        .sum()
+                });
+            let document: ScriptRuntimeSettingsDocument = serde_json::from_value(value)?;
+            if document.schema_version != SCRIPT_RUNTIME_SETTINGS_SCHEMA_VERSION {
+                return Err(ReadError::ScriptSettingsSchema {
+                    found: document.schema_version,
+                });
+            }
+            if document.profile != *profile || document.account != *account {
+                return Err(ReadError::Identity {
+                    profile: document.profile,
+                    account: document.account,
+                });
+            }
+            if document.revision != *revision || document.content != *content {
+                return Err(ReadError::ScriptSettingsScope);
+            }
+            if document.rows.len() > MAX_RUNTIME_SETTINGS_ROWS {
+                return Err(ReadError::TooManyScriptSettings {
+                    rows: document.rows.len(),
+                });
+            }
+            let identity = script_runtime_settings_identity(profile, account, *revision, content)?;
+            let mut rows = Vec::with_capacity(document.rows.len());
+            let mut names = HashSet::with_capacity(document.rows.len());
+            for (index, row) in document.rows.into_iter().enumerate() {
+                if !names.insert((row.namespace.clone(), row.key.clone())) {
+                    return Err(ReadError::DuplicateScriptSetting);
+                }
+                let row =
+                    RuntimeSettingsRow::try_new(&identity, &row.namespace, &row.key, &row.raw)
+                        .map_err(|_| ReadError::ScriptSettingsRow { index })?;
+                rows.push(row);
+            }
+            rows.sort_by(|left: &RuntimeSettingsRow, right| {
+                left.namespace()
+                    .cmp(right.namespace())
+                    .then_with(|| left.key().cmp(right.key()))
+            });
+            Ok(Some(ReadDocument {
+                snapshot: LeaseSnapshot::script_runtime_settings(rows),
+                preferences: None,
+                at: read_at,
+                digest,
+                written_len: raw.len(),
+                rewrite: if unknown == 0 && unknown_rows == 0 {
+                    Rewrite::Lossless
+                } else {
+                    Rewrite::Refused {
+                        unreadable: 0,
+                        lossy: unknown + unknown_rows,
+                    }
+                },
+            }))
+        }
     }
+}
+/// Profile and account from a complete pre-schema hint document. This
+/// recognizes the old envelope without copying the JSON tree, so identity
+/// mismatches still take precedence over its unsupported format.
+fn unversioned_hint_identity(value: &Value) -> Option<(&str, &str)> {
+    let fields = value.as_object()?;
+    if fields.contains_key("schema_version")
+        || fields.contains_key("revision")
+        || fields.contains_key("content")
+    {
+        return None;
+    }
+    let profile = fields.get("profile")?.as_str()?;
+    let account = fields.get("account")?.as_str()?;
+    fields.get("observed_at_unix")?.as_u64()?;
+    fields.get("rows")?.as_array()?;
+    Some((profile, account))
 }
 
 /// The largest file of `key`'s kind the service reads.
@@ -531,6 +808,7 @@ fn max_bytes(key: &StoreKey) -> u64 {
         StoreKey::Loadouts => MAX_LOADOUTS_BYTES,
         StoreKey::Preferences => MAX_PREFERENCES_BYTES,
         StoreKey::BankHint { .. } => MAX_HINT_BYTES,
+        StoreKey::ScriptRuntimeSettings { .. } => MAX_SCRIPT_RUNTIME_SETTINGS_BYTES,
     }
 }
 
@@ -549,10 +827,12 @@ pub(super) fn current_digest(
 }
 
 /// The rows a loadouts document holds, and whether a rewrite keeps all of
-/// it. A row the old reader skipped (malformed) is skipped here too, so a
-/// file is never refused whole for one bad row; but then the rows read are
-/// not everything the file holds, and the service never rewrites it.
+/// it. Malformed current-schema rows are skipped; because the resulting
+/// rows are not everything the file holds, the service never rewrites it.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
+    if loadouts_have_pre_0_2_8_shape(raw.as_bytes()) {
+        return Err(ReadError::UnsupportedSavedFormat);
+    }
     let Value::Array(elements) = serde_json::from_str(raw)? else {
         return Err(ReadError::NotAnArray);
     };
@@ -585,101 +865,23 @@ fn shared_names(rows: &[Loadout]) -> usize {
         .count()
 }
 
-/// The loadouts file at `path`, read again under its lock for the one-time
-/// rename of rows that share a name: its exact text and its rows. `None`
-/// when there is no file any more or every row has a name of its own
-/// (repaired meanwhile): it is read as it is. A file this build refuses,
-/// or one holding a row it cannot write back as read (a rewrite would lose
-/// that row), is an error: it is never rewritten.
-pub(super) fn loadouts_sharing_names(path: &Path) -> io::Result<Option<(String, Vec<Loadout>)>> {
-    let text = match read_private_file(path, MAX_LOADOUTS_BYTES) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let (rows, rewrite) = loadout_rows(&text)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    if shared_names(&rows) == 0 {
-        return Ok(None);
-    }
-    if let Rewrite::Refused { unreadable, lossy } = rewrite {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "the file also has {unreadable} unreadable row(s) and {lossy} row(s) that would \
-                 not write back as read, which a rewrite would lose"
-            ),
-        ));
-    }
-    Ok(Some((text, rows)))
-}
-
-/// One row [`rename_apart`] renamed: its index, its name before, and its
-/// name after.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RenamedApart {
-    pub(super) row: usize,
-    pub(super) from: String,
-    pub(super) to: String,
-}
-
-/// Give every row whose name an earlier row already has a name of its own:
-/// the second row of a name becomes `<name> (2)`, the third `<name> (3)`,
-/// and so on, skipping a suffix another row (or an earlier rename) already
-/// has. The first row of each name keeps it; every row keeps its content
-/// and its place. The same rows always get the same names. A new name stays
-/// within the bound Remove and Rename accept ([`new_name_apart`]), so every
-/// renamed row can still be edited. The renames made, in row order.
-pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
-    let mut taken: HashSet<String> = rows.iter().map(|row| row.name.clone()).collect();
-    let mut kept = HashSet::with_capacity(rows.len());
-    // Per name, the next suffix to try: each search starts after the last
-    // one taken, so a long run of one name costs no more than its length.
-    let mut next: HashMap<String, u64> = HashMap::new();
-    let mut renamed = Vec::new();
-    for (row, loadout) in rows.iter_mut().enumerate() {
-        if kept.insert(loadout.name.clone()) {
-            continue;
-        }
-        let suffix = next.entry(loadout.name.clone()).or_insert(2);
-        let name = loop {
-            let candidate = new_name_apart(&loadout.name, *suffix);
-            *suffix += 1;
-            if taken.insert(candidate.clone()) {
-                break candidate;
-            }
-        };
-        renamed.push(RenamedApart {
-            row,
-            from: std::mem::replace(&mut loadout.name, name.clone()),
-            to: name,
-        });
-    }
-    renamed
-}
-
-/// `<name> (<n>)`, with the name's text shortened (on a character boundary)
-/// when needed so the result, trimmed as Remove and Rename trim it, fits
-/// [`api::local_state::MAX_PREF_KEY_CHARS`] bytes.
-pub(super) fn new_name_apart(name: &str, n: u64) -> String {
-    let suffix = format!(" ({n})");
-    let body = name.trim_start();
-    let lead = &name[..name.len() - body.len()];
-    let room = api::local_state::MAX_PREF_KEY_CHARS.saturating_sub(suffix.len());
-    let mut end = body.len().min(room);
-    while !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{lead}{}{suffix}", &body[..end])
-}
-
 /// The bytes of the preferences file at `path` when its content is
 /// malformed (not UTF-8, not JSON, or JSON that is not an object): the
 /// file a reader may move aside. `None` when there is no file or it reads
 /// as preferences. A file refused for its owner, its mode or its size is
 /// an error here too, as it is to the reader: it is never moved.
 pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match read_private_file(path, MAX_PREFERENCES_BYTES) {
+    corrupt_json_object(path, MAX_PREFERENCES_BYTES)
+}
+
+/// The bytes of the script runtime settings file when its content is
+/// malformed; the same owner, mode and size checks as the reader apply.
+pub(super) fn corrupt_script_runtime_settings(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    corrupt_json_object(path, MAX_SCRIPT_RUNTIME_SETTINGS_BYTES)
+}
+
+fn corrupt_json_object(path: &Path, max_bytes: u64) -> io::Result<Option<Vec<u8>>> {
+    match read_private_file(path, max_bytes) {
         Ok(text) => Ok(match serde_json::from_str::<Value>(&text) {
             Ok(Value::Object(_)) => None,
             _ => Some(text.into_bytes()),
@@ -707,12 +909,10 @@ pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
                 return Err(refused("not a regular file"));
             }
             let mut bytes = Vec::new();
-            file.take(MAX_PREFERENCES_BYTES + 1)
+            file.take(max_bytes.saturating_add(1))
                 .read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > MAX_PREFERENCES_BYTES {
-                return Err(refused(&format!(
-                    "larger than {MAX_PREFERENCES_BYTES} bytes"
-                )));
+            if bytes.len() as u64 > max_bytes {
+                return Err(refused(&format!("larger than {max_bytes} bytes")));
             }
             Ok(Some(bytes))
         }
@@ -795,6 +995,69 @@ pub(super) fn hint_bytes(
         observed_at_unix: observed_at.unix_seconds(),
         rows: rows.to_vec(),
     })
+}
+
+/// The bytes a script settings write publishes in canonical namespace/key order.
+pub(super) fn script_runtime_settings_bytes(
+    key: &StoreKey,
+    rows: &[RuntimeSettingsRow],
+) -> io::Result<Vec<u8>> {
+    let StoreKey::ScriptRuntimeSettings {
+        profile,
+        account,
+        revision,
+        content,
+    } = key
+    else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "script settings write used a different store",
+        ));
+    };
+    if rows.len() > MAX_RUNTIME_SETTINGS_ROWS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "script settings row limit exceeded",
+        ));
+    }
+    let mut seen = HashSet::with_capacity(rows.len());
+    let mut write_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        let identity = row.identity();
+        if identity.domain() != LocalStateDomain::ScriptRuntimeSettings
+            || identity.account().profile() != profile
+            || identity.account().account() != account
+            || identity.scope().revision().as_i32() != *revision
+            || identity.scope().content() != content
+            || !seen.insert((row.namespace(), row.key()))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "script settings rows do not match their store",
+            ));
+        }
+        write_rows.push(ScriptRuntimeSettingsWriteRow {
+            namespace: row.namespace(),
+            key: row.key(),
+            raw: row.raw(),
+        });
+    }
+    let document = ScriptRuntimeSettingsWriteDocument {
+        schema_version: SCRIPT_RUNTIME_SETTINGS_SCHEMA_VERSION,
+        profile,
+        account,
+        revision: *revision,
+        content,
+        rows: write_rows,
+    };
+    let bytes = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
+    if bytes.len() as u64 > MAX_SCRIPT_RUNTIME_SETTINGS_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "script settings file byte limit exceeded",
+        ));
+    }
+    Ok(bytes)
 }
 
 /// The bytes a loadouts write publishes: the pretty-printed array, exactly
@@ -968,6 +1231,37 @@ pub(super) fn apply_preferences_edit(
         }
     }
     Some(())
+}
+
+/// Apply one exact raw setting write and keep the document in canonical key
+/// order. Refuse a new key when the bounded map is full.
+pub(super) fn apply_script_runtime_setting(
+    rows: &[RuntimeSettingsRow],
+    edit: &RuntimeSettingsEdit,
+) -> Result<Vec<RuntimeSettingsRow>, ErrorCode> {
+    let next =
+        RuntimeSettingsRow::try_new(edit.identity(), edit.namespace(), edit.key(), edit.raw())?;
+    let existing = rows
+        .iter()
+        .position(|row| row.namespace() == edit.namespace() && row.key() == edit.key());
+    let mut updated = rows.to_vec();
+    if let Some(index) = existing {
+        updated[index] = next;
+    } else {
+        if rows.len() >= MAX_RUNTIME_SETTINGS_ROWS {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::ScriptRuntimeSettings,
+                reason: ValidationReason::TooManyRows,
+            });
+        }
+        updated.push(next);
+    }
+    updated.sort_by(|left, right| {
+        left.namespace()
+            .cmp(right.namespace())
+            .then_with(|| left.key().cmp(right.key()))
+    });
+    Ok(updated)
 }
 
 /// The bytes a preferences write publishes: the pretty-printed object,

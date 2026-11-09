@@ -142,12 +142,8 @@ impl Fixture {
                 "harry_catherby": keeper_value(&self.harry),
             },
             "gerrant_item_rows_present": {
-                "harpoon": api::shop_facts::vendor_by_keeper_config(
-                    data, "gerrant", self.harpoon.id
-                ).is_some(),
-                "bait": api::shop_facts::vendor_by_keeper_config(
-                    data, "gerrant", self.bait.id
-                ).is_some(),
+                "harpoon": api::shop_facts::vendor_by_keeper_config(data, "gerrant", self.harpoon.id).ok().flatten().is_some(),
+                "bait": api::shop_facts::vendor_by_keeper_config(data, "gerrant", self.bait.id).ok().flatten().is_some(),
             },
             "account_membership": members,
             "eligible_nearest_rows": eligible,
@@ -235,10 +231,22 @@ fn fixture(
     let coins = item("coins")?;
     let gerrant = content_keeper(keepers, "gerrant", None)?;
     let harry = content_keeper(keepers, "harry", Some(CATHERBY_HARRY))?;
-    if api::shop_facts::vendor_by_keeper_config(data, "gerrant", harpoon.id).is_none()
-        || api::shop_facts::vendor_by_keeper_config(data, "gerrant", bait.id).is_none()
-        || api::shop_facts::vendor_by_keeper_config(data, "harry", harpoon.id).is_none()
-        || api::shop_facts::vendor_by_keeper_config(data, "harry", bait.id).is_none()
+    if api::shop_facts::vendor_by_keeper_config(data, "gerrant", harpoon.id)
+        .ok()
+        .flatten()
+        .is_none()
+        || api::shop_facts::vendor_by_keeper_config(data, "gerrant", bait.id)
+            .ok()
+            .flatten()
+            .is_none()
+        || api::shop_facts::vendor_by_keeper_config(data, "harry", harpoon.id)
+            .ok()
+            .flatten()
+            .is_none()
+        || api::shop_facts::vendor_by_keeper_config(data, "harry", bait.id)
+            .ok()
+            .flatten()
+            .is_none()
     {
         return Err(
             "R289 pinned shop records do not contain the required Gerrant/Harry items".into(),

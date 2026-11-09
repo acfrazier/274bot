@@ -82,7 +82,7 @@ export default class T extends LoopingBot {
 // every level, JS Numbers for every integer, and object values a shim can
 // stringify.
 #[test]
-fn posted_bag_values_are_plain_json_values() {
+fn posted_bag_values_are_plain_json_and_saved_ignores_host_bag() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
@@ -99,7 +99,7 @@ export default class T extends LoopingBot {
             protoKeyOwn: Object.prototype.hasOwnProperty.call(bag.odd, '__proto__'),
             protoKeyKept: Object.getPrototypeOf(bag.odd) === Object.prototype,
             display: SettingsStore.displayString('T', 'camp', { default: '' }),
-            saved: SettingsStore.saved('T', 'rows'),
+            saved: SettingsStore.saved('T', 'rows') ?? null,
             text: `${bag.camp}`,
         };
     }
@@ -131,7 +131,7 @@ export default class T extends LoopingBot {
             "protoKeyOwn": true,
             "protoKeyKept": true,
             "display": "[object Object]",
-            "saved": "[object Object]",
+            "saved": null,
             "text": "[object Object]",
         }),
         "logs: {logs:?}"
@@ -186,7 +186,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
     ];
 
     {
-        let mut store = script::ScriptSettingsStore::at(path.clone());
+        let mut store = script::ScriptSettingsStore::at(path.clone()).expect("settings file");
         store.set_bool(ScriptSource::Catalog, "ChickenKiller", "buryBones", false);
         store.set_num(ScriptSource::Catalog, "ChickenKiller", "leashRadius", 20.0);
         store.save().expect("save settings");
@@ -199,7 +199,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
         assert_eq!(mode, 0o600, "script-settings.json must be 0o600");
     }
 
-    let store = script::ScriptSettingsStore::at(path);
+    let store = script::ScriptSettingsStore::at(path).expect("settings file");
     let bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
     assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
     assert_eq!(bag.get("leashRadius").and_then(|v| v.as_f64()), Some(20.0));

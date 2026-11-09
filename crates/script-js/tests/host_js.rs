@@ -1,5 +1,5 @@
 // Host JS living index.d.ts — our verbs, not rs2b0t names.
-use script_js::host_js::{host_js_path, render_host_js_dts, write_host_js_dts};
+use script_js::tooling::host_js::{host_js_path, render_host_js_dts, write_host_js_dts};
 
 #[test]
 fn host_js_dts_is_fresh() {
@@ -9,14 +9,14 @@ fn host_js_dts_is_fresh() {
     let rendered = render_host_js_dts();
     assert_eq!(
         on_disk, rendered,
-        "host-js/index.d.ts is stale; run: cargo test -p script --test host_js regen_host_js -- --ignored"
+        "host-js/index.d.ts is stale; run: cargo test -p script-js --test host_js regen_host_js -- --ignored"
     );
 }
 
 #[test]
 fn ground_identity_request_layout_measurement() {
-    let size = std::mem::size_of::<script::shim::InteractReq>();
-    let alignment = std::mem::align_of::<script::shim::InteractReq>();
+    let size = std::mem::size_of::<script::interact::InteractReq>();
+    let alignment = std::mem::align_of::<script::interact::InteractReq>();
     println!("InteractReq layout: size={size} alignment={alignment}");
     assert_eq!(size, 128, "InteractReq must remain 128 bytes");
     assert_eq!(alignment, 8, "InteractReq must remain 8-byte aligned");
@@ -304,6 +304,7 @@ async function drive(): Promise<GatherOutcome> {
     miningResources: ['copper', 'tin'],
     fishingMethod: 'fishing.saltfish.op1',
     targetPreference: 'Nearest',
+    tickMethod: 'Knife',
     location: 'Custom',
     customTile: { x: 1, z: 2, level: 0 },
     radius: 12,
@@ -356,6 +357,9 @@ void narrow;
 
 // @ts-expect-error radius is a number, not a string
 const invalid: GatherSettings = { radius: 'wide' };
+// @ts-expect-error only Off and Knife are supported tick methods
+const invalidTickMethod: GatherSettings = { tickMethod: 'Fast' };
+void invalidTickMethod;
 void invalid;
 "#;
 

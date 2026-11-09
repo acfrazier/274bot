@@ -256,7 +256,7 @@ fn start_fixture(random_events: bool) -> LiveCell {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
+        port: Some(host_play::live_ports::game_port()),
         http_port: Some(http_port),
         cache_dir: Some(PathBuf::from(
             std::env::var_os("BOT_CACHE_DIR").expect("copied BOT_CACHE_DIR"),
@@ -314,11 +314,22 @@ fn start_fixture(random_events: bool) -> LiveCell {
         account,
         fixture,
     };
+    // The fixture logs its scriptless bot out to complete the tutorial (phase
+    // 3); the approved scriptless policy then parks it, so post the operator's
+    // explicit Login once after that logout.
+    let mut login_posted = false;
     wait_until(&live, "fixture ready", Duration::from_secs(240), |live| {
-        live.fixture
+        let state = live
+            .fixture
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .ready
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.phase >= 3 && !login_posted {
+            login_posted = true;
+            if let Some(arm) = live.play.arm(&live.account) {
+                arm.arm_explicit_login();
+            }
+        }
+        state.ready
     });
     live
 }
@@ -605,7 +616,7 @@ fn run_promise_cell() {
         &json!({
             "cell":"seat_live_js_promise",
             "account":live.account,
-            "host":"127.0.0.1:44594",
+            "host":format!("127.0.0.1:{}", host_play::live_ports::game_port()),
             "start":started,
             "active_gather_page":live_page,
             "active_seat":active_seat.map(seat_json),
@@ -825,7 +836,7 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
     let receipt = json!({
         "cell": if trigger_maze { "seat_live_guardian_hold" } else if reconnect { "seat_live_kept_reconnect" } else { "seat_live_hook_callbacks" },
         "account": live.account,
-        "host":"127.0.0.1:44594",
+        "host":format!("127.0.0.1:{}", host_play::live_ports::game_port()),
         "start": started,
         "initial_seat": seat_json(initial_seat),
         "guardian_during_hold": if trigger_maze { maze_status } else { Value::Null },
@@ -908,7 +919,7 @@ fn run_native_cell() {
         &json!({
             "cell":"seat_live_native_card",
             "account":live.account,
-            "host":"127.0.0.1:44594",
+            "host":format!("127.0.0.1:{}", host_play::live_ports::game_port()),
             "card":format!("{:?}", status.card),
             "phase":status_text(&status, "phase"),
             "phases":phases,
@@ -1041,7 +1052,7 @@ fn run_world_switch_restart_cell() {
         &json!({
             "cell":"seat_live_world_switch_restart",
             "account":live.account,
-            "host":"127.0.0.1:44594",
+            "host":format!("127.0.0.1:{}", host_play::live_ports::game_port()),
             "sessions":[format!("{first_session:?}"),format!("{second_session:?}")],
             "generations":[first_generation, second_generation],
             "seat_before_world_switch":seat_json(before),
@@ -1058,41 +1069,41 @@ fn run_world_switch_restart_cell() {
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_js_promise() {
     run_promise_cell();
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_hook_callbacks() {
     run_hold_cell(false, false, false);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_native_card() {
     run_native_cell();
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_guardian_hold() {
     run_hold_cell(true, true, false);
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_kept_reconnect_and_stop() {
     run_hold_cell(false, false, true);
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, Engine A 127.0.0.1:44594, disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_world_switch_restart() {
     run_world_switch_restart_cell();
 }

@@ -1,10 +1,14 @@
 // reader.combatLevel and Player.combatLevel mirror posted native local/peer
 // combat levels. Canonical foreign: raw?.localPlayer?.combatLevel ?? 0.
 
-use script_js::wire::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -137,6 +141,9 @@ fn probe(iso: &LoadIsolate, snap: &SnapshotInput<'_>) -> serde_json::Value {
 
 #[test]
 fn reader_combat_level_follows_posted_local_level_and_defaults_out_of_game() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(
         r#"
 import { reader } from '../../adapter/ClientAdapter.js';
@@ -161,13 +168,16 @@ export default class T extends LoopingBot {
 
 #[test]
 fn player_combat_level_reads_peer_rows_and_delta_updates_without_stale_identity() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(
         r#"
 import { reader } from '../../adapter/ClientAdapter.js';
 import { Players } from '../../api/players/Players.js';
 export default class T extends LoopingBot {
     loop() {
-        const peers = Players.all().map((p) => ({
+        const peers = Players.query().results().map((p) => ({
             index: p.index,
             name: p.name,
             level: p.combatLevel,
@@ -201,6 +211,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn omitted_combat_level_delta_keeps_last_posted_local_level() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     use script_js::wire::encode_snapshot_delta;
     let iso = spawn(
         r#"

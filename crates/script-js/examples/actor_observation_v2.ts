@@ -44,7 +44,13 @@ export function tick(api: NativeApi): void {
     const wrapped = new Npc(n);
     const origin = wrapped.networkOrigin();
     const tile = wrapped.tile();
-    const self = reader.selfTarget();
+    const faceEntity = reader.selfFaceEntity();
+    const self =
+        faceEntity < 0
+            ? { kind: 0, index: -1 }
+            : faceEntity >= 0x8000
+              ? { kind: 2, index: faceEntity - 0x8000 }
+              : { kind: 1, index: faceEntity };
     if (wrapped.size !== n.size || origin.x !== n.nx || origin.z !== n.nz) {
         throw new Error('v1 Npc packed fields disagree with snapshot row');
     }
@@ -52,7 +58,7 @@ export function tick(api: NativeApi): void {
         throw new Error('v1 Npc.tile disagrees with rendered snapshot row');
     }
     if (self.kind !== snap.self_target_kind || self.index !== snap.self_target_index) {
-        throw new Error('reader.selfTarget disagrees with snapshot self_target_*');
+        throw new Error('reader.selfFaceEntity disagrees with snapshot self_target_*');
     }
 
     const to = { x: origin.x, z: origin.z, level: n.level };

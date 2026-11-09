@@ -1,6 +1,6 @@
 //! One-attempt progress policy over the shared Path resolvers and JournalMachine.
 use super::*;
-use crate::api_progress::{ProgressPage, QuestProgressRow};
+use crate::api_progress::{JournalEvidence, ProgressPage, QuestProgressRow};
 use crate::native::{ActionError, ActionHandle, NativeActions};
 use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use crate::quest_journal::{title_matches, JournalMachine, JournalRequest, ROOT_289, TITLE_289};
@@ -10,7 +10,7 @@ use crate::quester::{
 };
 use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
-use api::selected::{Knowledge, SelectedPin};
+use api::selected::Knowledge;
 use api::snapshot::QuestListStatus;
 use std::{task::Poll, time::Duration};
 
@@ -18,8 +18,9 @@ pub(super) type ProgressJob = PreparedTask<Result<PreparedProgress, Arc<str>>>;
 
 pub(super) struct PreparedProgress {
     selected: Arc<api::game_data::SelectedGameData>,
-    pin: Arc<SelectedPin>,
-    path: Arc<CompiledPath>,
+    revision: api::selected::ClientRevision,
+    path: Option<Arc<CompiledPath>>,
+    requested_name: Option<Arc<str>>,
     quests: Arc<QuestCatalog>,
 }
 
@@ -31,7 +32,8 @@ pub(super) enum ProgressSeat {
         token: u64,
         run: RunKey,
         selected: Arc<api::game_data::SelectedGameData>,
-        bytes: &'static [u8],
+        bytes: Option<&'static [u8]>,
+        requested_name: Option<Arc<str>>,
         input: PreparationInput,
     },
     Preparing {
@@ -94,6 +96,9 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::BankDeposit(reason) => format!("failed:{reason}").into(),
         ActionError::CombatInterrupted => "combat-interrupted".into(),
         ActionError::NeedsEvidence(gates) => format!("needs-evidence:{gates:?}").into(),
+        ActionError::NeedsStep(gates) => format!("needs-step:{gates:?}").into(),
+        ActionError::GateRefused(observation) => format!("gate-refused:{observation:?}").into(),
+        ActionError::Prerequisite(refusal) => format!("prerequisite:{refusal}").into(),
         ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
             "ground-take-capacity".into()
         }
@@ -102,6 +107,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         }
         ActionError::WalkGoals(reason) => format!("walk-goals:{reason:?}").into(),
         ActionError::ServerOrdered(reason) => format!("server-ordered:{reason}").into(),
+        ActionError::PvpRefused(refusal) => format!("pvp-refused:{}", refusal.code()).into(),
     }
 }
 
@@ -113,7 +119,7 @@ fn compile_error_reason(error: crate::quester::compile::CompileError) -> Arc<str
 }
 
 fn row(
-    prepared: &PreparedProgress,
+    path: &CompiledPath,
     progress: api::quest_progress::QuestProgress,
     colour: QuestListStatus,
     journal_read: bool,
@@ -130,7 +136,7 @@ fn row(
     };
     Arc::new(QuestProgressRow {
         quest: progress.quest.0,
-        display: Arc::clone(&prepared.path.display_name),
+        display: Arc::clone(&path.display_name),
         colour,
         stage: knowledge(progress.stage),
         complete: progress.complete,
@@ -161,28 +167,44 @@ fn submit_progress(
     slot: SlotKey,
     input: PreparationInput,
     selected: Arc<api::game_data::SelectedGameData>,
-    bytes: &'static [u8],
-    operator: crate::local_state::OperatorLoadouts,
+    bytes: Option<&'static [u8]>,
+    requested_name: Option<Arc<str>>,
+    operator: Option<crate::local_state::OperatorLoadouts>,
+    nav: Option<nav_planner::contract::NavLease>,
 ) -> Result<ProgressJob, preparation::PreparationError> {
     preparation::submit(
         PreparationKind::Profile,
         Scope::Slot(slot),
         input,
         move |cap| {
-            let pin = selected
-                .selected_pin()
+            let revision = compiled::selected_revision(&selected)
                 .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
             let quests = Arc::new(
                 QuestCatalog::from_identity(selected.quest_identity())
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
-            let path =
-                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
-                    .map_err(compile_error_reason)?;
+            let path = match bytes {
+                Some(bytes) => Some(
+                    crate::quester::compile::compile_path(
+                        bytes,
+                        &selected,
+                        &quests,
+                        cap,
+                        operator
+                            .as_ref()
+                            .expect("path preparation has operator loadouts"),
+                        nav.as_ref()
+                            .and_then(nav_planner::contract::NavLease::zones),
+                    )
+                    .map_err(compile_error_reason)?,
+                ),
+                None => None,
+            };
             Ok(PreparedProgress {
                 selected,
-                pin,
+                revision,
                 path,
+                requested_name,
                 quests,
             })
         },
@@ -190,7 +212,13 @@ fn submit_progress(
 }
 
 impl SlotScript {
-    pub(in crate::slot) fn start_api_progress(&mut self, token: u64, quest: &str) {
+    pub(in crate::slot) fn start_api_progress(
+        &mut self,
+        token: u64,
+        quest: &str,
+        journal_only: bool,
+        nav: Option<nav_planner::contract::NavLease>,
+    ) {
         if !self.surface_active() {
             return;
         }
@@ -204,7 +232,10 @@ impl SlotScript {
         {
             return;
         }
-        if seat.gather.token().is_some() || seat.combat.token().is_some() {
+        if seat.gather.token().is_some()
+            || seat.combat.token().is_some()
+            || seat.cast_npc.token().is_some()
+        {
             seat.progress_page = Some(ProgressPage::Refused {
                 token,
                 reason: "busy".into(),
@@ -233,12 +264,17 @@ impl SlotScript {
             return;
         }
         seat.progress.reset(&mut seat.progress_retiring);
-        let Some(bytes) = crate::quester::registry::bundled_path(quest) else {
-            seat.progress_page = Some(ProgressPage::Refused {
-                token,
-                reason: "unknown-path".into(),
-            });
-            return;
+        let bytes = if journal_only {
+            None
+        } else {
+            let Some(bytes) = crate::quester::registry::bundled_path(quest) else {
+                seat.progress_page = Some(ProgressPage::Refused {
+                    token,
+                    reason: "unknown-path".into(),
+                });
+                return;
+            };
+            Some(bytes)
         };
         let Some(selected) = self
             .surface_start
@@ -270,22 +306,27 @@ impl SlotScript {
                 .as_ref()
                 .map_or(self.work_epoch, |seat| seat.run().session),
         };
-        let operator = match lease_operator_loadouts(self.local_state.as_deref()) {
-            Ok(operator) => operator,
-            Err(code) => {
-                seat.progress_page = Some(ProgressPage::Refused {
-                    token,
-                    reason: format!("unavailable:{code}").into(),
-                });
-                return;
+        let operator = if journal_only {
+            None
+        } else {
+            match lease_operator_loadouts(self.local_state.as_deref()) {
+                Ok(operator) => Some(operator),
+                Err(code) => {
+                    seat.progress_page = Some(ProgressPage::Refused {
+                        token,
+                        reason: format!("unavailable:{code}").into(),
+                    });
+                    return;
+                }
             }
         };
         let input = match PreparationInput::new(
             generation,
-            bytes.len(),
+            bytes.map_or(0, |bytes| bytes.len()),
             2 * 1024 * 1024,
             2 * 1024 * 1024,
         ) {
+            Ok(input) if journal_only => input,
             Ok(input) => input.with_quester_progress_compile(),
             Err(error) => {
                 seat.progress_page = Some(ProgressPage::Refused {
@@ -302,7 +343,16 @@ impl SlotScript {
             });
             return;
         };
-        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator);
+        let requested_name = journal_only.then(|| Arc::<str>::from(quest));
+        let job = submit_progress(
+            slot,
+            input,
+            Arc::clone(&selected),
+            bytes,
+            requested_name.clone(),
+            operator,
+            nav,
+        );
         match job {
             Ok(job) => {
                 self.control_generation = generation;
@@ -316,6 +366,7 @@ impl SlotScript {
                     run,
                     selected,
                     bytes,
+                    requested_name,
                     input,
                 };
                 seat.progress_page = Some(ProgressPage::Reading { token });
@@ -335,6 +386,7 @@ impl SlotScript {
             run,
             selected,
             bytes,
+            requested_name,
             input,
         } = &seat.progress
         {
@@ -346,18 +398,30 @@ impl SlotScript {
                 seat.progress = ProgressSeat::Idle;
                 return;
             };
-            let operator = match lease_operator_loadouts(self.local_state.as_deref()) {
-                Ok(operator) => operator,
-                Err(code) => {
-                    seat.progress_page = Some(ProgressPage::Refused {
-                        token: *token,
-                        reason: format!("unavailable:{code}").into(),
-                    });
-                    seat.progress = ProgressSeat::Idle;
-                    return;
+            let operator = if bytes.is_some() {
+                match lease_operator_loadouts(self.local_state.as_deref()) {
+                    Ok(operator) => Some(operator),
+                    Err(code) => {
+                        seat.progress_page = Some(ProgressPage::Refused {
+                            token: *token,
+                            reason: format!("unavailable:{code}").into(),
+                        });
+                        seat.progress = ProgressSeat::Idle;
+                        return;
+                    }
                 }
+            } else {
+                None
             };
-            match submit_progress(slot, *input, Arc::clone(selected), bytes, operator) {
+            match submit_progress(
+                slot,
+                *input,
+                Arc::clone(selected),
+                *bytes,
+                requested_name.clone(),
+                operator,
+                ctx.compiled.nav.cloned(),
+            ) {
                 Ok(job) => {
                     seat.progress = ProgressSeat::Preparing {
                         token: *token,
@@ -427,7 +491,7 @@ impl SlotScript {
         let mut cx = compiled::frame_context(
             ctx,
             *run,
-            &prepared.pin,
+            prepared.revision,
             &mut retained,
             &mut self.native_runtime,
         );
@@ -444,19 +508,26 @@ impl SlotScript {
                     {
                         seat.journal_evidence = Some((read.acquired, read.closed));
                     }
-                    ProgressPage::Done {
-                        token: *token,
-                        row: row(
-                            prepared,
-                            resolve_journal(&prepared.path, &read, None),
-                            QuestListStatus::InProgress,
-                            true,
-                        ),
+                    if let Some(path) = prepared.path.as_deref() {
+                        ProgressPage::Done {
+                            token: *token,
+                            row: row(
+                                path,
+                                resolve_journal(path, &read, None),
+                                QuestListStatus::InProgress,
+                                true,
+                            ),
+                        }
+                    } else {
+                        ProgressPage::JournalDone {
+                            token: *token,
+                            result: Some(Arc::new(JournalEvidence::from_read(&read))),
+                        }
                     }
                 }
             }
-        } else {
-            let colour = quest_colour(&prepared.path, &prepared.quests, cx.snapshot());
+        } else if let Some(path) = prepared.path.as_deref() {
+            let colour = quest_colour(path, &prepared.quests, cx.snapshot());
             let Some(colour) = colour.filter(|colour| *colour != QuestListStatus::Unknown) else {
                 let since = since.get_or_insert(cx.active_now());
                 if cx.active_now().saturating_sub(*since) < Duration::from_secs(8) {
@@ -471,14 +542,14 @@ impl SlotScript {
                 seat.progress = ProgressSeat::Idle;
                 return;
             };
-            if colour == QuestListStatus::InProgress && !prepared.path.progress.rules.is_empty() {
+            if colour == QuestListStatus::InProgress && !path.progress.rules.is_empty() {
                 // A modal owned by another quest is foreground occupancy, not a failed read.
                 let snapshot = cx.snapshot();
                 let occupied = snapshot.main_modal().is_some_and(|modal| {
                     if modal.value.root == ROOT_289 {
                         let expected = prepared
                             .quests
-                            .quest(prepared.path.id.0.as_ref())
+                            .quest(path.id.0.as_ref())
                             .ok()
                             .and_then(|facts| facts.journal_title.as_deref());
                         !expected.is_some_and(|expected| {
@@ -500,7 +571,7 @@ impl SlotScript {
                 } else {
                     match actions.begin::<JournalMachine>(
                         JournalRequest {
-                            quest: prepared.path.id.clone(),
+                            quest: path.id.clone(),
                             facts: Arc::clone(&prepared.quests),
                         },
                         &mut cx,
@@ -519,16 +590,62 @@ impl SlotScript {
                 ProgressPage::Done {
                     token: *token,
                     row: row(
-                        prepared,
-                        resolve_colour(
-                            &prepared.path,
-                            colour,
-                            cx.evidence(),
-                            Arc::clone(&prepared.pin),
-                        ),
+                        path,
+                        resolve_colour(path, colour, cx.evidence()),
                         colour,
                         false,
                     ),
+                }
+            }
+        } else {
+            let Some(requested_name) = prepared.requested_name.as_deref() else {
+                seat.progress = ProgressSeat::Idle;
+                return;
+            };
+            match prepared
+                .quests
+                .iter()
+                .find(|facts| facts.display.eq_ignore_ascii_case(requested_name))
+            {
+                None => ProgressPage::JournalDone {
+                    token: *token,
+                    result: None,
+                },
+                Some(facts) => {
+                    let snapshot = cx.snapshot();
+                    match snapshot.quest_statuses() {
+                        None => ProgressPage::Refused {
+                            token: *token,
+                            reason: "unavailable:quest tab".into(),
+                        },
+                        Some(rows)
+                            if !rows.value.iter().any(|row| {
+                                row.name.eq_ignore_ascii_case(&facts.display)
+                                    && row.component_id >= 0
+                            }) =>
+                        {
+                            ProgressPage::JournalDone {
+                                token: *token,
+                                result: None,
+                            }
+                        }
+                        Some(_) => match actions.begin::<JournalMachine>(
+                            JournalRequest {
+                                quest: facts.id.clone(),
+                                facts: Arc::clone(&prepared.quests),
+                            },
+                            &mut cx,
+                        ) {
+                            Ok(handle) => {
+                                *journal = Some(Box::new(handle));
+                                return;
+                            }
+                            Err(error) => ProgressPage::Refused {
+                                token: *token,
+                                reason: error_reason(error),
+                            },
+                        },
+                    }
                 }
             }
         };

@@ -60,6 +60,33 @@ pub struct NeedObservation {
     pub index: u8,
 }
 
+/// Why an optional need finished below its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmetCause {
+    /// The plan found nothing more to draw it from.
+    NoSupply,
+    /// The pack had no free slot for it, so it was left out of the plan.
+    NoRoom,
+}
+
+impl UnmetCause {
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::NoSupply => "nothing more to draw it from",
+            Self::NoRoom => "no free pack slot for it",
+        }
+    }
+}
+
+/// An optional need that stays below its target while the plan still succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmetNeed {
+    pub item: Arc<str>,
+    pub need: i32,
+    pub have: i32,
+    pub cause: UnmetCause,
+}
+
 pub struct Planner<'a> {
     counts: &'a dyn Counts,
     data: Option<&'a SelectedGameData>,
@@ -72,6 +99,7 @@ pub struct Planner<'a> {
     child: Option<NeedObservation>,
     next_index: usize,
     coin_reserve: i64,
+    unmet: Vec<UnmetNeed>,
 }
 
 enum TierDecision {
@@ -108,6 +136,7 @@ impl<'a> Planner<'a> {
             child: None,
             next_index: 0,
             coin_reserve: 0,
+            unmet: Vec::new(),
         }
     }
 
@@ -346,6 +375,14 @@ impl<'a> Planner<'a> {
         }
         if reach >= need.minimum || need.kind == NeedKind::Optional {
             self.note_short_target();
+            if need.kind == NeedKind::Optional {
+                self.unmet.push(UnmetNeed {
+                    item: Arc::clone(&need.name),
+                    need: need.target,
+                    have: reach,
+                    cause: UnmetCause::NoSupply,
+                });
+            }
         } else if self.blocked.is_none() {
             self.record_block(detail, need, id, BlockReason::SupplyMissing, None);
         }
@@ -425,6 +462,14 @@ impl<'a> Planner<'a> {
         }
     }
 
+    /// Records an optional need that the caller left out of the plan.
+    pub fn note_unmet(&mut self, unmet: UnmetNeed) {
+        self.unmet.push(unmet);
+    }
+    /// Optional needs that stay below their target.
+    pub fn unmet(&self) -> &[UnmetNeed] {
+        &self.unmet
+    }
     pub fn withdrawal_count(&self) -> usize {
         self.plan.withdrawal_count
     }
@@ -762,6 +807,25 @@ fn should_wear(data: Option<&api::game_data::SelectedGameData>, need: &Need, id:
     need.presence == Presence::Wielded && data.is_none_or(|data| wieldable_for_need(data, need, id))
 }
 
+/// Generated shop rows for one item. Rows the selected game data does not
+/// carry yield no vendor, so an incomplete table fails closed.
+fn vendors_for<'a>(
+    data: &'a api::game_data::SelectedGameData,
+    item_id: i32,
+) -> impl Iterator<Item = VendorFact<'a>> + 'a {
+    shop_facts::vendors_for(data, item_id).into_iter().flatten()
+}
+
+fn vendor_by_keeper_config<'a>(
+    data: &'a api::game_data::SelectedGameData,
+    keeper_config: &str,
+    item_id: i32,
+) -> Option<VendorFact<'a>> {
+    shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
+        .ok()
+        .flatten()
+}
+
 fn minimum_fact_quote(fact: &VendorFact<'_>, units: i32) -> Option<i64> {
     (fact.item.baseline > 0)
         .then(|| shop_facts::quote(fact.record, fact.item, units, fact.item.baseline))
@@ -778,12 +842,12 @@ pub(super) fn minimum_shop_quote(
     match choice {
         VendorChoice::None => None,
         VendorChoice::Explicit { keeper_config, .. } => {
-            let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+            let fact = vendor_by_keeper_config(data, keeper_config, item_id)?;
             vendor_eligible(&fact, members)
                 .then(|| minimum_fact_quote(&fact, units))
                 .flatten()
         }
-        VendorChoice::Nearest => shop_facts::vendors_for(data, item_id)
+        VendorChoice::Nearest => vendors_for(data, item_id)
             .filter(|fact| vendor_eligible(fact, members))
             .filter_map(|fact| minimum_fact_quote(&fact, units))
             .min(),
@@ -797,7 +861,7 @@ pub(super) fn keeper_minimum_shop_quote(
     members: bool,
     units: i32,
 ) -> Option<i64> {
-    let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+    let fact = vendor_by_keeper_config(data, keeper_config, item_id)?;
     vendor_eligible(&fact, members)
         .then(|| minimum_fact_quote(&fact, units))
         .flatten()
@@ -815,11 +879,11 @@ fn eligible_shop_stock(
     match choice {
         VendorChoice::None => false,
         VendorChoice::Explicit { keeper_config, .. } => {
-            shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
+            vendor_by_keeper_config(data, keeper_config, item_id)
                 .is_some_and(|fact| vendor_eligible(&fact, members))
         }
         VendorChoice::Nearest => {
-            shop_facts::vendors_for(data, item_id).any(|fact| vendor_eligible(&fact, members))
+            vendors_for(data, item_id).any(|fact| vendor_eligible(&fact, members))
         }
     }
 }
@@ -885,7 +949,7 @@ fn shop_quote<'a>(
     match choice {
         VendorChoice::None => None,
         VendorChoice::Explicit { keeper_config, .. } => {
-            let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+            let fact = vendor_by_keeper_config(data, keeper_config, item_id)?;
             if !vendor_eligible(&fact, members) {
                 return None;
             }
@@ -894,7 +958,7 @@ fn shop_quote<'a>(
         }
         VendorChoice::Nearest => {
             let mut best: Option<(VendorFact<'a>, i64)> = None;
-            for fact in shop_facts::vendors_for(data, item_id) {
+            for fact in vendors_for(data, item_id) {
                 if !vendor_eligible(&fact, members) {
                     continue;
                 }
@@ -942,7 +1006,7 @@ fn vendor_line_for_purchase(
     match choice {
         VendorChoice::None => "nobody sells it".to_string(),
         VendorChoice::Explicit { keeper_config, .. } => {
-            let Some(fact) = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
+            let Some(fact) = vendor_by_keeper_config(data, keeper_config, item_id)
                 .filter(|fact| vendor_eligible(fact, members))
             else {
                 return "nobody sells it".to_string();
@@ -958,7 +1022,7 @@ fn vendor_line_for_purchase(
             let mut count = 0usize;
             let mut low = i64::MAX;
             let mut high = 0i64;
-            for fact in shop_facts::vendors_for(data, item_id) {
+            for fact in vendors_for(data, item_id) {
                 if !vendor_eligible(&fact, members) {
                     continue;
                 }
@@ -1259,6 +1323,9 @@ mod tests {
     /// obtainable at all.
     #[test]
     fn a_partial_multi_item_withdraw_takes_what_the_session_bank_holds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let bead = |alias: &str| {
             let item = data.item_by_alias(alias).expect("bead");

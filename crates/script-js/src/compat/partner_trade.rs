@@ -64,17 +64,6 @@ pub fn parse_trade_partner_header(header: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-/// The frozen trade screen precedence: offer, then confirm, then closed.
-pub fn trade_screen_state(offer_open: bool, confirm_open: bool) -> &'static str {
-    if offer_open {
-        "offer"
-    } else if confirm_open {
-        "confirm"
-    } else {
-        "closed"
-    }
-}
-
 fn strip_trading_with(name: &str) -> Option<&str> {
     const PREFIX: &str = "trading with";
     let prefix = name.get(..PREFIX.len())?;
@@ -261,14 +250,6 @@ mod tests {
             parse_trade_partner_header("prefix: one:two"),
             Some("one:two".into())
         );
-    }
-
-    #[test]
-    fn trade_screen_state_prefers_offer_then_confirm() {
-        assert_eq!(trade_screen_state(false, false), "closed");
-        assert_eq!(trade_screen_state(false, true), "confirm");
-        assert_eq!(trade_screen_state(true, false), "offer");
-        assert_eq!(trade_screen_state(true, true), "offer");
     }
 
     #[test]

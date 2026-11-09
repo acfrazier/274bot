@@ -8,13 +8,14 @@ use crate::native::seat_rows::QueuedSeatBatch;
 use crate::native::snapshot_source::{BankSelectionInput, NativeFactsInput, SnapshotInput};
 use crate::native::{recovery_hints::RecoveryHintsCell, ActionContext, ActionError, SettingsBag};
 use crate::paint::ScriptPaint;
-use api::identity::ExecutionId;
+use api::identity::{ExecutionId, RequestId};
 use api::interact::server_ordered::ServerOrderedRequest;
+use api::native_input::NativeInputAuthority;
 use api::prot::Send as PacketSend;
 use api::selected::RunKey;
 use std::{
     any::Any,
-    sync::{mpsc::Sender, Arc},
+    sync::{mpsc::Sender, Arc, Mutex, MutexGuard, OnceLock},
     time::Instant,
 };
 
@@ -57,9 +58,31 @@ pub trait SurfaceCard: Any + Send + Sync + std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// The wilderness level of a tile (content `~wilderness_level`), for synchronous read-only
+/// queries from a surface. The host supplies one shared instance per Play; a start holds only
+/// an `Arc` to it and a query allocates nothing.
+pub trait WildernessLevels: Send + Sync + std::fmt::Debug {
+    /// The level at `tile`: 0 outside every wilderness zone.
+    fn level(&self, tile: api::snapshot::WorldTile) -> i32;
+}
+
+#[derive(Debug)]
+struct NoWilderness;
+
+impl WildernessLevels for NoWilderness {
+    fn level(&self, _: api::snapshot::WorldTile) -> i32 {
+        0
+    }
+}
+
+/// A source with no wilderness zone: every tile is level 0.
+pub fn no_wilderness() -> Arc<dyn WildernessLevels> {
+    Arc::new(NoWilderness)
+}
+
 /// Shared values that the slot retains when it restarts a run.
 ///
-/// Cloning this value clones its five `Arc`s. It does not copy their contents.
+/// Cloning this value clones its six `Arc`s. It does not copy their contents.
 #[derive(Clone, Debug)]
 pub struct SurfaceStart {
     /// The surface-owned card.
@@ -70,6 +93,8 @@ pub struct SurfaceStart {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Immutable named-bank facts for this start.
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
+    /// Shared wilderness levels for synchronous read-only queries.
+    pub wilderness_rules: Arc<dyn WildernessLevels>,
     /// Shared loadouts for this start.
     pub loadouts: Arc<[api::loadout::Loadout]>,
 }
@@ -90,6 +115,18 @@ pub trait SurfaceFactory: Send + Sync {
         execution: ExecutionId,
         recovery_hints: Arc<RecoveryHintsCell>,
     ) -> Result<Box<dyn SurfaceRun>, SurfaceError>;
+    /// Spawn with the slot's bound local-state capability when the surface
+    /// can consume it. Existing factories retain their original entry point.
+    fn spawn_with_state(
+        &self,
+        start: &SurfaceStart,
+        execution: ExecutionId,
+        recovery_hints: Arc<RecoveryHintsCell>,
+        local_state: Option<Arc<crate::local_state::SlotState>>,
+    ) -> Result<Box<dyn SurfaceRun>, SurfaceError> {
+        let _ = local_state;
+        self.spawn(start, execution, recovery_hints)
+    }
 }
 
 /// Receipt returned when the script calls its stop operation.
@@ -123,6 +160,371 @@ pub enum SurfaceReady {
     Ready,
     /// Setup failed with a diagnostic message.
     Failed(String),
+}
+/// Lifecycle projection exposed to a JavaScript run context.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RuntimeRunState {
+    /// No run has started in this isolate.
+    #[default]
+    Idle,
+    /// The run may execute, including while a host hold temporarily gates ticks.
+    Running,
+    /// The operator paused this run.
+    Paused,
+    /// The run is retiring.
+    Stopping,
+    /// The run ended without an error.
+    Stopped,
+    /// The run ended with an error.
+    Crashed,
+}
+
+impl RuntimeRunState {
+    /// The compatibility API state spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Stopping => "stopping",
+            Self::Stopped => "stopped",
+            Self::Crashed => "crashed",
+        }
+    }
+
+    /// Whether this run has been cancelled or reached a terminal state.
+    pub const fn aborted(self) -> bool {
+        matches!(self, Self::Stopping | Self::Stopped | Self::Crashed)
+    }
+}
+
+/// Slot-owned lifecycle requests submitted by the isolate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeControlRequest {
+    /// Pause the owning run.
+    Pause,
+    /// Resume the owning run after an operator pause.
+    Resume,
+}
+
+/// Exact terminal activity result retained until the next activity start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeActivityOutcome {
+    /// `finished`, `failed`, or `interrupted`.
+    pub kind: String,
+    /// The caller or child-provided reason.
+    pub reason: String,
+}
+
+/// Bounded state for the single child activity owned by a script run.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RuntimeActivityState {
+    /// Isolate-local identity of the active child.
+    pub child_id: Option<u64>,
+    /// Last terminal outcome, if any.
+    pub outcome: Option<RuntimeActivityOutcome>,
+    /// Whether one child callback is currently awaiting completion.
+    pub in_flight: bool,
+    /// Whether interruption was requested for this child.
+    pub interrupted: bool,
+    /// Whether `finish` was requested by the child.
+    pub finish_requested: bool,
+    /// Wall-clock eligibility bound in milliseconds.
+    pub next_at_ms: f64,
+    /// Server-tick eligibility bound.
+    pub next_tick: f64,
+    /// The actual active TaskBot name, when the child has one.
+    pub active_task: Option<String>,
+}
+
+/// Run-fenced native state shared by the slot and its isolate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptRuntimeSnapshot {
+    /// Slot generation that owns this run.
+    pub generation: u64,
+    /// Current script lifecycle.
+    pub state: RuntimeRunState,
+    /// Native stop receipt reason, if one exists.
+    pub stop_reason: Option<String>,
+    /// Expected host-queue work that holds the loop watchdog.
+    pub watchdog_hold: Option<String>,
+    /// Stable source key attached by the slot.
+    pub source_identity: Option<String>,
+    /// The one activity owned by this run.
+    pub activity: RuntimeActivityState,
+    /// A control request awaiting the slot lifecycle callback.
+    pub control_request: Option<RuntimeControlRequest>,
+}
+
+/// Why a script run could not register its one activity child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ActivityStartError {
+    /// The run has already ended.
+    #[error("Script run has ended")]
+    RunEnded,
+    /// The run already has an activity registered or in flight.
+    #[error("An activity is already running")]
+    AlreadyRunning,
+}
+
+/// Run-fenced state shared by the slot and its V8 isolate.
+///
+/// The slot creates a fresh value for every isolate generation. The isolate
+/// may project or update its owned child activity, but does not own script
+/// lifecycle transitions.
+pub struct ScriptRuntimeContext {
+    state: Mutex<ScriptRuntimeSnapshot>,
+    native_input: OnceLock<Arc<NativeInputAuthority>>,
+}
+
+impl ScriptRuntimeContext {
+    /// Create context for one runtime generation.
+    pub fn new(generation: u64) -> Self {
+        Self {
+            state: Mutex::new(ScriptRuntimeSnapshot {
+                generation,
+                state: RuntimeRunState::Idle,
+                stop_reason: None,
+                watchdog_hold: None,
+                source_identity: None,
+                activity: RuntimeActivityState::default(),
+                control_request: None,
+            }),
+            native_input: OnceLock::new(),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, ScriptRuntimeSnapshot> {
+        self.state.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Copy the current run and child state for an isolate callback.
+    pub fn snapshot(&self) -> ScriptRuntimeSnapshot {
+        self.lock().clone()
+    }
+    /// The slot-local authority shared with native input consumption.
+    pub(crate) fn native_input(&self) -> &Arc<NativeInputAuthority> {
+        self.native_input.get_or_init(NativeInputAuthority::new)
+    }
+
+    /// Bind the host-owned input authority before a run starts.
+    pub(crate) fn bind_native_input(
+        &self,
+        authority: Arc<NativeInputAuthority>,
+    ) -> Result<(), Arc<NativeInputAuthority>> {
+        self.native_input.set(authority)
+    }
+
+    /// Create a fresh run context carrying the same slot-local input authority.
+    pub(crate) fn with_native_input(generation: u64, authority: Arc<NativeInputAuthority>) -> Self {
+        let context = Self::new(generation);
+        let _ = context.native_input.set(authority);
+        context
+    }
+
+    /// Preserve a context snapshot while replacing its slot-local authority.
+    pub(crate) fn with_snapshot_and_native_input(
+        snapshot: ScriptRuntimeSnapshot,
+        authority: Arc<NativeInputAuthority>,
+    ) -> Self {
+        let context = Self {
+            state: Mutex::new(snapshot),
+            native_input: OnceLock::new(),
+        };
+        let _ = context.native_input.set(authority);
+        context
+    }
+    /// Read the current state without copying the rest of the context.
+    pub fn state(&self) -> RuntimeRunState {
+        self.lock().state
+    }
+
+    /// Update the slot-owned lifecycle projection.
+    pub fn set_state(&self, state: RuntimeRunState) {
+        let mut current = self.lock();
+        if current.state != state {
+            current.state = state;
+        }
+        if state.aborted() {
+            current.control_request = None;
+        }
+    }
+    /// Queue a run-fenced pause request for the owning slot.
+    pub fn request_pause(&self) -> bool {
+        let mut current = self.lock();
+        if current.state != RuntimeRunState::Running || current.control_request.is_some() {
+            return false;
+        }
+        current.control_request = Some(RuntimeControlRequest::Pause);
+        true
+    }
+
+    /// Queue a run-fenced resume request only after operator pause.
+    pub fn request_resume(&self) -> bool {
+        let mut current = self.lock();
+        if current.state != RuntimeRunState::Paused || current.control_request.is_some() {
+            return false;
+        }
+        current.control_request = Some(RuntimeControlRequest::Resume);
+        true
+    }
+
+    /// Take one pending request at the slot lifecycle boundary.
+    pub fn take_control_request(&self) -> Option<RuntimeControlRequest> {
+        self.lock().control_request.take()
+    }
+
+    /// Retain the exact source identity attached to this run.
+    pub fn set_source_identity(&self, identity: Option<String>) {
+        let mut current = self.lock();
+        if current.source_identity != identity {
+            current.source_identity = identity;
+        }
+    }
+
+    /// Retain the exact terminal reason from the slot lifecycle receipt.
+    pub fn set_stop_reason(&self, reason: Option<String>) {
+        let mut current = self.lock();
+        if current.stop_reason != reason {
+            current.stop_reason = reason;
+        }
+    }
+    /// Read the current host-queue watchdog hold.
+    pub fn watchdog_hold(&self) -> Option<String> {
+        self.lock().watchdog_hold.clone()
+    }
+
+    /// Set the host-queue watchdog hold exposed by the run context.
+    pub fn set_watchdog_hold(&self, hold: Option<String>) {
+        let mut current = self.lock();
+        if current.watchdog_hold != hold {
+            current.watchdog_hold = hold;
+        }
+    }
+
+    /// Register the one child after the native factory has created it.
+    pub fn start_activity(&self, child_id: u64) -> Result<(), ActivityStartError> {
+        let mut current = self.lock();
+        if current.state.aborted() {
+            return Err(ActivityStartError::RunEnded);
+        }
+        if current.activity.child_id.is_some() || current.activity.in_flight {
+            return Err(ActivityStartError::AlreadyRunning);
+        }
+        current.activity = RuntimeActivityState {
+            child_id: Some(child_id),
+            ..RuntimeActivityState::default()
+        };
+        Ok(())
+    }
+
+    /// Whether `child_id` is still the run's current child.
+    pub fn owns_activity(&self, child_id: u64) -> bool {
+        self.lock().activity.child_id == Some(child_id)
+    }
+
+    /// Begin one eligible child loop turn.
+    pub fn begin_activity_loop(&self, child_id: u64, tick: f64, now_ms: f64) -> bool {
+        let mut current = self.lock();
+        if current.state.aborted() {
+            return false;
+        }
+        let activity = &mut current.activity;
+        if activity.child_id != Some(child_id)
+            || activity.in_flight
+            || tick < activity.next_tick
+            || now_ms < activity.next_at_ms
+        {
+            return false;
+        }
+        activity.in_flight = true;
+        true
+    }
+
+    /// Record one child loop result and its next native eligibility bounds.
+    pub fn settle_activity_loop(&self, child_id: u64, next_at_ms: f64, next_tick: f64) {
+        let mut current = self.lock();
+        let activity = &mut current.activity;
+        if activity.child_id != Some(child_id) {
+            return;
+        }
+        activity.in_flight = false;
+        activity.next_at_ms = next_at_ms;
+        activity.next_tick = next_tick;
+    }
+
+    /// Record child callback entry for the `start` turn.
+    pub fn begin_activity_start(&self, child_id: u64) -> bool {
+        let mut current = self.lock();
+        if current.state.aborted() {
+            return false;
+        }
+        let activity = &mut current.activity;
+        if activity.child_id != Some(child_id) || activity.in_flight {
+            return false;
+        }
+        activity.in_flight = true;
+        true
+    }
+
+    /// Complete one child `onStart` turn.
+    pub fn settle_activity_start(&self, child_id: u64) {
+        let mut current = self.lock();
+        if current.activity.child_id == Some(child_id) {
+            current.activity.in_flight = false;
+        }
+    }
+
+    /// Publish one actual active task name from the child.
+    pub fn set_activity_task(&self, child_id: u64, name: Option<String>) {
+        let mut current = self.lock();
+        if current.activity.child_id == Some(child_id) {
+            current.activity.active_task = name;
+        }
+    }
+
+    /// Retain a terminal child result.
+    pub fn set_activity_outcome(
+        &self,
+        child_id: u64,
+        kind: String,
+        reason: String,
+        finish_requested: bool,
+    ) {
+        let mut current = self.lock();
+        let activity = &mut current.activity;
+        if activity.child_id == Some(child_id) {
+            activity.finish_requested = finish_requested;
+            activity.outcome = Some(RuntimeActivityOutcome { kind, reason });
+        }
+    }
+
+    /// Publish child interruption and return whether its callback is pending.
+    pub fn interrupt_activity(&self, child_id: Option<u64>, reason: String) -> Option<bool> {
+        let mut current = self.lock();
+        let activity = &mut current.activity;
+        if activity.child_id != child_id {
+            return None;
+        }
+        activity.interrupted = true;
+        activity.outcome = Some(RuntimeActivityOutcome {
+            kind: "interrupted".into(),
+            reason,
+        });
+        Some(activity.in_flight)
+    }
+
+    /// Release the child identity after its single cleanup path.
+    pub fn clear_activity(&self, child_id: u64) {
+        let mut current = self.lock();
+        let activity = &mut current.activity;
+        if activity.child_id == Some(child_id) {
+            activity.child_id = None;
+            activity.in_flight = false;
+            activity.finish_requested = false;
+            activity.active_task = None;
+        }
+    }
 }
 
 /// The identifiers the host compares for the latest and previous route
@@ -174,6 +576,25 @@ pub enum SurfaceError {
     ForeignCard(SurfaceKind),
 }
 
+/// A queued host-owned client frame whose isolate acknowledgement is awaited
+/// without holding the owning slot mutex.
+pub trait ClientFrameDispatch: Send + Sync {
+    /// Wait for the isolate to finish this frame and return whether it
+    /// acknowledged delivery.
+    fn wait_for_ack(&self) -> bool;
+}
+
+/// One live compatibility journal read. `token` counts every journal begin
+/// of the run; `generation` is the work generation it began in. Together they
+/// are the read's transaction identity: each new read has its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalWait {
+    pub token: u64,
+    pub generation: u64,
+    /// The lease's own wall bound: the read stops hiding the page here.
+    pub deadline: Instant,
+}
+
 /// One running surface. The slot owns lifecycle transitions, and `stop`
 /// transfers the run to its retirement worker.
 pub trait SurfaceRun: Send {
@@ -182,6 +603,9 @@ pub trait SurfaceRun: Send {
     fn poll_ready(&self) -> SurfaceReady;
     /// Return the run generation.
     fn generation(&self) -> u64;
+    /// Bind the slot-owned run context. Non-JavaScript surfaces need no
+    /// isolate projection and retain the default no-op.
+    fn bind_runtime_context(&mut self, _context: Arc<ScriptRuntimeContext>) {}
     /// Return whether script execution is active.
     fn execution_active(&self) -> bool;
     /// Return the execution sequence and its activity flag.
@@ -198,6 +622,24 @@ pub trait SurfaceRun: Send {
     fn pause(&self);
     /// Resume script execution.
     fn resume(&self);
+    /// Queue one client frame and return its independently waitable receipt.
+    /// Hosts must drop their slot lock before waiting for the receipt.
+    fn begin_client_frame(&mut self) -> Option<Arc<dyn ClientFrameDispatch>> {
+        None
+    }
+    /// Notify this run of one host-owned client main-loop frame.
+    ///
+    /// The host invokes this after each 20 ms client loop, independently of
+    /// game-tick delivery. Implementations that do not expose frame events
+    /// keep the default no-op.
+    fn on_client_frame(&mut self) -> bool {
+        self.begin_client_frame()
+            .is_some_and(|dispatch| dispatch.wait_for_ack())
+    }
+    /// Return whether this run has requested the lazy projection loc list.
+    fn loc_projection_wanted(&self) -> bool {
+        false
+    }
     /// Transfer this run to retirement and send its logs to `done`.
     fn stop(self: Box<Self>, done: Sender<Vec<String>>);
     /// Return whether the script has stopped.
@@ -235,6 +677,13 @@ pub trait SurfaceRun: Send {
     fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64);
     /// Report a snapshot change and its input identity.
     fn on_snapshot_change_at(&self, snap_tick: u64, input_identity: u64);
+    /// Dispatch the posted seat page to the rows it changed. Steps, resumes
+    /// and settles those rows only. Releases only terminals whose seat result
+    /// sequence is above `release_floor`. Records no tick and carries every
+    /// budget. Returns whether the surface accepted the dispatch: the slot
+    /// clears its seat-answer obligation only on `true`, and an accepted
+    /// dispatch executes or its page is delivered by a named later dispatch.
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool;
 
     // decoded effects
     /// Drain stamped interactions queued by the surface.
@@ -271,6 +720,13 @@ pub trait SurfaceRun: Send {
     fn paint_select(&self, key: &str, name: &str);
     /// Return whether the compatibility journal paint is hidden at `now`.
     fn journal_paint_hidden(&self, now: Instant) -> bool;
+    /// Return the live compatibility journal read at `now`: its transaction
+    /// identity and its lease's own wall bound.
+    fn journal_wait(&self, now: Instant) -> Option<JournalWait>;
+    /// Return the in-isolate owners whose interaction hold has expired at
+    /// `now` (finding N1 of `HOLD-MODEL-AB`): every queued row whose
+    /// `mirror_owner` is one of them is stale, and the host's drain drops it.
+    fn expired_hold_owners(&self, now: Instant) -> [Option<RequestId>; 2];
     /// Evaluate a probe expression.
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError>;
     /// Drain log lines.
@@ -380,7 +836,7 @@ impl ScriptPacketOpsContext<'_, '_> {
         if self.context.run() != self.permit.run {
             return Err(ActionError::Stale);
         }
-        ServerOrderedRequest::validate_advanced_shape(self.context.pin.revision, &operations)
+        ServerOrderedRequest::validate_advanced_shape(self.context.revision, &operations)
             .map_err(ActionError::ServerOrdered)?;
         self.context
             .emit_server_ordered_envelope(ServerOrderedEnvelope {

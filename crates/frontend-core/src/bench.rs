@@ -162,13 +162,16 @@ impl BenchRun {
     }
 
     /// Advance the run against `core`'s play session: `Ok(true)` once the
-    /// observation completed; without a play session nothing happens.
+    /// observation completed; without a play session nothing happens. The
+    /// run reads the script lines `core`'s last poll took (it drains them).
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
-            Some(play) => self
-                .0
-                .poll(play)
-                .map_err(|error| BenchError(BenchStep::Run(error))),
+            Some(play) => {
+                self.0.observe_script_lines(core.script_lines());
+                self.0
+                    .poll(play)
+                    .map_err(|error| BenchError(BenchStep::Run(error)))
+            }
             None => Ok(false),
         }
     }
@@ -177,6 +180,110 @@ impl BenchRun {
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_for_test(&mut self) {
         self.0.finish_for_test();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BenchConfig, BenchRun};
+    use crate::session::OperatorSession;
+    use host_play::{
+        memory::{Config, Workload},
+        run_with_io, InstancePermit, PlayOptions, Transport,
+    };
+    use std::{
+        fs,
+        sync::{LazyLock, Mutex},
+        time::Duration,
+    };
+    use vault::Vault;
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct EnvRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl EnvRestore {
+        fn set(values: &[(&'static str, &'static str)]) -> Self {
+            let old = values
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect();
+            for (key, value) in values {
+                std::env::set_var(key, value);
+            }
+            Self(old)
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in self.0.drain(..) {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn empty_play() -> host_play::Play {
+        run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+    }
+
+    #[test]
+    fn bench_poll_forwards_script_lines_to_the_q4_run() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = EnvRestore::set(&[
+            ("BOT_MEMORY_SCENARIO", "accountleveler_listener_probe"),
+            ("BOT_MEMORY_Q4_LISTENER", "1"),
+            ("BOT_MEMORY_Q4_CELL", "busy_bank_65_row_sampling"),
+        ]);
+        let config = BenchConfig(Box::new(Config {
+            n: 1,
+            workload: Workload::Active,
+            warmup: Duration::from_secs(1),
+            observe: Duration::from_secs(1),
+            teardown: Duration::from_secs(1),
+        }));
+        let mut bench = BenchRun::prepare(config, "panel").unwrap();
+        let name = bench.names()[0].clone();
+        let base = std::env::temp_dir().join(format!(
+            "frontend-core-bench-lines-{}-{}",
+            std::process::id(),
+            name
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let vault_path = base.join("vault");
+        let vault = Vault::create(&vault_path, "bench-wiring-test").unwrap();
+        let mut core = OperatorSession::<()>::new(InstancePermit::SkipLock);
+        core.set_spawn_workers(false);
+        core.start(vault, empty_play());
+        core.set_script_lines_for_test(vec![(name.clone(), "MEMAB_BANK_ROWS:1:65".into())]);
+
+        // The test has no prepared seed runner, so the observation can return
+        // an unrelated seed error after it consumes the supplied script lines.
+        let _ = bench.poll(&core);
+
+        assert_eq!(
+            bench.0.observed_script_bank_rows_for_test(&name),
+            Some(65),
+            "BenchRun::poll must pass the session's marker into the Q4 Run"
+        );
+        drop(bench);
+        fs::remove_dir_all(base).unwrap();
     }
 }
 

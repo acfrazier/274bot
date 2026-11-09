@@ -3,7 +3,8 @@
 //! before posting into an isolate.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -31,6 +32,34 @@ fn source_key(source: ScriptSource) -> &'static str {
 /// On-disk shape: `{ "catalog:ChickenKiller": { "buryBones": false, … } }`.
 type StoreFile = BTreeMap<String, Map<String, Value>>;
 
+/// A typed failure while reading the operator's script settings file.
+#[derive(Debug, thiserror::Error)]
+pub enum ScriptSettingsError {
+    /// The file exists but could not be read.
+    #[error("script settings at {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    /// The file is not the current map-of-maps document.
+    #[error("script settings at {path}: invalid document: {source}")]
+    Decode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+impl ScriptSettingsError {
+    /// The script settings file that failed to load.
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Read { path, .. } | Self::Decode { path, .. } => path,
+        }
+    }
+}
+
 /// Persisted operator overrides keyed by [`card_key`].
 pub struct ScriptSettingsStore {
     path: PathBuf,
@@ -39,19 +68,27 @@ pub struct ScriptSettingsStore {
 }
 
 impl ScriptSettingsStore {
-    pub fn at(path: PathBuf) -> Self {
-        let cards = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default();
-        ScriptSettingsStore {
+    pub fn at(path: PathBuf) -> Result<Self, ScriptSettingsError> {
+        let cards = match std::fs::read_to_string(&path) {
+            Ok(raw) => {
+                serde_json::from_str(&raw).map_err(|source| ScriptSettingsError::Decode {
+                    path: path.clone(),
+                    source,
+                })?
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => StoreFile::new(),
+            Err(source) => {
+                return Err(ScriptSettingsError::Read { path, source });
+            }
+        };
+        Ok(ScriptSettingsStore {
             path,
             cards,
             dirty: false,
-        }
+        })
     }
 
-    pub fn with_default_path() -> Self {
+    pub fn with_default_path() -> Result<Self, ScriptSettingsError> {
         Self::at(default_script_settings_path())
     }
 
@@ -387,6 +424,59 @@ pub fn format_setting_value(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let path = std::env::temp_dir().join(format!(
+                "script-settings-store-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn current_0_2_8_store_shape_loads_without_losing_values() {
+        let dir = Scratch::new();
+        let path = dir.0.join("script-settings.json");
+        let bytes = br#"{"catalog:ChickenKiller":{"buryBones":false,"eatAtPercent":47.0,"foodName":"lobster","priority":["a",2]}}"#;
+        std::fs::write(&path, bytes).unwrap();
+
+        let store = ScriptSettingsStore::at(path).unwrap();
+        let overrides = store.overrides(ScriptSource::Catalog, "ChickenKiller");
+        assert_eq!(overrides["buryBones"], Value::Bool(false));
+        assert_eq!(overrides["eatAtPercent"].as_f64(), Some(47.0));
+        assert_eq!(overrides["foodName"], Value::String("lobster".into()));
+        assert_eq!(overrides["priority"], serde_json::json!(["a", 2]));
+    }
+
+    #[test]
+    fn unsupported_document_schema_returns_typed_path_error_without_changing_bytes() {
+        let dir = Scratch::new();
+        let path = dir.0.join("script-settings.json");
+        let bytes = br#"{"catalog:ChickenKiller":[]}"#;
+        std::fs::write(&path, bytes).unwrap();
+
+        let error = match ScriptSettingsStore::at(path.clone()) {
+            Ok(_) => panic!("a non-map card row must be refused"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, ScriptSettingsError::Decode { .. }));
+        assert_eq!(error.path(), path);
+        assert!(error.to_string().contains(&path.display().to_string()));
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 
     #[test]
     fn numeric_bag_normalizes_integral_floats_without_rounding_fractions() {

@@ -23,6 +23,7 @@ type Scope = {
     kind: 'block' | 'switch' | 'label';
     guard: boolean;
     terminated: boolean;
+    selector?: string;
 };
 
 export type QuestStartTarget = {
@@ -39,7 +40,6 @@ export type QuestStartRow = {
 export type QuestStartFacts = {
     schema: 1;
     revision: number;
-    content_id: string;
     rows: QuestStartRow[];
 };
 
@@ -135,7 +135,7 @@ export function questStartContentFiles(content: string): string[] {
         .map((file) => path.relative(content, file).split(path.sep).join('/'));
 }
 
-function firstStartAssignment(lines: readonly ExpandedLine[], questId: string, varp: string): boolean {
+function firstStartAssignment(lines: readonly ExpandedLine[], questId: string, varp: string, allowNumericZeroCase: boolean): boolean {
     const varpStem = varp.replace(/(?:_quest|quest|_bits)$/, '');
     const guardForLine = (line: string) => {
         const names = [...line.matchAll(/\^([A-Za-z0-9_]+_not_started)\b/g)].map((match) => match[1]);
@@ -164,10 +164,14 @@ function firstStartAssignment(lines: readonly ExpandedLine[], questId: string, v
             const switchScope = [...scopes].reverse().find((scope) => scope.kind === 'switch');
             if (switchScope) {
                 const names = [...line.matchAll(/\^([A-Za-z0-9_]+_not_started)\b/g)].map((match) => match[1]);
-                switchScope.guard = names.some((name) => {
+                const namedNotStarted = names.some((name) => {
                     const stem = name.slice(0, -'_not_started'.length);
                     return stem === questId || stem === varp || stem === varpStem;
                 });
+                const numericNotStarted = allowNumericZeroCase
+                    && /^case\s+0\s*:/.test(line)
+                    && (switchScope.selector === questId || switchScope.selector === varp || switchScope.selector === varpStem);
+                switchScope.guard = namedNotStarted || numericNotStarted;
                 switchScope.terminated = false;
             }
         }
@@ -195,10 +199,12 @@ function firstStartAssignment(lines: readonly ExpandedLine[], questId: string, v
             }
             const prefix = code.slice(0, token.index).replace(/^\s*}\s*/, '').trim();
             const switchBlock = firstOpen && /^switch(?:_int)?\b/.test(prefix);
+            const switchSelector = switchBlock ? /^switch(?:_int)?\s*\(\s*%([A-Za-z0-9_]+)\s*\)/.exec(prefix)?.[1] : undefined;
             scopes.push({
                 kind: switchBlock ? 'switch' : 'block',
                 guard: !switchBlock && firstOpen && guardForLine(line),
                 terminated: false,
+                selector: switchSelector,
             });
             firstOpen = false;
         }
@@ -223,7 +229,6 @@ export function extractQuestStartFacts(
     content: string,
     quests: readonly QuestIdentityRow[],
     revision: number,
-    contentId: string,
 ): QuestStartFacts {
     const files = questStartContentFiles(content).map((file) => path.join(content, file));
     const handlers: Section[] = [];
@@ -243,7 +248,7 @@ export function extractQuestStartFacts(
     for (const quest of quests) {
         if (!/^\w+$/.test(quest.varp)) continue;
         for (const handler of handlers) {
-            if (!firstStartAssignment(expandedBody(handler, labels), quest.id, quest.varp)) continue;
+            if (!firstStartAssignment(expandedBody(handler, labels), quest.id, quest.varp, revision === 377)) continue;
             const ids = pack[handler.kind].get(handler.alias);
             if (ids === undefined) continue;
             rows.push({ quest: quest.id, target: { kind: handler.kind, id: ids }, op: handler.op });
@@ -256,5 +261,5 @@ export function extractQuestStartFacts(
         || a.target.kind.localeCompare(b.target.kind)
         || a.target.id - b.target.id
         || a.op - b.op));
-    return { schema: 1, revision, content_id: contentId, rows };
+    return { schema: 1, revision, rows };
 }

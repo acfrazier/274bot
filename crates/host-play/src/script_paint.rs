@@ -8,8 +8,33 @@ use super::{script_slot, ScriptWall};
 pub(crate) fn script_paint_of(
     scripts: &ScriptWall,
     name: &str,
-) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
+) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
     script_slot(scripts, name).and_then(|slot| slot.lock().ok().and_then(|slot| slot.paint()))
+}
+
+/// The active native script's typed survival report, or the no-run default.
+pub(crate) fn script_survival_of(
+    scripts: &ScriptWall,
+    name: &str,
+) -> script::survival::SurvivalReport {
+    script_slot(scripts, name)
+        .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_status()))
+        .map_or_else(script::survival::SurvivalReport::default, |status| {
+            status.survival
+        })
+}
+
+/// Copy the latest runner report unless this frame starts a new session.
+pub(crate) fn publish_script_survival(
+    status: &mut SlotStatus,
+    survival: script::survival::SurvivalReport,
+    session_boundary: bool,
+) {
+    status.survival = if session_boundary {
+        script::survival::SurvivalReport::default()
+    } else {
+        survival
+    };
 }
 
 /// Publish `paint` onto `status.script_paint`, sharing the frame the isolate
@@ -17,7 +42,7 @@ pub(crate) fn script_paint_of(
 /// is a new frame; an equal one is skipped.
 pub(crate) fn publish_script_paint(
     status: &mut SlotStatus,
-    paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    paint: Option<std::sync::Arc<script::paint::ScriptPaint>>,
 ) {
     match (&status.script_paint, &paint) {
         (Some(cur), Some(next)) if std::sync::Arc::ptr_eq(cur, next) => {}
@@ -29,7 +54,7 @@ pub(crate) fn publish_script_paint(
 /// Whether `paint` advertises `select_name` on the persistent chrome store
 /// `key` (`strip:{id}`, `rail:{id}`, or `tabs:{id}`).
 pub(crate) fn script_paint_select_advertised(
-    paint: &script::shim::ScriptPaint,
+    paint: &script::paint::ScriptPaint,
     key: &str,
     select_name: &str,
 ) -> bool {
@@ -55,4 +80,29 @@ pub(crate) fn script_paint_select_advertised(
             .any(|band| band.id == id && band.names.iter().any(|n| n == select_name));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn survival_status_copies_reports_and_clears_them_at_session_boundary() {
+        let report = script::survival::SurvivalReport {
+            decision: script::survival::Decision::Needed,
+            why: None,
+            need: Some(script::survival::math::SurvivalNeed::Food {
+                count: 3,
+                ref_heal: 12,
+            }),
+            tried: 0,
+            owner: script::survival::Owner::Step,
+        };
+        let mut status = SlotStatus::default();
+        publish_script_survival(&mut status, report, false);
+        assert_eq!(status.survival, report);
+
+        publish_script_survival(&mut status, report, true);
+        assert_eq!(status.survival, script::survival::SurvivalReport::default());
+    }
 }

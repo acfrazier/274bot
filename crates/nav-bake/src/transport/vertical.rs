@@ -1,19 +1,23 @@
 use super::rs2_syntax::{lex, parse_body, parse_expr, Expr, Stmt};
 use super::*;
 
+#[path = "vertical_377.rs"]
+mod revision_377;
+pub(super) use revision_377::supplemental_edges_377;
+
 // ---------------------------------------------------------------------------
 // Ladders and stairs (m8aq `resolvePlacements` port).
 // ---------------------------------------------------------------------------
 
 /// Per-placement outcome resolution, m8aq-style: a landing, or a skip reason.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
     Landing(Landing),
     Skipped(&'static str),
 }
 
 /// How the script moves the player (m8aq `Landing`).
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Landing {
     Abs { level: i32, x: i32, z: i32 },
     LocDelta { dx: i32, d_level: i32, dz: i32 },
@@ -52,6 +56,7 @@ pub(super) struct ScriptRule {
     pub(super) by_loc_coord: HashMap<i32, Outcome>,
     by_angle: HashMap<i32, Outcome>,
     pub(super) fallback: Option<Outcome>,
+    open_loc_id: Option<i32>,
 }
 
 pub(super) enum Guard {
@@ -355,54 +360,110 @@ pub(super) fn scripted_climb_edges(
         fs::read_to_string(content_root.join("scripts/ladders+stairs/scripts/ladders.rs2"))
             .ok()
             .and_then(|text| climb_helper_ticks(&text));
-    let mut rules = HashMap::new();
-    // Area/quest scripts also declare direct climb ops. Admit only the same
-    // unconditional presentation + fixed-move shape, not arbitrary scripted
-    // gates, choices, labels or queues. Existing coordinate/angle rules win.
-    let mut scripted_extras = HashMap::new();
+    let mut handlers = HashMap::new();
+    // A duplicate declaration, including another alias of the same loc id,
+    // cannot certify either half of an unconditional opening/climb pair.
     visit_rs2(&content_root.join("scripts"), &mut |text| {
         for (op, name, body) in script_blocks(text) {
             let Some(option) = oploc_option(&op) else {
                 continue;
             };
-            let key = (name.clone(), option);
-            let Some((landing, extra_ticks)) = direct_climb(&body, climb_ticks) else {
-                continue;
-            };
-            if matches!(landing, Landing::Abs { .. }) {
-                continue;
-            }
             let Some(&id) = ids.get(&name) else {
                 continue;
             };
-            if graph
-                .edges
-                .iter()
-                .any(|edge| edge.loc_id == id && edge.option == option)
-            {
-                continue;
-            }
             if !loc_defs
                 .op_at(id, option)
-                .is_some_and(|op| op.starts_with("Climb"))
+                .is_some_and(|op| op == "Open" || op.starts_with("Climb"))
             {
                 continue;
             }
-            let kind = if name.contains("stair") {
-                TransportKind::Stairs
-            } else {
-                TransportKind::Ladder
-            };
-            rules.entry(key.clone()).or_insert((
+            handlers
+                .entry((id, option))
+                .and_modify(|handler| *handler = None)
+                .or_insert(Some((name, body)));
+        }
+    });
+    let covered: HashSet<_> = graph
+        .edges
+        .iter()
+        .map(|edge| (edge.loc_id, edge.option))
+        .collect();
+    let mut rules = HashMap::new();
+    let mut scripted_extras = HashMap::new();
+    for (&(id, option), handler) in &handlers {
+        let Some((name, body)) = handler else {
+            continue;
+        };
+        if !loc_defs
+            .op_at(id, option)
+            .is_some_and(|op| op.starts_with("Climb"))
+        {
+            continue;
+        }
+        let Some((landing, extra_ticks)) = direct_climb(body, climb_ticks) else {
+            continue;
+        };
+        let kind = if name.contains("stair") {
+            TransportKind::Stairs
+        } else {
+            TransportKind::Ladder
+        };
+        let key = (name.clone(), option);
+        rules.insert(
+            key.clone(),
+            (
                 kind,
                 ScriptRule {
                     fallback: Some(Outcome::Landing(landing)),
                     ..ScriptRule::default()
                 },
-            ));
-            scripted_extras.insert(key, extra_ticks);
+            ),
+        );
+        scripted_extras.insert(key, extra_ticks);
+    }
+    for (&(id, option), handler) in &handlers {
+        let Some((name, body)) = handler else {
+            continue;
+        };
+        if loc_defs.op_at(id, option) != Some("Open") {
+            continue;
         }
-    });
+        let Some((open_name, opening_ticks)) = direct_open(body) else {
+            continue;
+        };
+        let Some(&open_id) = ids.get(&open_name) else {
+            continue;
+        };
+        let Some(Some((open_handler, _))) = handlers.get(&(open_id, option)) else {
+            continue;
+        };
+        let open_key = (open_handler.clone(), option);
+        let Some((kind, open_rule)) = rules.get(&open_key) else {
+            continue;
+        };
+        let Some(Outcome::Landing(landing)) = open_rule.fallback.as_ref() else {
+            continue;
+        };
+        let Some(extra_ticks) = scripted_extras[&open_key].checked_add(opening_ticks) else {
+            continue;
+        };
+        let (kind, landing) = (*kind, *landing);
+        let key = (name.clone(), option);
+        rules.insert(
+            key.clone(),
+            (
+                kind,
+                ScriptRule {
+                    fallback: Some(Outcome::Landing(landing)),
+                    open_loc_id: Some(open_id),
+                    ..ScriptRule::default()
+                },
+            ),
+        );
+        scripted_extras.insert(key, extra_ticks);
+    }
+    // Specialized coordinate/angle producers retain their existing edges and prices.
+    rules.retain(|(name, option), _| !covered.contains(&(ids[name], *option)));
     resolve_ladder_stair_rules(
         &rules,
         &scripted_extras,
@@ -485,7 +546,7 @@ fn resolve_ladder_stair_rules(
                         option,
                         ticks,
                         dir: None,
-                        open_loc_id: None,
+                        open_loc_id: rule.open_loc_id,
                         skill_req: vec![],
                         item_req: vec![],
                         consumed_req: vec![],
@@ -554,6 +615,34 @@ fn direct_climb(body: &str, climb_ticks: Option<i32>) -> Option<(Landing, i32)> 
         }
     }
     landing.map(|landing| (landing, extra_ticks))
+}
+
+/// A closed leaf may contribute only presentation, delays and one fixed
+/// loc change. Its target must separately certify the same Climb option.
+fn direct_open(body: &str) -> Option<(String, i32)> {
+    let mut open_name = None;
+    let mut ticks = OP_BASE_TICKS;
+    for statement in parse_body(body)? {
+        let Stmt::Call(name, args) = statement else {
+            return None;
+        };
+        match (name.as_str(), args.as_slice()) {
+            ("mes", [Expr::Str(calls)]) if calls.is_empty() => {}
+            ("anim", [Expr::Word(_), Expr::Num(_)])
+            | ("sound_synth", [Expr::Word(_), Expr::Num(_), Expr::Num(_)]) => {}
+            ("p_arrivedelay", []) => ticks = ticks.checked_add(ARRIVAL_DELAY_TICKS)?,
+            ("p_delay", [Expr::Num(delay)]) if *delay >= 0 => {
+                ticks = ticks.checked_add(delay_ticks(*delay)?)?;
+            }
+            ("loc_change", [Expr::Word(target), Expr::Num(duration)])
+                if *duration > 0 && open_name.is_none() =>
+            {
+                open_name = Some(target.clone());
+            }
+            _ => return None,
+        }
+    }
+    open_name.map(|name| (name, ticks))
 }
 
 /// Closed trapdoor placements (`trapdoors.rs2`) plus already-open leaves.

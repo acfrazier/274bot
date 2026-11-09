@@ -28,57 +28,81 @@ display name come from them. `package.py` stages only `LICENSE`,
 `NOTICE.md` and `FIRST-START.md` into the package; the other docs are read
 from the repository at the release commit.
 
-For a real candidate, give the controller a local work directory and the three
-canonical revision-289 input roots:
+For a real candidate, provide all four local generator roots and the actual
+`RS2B0T` query source. Revision 289 also requires the decoded snapshot used
+for its map and terrain bundle:
 
 ```sh
 python3 tools/release/release.py build \
   --commit "$COMMIT" --platform all --work-dir "$WORK" \
-  --engine-dir "$ENGINE" --content-dir "$CONTENT" \
-  --snapshot-root "$SNAPSHOTS" --snapshot-version "$SNAPSHOT_VERSION" \
+  --game-data-274-engine "$GAME_DATA_274_ENGINE" \
+  --game-data-274-content "$GAME_DATA_274_CONTENT" \
+  --game-data-289-engine "$GAME_DATA_289_ENGINE" \
+  --game-data-289-content "$GAME_DATA_289_CONTENT" \
+  --rs2b0t "$RS2B0T" \
+  --snapshot-root "$SNAPSHOT_ROOT" --snapshot-version "$SNAPSHOT_VERSION" \
   --sign-identity "$RELEASE_SIGN_IDENTITY" \
   --rusty-v8-archive "$RUSTY_V8_ARCHIVE"
 ```
 
-The engine argument is the engine root containing `data/pack/client`; the
-content argument is the canonical content tree; the snapshot root contains the
-named decoded snapshot directory. `--client-root` defaults to
+Each engine root contains its revision's `data/pack/client`; each content root
+is that revision's local content tree. `RS2B0T` is the actual local bank/cook
+query source, not a pinned checkout. The snapshot root contains the named
+decoded snapshot directory. `--client-root` defaults to
 `vendor/fr-client-rust`. The controller reads the client commit from the host
-commit's gitlink and refuses malformed or mismatched identities. It exports
-both exact commits into `source.tar.gz`, exports only the pinned build inputs
-into `inputs.tar.gz`, and writes `expect.json` with archive SHA-256 records and
-the SHA-256 tree digest plus file count for pack, content, and snapshot.
-`.git` metadata is excluded and symlinks are refused.
-Real builds require both host and client checkouts to be at the requested
-commits with no tracked or untracked changes. `release.py` and
-`windows-ssh.py` must match that commit, so uncommitted controller code cannot
-become the transported native worker.
+commit's gitlink and exports both exact commits into `source.tar.gz`. It
+transports all four game-data roots, `RS2B0T`, and the optional snapshot in
+`inputs.tar.gz` without game-input digests or pins. `.git` metadata is excluded
+and symlinks are refused.
 
-Every native worker verifies both archives, extracts them into a fresh
-per-commit workspace, recomputes all three input digests, and then builds:
+Real builds require the host and client checkouts at their requested commits
+with no tracked or untracked changes. `release.py` and `windows-ssh.py` must
+match that commit, so uncommitted controller code cannot become the transported
+native worker. Workers verify the source archive receipt, then extract the
+source and local inputs into a fresh per-commit workspace.
+
+Before the product build, each worker runs the shared local bootstrap:
 
 ```text
-GIT_DIRTY=0
-BOT_NAV_REVISION=289
-BOT_NAV_BUILD=require
-cargo build --locked --release -p panel --bin panel-play -p tui --bin tui-play
+GAME_DATA_274_ENGINE=.../game-data/274/engine
+GAME_DATA_274_CONTENT=.../game-data/274/content
+GAME_DATA_289_ENGINE=.../game-data/289/engine
+GAME_DATA_289_CONTENT=.../game-data/289/content
+RS2B0T=.../rs2b0t
+python tools/local-data/build.py
 ```
 
-It records the exact host/client commits, target, `rustc -Vv`, default features,
-input digests, and every binary/nav digest in the build receipt before calling
-`package.py`. Each platform therefore ships `panel-play`, `tui-play`,
-revision-289 navigation, and the terrain baked by the staged TUI from the same
-pinned cache and snapshot.
+The wrapper runs generator stage 1, builds and runs the isolated `nav-bake`
+tool for both revisions, exports the real schema-3 crossings projection, and
+runs generator stage 2. It stages local navigation under
+`target/local-data/nav/<revision>/`; stage 2 adds the actual prerequisite facts
+derived from the exported projection. Product building follows only after the
+wrapper succeeds. Release builds set `GIT_DIRTY=0` and `BOT_NAV_BUILD=require`,
+then require Cargo evidence that the API used `embedded-game-data` and was not
+compiled with `no_local_game_data`.
+
+The native worker resolves Bun before it restricts the macOS build environment.
+The wrapper receives that executable path through `BUN_EXECUTABLE`.
+Cargo retains the restricted `PATH` during both navigation and product builds.
+
+The same-build receipt records the exact host/client commits, target,
+`rustc -Vv`, default features, and each shipped binary/navigation file's SHA-256.
+It does not carry game-input digests. Revision-289 packages also contain the
+terrain and map catalogue baked by the staged TUI from the local 289 cache and
+decoded snapshot.
 
 Completed `prepared/` state is reusable: a one-platform retry verifies the
-existing archives, manifest, and current input tree digests instead of
-regenerating shared payload hashes. Use `--force-platform` to discard only the
-selected native staging and rebuild it. Use `--reset-prepared` only when the
-pinned source or inputs intentionally changed; it deletes and recreates the
-shared payload before staging the requested platform. An interrupted initial
-prepare removes its partial directory automatically.
+source archive receipt and release identity, then reuses the transported
+`inputs.tar.gz`. If local generator or map inputs intentionally change, use
+`--reset-prepared` to replace the shared source/input payload before staging.
+Use `--force-platform` to discard only the selected native staging and rebuild
+it. An interrupted initial prepare removes its partial directory automatically.
 
 ### Builders and parameters
+
+The host and client pin Rust **1.98.1** with Clippy and rustfmt. Prepare that exact
+toolchain in each builder's Rustup home before a release build. Do not use
+unqualified `stable` to qualify a release.
 
 - macOS arm64 builds locally. `--sign-identity` (or
   `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS
@@ -99,7 +123,7 @@ prepare removes its partial directory automatically.
   toolchain through it; any other value is dropped), plus the keys the
   worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
   `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and in particular
-  `CARGO_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
+  `CARGO_HOME`, `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
   `rust-toolchain.toml`) -- is not inherited. None of the dropped
   variables was set in the environment that produced the known-good
   0.2.1 package. Linux and Windows environment construction is
@@ -204,10 +228,11 @@ package manager on `PATH`, and their runtime floors are already pinned
 in the manifest (glibc 2.39 and the named system libraries on Linux,
 the Visual C++ runtime DLLs on Windows). A `readelf`/`dumpbin`
 dependency allowlist would be a different mechanism
-for a defect class neither builder has shown. Navigation is reported
-byte-identical only after all six files from all three platform archives
-compare equal; a partial per-platform verification explicitly reports that navigation was not compared.
-Verification does not publish anything.
+for a defect class neither builder has shown.
+
+Each package's navigation payloads are checked against its same-build receipt
+and release manifest. Verification does not compare navigation bytes across
+platforms. Verification does not publish anything.
 
 ### Python version
 
@@ -302,11 +327,11 @@ name comes from `crates/panel/src/build_info.rs` `RELEASE` (`beta 2`). Release t
 - Linux x64: `panel-play`, `tui-play` (see [Linux panel runtime](#linux-panel-runtime)).
 
 `host-play` remains a developer tool. Build default features with
-`cargo build --locked --release`; do not enable profiling features. Build from
-an exact source export or clean checkout with the recorded client gitlink.
-Navigation generation requires the canonical engine/content inputs described
-in `docs/api/nav.md`; release builds must not use `BOT_NAV_BUILD=skip`.
-
+`cargo build --locked --release`; do not enable profiling features. Before the
+product build, run `python tools/local-data/build.py` with local source roots
+for both revisions and `RS2B0T`. This generates embedded game facts and stages
+navigation payloads for revisions 274 and 289. `BOT_NAV_BUILD=skip` means no
+staging and must not be used for a release build.
 `package.py` takes a Cargo profile directory and a build receipt. The receipt
 contains `host_commit`, `client_commit`, `target`, `rustc`, `features` (the
 string `default`), `built_at`, and `files` mapping each binary and navigation
@@ -316,29 +341,26 @@ it excludes machine-local bake stamps, engine/cache data and credentials.
 
 Revision 289 packages also ship the WalkTo map catalogue and terrain. After
 staging the binaries, `package.py` runs the staged `tui-play --map-bundle`
-against the pinned client cache the nav bundle was built from: `--map-cache`
-(its jag directory) and `--map-unpack` (the snapshot root holding its decoded
-snapshot). Both are required, either explicitly or through
-`BOT_NAV_ENGINE_DIR` (or `ENGINE_DIR`) plus `BOT_NAV_SNAPSHOT_ROOT`; there are
-no operator-filesystem defaults.
+against the local revision-289 cache from `GAME_DATA_289_ENGINE` and the
+decoded snapshot: `--map-cache` is its `data/pack/client` directory and
+`--map-unpack` is the snapshot root. Both are required, either explicitly or
+through `GAME_DATA_289_ENGINE` plus `BOT_NAV_SNAPSHOT_ROOT`; there are no
+operator-filesystem defaults.
 The bake runs the production map-cache path (the same producer, writer and
 publication as a local bake; the image demand derives its catalogue first, so
 one bake yields both) in a scratch cache and ships the published directories
 as `map/289/catalogues/<key>/` (catalogue `manifest.json` plus
 `client-pois.json`) and `map/289/images/<key>/` (image `manifest.json` plus
-terrain PNGs), with `map/289/274bot.mapcatalogue.json` recording the catalogue
-identity (revision, decoded client content, derive policy), key, the
-manifest's size and SHA-256, the record count and the payload size, and
-`map/289/274bot.mapimages.json` recording the same for the terrain.
-`package.py` refuses a bundle whose content identity differs from
-`274bot.navpack.json`'s `content_id`, re-verifies every shipped file against
-those receipts, records the descriptions as `map_catalogue` and `map_images`
-in `release-manifest.json` (whose `files` list, and so the archive
-`SHA256SUMS`, covers every shipped file), and copies `map/` into the macOS
-bundle's `Contents/Resources` beside `nav/`. The app installs each artifact
-into `~/.274bot/map-cache` only when its identity matches the bound client
-cache exactly; otherwise the catalogue is derived locally and the local
-terrain bake stays behind the operator's consent.
+terrain PNGs), with `map/289/274bot.mapcatalogue.json` and
+`map/289/274bot.mapimages.json` recording each bundle's key, manifest receipt,
+totals, and map identity. `package.py` checks the catalogue and terrain against
+their own output receipts; it no longer compares catalogue identity to a
+navigation manifest. The release manifest records the descriptions and every
+shipped file, and the macOS app copies `map/` into
+`Contents/Resources` beside `nav/`. The app installs each artifact only when
+its identity matches the bound client cache exactly; otherwise the catalogue
+is derived locally and the local terrain bake stays behind the operator's
+consent.
 
 Example, after recording the build receipt:
 
@@ -347,7 +369,8 @@ python3 tools/release/package.py --platform macos \
   --input target/release --output "$WORK/274bot-$VERSION-macos-arm64" \
   --build-receipt "$WORK/macos-build.json" \
   --app-profile rs2b2t --sign-identity "$RELEASE_SIGN_IDENTITY" \
-  --map-cache "$ENGINE/data/pack/client" --map-unpack "$SNAPSHOTS"
+  --map-cache "$GAME_DATA_289_ENGINE/data/pack/client" \
+  --map-unpack "$SNAPSHOT_ROOT"
 ```
 
 `--check` (no `--output`, no signing) stages the same package into a
@@ -375,13 +398,13 @@ checks and smoke results with each candidate. Release notes must disclose the
 remaining catalog limitations; historical scoped script passes do not imply
 all scripts/options passed with a new binary.
 
-Distributed packages target `rs2b2t`. Build their navigation with a
-separate engine-input directory containing the public endpoint's CRC-verified
-cache under data/pack/client, and `BOT_NAV_CONTENT_DIR` pointing at canonical
-289 content. Do not overwrite the local engine cache. Both the public and the
-local 289 cache identities are recognized. Local servers with another cache
-need their own matching navigation build or explicit external navigation
-resources.
+Distributed packages target `rs2b2t`. Build local game facts and navigation
+before the product build with `python tools/local-data/build.py`, setting all
+four `GAME_DATA_274_*` and `GAME_DATA_289_*` source roots and `RS2B0T` to the
+intended local inputs. Use the same revision-289 engine cache and decoded
+snapshot for the package's map and terrain bundle. `NAV_PACK` is a runtime
+override only; the build does not authenticate navigation against a selected
+cache identity.
 
 ## Linux panel runtime
 

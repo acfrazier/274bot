@@ -1,0 +1,16 @@
+{
+  "stage": "doric:0",
+  "stand": [
+    2952,
+    3451,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [
+    "givebank bronze_pickaxe 1"
+  ],
+  "expect": [],
+  "mode": "clean"
+}

@@ -1,10 +1,14 @@
-use script_js::wire::{
+use script::native::snapshot_source::{
     ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, VarpInput,
     WidgetTextInput,
 };
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -143,6 +147,9 @@ fn probe_loop(iso: &LoadIsolate, snap: &SnapshotInput<'_>) -> serde_json::Value 
 
 #[test]
 fn attacked_by_player_follows_posted_local_face_and_does_not_latch() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { Game } from '../../api/game/Game.js';
 export default class T extends LoopingBot {
@@ -167,6 +174,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn is_hostile_attacker_uses_posted_npc_facts_not_name_table() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { Npcs } from '../../api/npcs/Npcs.js';
 import { isHostileAttacker, HOSTILE_NAMES } from '../../api/thieving/targets.js';
@@ -234,6 +244,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn if_text_reads_selected_posted_widgets_not_stale_labels() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
 export default class T extends LoopingBot {
@@ -296,6 +309,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn hold_freezes_loop_but_keeps_posted_hostile_and_widget_facts() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { Game } from '../../api/game/Game.js';
 import { reader } from '../../adapter/ClientAdapter.js';
@@ -343,6 +359,11 @@ export default class T extends LoopingBot {
 
 #[test]
 fn duel_controls_match_both_selected_caches() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 export default class T extends LoopingBot {
     loop() {
@@ -377,6 +398,9 @@ export default class T extends LoopingBot {
 /// identity (DuelArena.ts observeFightState, canAttemptDuelFight).
 #[test]
 fn fight_arena_at_answers_the_frozen_pen_object() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { DUEL_FIGHT_ARENAS, fightArenaAt } from '../../api/duel/Duel.js';
 export default class T extends LoopingBot {
@@ -409,6 +433,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn duel_challenge_area_export_uses_the_native_contract() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { inDuelChallengeArea } from '../../api/duel/Duel.js';
 export default class T extends LoopingBot {
@@ -440,6 +467,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn missing_distance_or_max_refuses_hostile_true() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { isHostileAttacker } from '../../api/thieving/targets.js';
 export default class T extends LoopingBot {
@@ -490,7 +520,7 @@ fn run_handshake(
     partner: &str,
     initiator: bool,
     snapshot: &SnapshotInput<'_>,
-) -> Vec<script::shim::InteractReq> {
+) -> Vec<script::interact::InteractReq> {
     let iso = spawn(&handshake_source(partner, initiator));
     post_snapshot_input(&iso, snapshot);
     iso.on_game_tick(snapshot.tick);
@@ -502,6 +532,9 @@ fn run_handshake(
 
 #[test]
 fn clue_duel_both_roles_challenge_the_named_visible_partner() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let challenge = ["Challenge".to_string()];
     let player = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
     let mut snapshot = base_snapshot();
@@ -514,7 +547,7 @@ fn clue_duel_both_roles_challenge_the_named_visible_partner() {
     for initiator in [false, true] {
         assert_eq!(
             run_handshake(" helper name ", initiator, &snapshot),
-            vec![script::shim::InteractReq::Player {
+            vec![script::interact::InteractReq::Player {
                 name: "Helper_Name".into(),
                 action: "Challenge".into(),
             }]
@@ -524,6 +557,9 @@ fn clue_duel_both_roles_challenge_the_named_visible_partner() {
 
 #[test]
 fn clue_duel_rejects_wrong_partner_and_any_stake() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let wrong = [
         WidgetTextInput {
             component_id: 6671,
@@ -546,7 +582,7 @@ fn clue_duel_rejects_wrong_partner_and_any_stake() {
     snapshot.widgets = &wrong;
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 
     let staked = [
@@ -569,12 +605,15 @@ fn clue_duel_rejects_wrong_partner_and_any_stake() {
     snapshot.widgets = &staked;
     assert_eq!(
         run_handshake("Helper", false, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 }
 
 #[test]
 fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let offer = [
         WidgetTextInput {
             component_id: 6671,
@@ -598,7 +637,7 @@ fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
     snapshot.varps = &[];
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::IfButton { component_id: 6732 }]
+        vec![script::interact::InteractReq::IfButton { component_id: 6732 }]
     );
     assert!(
         run_handshake("Helper", false, &snapshot).is_empty(),
@@ -607,6 +646,9 @@ fn clue_duel_initiator_sets_obstacle_rules_when_zero_varp_is_not_transmitted() {
 }
 #[test]
 fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let options = [VarpInput {
         index: 286,
         value: 1024,
@@ -642,7 +684,7 @@ fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
     snapshot.widgets = &initial;
     assert!(matches!(
         run_handshake("Helper", true, &snapshot).as_slice(),
-        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+            [script::interact::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
     ));
     assert!(
         run_handshake("Helper", false, &snapshot).is_empty(),
@@ -653,12 +695,15 @@ fn clue_duel_helper_accepts_only_after_the_initiator_is_observed_accepted() {
     snapshot.widgets = &accepted;
     assert!(matches!(
         run_handshake("Helper", false, &snapshot).as_slice(),
-        [script::shim::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
+            [script::interact::InteractReq::DuelAccept { screen, .. }] if screen == "offer"
     ));
 }
 
 #[test]
 fn clue_duel_offer_identity_does_not_authorize_a_staked_confirm() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let source = r#"
 import { ClueDuelHandshake } from '../../api/duel/ClueDuel.js';
 export default class T extends LoopingBot {
@@ -704,7 +749,7 @@ export default class T extends LoopingBot {
     let _ = isolate.probe("globalThis.__result");
     assert_eq!(
         isolate.drain_interacts(),
-        vec![script::shim::InteractReq::DuelAccept {
+        vec![script::interact::InteractReq::DuelAccept {
             screen: "offer".into(),
             partner: "Helper".into(),
             rules: 1024,
@@ -737,7 +782,7 @@ export default class T extends LoopingBot {
     let _ = isolate.probe("globalThis.__result");
     assert_eq!(
         isolate.drain_interacts(),
-        vec![script::shim::InteractReq::CloseModal],
+        vec![script::interact::InteractReq::CloseModal],
         "a stake inserted after a valid offer must cancel instead of confirming"
     );
     isolate.join();
@@ -745,6 +790,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn clue_duel_confirm_without_a_validated_offer_is_rejected() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let widgets = [
         WidgetTextInput {
             component_id: 6507,
@@ -767,12 +815,15 @@ fn clue_duel_confirm_without_a_validated_offer_is_rejected() {
     snapshot.varps = &options;
     assert_eq!(
         run_handshake("Helper", true, &snapshot),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
 }
 
 #[test]
 fn clue_duel_leave_targets_the_nearest_forfeit_exit() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let actions = ["Forfeit".to_string()];
     let loc = |id, x, z| SceneEntityInput {
         index: id,
@@ -827,7 +878,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Loc {
+        vec![script::interact::InteractReq::Loc {
             x: 3365,
             z: 3245,
             level: 0,
@@ -843,6 +894,9 @@ export default class T extends LoopingBot {
 /// a resilient walk whose wait settles on its own request.
 #[test]
 fn clue_duel_travel_walks_to_an_outside_destination_after_forfeit() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let actions = ["Forfeit".to_string()];
     let locs = [SceneEntityInput {
         index: 2,
@@ -927,20 +981,20 @@ export default class T extends LoopingBot {
     assert_eq!(
         requests[..2],
         [
-            script::shim::InteractReq::Loc {
+            script::interact::InteractReq::Loc {
                 x: 3364,
                 z: 3251,
                 level: 0,
                 action: "Forfeit".into(),
                 id: Some(3203),
             },
-            script::shim::InteractReq::Answer { option: 1 },
+            script::interact::InteractReq::Answer { option: 1 },
         ]
     );
     assert!(
         matches!(
             &requests[2..],
-            [script::shim::InteractReq::WalkNear {
+            [script::interact::InteractReq::WalkNear {
                 x: 3382,
                 z: 3269,
                 level: 0,
@@ -977,6 +1031,9 @@ export default class T extends LoopingBot {
 /// the helper, cancelling the duel screen only when one is open.
 #[test]
 fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let offer = [WidgetTextInput {
         component_id: 6671,
         text: "Dueling with: Helper",
@@ -1014,7 +1071,7 @@ fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
         assert_eq!(
             iso.drain_interacts(),
             if offer_open {
-                vec![script::shim::InteractReq::CloseModal]
+                vec![script::interact::InteractReq::CloseModal]
             } else {
                 Vec::new()
             },
@@ -1037,6 +1094,9 @@ fn clue_duel_travel_interrupt_cancels_only_an_open_duel() {
 /// resolves once the modal closed, and false with no duel screen open.
 #[test]
 fn duel_cancel_awaits_the_closed_duel_screen() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(
         r#"
 import { Duel } from '../../api/duel/Duel.js';
@@ -1057,7 +1117,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::CloseModal]
+        vec![script::interact::InteractReq::CloseModal]
     );
     assert_eq!(
         iso.probe("globalThis.__cancelled").unwrap(),

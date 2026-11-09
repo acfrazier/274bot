@@ -1,5 +1,8 @@
 # ADR 0010: The architecture check without the admission ceremony
 
+> The operator's 2026-11-05 amendment below supersedes the fine-grained
+> inventory and ownership-row requirements in the original decision.
+
 **Status:** direction set by the operator 2026-10-15 ("it's mostly the architecture gate … let's fix that"); this design is Main's, in effect unless the operator objects. Supersedes the protected-enforcement parts of ADR 0007 and §26 (epochs, exact-byte approvals, hash-chained receipts, qualification of proposed enforcement, pending records, hosted replays).
 
 ## Context
@@ -80,3 +83,29 @@ Reward hacking is handled where it has been caught in practice:
 - The checker also refuses an ASCII case variant of `Cargo.toml` anywhere in the tree, because it replaces the scanned manifest on a case-insensitive file system.
 - Unicode look-alike names are outside that refusal because Cargo on Linux does not read them.
 - A product build script can rewrite a vendored manifest on disk during a CI job, between steps. The checker reads committed manifests only. A new `build.rs` needs an ownership row, so a reviewer sees it.
+
+## Amendment: retain useful boundaries without per-file inventories
+
+Operator decision, 2026-11-05, following `ARCH-CHECKER-AUDIT-1105`.
+
+Keep the protected crate-edge allowlist, edge kinds and feature permissions;
+script/frontend-core foreign navigation and client boundaries; no whole-crate
+adapter re-exports; frontend-core owning/borrowed/scalar seam rules; and the
+semantic self-tests. The checker and rules remain operator-owned, and CI runs
+the protected copy rather than candidate code.
+
+Remove per-file ownership, exhaustive seam-type and test-exception registries,
+graph-provenance baselines and emitters, thread-local inventories, and
+per-release checker branches. Ownership classes come from syntax, not rows.
+Local and hosted checks use protected `main`.
+
+The 27 existing violations move to exact protected entries with one-line
+reasons. Candidate code cannot add its own exception. The narrow built-in test
+whitelist is unchanged. The 15 owning findings and 12 test-nav imports are one
+later follow-up, not new permission or work in this batch.
+
+Keep the existing client manifest pin: the workspace has no existing
+`cargo-deny` source rule. Do not add another tool. The nav Clippy deny lists and
+compiler probes remain, including their CI step, but source-file/subtree hashes
+and the stored inventory baseline are removed. Checks derive the deny surface
+from the compiler and compare the actual Clippy configuration.

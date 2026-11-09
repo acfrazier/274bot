@@ -160,9 +160,25 @@ impl ThieveCore {
         self.pending?.request_id
     }
 
+    pub(crate) fn has_pending_attempt(&self) -> bool {
+        self.pending.is_some()
+    }
+
     pub(crate) fn waiting_for_receipt(&self) -> bool {
         self.pending
             .is_some_and(|attempt| attempt.request_id.is_some() && attempt.accepted.is_none())
+    }
+
+    /// The pending attempt never reached the server (the host dropped its
+    /// request unsent): forget it, refund it and let the next poll dispatch
+    /// again at once. Nothing was tried, so nothing is retried or counted.
+    pub(crate) fn abandon_attempt(&mut self, now: Duration) {
+        if self.pending.take().is_some() {
+            if let Some(left) = self.attempts_left.as_mut() {
+                *left = left.saturating_add(1);
+            }
+            self.next_attempt = now;
+        }
     }
 
     pub(crate) fn stun_active(&self, now: Duration) -> bool {
@@ -211,9 +227,34 @@ impl ThieveCore {
         Ok(())
     }
 
+    /// Poll with the overall deadline enforced.
     pub(crate) fn poll(&mut self, now: Duration, observation: Observation) -> Decision {
+        self.poll_inner(now, observation, true)
+    }
+
+    /// Poll with the overall wall-clock deadline suspended.
+    ///
+    /// The thieve action's empty-anchor wait is a content wait: the selected
+    /// NPC's own `respawn_ticks` bounds it, and the attempt that wait produces
+    /// must not be killed by a deadline that elapsed while the target was
+    /// missing. The action still enforces the deadline on its approach walk
+    /// and on later attempts.
+    pub(crate) fn poll_without_deadline(
+        &mut self,
+        now: Duration,
+        observation: Observation,
+    ) -> Decision {
+        self.poll_inner(now, observation, false)
+    }
+
+    fn poll_inner(
+        &mut self,
+        now: Duration,
+        observation: Observation,
+        enforce_deadline: bool,
+    ) -> Decision {
         self.chat_since = self.chat_since.max(observation.chat.through_sequence);
-        if now >= self.deadline {
+        if enforce_deadline && now >= self.deadline {
             return Decision::Failed(Failure::Deadline);
         }
         if let Some(attempt) = self.pending {

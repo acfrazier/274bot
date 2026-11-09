@@ -1,11 +1,13 @@
 //! Native walk wait: LoadIsolate + FlatBuffer outcome, not arrival-only timeout.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
-    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput, TileInput},
+    script_js::wire::{
+        encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
+    },
+};
 
 fn base_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
     SnapshotInput {
@@ -156,6 +158,8 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -249,6 +253,8 @@ fn isolate_nopath_delta_snapshot_returns_false_promptly() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -432,6 +438,8 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: first,
             avoid: _,
             cross: _,
@@ -444,6 +452,8 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: second,
             avoid: _,
             cross: _,
@@ -637,6 +647,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 compat_tile_intent: true,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -652,6 +664,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -726,6 +740,8 @@ fn walk_to_stays_pending_until_posted_arrival() {
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -768,6 +784,8 @@ fn walk_to_same_coord_wrong_plane_is_not_arrival() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -1136,5 +1154,126 @@ export function tick(api) {
     iso.post_snapshot(arrived);
     iso.on_game_tick(5);
     assert_eq!(iso.probe("globalThis.__arrived ?? null").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_walking__traversal_remaining__contract() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__remaining = () => Traversal.remaining();
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let request_id = park_walk(&iso);
+
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(2, far()),
+        NativeFactsInput {
+            walk_remaining_request_id: request_id,
+            walk_remaining: 17,
+            ..NativeFactsInput::default()
+        },
+    ));
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.probe("__remaining()").unwrap().as_u64(),
+        Some(17),
+        "Traversal.remaining reads the active host walk's exact remaining count"
+    );
+
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(3, far()),
+        NativeFactsInput {
+            walk_remaining_request_id: request_id + 1,
+            walk_remaining: 99,
+            ..NativeFactsInput::default()
+        },
+    ));
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.probe("__remaining()").unwrap().as_u64(),
+        Some(0),
+        "a stale remaining count from a different request is ignored"
+    );
+
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(4, far()),
+        fail_native(1, 0, request_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(4);
+    let _ = iso.probe("true");
+    assert!(!iso.probe("__rs_ok").unwrap().as_bool().unwrap());
+    assert_eq!(iso.probe("__remaining()").unwrap().as_u64(), Some(0));
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_walking__traversal_requestrepath__contract() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__requestRepath = () => Traversal.requestRepath('changed route');
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let first = park_walk(&iso);
+    assert_eq!(
+        iso.probe("__requestRepath()").unwrap(),
+        serde_json::Value::Null
+    );
+
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests.len(),
+        2,
+        "repath aborts the old route and issues one new route"
+    );
+    assert_eq!(requests[0], InteractReq::AbortWalk { request_id: first });
+    let next = match requests[1] {
+        InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            request_id,
+            ..
+        } => request_id,
+        ref other => panic!("repath must issue the same target walk, got {other:?}"),
+    };
+    assert_ne!(next, first, "repath starts a fresh host route");
+
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(3, far()),
+        fail_native(1, 0, next, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+    assert!(!iso.probe("__rs_ok").unwrap().as_bool().unwrap());
     iso.join();
 }

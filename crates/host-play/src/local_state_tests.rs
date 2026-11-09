@@ -10,7 +10,7 @@ use api::loadout::Loadout;
 use api::local_state::{
     AccountKey, AuditCommit, AuditOrigin, BankHint, CommitAction, ContentScope, DomainEdit,
     DomainIdentity, ErrorCode, FailureReason, LoadoutEdit, LocalStateDomain, PreferencesEdit,
-    StoreVersion, SubmitReceipt, ValidationReason,
+    RuntimeSettingsEdit, StoreVersion, SubmitReceipt, ValidationReason,
 };
 use script::IsolatedEnv;
 
@@ -78,68 +78,124 @@ fn completed(service: &LocalStateService, request: RequestId) -> DurableReceipt 
     }
 }
 
-/// Retry a frontend write while it reports the write queued past the
-/// frontend's bounded durability wait: under machine load a write stays
-/// queued past the frontend timeout (a product deadline this suite must
-/// not change) and settles later. Any other error returns at once, so
-/// refusals and genuine conflicts keep their fast verdict.
-fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+/// Retry an attempt while `transient` says its failure is one of the two
+/// bounded waits this suite retries: the typed `NotReady` outcome (the
+/// store was still hydrating) or the write staying queued past the
+/// frontend's own bound. Both settle later under machine load (a product
+/// deadline this suite must not change). Any other failure returns at
+/// once, so refusals and genuine conflicts keep their fast verdict. The
+/// bound is the suite's 60 s, as before.
+fn patiently<E>(
+    mut attempt: impl FnMut() -> Result<(), E>,
+    transient: impl Fn(&E) -> bool,
+) -> Result<(), E> {
     let start = std::time::Instant::now();
     loop {
         match attempt() {
             Ok(()) => return Ok(()),
-            Err(error)
-                if error.contains("not durable within")
-                    && start.elapsed() < Duration::from_secs(60) =>
-            {
+            Err(error) if transient(&error) && start.elapsed() < Duration::from_secs(60) => {
                 std::thread::yield_now();
             }
             Err(error) => return Err(error),
         }
     }
 }
-/// A preferences `set`, retrying a load-slow durability wait.
+/// A preferences `set`, retrying the two transient waits: a load-slow
+/// durability wait, or a read queued while the store still hydrates.
 fn set_patiently(preferences: &Preferences, key: &str, value: serde_json::Value) {
-    patiently(|| {
-        preferences
-            .set(key, value.clone())
-            .map_err(|error| error.to_string())
-    })
-    .unwrap();
+    patiently(|| preferences.set(key, value.clone()), transient_wait).unwrap();
 }
-/// A preferences `update`, retrying a load-slow durability wait. A write
-/// of an earlier attempt that lands late is merged over, not duplicated:
-/// the update re-reads and re-applies `merge` on a conflict.
+/// A preferences `update`, retrying the two transient waits. A write of an
+/// earlier attempt that lands late is merged over, not duplicated: the
+/// update re-reads and re-applies `merge` on a conflict.
 fn update_patiently(
     preferences: &Preferences,
     mut merge: impl FnMut(&mut serde_json::Map<String, serde_json::Value>) -> std::io::Result<()>,
 ) {
-    patiently(|| {
-        preferences
-            .update(|document| merge(document))
-            .map_err(|error| error.to_string())
-    })
+    patiently(
+        || preferences.update(|document| merge(document)),
+        transient_wait,
+    )
     .unwrap();
+}
+/// A loadouts-store wait this suite retries. The store's save seam reports
+/// text, not a typed code (`script::LoadoutsStore::save` returns
+/// `Result<(), String>`), so this reads the two wait messages the frontend
+/// writes: the write stayed queued, or the domain was still hydrating.
+fn transient_save_wait(error: &str) -> bool {
+    error.contains("not durable within") || error.contains("is not ready")
 }
 /// A loadouts form `save`, retrying a load-slow durability wait. A write
 /// of an earlier attempt that lands late conflicts with its own retry;
 /// the save replays the store's latest on a conflict, so a retry converges
 /// instead of duplicating rows.
 fn save_patiently(form: &mut script::LoadoutsStore) {
-    let start = std::time::Instant::now();
-    loop {
-        match form.save() {
-            Ok(()) => return,
-            Err(error)
-                if (error.contains("not durable within")
-                    || error.contains("changed since this list was loaded"))
-                    && start.elapsed() < Duration::from_secs(60) =>
-            {
-                std::thread::yield_now();
+    patiently(
+        || form.save(),
+        |error| transient_save_wait(error) || error.contains("changed since this list was loaded"),
+    )
+    .unwrap_or_else(|error| panic!("save failed: {error}"));
+}
+
+/// An attempt outcome for the retry-helper test: only the wait is
+/// transient.
+#[derive(Debug, PartialEq, Eq)]
+enum TestAttempt {
+    Wait,
+    Refused,
+}
+
+/// The shared retry both ways: a typed `NotReady` attempt is retried and
+/// the next attempt succeeds; a permanent failure returns after one
+/// attempt. A service with the preferences domain closed reports the same
+/// typed `NotReady` the fixture's Reading-phase wait reports, without a
+/// five-second frontend wait.
+#[test]
+fn the_retry_helper_retries_not_ready_and_returns_a_permanent_failure() {
+    let scratch = IsolatedEnv::enter("local-state-retry-outcomes");
+    let closed = service(&scratch, &[]);
+    let not_ready = closed.preferences();
+    let attempts = AtomicUsize::new(0);
+    let result = patiently(
+        || {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                not_ready.set("map_bake", serde_json::json!("always"))
+            } else {
+                Ok(())
             }
-            Err(error) => panic!("save failed: {error}"),
-        }
-    }
+        },
+        transient_wait,
+    );
+    assert!(result.is_ok(), "a NotReady attempt is retried");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let error = not_ready
+        .set("map_bake", serde_json::json!("always"))
+        .expect_err("a closed domain refuses the write");
+    assert_eq!(
+        wait_outcome(&error),
+        WaitOutcome::NotReady,
+        "the typed Reading-phase outcome: {error}"
+    );
+
+    let attempts = AtomicUsize::new(0);
+    let result: Result<(), TestAttempt> = patiently(
+        || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err(TestAttempt::Refused)
+        },
+        |error| *error == TestAttempt::Wait,
+    );
+    assert_eq!(result.unwrap_err(), TestAttempt::Refused);
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "a refusal is not retried"
+    );
+
+    // An error the fixture did not mint is not a wait.
+    let terminal = std::io::Error::new(std::io::ErrorKind::InvalidData, "unreadable rows");
+    assert_eq!(wait_outcome(&terminal), WaitOutcome::Terminal);
+    assert!(!transient_wait(&terminal), "an unminted error is terminal");
 }
 
 /// How many stores the service holds.
@@ -179,6 +235,8 @@ fn hint_document(
         "schema_version": schema_version,
         "profile": profile,
         "account": account,
+        "revision": 289,
+        "content": CONTENT,
         "observed_at_unix": observed_at_unix,
         "rows": rows,
     }))
@@ -1004,33 +1062,47 @@ fn a_hint_written_under_one_content_scope_is_refused_under_another() {
     assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
 }
 
-/// r2 item 6: a hint written before scopes existed is read under the scope
-/// that asks, and the first write stamps it with that scope.
+/// Unscoped hints and the earlier pre-schema envelope are refused whole.
 #[test]
-fn a_hint_written_before_scopes_is_read_then_stamped() {
-    let scratch = IsolatedEnv::enter("local-state-legacy-hint");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.bank_hint_file(PROFILE, "alice");
-    write_private(
-        &path,
-        &hint_document(PROFILE, "alice", HINT_SCHEMA_VERSION, 3, &[(995, 3)]),
-    );
-    let service = LocalStateService::open(
-        root,
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    let lease = service.readback_lease(&alice, WAIT).unwrap().unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 3)]);
-    completed(
-        &service,
-        request(service.submit(hint_edit(&alice, None, vec![(995, 4)], 4))),
-    );
-    let written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written["revision"], serde_json::json!(289));
-    assert_eq!(written["content"], serde_json::json!(CONTENT));
+fn a_hint_without_scope_is_refused_and_kept() {
+    for (case, schema_version) in [
+        ("schema-1-unscoped", Some(HINT_SCHEMA_VERSION)),
+        ("pre-schema-unscoped", None),
+    ] {
+        let scratch = IsolatedEnv::enter(&format!("local-state-{case}"));
+        let root = StateRoot::new(scratch.home.join(".274bot"));
+        let path = root.bank_hint_file(PROFILE, "alice");
+        let mut document = serde_json::json!({
+            "profile": PROFILE,
+            "account": "alice",
+            "observed_at_unix": 3,
+            "rows": [[995, 3]],
+        });
+        if let Some(schema_version) = schema_version {
+            document["schema_version"] = serde_json::json!(schema_version);
+        }
+        let bytes = serde_json::to_vec(&document).unwrap();
+        write_private(&path, &bytes);
+        let service = service(&scratch, &[LocalStateDomain::BankHints]);
+        let alice = bank_identity("alice");
+        let refused = ErrorCode::Failed {
+            domain: LocalStateDomain::BankHints,
+            reason: FailureReason::UnsupportedSavedFormat,
+        };
+
+        assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
+        assert_eq!(service.lease(&alice), Err(refused));
+        assert_eq!(
+            service.submit(hint_edit(&alice, None, vec![(995, 4)], 4)),
+            SubmitReceipt::Refused(refused)
+        );
+        assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            bytes,
+            "{case}: original kept"
+        );
+    }
 }
 
 /// r2 item 1: a write whose directory entry cannot be flushed is not
@@ -2047,6 +2119,8 @@ fn a_hint_with_a_field_this_build_does_not_know_is_read_but_never_rewritten() {
         "schema_version": HINT_SCHEMA_VERSION,
         "profile": PROFILE,
         "account": "alice",
+        "revision": 289,
+        "content": CONTENT,
         "observed_at_unix": 7,
         "rows": [[995, 7]],
         "note": "keep",
@@ -2253,8 +2327,8 @@ fn a_failed_or_interrupted_many_member_update_changes_nothing() {
         step.store(failure, Ordering::SeqCst);
         let error = preferences.update(renumber).expect_err(case);
         assert!(
-            !error.to_string().contains("not durable within"),
-            "{case}: {error}"
+            !transient_wait(&error),
+            "{case}: a load timeout is not the injected failure: {error}"
         );
         assert_eq!(std::fs::read(&path).unwrap(), bytes_before, "{case}: file");
         preferences.reload().unwrap();
@@ -2353,14 +2427,13 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
 
     form.upsert(Loadout::new("form-row"));
     // The conflict is decided without waiting for durability, but a worker
-    // starved by machine load answers the first save with the bounded-wait
-    // timeout instead: retry those, keep the first decisive answer.
+    // starved by machine load answers the first save with one of the two
+    // bounded waits instead: retry those, keep the first decisive answer.
     let start = std::time::Instant::now();
     let error = loop {
         match form.save() {
             Err(error)
-                if error.contains("not durable within")
-                    && start.elapsed() < Duration::from_secs(60) =>
+                if transient_save_wait(&error) && start.elapsed() < Duration::from_secs(60) =>
             {
                 std::thread::yield_now()
             }
@@ -2492,9 +2565,31 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
     assert_eq!(audits.lock().unwrap().len(), 1);
 }
 
-/// Every line of a repair (a preferences quarantine, loadouts renamed
-/// apart) the service logs, with its level.
-fn quarantine_lines(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<(Level, String)>>> {
+type NoticeLines = Arc<std::sync::Mutex<Vec<(Level, String)>>>;
+
+fn loadouts_service_with_notices(scratch: &IsolatedEnv) -> (Arc<LocalStateService>, NoticeLines) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |level, line| {
+                sink.lock().unwrap().push((level, line.to_string()));
+            })),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let service = LocalStateService::open_with_state(
+        StateRoot::new(scratch.home.join(".274bot")),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    );
+    (service, seen)
+}
+
+/// Preference recovery notices emitted through the service's test-only hook.
+fn quarantine_lines(service: &LocalStateService) -> NoticeLines {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     service.set_notice_hook(Arc::new(move |level, line| {
@@ -2525,6 +2620,192 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
         Arc::new(RequestIdMinter::new()),
     )
     .preferences()
+}
+
+/// A runtime settings service and its account/content-bound file.
+fn runtime_settings_at(
+    scratch: &IsolatedEnv,
+    case: &str,
+) -> (Arc<LocalStateService>, DomainIdentity, std::path::PathBuf) {
+    let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let identity = identity(LocalStateDomain::ScriptRuntimeSettings, "alice");
+    let path = root.script_runtime_settings_file(
+        identity.account().profile(),
+        identity.account().account(),
+        identity.scope().revision().as_i32(),
+        identity.scope().content(),
+    );
+    let service = LocalStateService::open(
+        root,
+        &[LocalStateDomain::ScriptRuntimeSettings],
+        Arc::new(RequestIdMinter::new()),
+    );
+    (service, identity, path)
+}
+
+#[test]
+fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-round-trip");
+    let (service, identity, path) = runtime_settings_at(&scratch, "settings");
+    let edit = RuntimeSettingsEdit::try_set(
+        identity.clone(),
+        None,
+        "catalog:ChickenKiller",
+        "buryBones",
+        "false",
+    )
+    .unwrap();
+    let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
+    completed(&service, request);
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "schema_version": 1,
+            "profile": PROFILE,
+            "account": "alice",
+            "revision": 289,
+            "content": CONTENT,
+            "rows": [{
+                "namespace": "catalog:ChickenKiller",
+                "key": "buryBones",
+                "raw": "false"
+            }]
+        })
+    );
+
+    let lease = service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the write created a settings file");
+    let rows = lease
+        .snapshot()
+        .as_script_runtime_settings()
+        .expect("script settings snapshot");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].namespace(), "catalog:ChickenKiller");
+    assert_eq!(rows[0].key(), "buryBones");
+    assert_eq!(rows[0].raw(), "false");
+}
+
+/// WalkTo saves `customTile`, and its change listener saves `destination`
+/// in the same call; a MapPicker row is written just before. All three
+/// writes queue back to back. After they settle, the file and every read
+/// hold all three rows (the restart in the WalkTo live cell found only
+/// `destination`).
+#[test]
+fn back_to_back_runtime_settings_writes_keep_every_row() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-back-to-back");
+    let (service, identity, path) = runtime_settings_at(&scratch, "settings");
+    service
+        .readback_lease(&identity, WAIT)
+        .expect("an absent file is ready");
+    let rows = [
+        ("MapPicker", "showBasemap", "false"),
+        ("WalkTo", "customTile", "3110,3106,0"),
+        ("WalkTo", "destination", "Map pick"),
+    ];
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(namespace, key, raw)| {
+            let edit =
+                RuntimeSettingsEdit::try_set(identity.clone(), None, namespace, key, raw).unwrap();
+            request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)))
+        })
+        .collect();
+    for request in requests {
+        completed(&service, request);
+    }
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        document["rows"],
+        serde_json::json!([
+            { "namespace": "MapPicker", "key": "showBasemap", "raw": "false" },
+            { "namespace": "WalkTo", "key": "customTile", "raw": "3110,3106,0" },
+            { "namespace": "WalkTo", "key": "destination", "raw": "Map pick" },
+        ]),
+        "the file keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads from the settled cache"
+        );
+    }
+    let lease = service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the writes created a settings file");
+    assert_eq!(
+        lease.snapshot().as_script_runtime_settings().unwrap().len(),
+        3,
+        "a later readback keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads after a readback"
+        );
+    }
+}
+
+#[test]
+fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-quarantine");
+    for (case, bytes) in [
+        ("not-json", b"{not valid json".to_vec()),
+        ("not-an-object", b"[1, 2, 3]".to_vec()),
+    ] {
+        let (service, identity, path) = runtime_settings_at(&scratch, case);
+        write_private(&path, &bytes);
+        let notices = quarantine_lines(&service);
+
+        assert!(service.readback_lease(&identity, WAIT).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(siblings(&path), std::slice::from_ref(&name));
+
+        let edit = RuntimeSettingsEdit::try_set(
+            identity.clone(),
+            None,
+            "catalog:ChickenKiller",
+            "buryBones",
+            "false",
+        )
+        .unwrap();
+        let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
+        completed(&service, request);
+
+        let names = siblings(&path);
+        assert_eq!(names.len(), 2, "{case}: {names:?}");
+        let quarantined = path.with_file_name(&names[1]);
+        assert!(
+            names[1].starts_with(&format!("{name}.corrupt-")),
+            "{case}: {names:?}"
+        );
+        assert_eq!(std::fs::read(&quarantined).unwrap(), bytes);
+        let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+        let rows = lease.snapshot().as_script_runtime_settings().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].raw(), "false");
+        let notices = notices.lock().unwrap();
+        assert_eq!(notices.len(), 2, "{case}: {notices:?}");
+        assert_eq!(notices[0].0, Level::Warn);
+        assert_eq!(notices[1].0, Level::Info);
+        assert!(
+            notices[1].1.starts_with(
+                "audit domain=script-runtime-settings action=script-runtime-settings-quarantine"
+            ),
+            "{case}: {notices:?}"
+        );
+    }
 }
 
 #[test]
@@ -2591,11 +2872,10 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             "{case}: reads write nothing"
         );
 
-        patiently(|| {
-            preferences
-                .set("map_bake", serde_json::json!("always"))
-                .map_err(|error| error.to_string())
-        })
+        patiently(
+            || preferences.set("map_bake", serde_json::json!("always")),
+            transient_wait,
+        )
         .expect(case);
         assert_eq!(
             std::fs::read(&path).unwrap(),
@@ -2673,13 +2953,13 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
     // The save stays queued past the frontend's bounded wait under load and
-    // settles later: retry a timed-out save against what is on disk now.
+    // settles later: retry either bounded wait against what is on disk now.
     let mut saved = saver.join().unwrap();
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(60) {
         match saved {
             Ok(()) => break,
-            Err(error) if error.to_string().contains("not durable within") => {
+            Err(error) if transient_wait(&error) => {
                 saved = preferences.set("map_bake", serde_json::json!("always"));
             }
             Err(error) => panic!("save failed: {error}"),
@@ -2809,751 +3089,94 @@ fn preferences_refused_for_permissions_are_never_quarantined() {
     }
 }
 
-/// The rows of the loadouts file at `path`.
-fn rows_on_disk(path: &std::path::Path) -> Vec<Loadout> {
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-}
-
-/// T5.2 r5 (Sol r4 F1, the one-time migration): a `loadouts.json` whose
-/// rows share a name (an older editor could leave one) is renamed apart by
-/// the read that finds it, before anything is leased or written. Its exact
-/// bytes are kept first in a new `loadouts.json.duplicates-<time>`, whose
-/// directory entry is flushed before the file is replaced; every later row
-/// of a name becomes `<name> (2)`, `(3)`, … in row order, a suffix another
-/// row has skipped; every row keeps its content and its place; the result
-/// is one publication, flushed. The operator is told (a warning), and one
-/// info audit line names the copy and each rename. Later reads, by this
-/// service or another, rename nothing.
-#[test]
-fn rows_sharing_a_name_are_renamed_apart_once_and_the_file_is_kept_byte_for_byte() {
-    let scratch = IsolatedEnv::enter("local-state-r5-dedupe");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    assert_eq!(
-        service.readback_lease(&loadouts_identity(), WAIT).unwrap(),
-        None
-    );
-    let notices = quarantine_lines(&service);
-    let commits = audits(&service);
-    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let synced = Arc::clone(&order);
-    service.set_sync_hook(Arc::new(move |dir| {
-        synced
-            .lock()
-            .unwrap()
-            .push(format!("sync {}", dir.display()));
-        files::sync_directory(dir)
-    }));
-    let written = Arc::clone(&order);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        written
-            .lock()
-            .unwrap()
-            .push(format!("write {}", path.display()));
-        vault::write_private_file(path, bytes)
-    }));
-    // As an older build's form could leave it, written compact with a
-    // trailing newline, so the copy is shown to be the file's own bytes
-    // and not a rewrite of its rows.
-    let legacy = [
-        Loadout::new("same").with_carry("Lobster", 1),
-        Loadout::new("same")
-            .with_slot("righthand", "Rune scimitar")
-            .with_carry("Shark", 2),
-        Loadout::new("same (2)").with_carry("Tuna", 3),
-        Loadout::new("other"),
-        Loadout::new("same").with_carry("Trout", 4),
-    ];
-    let mut bytes = serde_json::to_vec(&legacy).unwrap();
-    bytes.push(b'\n');
-    write_private(&path, &bytes);
-
-    let lease = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap();
-    let mut apart = legacy.to_vec();
-    apart[1].name = "same (3)".into();
-    apart[4].name = "same (4)".into();
-    assert_eq!(
-        lease.snapshot().as_loadouts().unwrap(),
-        apart.as_slice(),
-        "the later rows of `same` are renamed apart (`same (2)` is another row's), each \
-         keeping its gear and its place"
-    );
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        serde_json::to_vec_pretty(&apart).unwrap(),
-        "one publication of the renamed rows"
-    );
-    let found = siblings(&path);
-    assert_eq!(found.len(), 2, "{found:?}");
-    assert!(
-        found[1].starts_with("loadouts.json.duplicates-"),
-        "{found:?}"
-    );
-    let quarantined = path.with_file_name(&found[1]);
-    assert_eq!(
-        std::fs::read(&quarantined).unwrap(),
-        bytes,
-        "the copy holds the file's exact bytes"
-    );
-    let dir = path.parent().unwrap().display().to_string();
-    assert_eq!(
-        *order.lock().unwrap(),
-        [
-            format!("sync {dir}"),
-            format!("write {}", path.display()),
-            format!("sync {dir}"),
-        ],
-        "the copy's entry is flushed before the file is replaced, the replacement's after"
-    );
-    let renames = r#"row 2 "same" → "same (3)", row 5 "same" → "same (4)""#;
-    let lines = notices.lock().unwrap().clone();
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert_eq!(lines[0].0, Level::Warn, "the operator's notice");
-    assert!(
-        lines[0].1.contains(&quarantined.display().to_string()) && lines[0].1.contains(renames),
-        "{lines:?}"
-    );
-    assert_eq!(lines[1].0, Level::Info, "the audit line");
-    assert!(
-        lines[1]
-            .1
-            .starts_with("audit domain=loadouts-references action=loadouts-dedupe "),
-        "{lines:?}"
-    );
-    assert!(
-        lines[1].1.contains(&format!(
-            "path={} quarantined={} renamed=[{renames}]",
-            path.display(),
-            quarantined.display()
-        )),
-        "{lines:?}"
-    );
-    assert!(
-        commits.lock().unwrap().is_empty(),
-        "a repair, not a submitted write"
-    );
-
-    // Apart now: nothing more to rename, here or in another process.
-    let again = LocalStateService::open(
-        root,
-        &[LocalStateDomain::LoadoutsReferences],
-        Arc::new(RequestIdMinter::new()),
-    );
-    for reader in [&service, &again] {
-        let lease = reader
-            .readback_lease(&loadouts_identity(), WAIT)
-            .unwrap()
-            .unwrap();
-        assert_eq!(lease.snapshot().as_loadouts().unwrap(), apart.as_slice());
-    }
-    assert_eq!(siblings(&path), found, "no second copy");
-    assert_eq!(notices.lock().unwrap().len(), 2, "nothing more to tell");
-}
-
-/// T5.2 r5 (Sol r4 F1, `probe-legacy-duplicate` made permanent): on a
-/// `loadouts.json` an older editor saved with two loadouts named `same`,
-/// renaming the second through the service-backed form (as both editors
-/// do: by its place in the list, with `replace_at`) renames that row, with
-/// its gear, in its place, and the first keeps its own gear. Before r5 the
-/// rename replaced the first row of the name, and the first row's gear was
-/// gone.
-#[test]
-fn renaming_the_second_of_two_same_named_loadouts_keeps_the_first_ones_gear() {
-    let scratch = IsolatedEnv::enter("local-state-r5-legacy-duplicate");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    let first = Loadout::new("same").with_carry("Lobster", 1);
-    let second = Loadout::new("same").with_carry("Shark", 2);
-    write_loadouts(
-        &path,
-        &[first.clone(), second.clone(), Loadout::new("other")],
-    );
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let mut editor = form(&service);
-    let mut renamed = editor.loadouts()[1].clone();
-    renamed.name = "renamed-second".into();
-    assert!(editor.replace_at(1, renamed));
-    save_patiently(&mut editor);
-    let rows = rows_on_disk(&path);
-    assert!(
-        rows.contains(&first),
-        "renaming the second duplicate-name row destroyed the first saved loadout's gear: \
-         {rows:?}"
-    );
-    let mut second_renamed = second;
-    second_renamed.name = "renamed-second".into();
-    assert_eq!(
-        rows,
-        [first, second_renamed, Loadout::new("other")],
-        "the second row is renamed, with its gear, in its place"
-    );
-    assert_eq!(editor.snapshot(), rows);
-}
-
-/// A root whose `loadouts.json` an older editor left with three loadouts
-/// named `same`, each with its own gear, around another, and a
-/// service-backed form loaded over it (the file is migrated by then).
-struct Legacy {
-    path: std::path::PathBuf,
-    editor: script::LoadoutsStore,
-    _service: Arc<LocalStateService>,
-    _scratch: IsolatedEnv,
-}
-
-fn legacy(case: &str) -> Legacy {
-    let scratch = IsolatedEnv::enter(case);
-    let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
-    write_loadouts(
-        &path,
-        &[
-            Loadout::new("same").with_carry("Lobster", 1),
-            Loadout::new("same").with_carry("Shark", 2),
-            Loadout::new("other").with_carry("Coal", 3),
-            Loadout::new("same").with_carry("Trout", 4),
-        ],
-    );
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .expect("initial legacy loadouts readback")
-        .expect("the legacy fixture has a saved loadouts file");
-    let editor = form(&service);
-    assert!(
-        editor.load_error().is_none(),
-        "legacy loadouts form failed to load: {:?}",
-        editor.load_error()
-    );
-    Legacy {
-        path,
-        editor,
-        _service: service,
-        _scratch: scratch,
-    }
-}
-
-/// T5.2 r5 (F1): on a migrated legacy file every edit names one row, so
-/// saving the selected loadout changed changes it and no other. The
-/// editors select a row by its place in the list and save it with
-/// `replace_at` (panel `save_draft`, TUI `commit_scratch`): an upsert of
-/// its name. Before r5 the name was every `same` row's: the upsert
-/// replaced the first, and the save's other rows of the name overwrote it.
-#[test]
-fn on_a_migrated_legacy_file_saving_a_changed_loadout_changes_only_it() {
-    for selected in [0, 1, 3] {
-        let mut case = legacy(&format!("local-state-r5-legacy-upsert-{selected}"));
-        let mut expected = case.editor.snapshot();
-        let changed = expected[selected].clone().with_carry("Coins", 99);
-        assert!(case.editor.replace_at(selected, changed.clone()));
-        save_patiently(&mut case.editor);
-        expected[selected] = changed;
-        assert_eq!(
-            rows_on_disk(&case.path),
-            expected,
-            "saving row {selected} changed that row and no other"
-        );
-        assert_eq!(case.editor.snapshot(), expected);
-    }
-}
-
-/// T5.2 r5 (F1): on a migrated legacy file removing the selected loadout
-/// removes it and no other. The editors remove the selected row by its
-/// name (panel `delete_loadout`, TUI row 7). Before r5 the name was every
-/// `same` row's, so no removal could name the selected one.
-#[test]
-fn on_a_migrated_legacy_file_removing_a_loadout_removes_only_it() {
-    for selected in [0, 1, 3] {
-        let mut case = legacy(&format!("local-state-r5-legacy-remove-{selected}"));
-        let mut expected = case.editor.snapshot();
-        let name = expected.remove(selected).name;
-        assert!(case.editor.remove(&name));
-        save_patiently(&mut case.editor);
-        assert_eq!(
-            rows_on_disk(&case.path),
-            expected,
-            "removing row {selected} removed that row and no other"
-        );
-        assert_eq!(case.editor.snapshot(), expected);
-    }
-}
-
-/// T5.2 r5 (F1): on a migrated legacy file renaming the selected loadout
-/// renames it, with its gear and in its place, and no other (the editors'
-/// `replace_at` with a new name: one rename of its name). Before r5 the
-/// rename took the first `same` row.
-#[test]
-fn on_a_migrated_legacy_file_renaming_a_loadout_renames_only_it() {
-    for selected in [0, 1, 3] {
-        let mut case = legacy(&format!("local-state-r5-legacy-rename-{selected}"));
-        let mut expected = case.editor.snapshot();
-        expected[selected].name = "picked".into();
-        assert!(case.editor.replace_at(selected, expected[selected].clone()));
-        save_patiently(&mut case.editor);
-        assert_eq!(
-            rows_on_disk(&case.path),
-            expected,
-            "renaming row {selected} renamed that row and no other"
-        );
-        assert_eq!(case.editor.snapshot(), expected);
-    }
-}
-
-/// T5.2 r5 (F1): the names a rename apart gives. Per name, the second row
-/// becomes `<name> (2)`, the third `<name> (3)`, and so on in row order; a
-/// suffix another row (or an earlier rename) already has is skipped; the
-/// first row of each name keeps it, and every row keeps its content and
-/// its place. The same rows always get the same names, and rows already
-/// apart get none.
-#[test]
-fn rows_sharing_a_name_get_the_next_free_suffix_in_row_order() {
-    let gear = |name: &str, coins: u32| Loadout::new(name).with_carry("Coins", coins);
-    let rows = vec![
-        gear("a", 1),
-        gear("a", 2),
-        gear("a (2)", 3),
-        gear("b", 4),
-        gear("a", 5),
-        gear("b", 6),
-        gear("a (2)", 7),
-    ];
-    let mut apart = rows.clone();
-    let made = files::rename_apart(&mut apart);
-    let names: Vec<&str> = apart.iter().map(|row| row.name.as_str()).collect();
-    assert_eq!(
-        names,
-        ["a", "a (3)", "a (2)", "b", "a (4)", "b (2)", "a (2) (2)"]
-    );
-    for (before, after) in rows.iter().zip(&apart) {
-        assert_eq!(
-            before.carry, after.carry,
-            "each row keeps its gear, in place"
-        );
-    }
-    let renamed = |row: usize, from: &str, to: &str| files::RenamedApart {
-        row,
-        from: from.into(),
-        to: to.into(),
-    };
-    assert_eq!(
-        made,
-        [
-            renamed(1, "a", "a (3)"),
-            renamed(4, "a", "a (4)"),
-            renamed(5, "b", "b (2)"),
-            renamed(6, "a (2)", "a (2) (2)"),
-        ]
-    );
-    let mut again = rows.clone();
-    assert_eq!(files::rename_apart(&mut again), made, "deterministic");
-    assert!(
-        files::rename_apart(&mut apart).is_empty(),
-        "rows already apart get no new names"
-    );
-}
-
-/// T5.2 r5 review (R5-F1): a renamed-apart row stays addressable. Remove and
-/// Rename refuse a trimmed name over `MAX_PREF_KEY_CHARS` bytes, so the new
-/// name is shortened (on a character boundary) to fit, for names at the
-/// bound in one-byte and multi-byte text and with leading spaces, and the
-/// shortened names still come out distinct from each other and from rows
-/// already named that way.
-#[test]
-fn names_made_apart_stay_within_the_remove_and_rename_bound() {
-    let max = api::local_state::MAX_PREF_KEY_CHARS;
-    let ascii = "a".repeat(max);
-    let accented = "é".repeat(max / 2);
-    let spaced = format!("  {}", "b".repeat(max));
-    let taken = files::new_name_apart(&ascii, 2);
-    let gear = |name: &str, coins: u32| Loadout::new(name).with_carry("Coins", coins);
-    let rows = vec![
-        gear(&ascii, 1),
-        gear(&ascii, 2),
-        gear(&ascii, 3),
-        gear(&taken, 4),
-        gear(&accented, 5),
-        gear(&accented, 6),
-        gear(&spaced, 7),
-        gear(&spaced, 8),
-    ];
-    let mut apart = rows.clone();
-    let made = files::rename_apart(&mut apart);
-    assert_eq!(made.len(), 4, "the second and third of each name: {made:?}");
-    for change in &made {
-        let trimmed = change.to.trim();
-        assert!(
-            trimmed.len() <= max,
-            "{:?} is {} bytes trimmed",
-            change.to,
-            trimmed.len()
-        );
-        assert!(!trimmed.is_empty());
-    }
-    let mut names: Vec<&str> = apart.iter().map(|row| row.name.as_str()).collect();
-    names.sort_unstable();
-    names.dedup();
-    assert_eq!(names.len(), rows.len(), "every row has its own name");
-    for (before, after) in rows.iter().zip(&apart) {
-        assert_eq!(before.carry, after.carry, "each row keeps its gear");
-    }
-}
-
-/// T5.2 r5 (F1): rows another writer leaves sharing a name while this
-/// service holds the file (an older build's form on the same home) are
-/// renamed apart by the next write's own read, under that write's lock,
-/// before the write is decided. That write settles as a conflict (the file
-/// changed under it), and the next edit names one row: no edit runs against
-/// rows that share a name.
-#[test]
-fn rows_another_writer_leaves_sharing_a_name_are_renamed_apart_before_an_edit() {
-    let scratch = IsolatedEnv::enter("local-state-r5-outside-duplicates");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    write_loadouts(&path, &[Loadout::new("same"), Loadout::new("other")]);
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let version = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
-    let notices = quarantine_lines(&service);
-    let left = [
-        Loadout::new("same"),
-        Loadout::new("other"),
-        Loadout::new("same").with_carry("Shark", 2),
-    ];
-    write_loadouts(&path, &left);
-    let remove = |expected| {
-        DomainEdit::Loadout(LoadoutEdit::remove(loadouts_identity(), expected, "same").unwrap())
-    };
-    let stale = request(service.submit(remove(Some(version))));
-    assert!(
-        matches!(
-            settlement(&service, stale),
-            Settlement::Failed(ErrorCode::Conflict { .. })
-        ),
-        "the removal was written against another file"
-    );
-    let mut apart = left.to_vec();
-    apart[2].name = "same (2)".into();
-    assert_eq!(
-        rows_on_disk(&path),
-        apart,
-        "renamed apart under the write's lock, and the stale removal not applied"
-    );
-    assert!(
-        notices.lock().unwrap().iter().any(|(level, line)| {
-            *level == Level::Info
-                && line.starts_with("audit domain=loadouts-references action=loadouts-dedupe ")
-        }),
-        "audited"
-    );
-    let current = service.lease(&loadouts_identity()).unwrap().version();
-    completed(&service, request(service.submit(remove(Some(current)))));
-    assert_eq!(
-        rows_on_disk(&path),
-        &apart[1..],
-        "the removal named one row"
-    );
-}
-
-/// T5.2 r5 (F1): the copy a rename apart keeps never replaces an existing
-/// file: with the `loadouts.json.duplicates-<time>` names of the next few
-/// seconds already taken (earlier copies), the new copy takes the next
-/// free name, holds the file's exact bytes, and every earlier copy keeps
-/// its own.
-#[test]
-fn a_rename_apart_never_overwrites_an_earlier_copy() {
-    let scratch = IsolatedEnv::enter("local-state-r5-dedupe-copy-names");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    write_loadouts(
-        &path,
-        &[
-            Loadout::new("same").with_carry("Lobster", 1),
-            Loadout::new("same").with_carry("Shark", 2),
-        ],
-    );
-    let bytes = std::fs::read(&path).unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let earlier: Vec<String> = (now..now + 3)
-        .map(|second| format!("loadouts.json.duplicates-{second}"))
-        .collect();
-    for name in &earlier {
-        write_private(&path.with_file_name(name), b"an earlier copy");
-    }
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let lease = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap();
-    assert_eq!(lease.snapshot().as_loadouts().unwrap()[1].name, "same (2)");
-    for name in &earlier {
-        assert_eq!(
-            std::fs::read(path.with_file_name(name)).unwrap(),
-            b"an earlier copy",
-            "{name} keeps its bytes"
-        );
-    }
-    let made: Vec<String> = siblings(&path)
-        .into_iter()
-        .filter(|name| name.starts_with("loadouts.json.duplicates-") && !earlier.contains(name))
-        .collect();
-    assert_eq!(made.len(), 1, "one new copy: {made:?}");
-    assert_eq!(
-        std::fs::read(path.with_file_name(&made[0])).unwrap(),
-        bytes,
-        "the new copy holds the file's exact bytes"
-    );
-}
-
-/// T5.2 r5 (F1): the rename apart runs under the loadouts file's write
-/// lock: while another writer holds it, nothing is renamed or copied; once
-/// it is released, the waiting read renames the file apart.
-#[test]
-fn a_rename_apart_waits_for_the_files_lock() {
-    let scratch = IsolatedEnv::enter("local-state-r5-dedupe-lock");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    assert_eq!(
-        service.readback_lease(&loadouts_identity(), WAIT).unwrap(),
-        None
-    );
-    let rows = [
-        Loadout::new("same").with_carry("Lobster", 1),
-        Loadout::new("same").with_carry("Shark", 2),
-    ];
-    write_loadouts(&path, &rows);
-    let bytes = std::fs::read(&path).unwrap();
-    let lock = files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap();
-    let reader = {
-        let service = Arc::clone(&service);
-        std::thread::spawn(move || service.readback_lease(&loadouts_identity(), WAIT))
-    };
-    // The read has begun, found the rows sharing a name, and waits for the
-    // lock to rename them apart.
-    let deadline = std::time::Instant::now() + WAIT;
-    while service.shared.state.lock().stores[&files::StoreKey::Loadouts].readback
-        != Readback::InFlight
-        && !reader.is_finished()
-        && std::time::Instant::now() < deadline
-    {
-        std::thread::yield_now();
-    }
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        bytes,
-        "not renamed under another's lock"
-    );
-    assert_eq!(
-        siblings(&path),
-        ["loadouts.json"],
-        "no copy under another's lock"
-    );
-    drop(lock);
-    let lease = reader.join().unwrap().unwrap().unwrap();
-    let mut apart = rows.to_vec();
-    apart[1].name = "same (2)".into();
-    assert_eq!(lease.snapshot().as_loadouts().unwrap(), apart.as_slice());
-    let found = siblings(&path);
-    assert_eq!(found.len(), 2, "{found:?}");
-    assert_eq!(
-        std::fs::read(path.with_file_name(&found[1])).unwrap(),
-        bytes
-    );
-}
-
-/// What a rename apart that was not made leaves: the file refused (no
-/// lease, and no edit: none runs against rows that share a name), every
-/// byte of it kept, any copy made holding exactly those bytes, and the
-/// operator told why, with nothing audited.
-fn assert_refused_and_untouched(
+/// A refused loadouts file stays byte-for-byte intact and is never renamed,
+/// quarantined, leased or written. The refusal hook is installed before eager
+/// hydration starts, at the same boundary as the Lifecycle warning.
+fn assert_loadouts_refused_and_untouched(
     service: &LocalStateService,
     path: &std::path::Path,
     bytes: &[u8],
     notices: &std::sync::Mutex<Vec<(Level, String)>>,
-    case: &str,
+    reason: FailureReason,
+    message: &str,
 ) {
-    let refused = service.readback_lease(&loadouts_identity(), WAIT);
-    assert!(
-        matches!(
-            refused,
-            Err(ErrorCode::Failed {
-                domain: LocalStateDomain::LoadoutsReferences,
-                reason: FailureReason::Schema,
-            })
-        ),
-        "{case}: refused, not leased: {refused:?}"
-    );
-    assert!(
-        matches!(
-            service.lease(&loadouts_identity()),
-            Err(ErrorCode::Failed { .. })
-        ),
-        "{case}: no lease"
-    );
-    assert!(
-        matches!(
-            service.submit(loadout_edit(None, Loadout::new("new"))),
-            SubmitReceipt::Refused(ErrorCode::Failed { .. })
-        ),
-        "{case}: no edit"
-    );
-    // The refused submission asked for another read: let it finish.
-    let _ = service.readback_lease(&loadouts_identity(), WAIT);
+    let refused = ErrorCode::Failed {
+        domain: LocalStateDomain::LoadoutsReferences,
+        reason,
+    };
+    let identity = loadouts_identity();
+    assert_eq!(service.readback_lease(&identity, WAIT), Err(refused));
+    assert_eq!(service.lease(&identity), Err(refused));
     assert_eq!(
-        std::fs::read(path).unwrap(),
-        bytes,
-        "{case}: the file keeps every byte"
+        service.submit(loadout_edit(None, Loadout::new("new"))),
+        SubmitReceipt::Refused(refused)
     );
-    for copy in siblings(path)
-        .iter()
-        .filter(|name| name.starts_with("loadouts.json.duplicates-"))
-    {
-        assert_eq!(
-            std::fs::read(path.with_file_name(copy)).unwrap(),
-            bytes,
-            "{case}: a copy left behind holds the file's exact bytes"
-        );
-    }
+    let _ = service.readback_lease(&identity, WAIT);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert_eq!(siblings(path), ["loadouts.json"]);
     let lines = notices.lock().unwrap().clone();
-    assert!(!lines.is_empty(), "{case}: the operator is told");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0].0, Level::Warn, "{lines:?}");
     assert!(
-        lines.iter().all(|(level, line)| *level == Level::Warn
-            && line.contains("could not be renamed apart")
-            && line.contains(&path.display().to_string())),
-        "{case}: told why, and nothing audited: {lines:?}"
+        lines[0].1.contains(&path.display().to_string()) && lines[0].1.contains(message),
+        "{lines:?}"
     );
 }
 
-/// T5.2 r5 (F1): a rename apart that cannot be made whole is not made: the
-/// file keeps every byte, the operator is told why, and the file is
-/// refused, no lease and no edit, until a later read can make it. The
-/// faults: the copy's directory entry cannot be flushed, the publication
-/// fails, or the file also holds a row this build cannot write back as
-/// read (a rewrite would lose that row's unknown field).
 #[test]
-fn a_rename_apart_that_cannot_be_made_whole_leaves_the_file_untouched_and_refused() {
-    for fault in ["copy-entry", "publication", "unknown-field"] {
-        let scratch = IsolatedEnv::enter(&format!("local-state-r5-dedupe-fault-{fault}"));
+fn pre_0_2_8_loadout_shapes_are_refused_and_kept() {
+    let cases: [(&str, &[u8]); 2] = [
+        (
+            "array-worn",
+            br#"[
+                {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
+                {"name":"old","worn":["Rune scimitar"],"carry":[]}
+            ]"#,
+        ),
+        (
+            "string-carry",
+            br#"[
+                {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
+                {"name":"old","worn":{},"carry":["Shark"]}
+            ]"#,
+        ),
+    ];
+    for (case, bytes) in cases {
+        let scratch = IsolatedEnv::enter(&format!("local-state-loadout-{case}"));
         let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
-        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-        assert_eq!(
-            service.readback_lease(&loadouts_identity(), WAIT).unwrap(),
-            None
-        );
-        let failing = Arc::new(AtomicBool::new(true));
-        let fails = Arc::clone(&failing);
-        service.set_sync_hook(Arc::new(move |dir| {
-            if fault == "copy-entry" && fails.load(Ordering::SeqCst) {
-                return Err(std::io::Error::other("the directory flush fails"));
-            }
-            files::sync_directory(dir)
-        }));
-        let fails = Arc::clone(&failing);
-        service.set_write_hook(Arc::new(move |path, bytes| {
-            if fault == "publication" && fails.load(Ordering::SeqCst) {
-                return Err(std::io::Error::other("the publication fails (disk full)"));
-            }
-            vault::write_private_file(path, bytes)
-        }));
-        let notices = quarantine_lines(&service);
-        let rows = [
-            Loadout::new("same").with_carry("Lobster", 1),
-            Loadout::new("same").with_carry("Shark", 2),
-        ];
-        let plain = serde_json::to_vec_pretty(&rows).unwrap();
-        let bytes = if fault == "unknown-field" {
-            let mut document = serde_json::to_value(&rows).unwrap();
-            document[1]["note"] = serde_json::json!("a field this build does not know");
-            serde_json::to_vec_pretty(&document).unwrap()
-        } else {
-            plain.clone()
-        };
-        write_private(&path, &bytes);
-        assert_refused_and_untouched(&service, &path, &bytes, &notices, fault);
+        write_private(&path, bytes);
+        let (service, notices) = loadouts_service_with_notices(&scratch);
 
-        // The fault is gone (the unknown field: the operator removed it).
-        failing.store(false, Ordering::SeqCst);
-        if fault == "unknown-field" {
-            write_private(&path, &plain);
-        }
-        notices.lock().unwrap().clear();
-        let lease = service
-            .readback_lease(&loadouts_identity(), WAIT)
-            .unwrap()
-            .unwrap();
-        let mut apart = rows.to_vec();
-        apart[1].name = "same (2)".into();
-        assert_eq!(
-            lease.snapshot().as_loadouts().unwrap(),
-            apart.as_slice(),
-            "{fault}: renamed apart once it can be"
-        );
-        assert_eq!(rows_on_disk(&path), apart, "{fault}");
-        assert!(
-            notices.lock().unwrap().iter().any(|(level, line)| {
-                *level == Level::Info
-                    && line.starts_with("audit domain=loadouts-references action=loadouts-dedupe ")
-            }),
-            "{fault}: audited once made"
+        assert_loadouts_refused_and_untouched(
+            &service,
+            &path,
+            bytes,
+            &notices,
+            FailureReason::UnsupportedSavedFormat,
+            "saved data is in a format from before 0.2.8",
         );
     }
 }
 
-/// T5.2 r5 (F1): when the copy of the file cannot be made (its directory
-/// takes no new entry), nothing is renamed: the file keeps every byte and
-/// is refused, and once the directory takes entries again the next read
-/// renames it apart.
-#[cfg(unix)]
 #[test]
-fn a_rename_apart_whose_copy_cannot_be_made_leaves_the_file_untouched_and_refused() {
-    if running_as_root() {
-        return;
-    }
-    let scratch = IsolatedEnv::enter("local-state-r5-dedupe-fault-copy");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    assert_eq!(
-        service.readback_lease(&loadouts_identity(), WAIT).unwrap(),
-        None
-    );
-    let notices = quarantine_lines(&service);
+fn current_loadouts_with_duplicate_names_are_refused_and_kept() {
+    let scratch = IsolatedEnv::enter("local-state-loadout-duplicate-names");
+    let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
     let rows = [
         Loadout::new("same").with_carry("Lobster", 1),
         Loadout::new("same").with_carry("Shark", 2),
     ];
-    write_loadouts(&path, &rows);
-    let bytes = std::fs::read(&path).unwrap();
-    // The repair can take the file's lock (its lock file exists), but the
-    // directory takes no new entry, so no copy can be made.
-    drop(files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap());
-    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
-    let restore = ModeGuard(root.path().to_path_buf());
-    assert_refused_and_untouched(&service, &path, &bytes, &notices, "copy");
-    assert_eq!(siblings(&path), ["loadouts.json"], "no copy was made");
+    let bytes = serde_json::to_vec_pretty(&rows).unwrap();
+    write_private(&path, &bytes);
+    let (service, notices) = loadouts_service_with_notices(&scratch);
 
-    drop(restore);
-    let lease = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap();
-    let mut apart = rows.to_vec();
-    apart[1].name = "same (2)".into();
-    assert_eq!(lease.snapshot().as_loadouts().unwrap(), apart.as_slice());
-    let found = siblings(&path);
-    assert_eq!(found.len(), 2, "{found:?}");
-    assert_eq!(
-        std::fs::read(path.with_file_name(&found[1])).unwrap(),
-        bytes
+    assert_loadouts_refused_and_untouched(
+        &service,
+        &path,
+        &bytes,
+        &notices,
+        FailureReason::Schema,
+        "share a name with an earlier row",
     );
 }
 
@@ -3657,6 +3280,75 @@ fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
     let audits = audits.lock().unwrap();
     assert_eq!(audits.len(), 1);
     assert_eq!(audits[0].action(), CommitAction::PreferencesWrite);
+}
+
+#[test]
+fn the_pvp_setting_projects_off_by_default_and_follows_one_member_write() {
+    let scratch = IsolatedEnv::enter("local-state-pvp-projection");
+    let preferences = preferences(&scratch);
+    write_private(&preferences.path(), br#"{"nav":{"allow_teleports":true}}"#);
+    preferences.reload().unwrap();
+    assert!(
+        !preferences.pvp_globals().unwrap().start_fights,
+        "absent = off"
+    );
+
+    // One write of the member is one audit line, and the projection follows it.
+    let audits = audits(preferences.service());
+    let patch =
+        PreferencePatch::member(&["pvp", "start_fights"], Some(serde_json::json!(true))).unwrap();
+    match preferences.begin_patch(patch).unwrap() {
+        Update::Durable => {}
+        Update::Queued(mut watch) => watch
+            .wait(WAIT)
+            .expect("the accepted write settles")
+            .expect("the accepted write is durable"),
+    }
+    assert!(preferences.pvp_globals().unwrap().start_fights);
+    assert!(
+        preferences.walk_globals().unwrap().allow_teleports,
+        "nav is kept"
+    );
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1, "one write, one audit line");
+    assert_eq!(audits[0].action(), CommitAction::PreferencesWrite);
+}
+
+#[test]
+fn a_malformed_pvp_member_fails_closed_with_a_safe_typed_cause() {
+    for (label, document) in [
+        (
+            "string",
+            br#"{"pvp":{"start_fights":"private-sensitive-value"}}"#.as_slice(),
+        ),
+        ("not-an-object", br#"{"pvp":true}"#.as_slice()),
+    ] {
+        let scratch = IsolatedEnv::enter(&format!("local-state-pvp-projection-error-{label}"));
+        let preferences = preferences(&scratch);
+        write_private(&preferences.path(), document);
+        preferences.reload().unwrap();
+        let error = preferences
+            .pvp_globals()
+            .expect_err("a malformed pvp member is not a setting");
+        assert!(error.path().ends_with("panel-ui.json"));
+        assert!(error.cause().contains("pvp"), "{label}");
+        assert!(!error.cause().contains("private-sensitive-value"));
+        // The rest of the document stays readable and the walk view is not hurt.
+        assert!(preferences.document().is_ok());
+        assert!(preferences.walk_globals().is_ok());
+    }
+}
+
+#[test]
+fn the_pvp_setting_is_not_ready_while_the_store_is_cold_or_refused() {
+    let scratch = IsolatedEnv::enter("local-state-pvp-cold");
+    let preferences = preferences(&scratch);
+    write_private(&preferences.path(), b"{not-json");
+    assert!(preferences.reload().is_err());
+    assert!(
+        preferences.pvp_globals().is_err(),
+        "a refused store is no setting"
+    );
 }
 
 #[test]

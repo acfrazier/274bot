@@ -3,6 +3,8 @@ use crate::native::CompiledCard;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
+#[path = "walkto/mod.rs"]
+mod walkto;
 
 /// A picker id: the exact string the picker shows and Start keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +22,8 @@ static CARDS: &[CompiledCard] = &[
     crate::grinch::CARD,
     crate::quester::CARD,
 ];
+
+const INTERNAL_CARDS: &[CompiledCard] = &[walkto::CARD];
 
 struct Registry {
     installed: Vec<&'static [CompiledCard]>,
@@ -75,6 +79,7 @@ impl CardRegistry {
             if registry
                 .merged
                 .iter()
+                .chain(INTERNAL_CARDS.iter())
                 .chain(cards[..index].iter())
                 .any(|existing| existing.id == card.id)
             {
@@ -184,7 +189,11 @@ pub fn compiled_cards() -> &'static [CompiledCard] {
 }
 
 pub fn compiled_card(id: CompiledId) -> Option<&'static CompiledCard> {
-    compiled_cards().iter().find(|card| card.id == id)
+    REGISTRY
+        .cards()
+        .iter()
+        .find(|card| card.id == id)
+        .or_else(|| INTERNAL_CARDS.iter().find(|card| card.id == id))
 }
 
 pub fn compiled_id(name: &str) -> Option<CompiledId> {
@@ -200,15 +209,99 @@ pub fn is_whale(name: &str) -> bool {
     WHALE_IDS.contains(&name)
 }
 
+/// Resolve the selected public world from `location.host` and the
+/// count/first value returned by `URLSearchParams.getAll("world")`.
+///
+/// An explicit query parameter takes precedence over the host. Duplicates
+/// and values outside 1–3 are rejected exactly as the web compatibility
+/// module does. Upstream matches `new URL("https://" + host).hostname`, so a
+/// port on the host is ignored.
+pub fn resolve_world_number(
+    host: &str,
+    value_count: usize,
+    value: Option<&str>,
+) -> Result<i32, &'static str> {
+    match value_count {
+        0 => {}
+        1 => {
+            return match value {
+                Some("1") => Ok(1),
+                Some("2") => Ok(2),
+                Some("3") => Ok(3),
+                _ => Err("world must be 1, 2 or 3"),
+            };
+        }
+        _ => return Err("world must be 1, 2 or 3"),
+    }
+
+    let hostname = host.split_once(':').map_or(host, |(hostname, _)| hostname);
+    Ok(if hostname.eq_ignore_ascii_case("w1.rs2b2t.com") {
+        1
+    } else if hostname.eq_ignore_ascii_case("w2.rs2b2t.com") {
+        2
+    } else if hostname.eq_ignore_ascii_case("w3.rs2b2t.com") {
+        3
+    } else {
+        1
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_world_overrides_the_host() {
+        assert_eq!(resolve_world_number("w2.rs2b2t.com", 1, Some("1")), Ok(1));
+        assert_eq!(resolve_world_number("w1.rs2b2t.com", 1, Some("3")), Ok(3));
+    }
+
+    #[test]
+    fn invalid_and_repeated_world_values_are_rejected() {
+        let invalid = Err("world must be 1, 2 or 3");
+        assert_eq!(resolve_world_number("w2.rs2b2t.com", 1, Some("4")), invalid);
+        assert_eq!(
+            resolve_world_number("w2.rs2b2t.com", 1, Some("01")),
+            invalid
+        );
+        assert_eq!(resolve_world_number("w2.rs2b2t.com", 2, Some("1")), invalid);
+    }
+
+    #[test]
+    fn recognized_hosts_ignore_case_and_ports() {
+        assert_eq!(resolve_world_number("w1.rs2b2t.com:443", 0, None), Ok(1));
+        assert_eq!(resolve_world_number("W2.RS2B2T.COM:8080", 0, None), Ok(2));
+        assert_eq!(resolve_world_number("w3.rs2b2t.com", 0, None), Ok(3));
+    }
+
+    #[test]
+    fn unrecognized_hosts_default_to_world_one() {
+        assert_eq!(resolve_world_number("localhost:8081", 0, None), Ok(1));
+        assert_eq!(resolve_world_number("example.invalid", 0, None), Ok(1));
+    }
 
     const ADDED_CARD: CompiledCard = CompiledCard {
         id: CompiledId("registry-test-card"),
         ..crate::gatherer::CARD
     };
+    const INTERNAL_ID_COLLISION_CARD: CompiledCard = CompiledCard {
+        id: walkto::CARD.id,
+        ..ADDED_CARD
+    };
+    static INTERNAL_ID_COLLISION: [CompiledCard; 1] = [INTERNAL_ID_COLLISION_CARD];
     static ADDED: [CompiledCard; 1] = [ADDED_CARD];
+
+    #[test]
+    fn internal_walkto_is_lookupable_but_not_listed() {
+        assert!(compiled_cards()
+            .iter()
+            .all(|card| card.id != walkto::CARD.id));
+        assert_eq!(compiled_id(walkto::CARD.id.0), None);
+        assert!(std::ptr::eq(
+            compiled_card(walkto::CARD.id).expect("internal WalkTo remains startable"),
+            &walkto::CARD,
+        ));
+    }
 
     #[test]
     fn install_after_read_is_visible_and_same_slice_is_idempotent() {
@@ -242,6 +335,10 @@ mod tests {
         assert_eq!(
             REGISTRY.install(&INTERNAL_DUPLICATE),
             Err(CardInstallError::DuplicateId(ADDED_CARD.id))
+        );
+        assert_eq!(
+            REGISTRY.install(&INTERNAL_ID_COLLISION),
+            Err(CardInstallError::DuplicateId(walkto::CARD.id))
         );
         assert!(std::ptr::eq(before, REGISTRY.cards()));
         assert_eq!(
@@ -377,7 +474,11 @@ mod tests {
         let mut slot = SlotScript::new();
         slot.sync_compiled_clue(false);
         install_cards(&COUNTING_CARD).unwrap();
-        slot.start_test_script(Box::new(IdleScript), None).unwrap();
+        slot.start_test_script(
+            Box::new(IdleScript),
+            Some(crate::native::minimal_selected_data_for_test()),
+        )
+        .unwrap();
         slot.sync_compiled_clue(false);
         assert_calls(&[Call::Resume, Call::Hold(false)]);
 
@@ -413,6 +514,7 @@ mod tests {
                 game_data: None,
                 named_banks: Arc::default(),
                 loadouts: Arc::default(),
+                wilderness_rules: crate::surface::no_wilderness(),
             })
             .unwrap();
         factory

@@ -130,10 +130,10 @@ ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
     assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
     let sorter = lib
         .get(ScriptSource::Catalog, "BankSorter")
-        .expect("BankSorter remains listed with its availability reason");
+        .expect("BankSorter listed");
     assert_eq!(
-        sorter.unloadable.as_deref(),
-        Some("dim: BankSorter is unavailable until native bank sorting is implemented")
+        sorter.unloadable, None,
+        "BankSorter loads: the native bank seat sorts"
     );
     let jive = lib
         .get(ScriptSource::Catalog, "JiveKQ")
@@ -264,12 +264,9 @@ fn hash_bot_shop_remaps() {
 }
 
 #[test]
-fn walk_executor_stays_unloadable() {
-    let src = "import x from '../../event/webwalk/WalkExecutor.js'; export default class T extends LoopingBot { loop() {} }";
-    assert_eq!(
-        script_js::first_unloadable_specifier(src).as_deref(),
-        Some("../../event/webwalk/WalkExecutor.js")
-    );
+fn walk_executor_module_is_loadable() {
+    let src = "import { WalkExecutor } from '../../event/webwalk/WalkExecutor.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script_js::first_unloadable_specifier(src), None);
 }
 
 #[test]

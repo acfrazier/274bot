@@ -1,0 +1,28 @@
+[proc,woodcutting_axe_checker](boolean $print_mes)(namedobj)
+def_int $level = stat(woodcutting);
+def_obj $obj1 = inv_getobj(worn, ^wearpos_rhand);
+if (($obj1 = rune_axe | inv_total(inv, rune_axe) > 0)) {
+    return (rune_axe);
+}
+if (($obj1 = adamant_axe | inv_total(inv, adamant_axe) > 0)) {
+    return (adamant_axe);
+}
+if (($obj1 = mithril_axe | inv_total(inv, mithril_axe) > 0)) {
+    return (mithril_axe);
+}
+if (($obj1 = black_axe | inv_total(inv, black_axe) > 0)) {
+    return (black_axe);
+}
+if (($obj1 = steel_axe | inv_total(inv, steel_axe) > 0)) {
+    return (steel_axe);
+}
+if (($obj1 = iron_axe | inv_total(inv, iron_axe) > 0)) {
+    return (iron_axe);
+}
+if (($obj1 = bronze_axe | inv_total(inv, bronze_axe) > 0)) {
+    return (bronze_axe);
+}
+if ($print_mes = true) {
+    mes("You do not have an axe which you have the level to use.");
+}
+return(null);

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
-use api::condition::BotCondition;
+use api::condition::{BotCondition, PoisonState, WindowReset};
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -10,7 +10,7 @@ use nav_executor::TravelOptions;
 use nav_planner::arrival::ArrivalKind;
 use nav_planner::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
 use nav_planner::router::{
-    find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
+    find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Leg, Route,
     RouteError,
 };
 use nav_planner::world::NavWorld;
@@ -26,8 +26,197 @@ use super::{
     ScriptWalkArm, SlotStatus,
 };
 
+#[cfg(test)]
+thread_local! {
+    // Count the actual pump lock sites without adding release-path state.
+    static STEP_NAV_LOCK_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+thread_local! {
+    static WALK_ATTEMPT_CAPTURE: std::cell::RefCell<Option<Vec<serde_json::Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+fn is_walk_attempt_capture_active() -> bool {
+    WALK_ATTEMPT_CAPTURE.with(|capture| capture.borrow().is_some())
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+fn record_walk_attempt_capture(event: serde_json::Value) {
+    WALK_ATTEMPT_CAPTURE.with(|capture| {
+        if let Some(events) = capture.borrow_mut().as_mut() {
+            events.push(event);
+        }
+    });
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+impl NavBot {
+    pub(crate) fn start_walk_attempt_capture() {
+        WALK_ATTEMPT_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    }
+
+    pub(crate) fn walk_attempt_capture_active() -> bool {
+        is_walk_attempt_capture_active()
+    }
+
+    pub(crate) fn drain_walk_attempt_capture() -> Vec<serde_json::Value> {
+        WALK_ATTEMPT_CAPTURE.with(|capture| {
+            capture
+                .borrow_mut()
+                .as_mut()
+                .map(std::mem::take)
+                .unwrap_or_default()
+        })
+    }
+
+    pub(crate) fn stop_walk_attempt_capture() {
+        WALK_ATTEMPT_CAPTURE.with(|capture| *capture.borrow_mut() = None);
+    }
+}
+
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
+
+fn legacy_route_tile(route: &Route, index: u16) -> Option<WorldTile> {
+    let target = usize::from(index);
+    let mut offset = 0usize;
+    for (leg_index, leg) in route.legs.iter().enumerate() {
+        match leg {
+            Leg::Walk { tiles } => {
+                if target >= offset {
+                    if let Some(tile) = tiles.get(target - offset) {
+                        return Some(*tile);
+                    }
+                }
+                offset = offset.checked_add(tiles.len())?;
+            }
+            Leg::Transport { edge } => {
+                let takeoff = edge.takeoff.unwrap_or(edge.at);
+                let attached = leg_index
+                    .checked_sub(1)
+                    .and_then(|previous| route.legs.get(previous))
+                    .is_some_and(
+                        |leg| matches!(leg, Leg::Walk { tiles } if tiles.last() == Some(&takeoff)),
+                    );
+                if !attached {
+                    if offset == target {
+                        return Some(takeoff);
+                    }
+                    offset = offset.checked_add(1)?;
+                }
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn step_poison_hold_on_bot<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    bot: &mut NavBot,
+    world: Option<&NavWorld>,
+    slot: Option<&str>,
+    allow_stand_click: bool,
+) -> bool {
+    let Some(until_index) = bot.poison_hold.as_ref().map(|hold| hold.until_index) else {
+        return false;
+    };
+    let now = snapshot.tick() as u16;
+    let fact = bot
+        .condition
+        .current()
+        .copied()
+        .filter(|fact| fact.tick == snapshot.tick());
+    if fact.is_some_and(|fact| !matches!(fact.poison, PoisonState::Unknown { .. })) {
+        // A fact always precedes the Unknown-only deadline. If the world is
+        // temporarily unavailable, freeze until publication can reassess it.
+        bot.admission_pending = true;
+        return true;
+    }
+    let retreat = if let Some(route) = bot.compact_route.as_ref() {
+        route
+            .view()
+            .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
+            .and_then(|path| path.point(until_index))
+            .map(|point| point.tile)
+    } else if let Some(world) = world {
+        bot.route
+            .as_ref()
+            .and_then(|route| nav_planner::producer::route_view(world, route).ok())
+            .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
+            .and_then(|path| path.point(until_index))
+            .map(|point| point.tile)
+    } else {
+        bot.route
+            .as_deref()
+            .and_then(|route| legacy_route_tile(route, until_index))
+    };
+    let here = snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level });
+    let at_retreat = retreat.is_some() && here == retreat;
+    let window = fact.and_then(|fact| fact.poison_window);
+    let remaining = window.map_or(crate::slot_condition::CLEAN_TICKS, |window| {
+        window.remaining
+    });
+    let accepted = window.is_some_and(|window| window.accepted);
+
+    if at_retreat {
+        let hold = bot.poison_hold.as_mut().expect("hold was read above");
+        if let Some(wait) = hold.start_wait(now, remaining) {
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold start until_index={until_index} started={} deadline={} remaining={} accepted={accepted}",
+                wait.started,
+                wait.deadline,
+                wait.remaining(),
+            );
+        }
+        if !accepted && !hold.stand_sent && allow_stand_click {
+            hold.stand_sent = true;
+            let result = Interactions::new(snapshot, driver)
+                .walk(retreat.expect("at_retreat requires a retreat tile"));
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold stand until_index={until_index} tick={now} sent={}",
+                matches!(result, SendResult::Sent { .. }),
+            );
+        }
+    }
+
+    let Some(wait) = bot.poison_hold.as_ref().and_then(|hold| hold.wait) else {
+        return false;
+    };
+    if wait.ended(now) {
+        let cause = window.map_or(WindowReset::IncompleteFact, |window| window.last_reset);
+        let destination = bot.route_destination().or(retreat).or(here);
+        if let Some(destination) = destination {
+            let waited = wait.waited(now);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold end outcome=unsettled until_index={until_index} started={} deadline={} waited={waited} cause={cause:?}",
+                wait.started,
+                wait.deadline,
+            );
+            crate::admission::refuse(
+                bot,
+                world,
+                destination,
+                script::native::WalkRefusal::PoisonUnsettled { waited, cause },
+            );
+        }
+        return true;
+    }
+    true
+}
 
 struct LiveRouteRefresh {
     to: WorldTile,
@@ -48,6 +237,109 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
     }
 }
 
+/// Fold a compatibility transfer before the observer reports a Load terminal.
+/// A true result consumes that Load terminal, not an inner native terminal.
+pub(crate) fn observe_compat_walk(
+    slot: &mut script::SlotScript,
+    bot: &mut NavBot,
+    here: Option<WorldTile>,
+    name: &str,
+) -> bool {
+    use script::native::{ActionError, WalkEnd};
+
+    let mut consumed = false;
+    if let Some((run, request_id, result)) = slot.take_compat_walk_terminal() {
+        let request_id = request_id.get();
+        if bot.compat_walk_run() == Some(run)
+            && bot.compat_walk_request_id() == Some(request_id)
+            && bot.compat_walk_context_current()
+            && bot.compat_walk_handed_over()
+        {
+            let (end, detail) = match result {
+                Ok(receipt) => {
+                    let detail = receipt.failure_detail();
+                    (receipt.end, detail)
+                }
+                Err(error) => {
+                    let end = match error {
+                        ActionError::Cancelled => WalkEnd::Cancelled,
+                        ActionError::UserInput => WalkEnd::UserInput,
+                        _ => WalkEnd::Failed,
+                    };
+                    (end, Some(Arc::from(error.to_string())))
+                }
+            };
+            consumed = bot.complete_compat_walk(request_id, end, detail);
+            if consumed {
+                slot.finish_compat_walk(request_id);
+            }
+        }
+    }
+    let Some(request_id) = bot.compat_walk_request_id() else {
+        return consumed;
+    };
+    if !bot.compat_walk_context_current() {
+        bot.retire_compat_walk(request_id);
+        return consumed;
+    }
+    if bot.compat_walk_handed_over() {
+        return true;
+    }
+    if !bot.compat_walk_direct_terminal() {
+        return consumed;
+    }
+
+    // This is the terminal's first owner decision, including denied or failed
+    // handovers. Keep the matched page's stamp, not this observer's tick.
+    if let Some(observation) = bot.compat_walk_refusal() {
+        if slot.record_gate_refusal(observation.fact.observed.run, observation) {
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = name,
+                "prereq refusal-record owner=compat request={} run={:?} tick={} sequence={}",
+                request_id,
+                observation.fact.observed.run,
+                observation.fact.observed.tick,
+                observation.fact.observed.sequence,
+            );
+        }
+    }
+    let run = bot.compat_walk_run().expect("retained compatibility run");
+    if let Some(handover) = here.and_then(|here| bot.take_compat_walk_handover(here)) {
+        let entry = match &handover.entry {
+            script::native::HandoverEntry::NeedsStep(_) => "NeedsStep",
+            script::native::HandoverEntry::GateRefused(_) => "GateRefused",
+        };
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Info,
+            slot = name,
+            "prereq handover owner=compat entry={} request={} run={:?}",
+            entry,
+            request_id,
+            run,
+        );
+        if let Err(error) = slot.accept_compat_walk_handover(run, handover) {
+            bot.complete_compat_walk(
+                request_id,
+                WalkEnd::Refused,
+                Some(Arc::from(format!(
+                    "walk prerequisite handover was refused: {error:?}"
+                ))),
+            );
+            // No runner owns this terminal. Let the ordinary observer retire
+            // the admitted physical walk's release reservation.
+            return false;
+        }
+        return true;
+    }
+
+    // An ordinary direct terminal keeps the existing observer/seat path.
+    bot.retire_compat_walk(request_id);
+    consumed
+}
+
 /// End the uid's walk follow and everything that shares its ownership. A
 /// still-live native owner receives `Cancelled`; a revoked one nothing.
 pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
@@ -61,14 +353,16 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     }
     bot.route_generation = bot.route_generation.wrapping_add(1);
     bot.clear_route();
-    bot.route_ticket = None;
-    bot.pending_route = None;
+    // Only the walk's own route work ends here. A live advisory assessment has
+    // its own owner, answers its own request, and outlives the walk.
+    bot.supersede_walk_route_work();
     bot.requested_route = None;
     bot.end_native_walk(end);
     bot.route_loc_id = None;
     bot.route_loc_geometry = (false, false);
     bot.route_arrival = ArrivalKind::Reach;
     bot.route_quest_evidence = None;
+    bot.walk_no_progress.reset();
     bot.walk_request_id = 0;
     if !manual {
         bot.clear_walk_outcome();
@@ -278,7 +572,7 @@ pub(crate) fn finish_combat_prayers(
     let Some(debt) = bot.combat_prayer_off.as_mut() else {
         return;
     };
-    let Ok(data) = api::game_data::for_revision(api::selected::ClientRevision::R289) else {
+    let Some(data) = prayer_cleanup_data(driver.revision()) else {
         return;
     };
     // Observe the whole mask while clicks are serialized. Once an accepted
@@ -365,11 +659,48 @@ pub(crate) fn finish_walk_guard<D: Driver>(
     }
 }
 
-fn prayer_varp_value(snapshot: &GameSnapshot, component: i32) -> Option<i32> {
+fn prayer_cleanup_data(
+    revision: api::selected::ClientRevision,
+) -> Option<Arc<api::game_data::SelectedGameData>> {
+    // Preserve legacy cleanup for 274/289 drivers and recording stubs.
+    api::game_data::for_revision(if revision.is_377() {
+        revision
+    } else {
+        api::selected::ClientRevision::R289
+    })
+    .ok()
+}
+
+#[test]
+fn prayer_cleanup_selects_377_without_changing_legacy_drivers() {
+    use api::selected::ClientRevision;
+    let has_local_377_data = script::native::has_local_game_data_for_test(ClientRevision::R377);
+    let has_local_legacy_data = api::test_support::game_data_available();
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        if revision.is_377() && !has_local_377_data {
+            continue;
+        }
+        if !revision.is_377() && !has_local_legacy_data {
+            continue;
+        }
+        let data = prayer_cleanup_data(revision).expect("cleanup prayer facts");
+        assert_eq!(data.revision(), if revision.is_377() { 377 } else { 289 });
+    }
+}
+
+fn prayer_varp_value(
+    snapshot: &GameSnapshot,
+    component: i32,
+    revision: api::selected::ClientRevision,
+) -> Option<i32> {
     if !snapshot.ingame() || snapshot.scene_state() != 2 {
         return None;
     }
-    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+    let data = prayer_cleanup_data(revision)?;
     let fact = data
         .prayers()
         .iter()
@@ -416,7 +747,7 @@ fn finish_prayer_off(
         off.start_at_first_pump = false;
     }
     let mut age = elapsed(tick, off.admitted_tick);
-    let mut value = prayer_varp_value(snapshot, off.component);
+    let mut value = prayer_varp_value(snapshot, off.component, driver.revision());
     if value == Some(0) && !off.awaiting_on {
         return false;
     }
@@ -427,7 +758,7 @@ fn finish_prayer_off(
             || (age == GUARD_PRAYER_WINDOW_TICKS && value != Some(1)));
     if expired_enable {
         if let Some(fallback_component) = off.fallback_component.filter(|_| value != Some(1)) {
-            if prayer_varp_value(snapshot, fallback_component) == Some(1) {
+            if prayer_varp_value(snapshot, fallback_component, driver.revision()) == Some(1) {
                 api::host_log!(
                     api::hostlog::Category::NavEvent,
                     api::hostlog::Level::Warn,
@@ -655,11 +986,11 @@ pub(crate) fn pause_script(
 /// newer walk, a nearest-bank walk, an abort) and not when the player
 /// already stands within its arrival radius (`arrived`).
 pub(crate) fn resumed_walk<'a>(
-    carried: Option<script::shim::InteractReq>,
-    queued: impl IntoIterator<Item = &'a script::shim::InteractReq>,
+    carried: Option<script::interact::InteractReq>,
+    queued: impl IntoIterator<Item = &'a script::interact::InteractReq>,
     arrived: impl FnOnce(WorldTile, i32) -> bool,
-) -> Option<script::shim::InteractReq> {
-    use script::shim::InteractReq;
+) -> Option<script::interact::InteractReq> {
+    use script::interact::InteractReq;
     let carried = carried?;
     let superseded = queued.into_iter().any(|op| {
         matches!(
@@ -723,7 +1054,7 @@ pub(crate) fn apply_watchdog_nav_action(
     here: Option<(i32, i32, i32)>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
     bank: Option<&RwLock<BankMemory>>,
     name: &str,
 ) {
@@ -807,6 +1138,9 @@ pub(crate) fn apply_nav_follow_outcome(
     outcome: Option<nav_executor::TravelOutcome>,
     walking_stand: bool,
 ) {
+    if outcome.is_some() && bot.route_request_id == bot.walk_request_id {
+        bot.walk_no_progress.reset();
+    }
     match outcome {
         Some(nav_executor::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
         // Frozen `walkResilient` treats EndBlocked as a completed route for
@@ -861,6 +1195,123 @@ pub(crate) fn apply_nav_follow_outcome(
         }
         None => {}
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkWaitReason {
+    Traveller(nav_executor::TravelWaitReason),
+    Route,
+    BankStep,
+    WalkGuard,
+    CombatPrayerCleanup,
+    SlotEscape,
+    RandomEventHold,
+}
+
+impl WalkWaitReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Traveller(reason) => reason.as_str(),
+            Self::Route => "route",
+            Self::BankStep => "bank step",
+            Self::WalkGuard => "walk guard",
+            Self::CombatPrayerCleanup => "combat prayer cleanup",
+            Self::SlotEscape => "slot escape",
+            Self::RandomEventHold => "random-event hold",
+        }
+    }
+}
+
+struct WalkWaitDetails {
+    reason: WalkWaitReason,
+    target: Option<WorldTile>,
+    target_id: Option<nav_executor::LocId>,
+    aim: Option<WorldTile>,
+    route_target: Option<WorldTile>,
+}
+
+fn walk_wait_details(
+    bot: &NavBot,
+    override_reason: Option<WalkWaitReason>,
+    traveller_wait: Option<(
+        nav_executor::TravelWaitReason,
+        Option<WorldTile>,
+        Option<nav_executor::LocId>,
+    )>,
+) -> WalkWaitDetails {
+    let route_target = bot
+        .requested_route
+        .map(|(target, ..)| target)
+        .or_else(|| bot.route_destination());
+    let (reason, target, target_id) = if let Some(reason) = override_reason {
+        (reason, route_target, None)
+    } else if bot.route_work_pending()
+        && (!bot.has_route() || bot.route_request_id != bot.walk_request_id)
+    {
+        (WalkWaitReason::Route, route_target, None)
+    } else if let Some((reason, target, target_id)) = traveller_wait {
+        (WalkWaitReason::Traveller(reason), target, target_id)
+    } else if bot.route_work_pending() || bot.has_route() {
+        (WalkWaitReason::Route, route_target, None)
+    } else if bot.bank_fetch.is_some() {
+        (WalkWaitReason::BankStep, route_target, None)
+    } else {
+        (WalkWaitReason::Route, route_target, None)
+    };
+    WalkWaitDetails {
+        reason,
+        target,
+        target_id,
+        aim: bot.traveller.current_aim(),
+        route_target,
+    }
+}
+
+fn record_walk_no_progress(
+    name: &str,
+    bot: &mut NavBot,
+    here: Option<(i32, i32, i32)>,
+    tick: u32,
+    override_reason: Option<WalkWaitReason>,
+) {
+    if bot.walk_request_id == 0 || bot.requested_route.is_none() || !bot.walk_work_live() {
+        bot.walk_no_progress.reset();
+        return;
+    }
+    let Some((x, z, level)) = here else {
+        bot.walk_no_progress.reset();
+        return;
+    };
+    let tile = WorldTile { x, z, level };
+    let Some(no_progress_ticks) = bot
+        .walk_no_progress
+        .observe(bot.walk_request_id, tile, tick)
+    else {
+        return;
+    };
+    let wait = walk_wait_details(bot, override_reason, bot.traveller.current_wait_status());
+    log_walk_no_progress(name, bot.walk_request_id, tile, no_progress_ticks, wait);
+}
+
+fn log_walk_no_progress(
+    name: &str,
+    request_id: u64,
+    tile: WorldTile,
+    no_progress_ticks: u32,
+    wait: WalkWaitDetails,
+) {
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        slot = name,
+        "walk no-progress request={} tile={tile:?} no_progress_ticks={no_progress_ticks} reason={} target={:?} target_id={:?} aim={:?} route_target={:?}",
+        request_id,
+        wait.reason.as_str(),
+        wait.target,
+        wait.target_id.map(nav_executor::LocId::get),
+        wait.aim,
+        wait.route_target,
+    );
 }
 
 /// Publish a script walk's destination into `name`'s status row. The caller
@@ -920,11 +1371,29 @@ pub(crate) fn step_nav_bot<D: Driver>(
     bank: Option<&RwLock<BankMemory>>,
     reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
 ) {
+    macro_rules! lock_navs {
+        () => {{
+            #[cfg(test)]
+            STEP_NAV_LOCK_COUNT.with(|count| count.set(count.get() + 1));
+            navs.lock().unwrap()
+        }};
+    }
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
             if let Some(world) = world {
                 crate::admission::publish(bot, world, snapshot, map_members, Some(name));
+            }
+            if step_poison_hold_on_bot(
+                driver,
+                snapshot,
+                bot,
+                world.map(Arc::as_ref),
+                Some(name),
+                !hold,
+            ) {
+                publish_script_walk(statuses, name, bot.route_destination());
+                return;
             }
             if snapshot
                 .stats()
@@ -943,15 +1412,45 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     .as_ref()
                     .is_some_and(|off| off.blocks_nav(snapshot.tick() as u16))
                 {
+                    record_walk_no_progress(
+                        name,
+                        bot,
+                        here,
+                        snapshot.tick(),
+                        Some(WalkWaitReason::WalkGuard),
+                    );
                     return;
                 }
             }
             finish_combat_prayers(driver, snapshot, bot, Some(name));
             if bot.combat_prayer_off.is_some() {
+                record_walk_no_progress(
+                    name,
+                    bot,
+                    here,
+                    snapshot.tick(),
+                    Some(WalkWaitReason::CombatPrayerCleanup),
+                );
                 return;
             }
             if bot.slot_escape().is_some() {
+                record_walk_no_progress(
+                    name,
+                    bot,
+                    here,
+                    snapshot.tick(),
+                    Some(WalkWaitReason::SlotEscape),
+                );
                 return;
+            }
+            if hold {
+                record_walk_no_progress(
+                    name,
+                    bot,
+                    here,
+                    snapshot.tick(),
+                    Some(WalkWaitReason::RandomEventHold),
+                );
             }
         }
     }
@@ -962,8 +1461,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
         return;
     }
     if here.is_none() {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
+            record_walk_no_progress(name, bot, here, snapshot.tick(), None);
             // A missing player cannot open/withdraw/wear; abort the latched
             // non-Walk step so disconnect does not hang with follow frozen.
             if bank_fetch_freezes_follow(bot) {
@@ -974,7 +1474,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     let borrowed_world = world.map(Arc::as_ref);
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
             if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
                 abort_walk_on_bot(bot);
@@ -985,6 +1485,13 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
+                    record_walk_no_progress(
+                        name,
+                        bot,
+                        here,
+                        snapshot.tick(),
+                        Some(WalkWaitReason::BankStep),
+                    );
                     publish_script_walk(statuses, name, bot.route_destination());
                     return;
                 }
@@ -994,7 +1501,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     // Resolve arrival before the follow lock: the reach view lives behind
     // the script slot, and the slot locks before navs, never after.
     let (armed, endpoint, loc_id, estimated_geometry, arrival) = {
-        let all = navs.lock().unwrap();
+        let all = lock_navs!();
         all.get(name)
             .filter(|bot| bot.has_route() && bot.bank_fetch.is_none())
             .map(|bot| {
@@ -1046,7 +1553,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             || (live_geometry.1 && !estimated_geometry.1)
             || (target_gone && estimated_geometry.1));
     let (refresh, suppress_follow) = if invalid_endpoint {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         let Some(bot) = all.get_mut(name) else {
             return;
         };
@@ -1103,7 +1610,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             world: world.cloned(),
             navs: Arc::clone(navs),
             name: name.to_string(),
-            state: Some(state),
+            state: Some(Arc::new(state)),
             bank: super::slot_bank_memory::planner_rows(bank),
         }
         .refresh_route_in_snapshot(
@@ -1121,7 +1628,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     let defer_estimated_end = estimated_endpoint;
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         let Some(bot) = all.get_mut(name) else {
             return;
         };
@@ -1195,8 +1702,87 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     .map(|world| world.graph.teleports.as_slice()),
                                 edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
                                 quest_evidence: bot.route_quest_evidence.as_ref(),
+                                route_index_limit: bot
+                                    .poison_hold
+                                    .as_ref()
+                                    .map(|hold| hold.until_index),
                                 ..TravelOptions::default()
                             };
+                            #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+                            if is_walk_attempt_capture_active() {
+                                let route_generation = bot.route_generation;
+                                let route_request_id = bot.route_request_id;
+                                let walk_request_id = bot.walk_request_id;
+                                let map_route_generation = bot.map_route_generation;
+                                let route_index_limit = options.route_index_limit;
+                                let route_destination = route.destination();
+                                let route_path = borrowed_world
+                                    .and_then(|world| route.view_in(world))
+                                    .and_then(|view| {
+                                        script::combat::risk::RoutePath::new(view).ok()
+                                    });
+                                options.on_event = Some(Box::new(move |event| {
+                                    let nav_executor::TravelEvent::WalkAttempt {
+                                        tick,
+                                        at,
+                                        aim,
+                                        refusal,
+                                    } = event
+                                    else {
+                                        return;
+                                    };
+                                    let mut aim_route_indices = Vec::new();
+                                    let (route_path_len, aim_index_status) =
+                                        if let Some(path) = route_path {
+                                            for index in 0..path.len() {
+                                                let Ok(index) = u16::try_from(index) else {
+                                                    break;
+                                                };
+                                                if path
+                                                    .point(index)
+                                                    .is_some_and(|point| point.tile == aim)
+                                                {
+                                                    aim_route_indices.push(index);
+                                                }
+                                            }
+                                            let status = match aim_route_indices.len() {
+                                                0 => "unmatched",
+                                                1 => "unique",
+                                                _ => "ambiguous",
+                                            };
+                                            (Some(path.len()), status)
+                                        } else {
+                                            (None, "route_path_unavailable")
+                                        };
+                                    record_walk_attempt_capture(serde_json::json!({
+                                        "event": "WalkAttempt",
+                                        "tick": tick,
+                                        "at": [at.x, at.z, at.level],
+                                        "aim": [aim.x, aim.z, aim.level],
+                                        "refusal": refusal.map(|reason| format!("{reason:?}")),
+                                        "route_identity": {
+                                            "generation": route_generation,
+                                            "request_id": route_request_id,
+                                            "walk_request_id": walk_request_id,
+                                            "map_route_generation": map_route_generation,
+                                        },
+                                        "route_destination": [
+                                            route_destination.x,
+                                            route_destination.z,
+                                            route_destination.level,
+                                        ],
+                                        "route_index_limit": route_index_limit,
+                                        "route_path_len": route_path_len,
+                                        "aim_route_indices": aim_route_indices,
+                                        "aim_index_status": aim_index_status,
+                                    }));
+                                }));
+                            }
+
+                            if let Some(content) = route.prereq_content() {
+                                options.refusal_texts = Arc::clone(&content.refusal_texts);
+                                options.crossing_passes = Arc::clone(&content.crossing_passes);
+                            }
                             match route.plan_for_follow() {
                                 Some(plan) => {
                                     bot.traveller
@@ -1242,6 +1828,16 @@ pub(crate) fn step_nav_bot<D: Driver>(
         // Publish while the navigation lock is still held: a Stop's reset
         // and retirement then run wholly before or wholly after this
         // read-and-publish, so a retired run's destination cannot return.
+        record_walk_no_progress(
+            name,
+            bot,
+            here,
+            snapshot.tick(),
+            bot.walk_guard
+                .as_ref()
+                .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16))
+                .then_some(WalkWaitReason::WalkGuard),
+        );
         publish_script_walk(statuses, name, bot.route_destination());
     }
 }
@@ -1340,6 +1936,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
+                Some(world),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             bot.assessment = Some(crate::admission::assess_route_path(
@@ -1397,6 +1994,7 @@ fn resume_final_route(
                     pending.dest
                 )
             });
+            bot.poison_hold = None;
             bot.route = Some(Arc::new(route));
             bot.compact_route = None;
         }
@@ -1487,7 +2085,8 @@ fn step_walk(
         ..pending.opts
     };
     let search = |opts| {
-        find_with_avoid(
+        let fallback = || arm_access_fallback(w, from, dest, opts, &state, &pending.avoid);
+        match find_with_avoid(
             &w.collision,
             &w.graph,
             from,
@@ -1495,10 +2094,21 @@ fn step_walk(
             opts,
             &state,
             &pending.avoid,
-        )
-        .ok()
-        .or_else(|| arm_access_fallback(w, from, dest, opts, &state, &pending.avoid).ok())
-        .map_or(crate::RouteOutcome::NoPath, crate::RouteOutcome::Routed)
+        ) {
+            Ok(route) => crate::RouteOutcome::Routed(route),
+            Err(RouteError::BudgetExhausted) => match fallback() {
+                Ok(route) => crate::RouteOutcome::Routed(route),
+                Err(_) => crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: None,
+                    },
+                },
+            },
+            Err(RouteError::NoPath) => match fallback() {
+                Ok(route) => crate::RouteOutcome::Routed(route),
+                Err(_) => crate::RouteOutcome::NoPath,
+            },
+        }
     };
     let outcome = search(opts);
     let (outcome, assessment, refusal) =
@@ -1508,6 +2118,7 @@ fn step_walk(
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
+                Some(w),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             let route = match &outcome {
@@ -1515,7 +2126,7 @@ fn step_walk(
                 crate::RouteOutcome::BankSession { .. } => {
                     unreachable!("bank access search cannot start another session")
                 }
-                crate::RouteOutcome::NoPath => None,
+                crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => None,
             };
             let assessment = route.map(|route| crate::admission::assess(route, w, &admission));
             let refusal = assessment
@@ -1530,8 +2141,21 @@ fn step_walk(
             (outcome, None, None)
         };
     bot.assessment = assessment;
+    if let crate::RouteOutcome::IncompleteSearch { search_result } = &outcome {
+        let refusal = script::native::WalkRefusal::SearchIncomplete {
+            nodes_settled: match search_result {
+                crate::walk_plan::RouteSearchResultKind::BudgetExhausted { settled } => *settled,
+                _ => None,
+            },
+        };
+        log_walk_arm_bot(|| {
+            format!("bank access route search_result={search_result} destination={dest:?}")
+        });
+        crate::admission::refuse(bot, Some(w), dest, refusal);
+        return (false, StepEnd::Abort("bank access route search incomplete"));
+    }
     if let Some(refusal) = refusal {
-        crate::admission::refuse(bot, w, dest, refusal);
+        crate::admission::refuse(bot, Some(w), dest, refusal);
         return (false, StepEnd::Abort("bank access route risk refused"));
     }
     let crate::RouteOutcome::Routed(route) = outcome else {
@@ -1546,6 +2170,7 @@ fn step_walk(
         *level = reached.level;
     }
     log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={reached:?}"));
+    bot.poison_hold = None;
     bot.route = Some(Arc::new(route));
     bot.compact_route = None;
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
@@ -2048,4 +2673,37 @@ mod zone_diagnostic_tests {
             other => panic!("expected a bank-access zone witness, got {other:?}"),
         }
     }
+
+    #[test]
+    fn poison_hold_legacy_route_index_resolves_without_world() {
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let retreat = WorldTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        };
+        let destination = WorldTile {
+            x: 3200,
+            z: 3202,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![origin, retreat, destination],
+            }],
+            dest: destination,
+            ticks: 1.5,
+        };
+
+        assert_eq!(legacy_route_tile(&route, 1), Some(retreat));
+        assert_eq!(legacy_route_tile(&route, 3), None);
+    }
 }
+
+#[cfg(test)]
+#[path = "script_walk_no_progress_tests.rs"]
+mod no_progress_tests;

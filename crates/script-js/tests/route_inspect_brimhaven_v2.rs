@@ -2,8 +2,8 @@
 //! Proves the fixture begins/settles on published NativeSnapshot fields,
 //! not a retyped facsimile (LIVE failed because `scene_state` is raw-only).
 
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
     RouteInspectTerminalInput, SnapshotInput, TileInput,
 };
@@ -219,6 +219,11 @@ fn actual_example_begins_and_settles_on_published_native_snapshot() {
                 reason: Some(""),
                 bank_planned: false,
                 ticks: 8.0,
+                terminal: Some(TileInput {
+                    x: 2698,
+                    z: 3206,
+                    level: 0,
+                }),
                 hops: &hops,
             },
             accepted_id: token,
@@ -281,6 +286,7 @@ fn inspect_facts<'a>(
                 bank_planned: false,
                 ticks: 8.0,
                 hops,
+                terminal: None,
             },
             accepted_id: request_id,
             ..Default::default()
@@ -375,6 +381,121 @@ fn actual_example_stops_on_bank_arrival_without_walk_outcome_seq() {
         receipt.as_ref().map(|r| r.reason.as_str()),
         Some(STOP_OK),
         "{receipt:?}"
+    );
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_walking__walkexecutor__contract() {
+    let source = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+import { WalkExecutor } from '../../event/webwalk/WalkExecutor.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        const startMachine = globalThis.__rs2b0t_machine_start;
+        globalThis.__rs2b0t_machine_start = (family, args, hooks) => {
+            if (family === 'walk-resilient') globalThis.__walkArgs = args;
+            if (family === 'walk-probe-dest') {
+                globalThis.__probeStartCount = (globalThis.__probeStartCount ?? 0) + 1;
+            }
+            return startMachine(family, args, hooks);
+        };
+        globalThis.__walked = await Traversal.walkResilient(
+            { x: 2683, z: 3272, level: 0 },
+            { radius: 0, maxBudget: 123456 },
+        );
+        globalThis.__last = WalkExecutor.lastOutcome;
+        globalThis.__invalidProbe = await WalkExecutor.probeDest(
+            { x: 2655, z: 3283, level: 0 },
+            0,
+        );
+        globalThis.__invalidDest = await WalkExecutor.probeDest(
+            { x: '2655', z: 3283, level: 0 },
+            23,
+        );
+        globalThis.__probe = await WalkExecutor.probeDest(
+            { x: 2655, z: 3283, level: 0 },
+            23,
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
+    post_tick(&iso, 1, PIER, NativeFactsInput::default());
+    assert!(
+        iso.probe("globalThis.__walked").unwrap().as_bool().unwrap(),
+        "the same-tile walk completes"
+    );
+    assert_eq!(iso.probe("globalThis.__last").unwrap(), "arrived");
+    assert_eq!(
+        iso.probe("globalThis.__walkArgs.opts.maxBudget").unwrap(),
+        123456
+    );
+    assert_eq!(
+        iso.probe("globalThis.__invalidProbe").unwrap(),
+        serde_json::json!({"ok": false, "terminal": null})
+    );
+    assert_eq!(
+        iso.probe("globalThis.__invalidDest").unwrap(),
+        serde_json::json!({"ok": false, "terminal": null})
+    );
+
+    assert_eq!(
+        iso.probe("globalThis.__probeStartCount").unwrap(),
+        3,
+        "valid and invalid probe inputs are both validated in the Rust family"
+    );
+    let requests = inspect_routes(&iso);
+    let token = match requests.as_slice() {
+        [InteractReq::InspectRoute {
+            x: 2655,
+            z: 3283,
+            level: 0,
+            from_x: 2683,
+            from_z: 3272,
+            from_level: 0,
+            allow_teleports: false,
+            allow_bank_fetch: false,
+            max_expansions: None,
+            request_id,
+            ..
+        }] => {
+            assert_ne!(*request_id, 0);
+            *request_id
+        }
+        other => panic!("probeDest must submit the bounded route request, got {other:?}"),
+    };
+
+    let settled = NativeFactsInput {
+        route_inspect: RouteInspectFactsInput {
+            latest: RouteInspectTerminalInput {
+                seq: 2,
+                generation: 1,
+                request_id: token,
+                ok: true,
+                reason: Some(""),
+                bank_planned: false,
+                ticks: 8.0,
+                terminal: Some(BANK),
+                hops: &[],
+            },
+            accepted_id: token,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    post_tick(&iso, 2, PIER, settled);
+    post_tick(&iso, 3, PIER, settled);
+    assert_eq!(
+        iso.probe("globalThis.__probe").unwrap(),
+        serde_json::json!({
+            "ok": true,
+            "terminal": { "x": BANK.x, "z": BANK.z, "level": BANK.level }
+        }),
+        "probeDest preserves the exact native route terminal"
     );
     iso.join();
 }

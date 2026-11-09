@@ -1320,7 +1320,9 @@ fn one_acquisition_buys_two_needs_and_waits_for_each_counted_final_close() {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let bronze = data.item_by_alias("bronze_axe").unwrap();
     let iron = data.item_by_alias("iron_axe").unwrap();
-    let keeper = api::shop_facts::vendor_by_keeper_config(&data, "bob", bronze.id).unwrap();
+    let keeper = api::shop_facts::vendor_by_keeper_config(&data, "bob", bronze.id)
+        .unwrap()
+        .unwrap();
     let (_listener, mut client) = attached_client_with_shop(false);
     let cache = Arc::get_mut(&mut client.cache).unwrap();
     cache.objs.resize(
@@ -1474,4 +1476,136 @@ fn one_acquisition_buys_two_needs_and_waits_for_each_counted_final_close() {
     assert_eq!(log.buttons.len(), 3, "three resolved observed transfers");
     assert_eq!(log.closes, 2);
     assert_no_queued_action(&ledger);
+}
+
+/// A reach view round the keeper at (3200, 3200) with every step open,
+/// flooded from `origin` (rank 0 there, nothing else ranked).
+fn reach_from(origin: WorldTile) -> api::query::ReachQueryView {
+    const SIDE: i32 = 31;
+    let (base_x, base_z) = (3185, 3185);
+    let n = (SIDE * SIDE) as usize;
+    let i = ((origin.x - base_x) * SIDE + (origin.z - base_z)) as usize;
+    let mut reachable = vec![0u32; n.div_ceil(32)];
+    reachable[i / 32] |= 1 << (i % 32);
+    let mut exact_rank = vec![u16::MAX; n];
+    exact_rank[i] = 0;
+    api::query::ReachQueryView {
+        available: true,
+        base_x,
+        base_z,
+        level: 0,
+        width: SIDE,
+        height: SIDE,
+        walkable: vec![u32::MAX; n.div_ceil(32)],
+        reachable: reachable.clone(),
+        reachable_adj: reachable,
+        exact_rank: exact_rank.clone(),
+        adjacent_rank: exact_rank,
+        step: vec![u8::MAX; n],
+        canlight: Vec::new(),
+    }
+}
+
+/// A failed approach to an unreachable keeper is not terminal (AGENTS.md: a
+/// walk failure is never terminal until its bounded retries are spent): the
+/// walk is planned again from the observed position on a later tick.
+#[test]
+fn shop_keeper_walk_replans_after_a_failed_approach() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3190,
+        z: 3200,
+        level: 0,
+    };
+    let mut keeper = npc_row(7, 123, 0);
+    keeper.distance = 10;
+    let mut before = snapshot(&client, Vec::new(), vec![keeper]);
+    before.seed_local_player(local_player(origin));
+    let mut origin_reach = reach_from(origin);
+    origin_reach.step.fill(0);
+    let mut ledger = None;
+    let handle = start_machine(&before, &mut ledger, 2);
+
+    let first = with_tick_reach(&before, &origin_reach, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(first.is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    let first_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    assert_eq!(
+        post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed")),
+        first_request_id
+    );
+
+    let moved = WorldTile { x: 3191, ..origin };
+    let mut after_failure = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 0)]);
+    after_failure.seed_local_player(local_player(moved));
+    let moved_reach = reach_from(moved);
+    let failed = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(failed.is_pending());
+    assert!(
+        !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+            matches!(&entry.effect, HostEffect::Walk(_))
+                && entry.request_id.get() != first_request_id
+        }),
+        "retry starts on a later tick"
+    );
+
+    let retry = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(retry.is_pending());
+    let retry_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .unwrap()
+        .request_id
+        .get();
+    assert_ne!(retry_request_id, first_request_id);
+    assert_eq!(
+        post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
+        retry_request_id
+    );
+
+    let target = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let mut arrived = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 0)]);
+    arrived.seed_local_player(local_player(target));
+    let target_reach = reach_from(target);
+    let result = with_tick_reach(&arrived, &target_reach, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(result.is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Interaction(InteractReq::Npc {
+            name,
+            action,
+            index: Some(7),
+        }) if name == "Shopkeeper" && action == "Trade"
+    ));
 }

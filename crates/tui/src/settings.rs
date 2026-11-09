@@ -18,8 +18,9 @@ use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PA
 use frontend_core::{CurePoison, GuardianPolicy, Setting, SettingsDraft, GUARDIAN_EVENTS};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
-    QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, PREREQ_PERMISSION_LABELS,
+    PREREQ_SCOPE_NOTE, QUESTER_HEADING, QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE,
+    SCRIPT_SCOPE_NOTICE,
 };
 
 use crate::app::SettingFeedback;
@@ -62,8 +63,9 @@ pub struct SettingsState {
     pub open: bool,
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=event, 4=event policy,
     /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
-    /// 9=manual-walk pause, 10=map bake, 11=memory, 12=folder gate,
-    /// 13=paths folder, 14=reload paths, 15=cure poison.
+    /// 9=prerequisite dialogue, 10=quest start, 11=manual-walk pause,
+    /// 12=map bake, 13=memory, 14=folder gate, 15=paths folder, 16=reload
+    /// paths, 17=cure poison, 18=start fights with players.
     pub row: usize,
     /// Selected per-event policy row.
     pub random_event_index: usize,
@@ -74,7 +76,7 @@ pub struct SettingsState {
     /// A process-owned shared-preferences save has not settled yet.
     pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 16],
+    pub row_areas: [Rect; 19],
     /// The row whose own lines [`Self::detail_scroll`] scrolls.
     pub detail_row: usize,
     /// Lines of the selected setting scrolled out above the viewport when
@@ -139,6 +141,8 @@ pub enum SettingsKey {
     SurvivableRoutingNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
+    /// The global PvP setting changed; the value is what the row now shows.
+    PvpStartFights(bool),
     /// The Quester folder settings changed and need shared persistence.
     QuesterPathsChanged,
     /// Reload the shared Path registry without starting a Path.
@@ -164,6 +168,7 @@ pub struct SettingsPane<'a> {
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
+    pub pvp_start_fights: Option<&'a mut frontend_core::PvpSettingView>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
     pub survivable_routing_notice_ack: Option<&'a mut bool>,
     pub quester_paths: Option<&'a mut QuesterPathsView>,
@@ -195,6 +200,7 @@ impl<'a> SettingsPane<'a> {
             memory: None,
             feedback: &[],
             pause_script_on_manual_walk_abort: None,
+            pvp_start_fights: None,
             script_scope_notice_ack: None,
             survivable_routing_notice_ack: None,
             quester_paths: None,
@@ -218,6 +224,12 @@ impl<'a> SettingsPane<'a> {
     /// Bind the shared global pause preference to the settings row.
     pub fn pause_script_on_manual_walk_abort(mut self, value: &'a mut bool) -> Self {
         self.pause_script_on_manual_walk_abort = Some(value);
+        self
+    }
+
+    /// Bind the global "Start fights with players" setting to its row.
+    pub fn pvp_start_fights(mut self, value: &'a mut frontend_core::PvpSettingView) -> Self {
+        self.pvp_start_fights = Some(value);
         self
     }
 
@@ -274,7 +286,7 @@ impl<'a> SettingsPane<'a> {
                 {
                     self.state.detail_scroll += 1;
                 } else {
-                    self.state.row = (self.state.row + 1).min(15);
+                    self.state.row = (self.state.row + 1).min(18);
                     self.reset_detail();
                 }
                 SettingsKey::Consumed
@@ -295,7 +307,7 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
-            KeyCode::Char(' ') if self.state.row == 14 => SettingsKey::Consumed,
+            KeyCode::Char(' ') if self.state.row == 16 => SettingsKey::Consumed,
             KeyCode::Char(' ') => self.activate(),
             KeyCode::Esc => {
                 self.state.open = false;
@@ -382,23 +394,31 @@ impl<'a> SettingsPane<'a> {
                 self.activate_value();
                 SettingsKey::WalkGlobal(NavPreference::SurvivableRouting)
             }
-            9 if self.pause_script_on_manual_walk_abort.is_some() => {
+            9 => {
                 self.activate_value();
-                SettingsKey::PauseScriptOnManualWalkAbort
+                SettingsKey::WalkGlobal(NavPreference::AllowPrereqDialogue)
             }
             10 => {
                 self.activate_value();
+                SettingsKey::WalkGlobal(NavPreference::AllowQuestStart)
+            }
+            11 if self.pause_script_on_manual_walk_abort.is_some() => {
+                self.activate_value();
+                SettingsKey::PauseScriptOnManualWalkAbort
+            }
+            12 => {
+                self.activate_value();
                 SettingsKey::MapBake
             }
-            11 => SettingsKey::Changed(SettingsEdit::Lowmem(!self.settings.lowmem())),
-            12 => {
+            13 => SettingsKey::Changed(SettingsEdit::Lowmem(!self.settings.lowmem())),
+            14 => {
                 let Some(paths) = self.quester_paths.as_deref_mut() else {
                     return SettingsKey::Consumed;
                 };
                 paths.set_enabled(!paths.enabled());
                 SettingsKey::QuesterPathsChanged
             }
-            13 => {
+            15 => {
                 if self.quester_paths.is_none() {
                     return SettingsKey::Consumed;
                 }
@@ -406,10 +426,18 @@ impl<'a> SettingsPane<'a> {
                 self.state.folder_changed = false;
                 SettingsKey::Consumed
             }
-            14 => SettingsKey::ReloadPaths,
-            15 => SettingsKey::Changed(SettingsEdit::CurePoison(
+            16 => SettingsKey::ReloadPaths,
+            17 => SettingsKey::Changed(SettingsEdit::CurePoison(
                 self.settings.survival().cure_poison().next(),
             )),
+            18 => match self.pvp_start_fights.as_deref_mut() {
+                Some(view) => {
+                    let next = !view.shown();
+                    view.begin(next);
+                    SettingsKey::PvpStartFights(next)
+                }
+                None => SettingsKey::Consumed,
+            },
             _ => SettingsKey::Consumed,
         }
     }
@@ -441,6 +469,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
                     nav.survivable_routing(),
+                    nav.allow_prereq_dialogue(),
+                    nav.allow_quest_start(),
                 );
             }
             6 => {
@@ -451,6 +481,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
                     nav.survivable_routing(),
+                    nav.allow_prereq_dialogue(),
+                    nav.allow_quest_start(),
                 );
             }
             7 => {
@@ -461,6 +493,8 @@ impl<'a> SettingsPane<'a> {
                     !nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
                     nav.survivable_routing(),
+                    nav.allow_prereq_dialogue(),
+                    nav.allow_quest_start(),
                 );
             }
             8 => {
@@ -468,11 +502,35 @@ impl<'a> SettingsPane<'a> {
                 *self.nav = self.nav.with_danger_level(next);
             }
             9 => {
+                let nav = *self.nav;
+                *self.nav = frontend_core::WalkGlobals::new(
+                    nav.allow_teleports(),
+                    nav.allow_wilderness(),
+                    nav.allow_bank_fetch(),
+                    nav.allow_danger_zones(),
+                    nav.survivable_routing(),
+                    !nav.allow_prereq_dialogue(),
+                    nav.allow_quest_start(),
+                );
+            }
+            10 => {
+                let nav = *self.nav;
+                *self.nav = frontend_core::WalkGlobals::new(
+                    nav.allow_teleports(),
+                    nav.allow_wilderness(),
+                    nav.allow_bank_fetch(),
+                    nav.allow_danger_zones(),
+                    nav.survivable_routing(),
+                    nav.allow_prereq_dialogue(),
+                    !nav.allow_quest_start(),
+                );
+            }
+            11 => {
                 if let Some(pause) = self.pause_script_on_manual_walk_abort.as_deref_mut() {
                     *pause = !*pause;
                 }
             }
-            10 => *self.map_bake = self.map_bake.toggled(),
+            12 => *self.map_bake = self.map_bake.toggled(),
             _ => {}
         }
     }
@@ -499,7 +557,7 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
-        let selected_row = self.state.row.min(15);
+        let selected_row = self.state.row.min(18);
         let danger_help = (selected_row == 8
             && danger_level == frontend_core::DangerLevel::WhenSurvivable)
             .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
@@ -577,43 +635,64 @@ impl Widget for SettingsPane<'_> {
                 )
             },
             format!(
-                "{}Pause script on manual movement: {}",
+                "{}{}: {}",
                 marker(9),
+                PREREQ_PERMISSION_LABELS[0].1,
+                self.nav.allow_prereq_dialogue()
+            ),
+            format!(
+                "{}{}: {}",
+                marker(10),
+                PREREQ_PERMISSION_LABELS[1].1,
+                self.nav.allow_quest_start()
+            ),
+            format!(
+                "{}Pause script on manual movement: {}",
+                marker(11),
                 self.pause_script_on_manual_walk_abort
                     .as_deref()
                     .copied()
                     .unwrap_or(true)
             ),
-            format!("{}map bake: {}", marker(10), self.map_bake.as_str()),
+            format!("{}map bake: {}", marker(12), self.map_bake.as_str()),
             format!(
                 "{}memory: {}",
-                marker(11),
+                marker(13),
                 MemoryNotice::status_text(self.settings.lowmem(), self.memory)
             ),
-            format!("{}{}: {}", marker(12), LOAD_PATHS_LABEL, paths_enabled),
-            format!("{}Paths folder: {}{}", marker(13), path_folder, folder_hint),
-            format!("{}{}", marker(14), reload),
+            format!("{}{}: {}", marker(14), LOAD_PATHS_LABEL, paths_enabled),
+            format!("{}Paths folder: {}{}", marker(15), path_folder, folder_hint),
+            format!("{}{}", marker(16), reload),
             format!(
                 "{}cure poison: {}",
-                marker(15),
+                marker(17),
                 self.settings.survival().cure_poison().label()
+            ),
+            format!(
+                "{}{}: {}",
+                marker(18),
+                frontend_core::START_FIGHTS_LABEL,
+                self.pvp_start_fights
+                    .as_deref()
+                    .is_some_and(frontend_core::PvpSettingView::shown)
             ),
         ];
         // What follows each row while its setting is pending or failed:
         // pieces borrowed from the retained feedback and drawn after the
         // row's own text, so a frame copies none of it.
-        let row_feedback: [Feedback<'_>; 16] = std::array::from_fn(|index| {
+        let row_feedback: [Feedback<'_>; 19] = std::array::from_fn(|index| {
             row_settings(index)
                 .iter()
                 .find_map(|setting| feedback_parts(self.feedback, *setting))
                 .unwrap_or(NO_FEEDBACK)
         });
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
+        let combat_note = format!("Combat: {}", frontend_core::START_FIGHTS_NOTE);
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
         // height, but the row keeps its own index, hit target, and scroll slot.
-        let headers: [Option<(&str, Style)>; 16] = [
+        let headers: [Option<(&str, Style)>; 19] = [
             None,
             None,
             None,
@@ -626,6 +705,8 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             None,
+            Some((PREREQ_SCOPE_NOTE, note_style)),
+            None,
             None,
             None,
             None,
@@ -633,10 +714,11 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             Some(("Survival and supplies", heading_style)),
+            Some((combat_note.as_str(), note_style)),
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
-        let row_heights: [u16; 16] = std::array::from_fn(|index| {
+        let row_heights: [u16; 19] = std::array::from_fn(|index| {
             wrapped_rows_parts(
                 [
                     rows[index].as_str(),
@@ -648,7 +730,7 @@ impl Widget for SettingsPane<'_> {
         });
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
-        let block_heights: [u16; 16] =
+        let block_heights: [u16; 19] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
@@ -991,9 +1073,12 @@ fn row_settings(row: usize) -> &'static [Setting] {
         6 => &[Setting::Nav(N::AllowWilderness)],
         7 => &[Setting::Nav(N::AllowBankFetch)],
         8 => &[Setting::DangerRouting],
-        9 => &[Setting::Nav(N::PauseScriptOnManualWalkAbort)],
-        10 => &[Setting::MapBake],
-        12 | 13 => &[Setting::QuesterPaths],
+        9 => &[Setting::Nav(N::AllowPrereqDialogue)],
+        10 => &[Setting::Nav(N::AllowQuestStart)],
+        11 => &[Setting::Nav(N::PauseScriptOnManualWalkAbort)],
+        12 => &[Setting::MapBake],
+        14 | 15 => &[Setting::QuesterPaths],
+        18 => &[Setting::PvpStartFights],
         _ => &[],
     }
 }
@@ -1232,7 +1317,7 @@ mod tests {
             let mut bake = MapBakeChoice::Ask;
             let mut state = SettingsState {
                 open: true,
-                row: 15,
+                row: 17,
                 ..Default::default()
             };
             let text = render_lines(
@@ -1251,6 +1336,77 @@ mod tests {
                 "{w}x{h}: the selected cure poison row paints:\n{text}"
             );
         }
+    }
+
+    /// PVP-V1: the global PvP row paints at both capture sizes with its
+    /// group note, shows the saved value, and the popup toggles it.
+    #[test]
+    fn start_fights_row_is_visible_at_common_sizes_and_toggles() {
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let settings = SettingsDraft::default();
+            let mut nav = WalkGlobals::default();
+            let mut bake = MapBakeChoice::Ask;
+            let mut view = frontend_core::PvpSettingView::new(false);
+            let mut state = SettingsState {
+                open: true,
+                row: 18,
+                ..Default::default()
+            };
+            let text = render_lines(
+                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                    .pvp_start_fights(&mut view),
+                w,
+                h,
+            );
+            println!("--- settings popup {w}x{h}, row 18 selected, off ---\n{text}");
+            assert!(
+                text.contains("> Start fights with players: false"),
+                "{w}x{h}: the selected row paints:\n{text}"
+            );
+            assert!(
+                text.contains("Combat: Lets any script start a fight with a player"),
+                "{w}x{h}: the note paints:\n{text}"
+            );
+        }
+
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut view = frontend_core::PvpSettingView::new(false);
+        let mut state = SettingsState {
+            open: true,
+            row: 18,
+            ..Default::default()
+        };
+        let key_result = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+            .pvp_start_fights(&mut view)
+            .on_key(key(KeyCode::Enter));
+        assert_eq!(key_result, SettingsKey::PvpStartFights(true));
+        assert!(view.shown(), "the row shows the new value at once");
+        let text = render_lines(
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                .pvp_start_fights(&mut view),
+            120,
+            40,
+        );
+        println!("--- settings popup 120x40, row 18 selected, on ---\n{text}");
+        assert!(text.contains("> Start fights with players: true"), "{text}");
+    }
+
+    /// Without a setting view (a `--live` run) the row does nothing.
+    #[test]
+    fn start_fights_row_without_a_view_is_consumed() {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 18,
+            ..Default::default()
+        };
+        let result = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+            .on_key(key(KeyCode::Enter));
+        assert_eq!(result, SettingsKey::Consumed);
     }
 
     /// The popup returns the selected profile edit for its caller to stage.
@@ -1299,7 +1455,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 15,
+            row: 17,
             ..Default::default()
         };
         assert_eq!(
@@ -1429,6 +1585,8 @@ mod tests {
             (6, NavPreference::AllowWilderness),
             (7, NavPreference::AllowBankFetch),
             (8, NavPreference::SurvivableRouting),
+            (9, NavPreference::AllowPrereqDialogue),
+            (10, NavPreference::AllowQuestStart),
         ] {
             let mut state = SettingsState {
                 open: true,
@@ -1446,6 +1604,14 @@ mod tests {
         assert!(nav.allow_bank_fetch());
         assert!(nav.allow_danger_zones());
         assert_eq!(nav.danger_level(), frontend_core::DangerLevel::Always);
+        assert!(
+            !nav.allow_prereq_dialogue(),
+            "the dialogue row toggles the default-on grant off"
+        );
+        assert!(
+            !nav.allow_quest_start(),
+            "the quest-start row toggles the default-on grant off"
+        );
     }
 
     #[test]
@@ -1505,7 +1671,7 @@ mod tests {
             24,
         );
         assert!(
-            text.contains("Danger routing now has three levels"),
+            text.contains("Danger routing has three levels"),
             "the migration notice remains visible after the old notice was dismissed: {text:?}"
         );
         let outcome = {
@@ -1523,7 +1689,7 @@ mod tests {
             100,
             24,
         );
-        assert!(!text.contains("Danger routing now has three levels"));
+        assert!(!text.contains("Danger routing has three levels"));
     }
 
     #[test]
@@ -1546,20 +1712,18 @@ mod tests {
         assert!(text.contains(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_LABEL));
         assert!(text.contains("Effective level: Never"));
         assert!(text.contains("not available yet"));
-        // The held wording itself must not promise behaviours the held
-        // routing does not have. Scope the absence checks to that
-        // wording: the popup also carries the cure poison row, whose
-        // label legitimately mentions the eating line.
-        let held = format!(
-            "{} {}",
-            frontend_core::walk_permissions::survivable_routing_tooltip(),
-            frontend_core::walk_permissions::survivable_routing_notice()
-        );
+        // The held level cannot change admission, but an explicit zone grant
+        // still checks the bound. Its text excludes food/prayer/escape rather
+        // than promising those actions.
+        let held = frontend_core::walk_permissions::survivable_routing_tooltip();
         assert!(!held.contains("274V17"));
         assert!(!held.contains("rebake"));
         assert!(!held.contains("turn back"));
-        assert!(!held.contains("eating"));
-        assert!(!held.contains("praying"));
+        assert!(held.contains("This setting does not change route admission."));
+        assert!(held.contains("Explicit danger-zone grants still check"));
+        assert!(held.contains("without eating, prayer or escape"));
+        assert!(!held.contains("will eat"));
+        assert!(!held.contains("will pray"));
     }
 
     #[test]
@@ -1671,10 +1835,10 @@ mod tests {
             {
                 let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                     .pause_script_on_manual_walk_abort(&mut pause);
-                for _ in 0..9 {
+                for _ in 0..11 {
                     assert_eq!(pane.on_key(key(KeyCode::Down)), SettingsKey::Consumed);
                 }
-                assert_eq!(pane.state.row, 9);
+                assert_eq!(pane.state.row, 11);
                 assert_eq!(
                     pane.on_key(key(KeyCode::Enter)),
                     SettingsKey::PauseScriptOnManualWalkAbort
@@ -1700,7 +1864,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 11,
+            row: 13,
             ..Default::default()
         };
         let outcome = {
@@ -1758,7 +1922,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 11,
+            row: 13,
             ..Default::default()
         };
         let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
@@ -1784,7 +1948,7 @@ mod tests {
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
-            row: 9,
+            row: 11,
             ..Default::default()
         };
         let (moved, flipped) = {
@@ -1793,7 +1957,7 @@ mod tests {
             (moved, pane.on_key(key(KeyCode::Enter)))
         };
         assert_eq!(moved, SettingsKey::Consumed);
-        assert_eq!(state.row, 10, "the map-bake row follows the pause toggle");
+        assert_eq!(state.row, 12, "the map-bake row follows the pause toggle");
         assert_eq!(flipped, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Always);
         assert!(!nav.allow_bank_fetch(), "the bank row is untouched");

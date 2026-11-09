@@ -29,35 +29,25 @@ pub fn encode_flags_sidecar(
     out
 }
 
-/// Serialize a paint-reach bitset: magic `b"274R"`, version 1, the same
-/// origin/width/height header as the pack, explicit word count, the 32-byte
-/// pack SHA-256 binding, then `word_count` little-endian `u64` words.
+/// Serialize a paint-reach bitset: magic `b"274R"`, version 2, the same
+/// origin/width/height header as the pack, explicit word count, then
+/// `word_count` little-endian `u64` words.
 pub fn encode_reach_sidecar(
     origin: WorldTile,
     width: usize,
     height: usize,
     bits: &[u64],
-    binding: &[u8; 32],
 ) -> Vec<u8> {
-    encode_bitset_sidecar(
-        MAGIC_REACH,
-        VERSION_REACH,
-        origin,
-        width,
-        height,
-        bits,
-        binding,
-    )
+    encode_bitset_sidecar(MAGIC_REACH, VERSION_REACH, origin, width, height, bits)
 }
 
-/// Serialize a static canlight bitset: magic `b"274L"`, version 1, the same
+/// Serialize a static canlight bitset: magic `b"274L"`, version 2, the same
 /// header dialect as [`encode_reach_sidecar`].
 pub fn encode_canlight_sidecar(
     origin: WorldTile,
     width: usize,
     height: usize,
     bits: &[u64],
-    binding: &[u8; 32],
 ) -> Vec<u8> {
     encode_bitset_sidecar(
         MAGIC_CANLIGHT,
@@ -66,7 +56,6 @@ pub fn encode_canlight_sidecar(
         width,
         height,
         bits,
-        binding,
     )
 }
 
@@ -77,9 +66,8 @@ pub(super) fn encode_bitset_sidecar(
     width: usize,
     height: usize,
     bits: &[u64],
-    binding: &[u8; 32],
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + 4 + 32 + bits.len() * 8);
+    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + 4 + bits.len() * 8);
     out.extend_from_slice(magic);
     out.push(version);
     for v in [origin.x, origin.z, origin.level] {
@@ -88,7 +76,6 @@ pub(super) fn encode_bitset_sidecar(
     out.extend_from_slice(&(width as u32).to_le_bytes());
     out.extend_from_slice(&(height as u32).to_le_bytes());
     out.extend_from_slice(&(bits.len() as u32).to_le_bytes());
-    out.extend_from_slice(binding);
     for word in bits {
         out.extend_from_slice(&word.to_le_bytes());
     }

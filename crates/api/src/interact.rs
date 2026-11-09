@@ -84,6 +84,17 @@ pub enum WireCommand<'a> {
     ClearLocalModal {
         component_id: i32,
     },
+    /// Drag an inventory-component row to another slot (`INV_BUTTOND`).
+    Drag {
+        component_id: i32,
+        slot: i32,
+        target_slot: i32,
+        insert: bool,
+    },
+    /// A public `MESSAGE_PUBLIC` packet built by `prot::Send::message_public`.
+    PublicMessage {
+        text: String,
+    },
 }
 
 /// Why a wire interaction was refused before dispatch. Every variant is one
@@ -635,6 +646,44 @@ impl<'a> Interactions<'a> {
         )
     }
 
+    /// Drag one row of the open bank's withdraw grid to `target_slot`
+    /// (`INV_BUTTOND`, `interface_bank/scripts/bank.rs2:6-11`). The row must
+    /// be the exact posted bank row and the target a slot of that grid.
+    pub fn drag_bank_item<'t>(
+        &mut self,
+        item: &ItemView,
+        target_slot: i32,
+        insert: bool,
+    ) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let component_id = snapshot.bank_component_id();
+        if component_id < 0 || item.component_id != component_id {
+            return refuse(snapshot, SendReason::StaleTarget);
+        }
+        let live = snapshot
+            .bank()
+            .iter()
+            .any(|row| row.def.id == item.def.id && row.slot == item.slot);
+        if !live {
+            return refuse(snapshot, SendReason::StaleTarget);
+        }
+        if !(0..snapshot.bank_size()).contains(&target_slot) || item.slot == target_slot {
+            return refuse(snapshot, SendReason::InvalidAction);
+        }
+        self.dispatch(
+            WireCommand::Drag {
+                component_id,
+                slot: item.slot,
+                target_slot,
+                insert,
+            },
+            snapshot.tick() as u64,
+        )
+    }
+
     /// Resume the chat continuation, or a currently visible pause component.
     pub fn continue_dialog<'t>(&mut self, component_id: Option<i32>) -> SendResult<'t> {
         let snapshot = self.snapshot;
@@ -681,6 +730,22 @@ impl<'a> Interactions<'a> {
         };
         self.dispatch(
             WireCommand::Continue { component_id },
+            snapshot.tick() as u64,
+        )
+    }
+    /// Send a bounded public message through the normal encrypted packet
+    /// driver. The client protocol builder rejects text it cannot pack.
+    pub fn say_public<'t>(&mut self, text: &str) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if !snapshot.attached() {
+            return refuse(snapshot, SendReason::NotAttached);
+        }
+        let message: String = text.trim().chars().take(80).collect();
+        if message.is_empty() {
+            return refuse(snapshot, SendReason::InvalidAction);
+        }
+        self.dispatch(
+            WireCommand::PublicMessage { text: message },
             snapshot.tick() as u64,
         )
     }
@@ -843,8 +908,19 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.precondition(snapshot, true) {
             return refuse(snapshot, reason);
         }
+        // An enter-amount prompt opened after `if_close` has no modal root
+        // (`apply_p_countdialog` sets only `dialog_input_open`). The engine
+        // accepts CLOSE_MODAL then: `closeModal` clears the suspended
+        // script's `protect` before it checks the modal state
+        // (`Player.ts:760-766`), so a held click that the prompt blocked
+        // runs again.
         let modals = snapshot.modals();
-        if modals.main == -1 && modals.side == -1 && modals.chat == -1 && modals.tutorial == -1 {
+        if !snapshot.count_dialog_open()
+            && modals.main == -1
+            && modals.side == -1
+            && modals.chat == -1
+            && modals.tutorial == -1
+        {
             return refuse(snapshot, SendReason::NoModalOpen);
         }
         self.dispatch(WireCommand::Close, snapshot.tick() as u64)
@@ -1216,7 +1292,14 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
-            WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
+            WireCommand::PublicMessage { text } => self.driver.send_public_message(text),
+            WireCommand::DoorStep { tile } => self.driver.send_pending_door_step(tile.x, tile.z),
+            WireCommand::Drag {
+                component_id,
+                slot,
+                target_slot,
+                insert,
+            } => Send::inv_buttond(*component_id, *slot, *target_slot, *insert)
                 .and_then(|send| self.driver.send_packet(&send))
                 .is_ok(),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
@@ -1309,7 +1392,9 @@ fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
         | WireCommand::Count { .. }
         | WireCommand::Walk { .. }
         | WireCommand::WalkNearest { .. }
-        | WireCommand::DoorStep { .. } => true,
+        | WireCommand::DoorStep { .. }
+        | WireCommand::PublicMessage { .. }
+        | WireCommand::Drag { .. } => true,
         WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }
 }

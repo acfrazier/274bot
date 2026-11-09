@@ -6,7 +6,7 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::{
     quest_list_status, EvidenceStamp, JournalRead, ProgressFlag, QuestProgress,
 };
-use api::selected::{FactKey, Gap, Knowledge, SelectedPin, Truth};
+use api::selected::{FactKey, Gap, Knowledge, Truth};
 use api::snapshot::{QuestListStatus, SnapshotView};
 use std::sync::Arc;
 
@@ -412,7 +412,6 @@ pub fn resolve_colour(
     path: &CompiledPath,
     colour: QuestListStatus,
     evidence: EvidenceStamp,
-    pin: Arc<SelectedPin>,
 ) -> QuestProgress {
     let (stage, complete) = match colour {
         QuestListStatus::NotStarted => (
@@ -437,7 +436,6 @@ pub fn resolve_colour(
         binding: path.progress.binding.clone(),
         role: path.progress.role.clone(),
         rule,
-        pin,
     }
 }
 
@@ -517,7 +515,6 @@ pub fn resolve_journal(
         binding: path.progress.binding.clone(),
         role: path.progress.role.clone(),
         rule,
-        pin: Arc::clone(&read.pin),
     }
 }
 
@@ -532,7 +529,6 @@ fn unknown_journal_progress(path: &CompiledPath, read: &JournalRead) -> QuestPro
         binding: path.progress.binding.clone(),
         role: path.progress.role.clone(),
         rule: unknown("journal-quest-mismatch"),
-        pin: Arc::clone(&read.pin),
     }
 }
 
@@ -657,20 +653,6 @@ mod tests {
     use super::*;
     use api::selected::{ClientRevision, RunKey};
 
-    fn pin() -> Arc<SelectedPin> {
-        Arc::new(SelectedPin {
-            revision: ClientRevision::R289,
-            engine_commit: Arc::from("engine"),
-            content_commit: Arc::from("content"),
-            cache_id: Arc::from("cache"),
-            content_id: Arc::from("content-id"),
-            nav_sha256: [0; 32],
-            flags_sha256: [0; 32],
-            schema: 1,
-            manifest_sha256: [0; 32],
-        })
-    }
-
     fn stamp(tick: u64) -> EvidenceStamp {
         EvidenceStamp {
             run: RunKey {
@@ -712,6 +694,7 @@ mod tests {
             role: None,
             kind: crate::quester::path::PathKind::Quest,
             partner: None,
+            prereq: Default::default(),
             progress_reader: None,
             display_name: Arc::from("Synthetic"),
             tested_stats: None,
@@ -762,7 +745,6 @@ mod tests {
     }
 
     fn read(path: &CompiledPath, tick: u64, text: &str) -> JournalRead {
-        let pin = pin();
         JournalRead {
             quest: path.id.clone(),
             root: 0,
@@ -770,11 +752,9 @@ mod tests {
             colour: None,
             acquired: stamp(tick),
             closed: stamp(tick),
-            pin,
         }
     }
     fn read_lines(path: &CompiledPath, tick: u64, lines: &[&str]) -> JournalRead {
-        let pin = pin();
         JournalRead {
             quest: path.id.clone(),
             root: 0,
@@ -787,7 +767,6 @@ mod tests {
             colour: None,
             acquired: stamp(tick),
             closed: stamp(tick),
-            pin,
         }
     }
 
@@ -1053,7 +1032,7 @@ mod tests {
     #[test]
     fn colour_resolution_bypasses_rules_and_has_empty_signals() {
         let path = path(Vec::new(), Vec::new(), true);
-        let progress = resolve_colour(&path, QuestListStatus::Complete, stamp(1), pin());
+        let progress = resolve_colour(&path, QuestListStatus::Complete, stamp(1));
         assert!(matches!(
             &progress.stage,
             Knowledge::Known(stage) if stage.0.as_ref() == "synthetic:2"
@@ -1065,6 +1044,9 @@ mod tests {
 
     #[test]
     fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("romeojuliet").unwrap();
@@ -1093,6 +1075,9 @@ mod tests {
 
     #[test]
     fn released_sheep_complete_journal_resolves_complete_not_collect_more() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("sheep").unwrap();
@@ -1142,6 +1127,9 @@ mod tests {
 
     #[test]
     fn quest_colour_matches_shared_snapshot_lookup_and_stage_colours() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let facts = quests

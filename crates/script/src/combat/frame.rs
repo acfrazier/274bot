@@ -24,6 +24,13 @@ pub struct Frame<'a> {
     pub prayers: [bool; 15],
     pub varps: &'a [VarpView],
     pub in_combat: CombatView,
+    /// The posted live reach flood for this snapshot, when the host
+    /// attached one. Melee target selection uses it to refuse a target
+    /// no wall-valid stand can reach; `None` leaves reachability unknown.
+    pub reach: Option<&'a api::query::ReachQueryView>,
+    /// The Wilderness levels for this frame; `None` without a nav pack (every
+    /// tile then reads as outside the Wilderness).
+    pub wilderness: Option<&'a dyn crate::native::WildernessLevels>,
 }
 
 impl<'a> Frame<'a> {
@@ -51,6 +58,7 @@ impl<'a> Frame<'a> {
                 .map(|tab| tab.root_component_id)
         });
         let in_combat = snapshot.in_combat()?.value;
+        let reach = snapshot.reach().map(|observed| observed.value);
         Some(Self {
             here,
             combat_tab,
@@ -68,7 +76,19 @@ impl<'a> Frame<'a> {
             prayers,
             varps,
             in_combat,
+            reach,
+            wilderness: None,
         })
+    }
+
+    /// Attach the host's Wilderness levels to this frame.
+    #[must_use]
+    pub fn with_wilderness(
+        mut self,
+        wilderness: Option<&'a dyn crate::native::WildernessLevels>,
+    ) -> Self {
+        self.wilderness = wilderness;
+        self
     }
 
     #[inline]

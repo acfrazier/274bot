@@ -7,6 +7,14 @@
 // while held/paused, so even time waits stay parked.
 const host = () => globalThis.__rs2b0t_host || {};
 
+const runtime = (operation) => globalThis.__rs2b0t_script_runtime(operation);
+
+export class ScriptAborted extends Error {
+    constructor() {
+        super('script stopped');
+        this.name = 'ScriptAborted';
+    }
+}
 // Mirrors rs2b0t Scheduler.trySettle per wait: cond, then timeout.
 // `undefined` keeps the wait parked; an Error rejects it. A machine wait
 // takes its Rust outcome envelope once the machine has settled.
@@ -32,21 +40,32 @@ const park = {
 
     enqueue(spec) {
         return new Promise((resolve, reject) => {
-            park.waits.push({ ...spec, resolve, reject });
+            park.waits.push({
+                ...spec,
+                activityId: runtime('activityId'),
+                resolve,
+                reject,
+            });
             const h = host();
             h.waitEnqueues = (h.waitEnqueues || 0) + 1;
         });
     },
 
+
+
     // A wait enqueued by a settled wait's continuation lands on the next
     // pump: continuations run after this returns, never inside the pass.
-    settle(tick, now, only) {
+    settle(tick, now, only, handles) {
         if (park.waits.length === 0) return;
         const pending = park.waits;
         park.waits = [];
         const h = host();
         for (const wait of pending) {
-            const outcome = only && wait.kind !== only ? undefined : trySettle(wait, tick, now);
+            // A seat page lists the machine waits it may release. The list is
+            // checked before the take: the take removes the outcome.
+            const listed = !handles || wait.kind !== 'machine' || handles.includes(wait.handle);
+            const outcome =
+                (only && wait.kind !== only) || !listed ? undefined : trySettle(wait, tick, now);
             if (outcome === undefined) {
                 park.waits.push(wait);
                 continue;
@@ -57,6 +76,9 @@ const park = {
         }
     },
 };
+
+globalThis.__rs2b0t_wait_queue = () => park.waits;
+globalThis.__rs2b0t_make_script_aborted = () => new ScriptAborted();
 
 export const Execution = {
     async delay(ms) {
@@ -122,6 +144,6 @@ globalThis.__rs2b0t_pump = (n) => {
 // After the pump, a machine that resumed on a settled callback promise
 // may have ended: settle only the machine waits, so its await resolves in
 // the tick it ended. Every other wait keeps its once-per-tick pump.
-globalThis.__rs2b0t_settle_machines = () => {
-    park.settle(0, 0, 'machine');
+globalThis.__rs2b0t_settle_machines = (handles) => {
+    park.settle(0, 0, 'machine', handles);
 };

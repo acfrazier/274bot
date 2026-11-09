@@ -14,8 +14,10 @@
 use std::alloc::Layout;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
-use api::selected::Truth;
+use api::prereq_steps::proves;
+use api::selected::{QuestGate, StageWindow, Truth};
 use api::snapshot::GameSnapshot;
 
 use crate::quest_gates::QuestEvidence;
@@ -62,6 +64,11 @@ pub struct WorldState {
     /// Host-play / panel / tui / scenario or-in the bound profile fact
     /// via [`WorldState::with_map_members`].
     pub map_members: bool,
+
+    /// Stage windows that an API-owned prerequisite step can establish.
+    /// This is diagnostic authority only; strict routing still requires
+    /// every quest gate to be proven `True` by `quest_evidence`.
+    pub establishable: Option<Arc<[StageWindow]>>,
     /// Resolved quest progress stage gates are tested with
     /// ([`TransportEdge::quest_gates`]). `None` — every caller without a
     /// pinned progress provider — leaves each gated edge `Unknown`, so it is
@@ -70,15 +77,38 @@ pub struct WorldState {
     pub quest_evidence: Option<QuestEvidence>,
 }
 
+/// Tri-state transport admission used by atlas proofs and routing diagnosis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeAdmission {
+    /// Every required fact is observed and holds.
+    Allowed,
+    /// An observed fact disproves the edge.
+    Denied,
+    /// A required observation is missing.
+    Unknown(MissingRequirement),
+}
+
+/// Why an edge cannot be proved or disproved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingRequirement {
+    InventoryObservation,
+    EquipmentObservation,
+    SkillObservation { skill: i32 },
+    VarpObservation { varp: i32 },
+    QuestJournalObservation,
+    WorldBinding,
+}
 /// A content entrance requirement that the route state cannot prove.
 /// These are not bank-fetch requirements: diagnosis never changes the
 /// player's held or worn items to make the entrance acceptable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum EntranceRequirement {
-    /// The inventory observation cannot establish absence.
+    /// The first inventory observation is pending. A later route request must
+    /// check its contents before the edge can be used.
     #[error("inventory is not observed at entrance {at:?}")]
     InventoryNotObserved { at: api::WorldTile },
-    /// The equipment observation cannot establish absence.
+    /// The first equipment observation is pending. A later route request must
+    /// check its contents before the edge can be used.
     #[error("equipment is not observed at entrance {at:?}")]
     EquipmentNotObserved { at: api::WorldTile },
     /// A forbidden item is held.
@@ -334,8 +364,30 @@ impl WorldState {
             quests,
             allow_fetchable_worn: false,
             map_members: false,
+            establishable: None,
             quest_evidence: None,
         }
+    }
+    /// Attach the prerequisite-stage windows that an API-owned step can
+    /// establish. Strict route admission does not consult this list.
+    pub fn with_establishable(mut self, windows: Arc<[StageWindow]>) -> Self {
+        self.establishable = Some(windows);
+        self
+    }
+
+    /// Whether an unproven quest gate can be established by a prerequisite
+    /// step. The API owns the implication rule; this method only applies it
+    /// to the caller-supplied candidate list.
+    pub(crate) fn gate_actionable(&self, gate: &QuestGate) -> bool {
+        let truth = self
+            .quest_evidence
+            .as_ref()
+            .map_or(Truth::Unknown, |evidence| evidence.test(gate));
+        truth != Truth::True
+            && self
+                .establishable
+                .as_deref()
+                .is_some_and(|windows| windows.iter().any(|established| proves(established, gate)))
     }
 
     /// Bind the WORLD `map_members` fact from the selected server profile.
@@ -347,8 +399,8 @@ impl WorldState {
     }
 
     /// Attach the caller's resolved quest progress evidence (its immutable
-    /// provider snapshot, source quest family and freshness floor). A
-    /// refreshed provider replaces the previous evidence wholesale.
+    /// provider snapshot and causal freshness floor). A refreshed provider
+    /// replaces the previous evidence wholesale.
     pub fn with_quest_evidence(mut self, evidence: QuestEvidence) -> Self {
         self.quest_evidence = Some(evidence);
         self
@@ -367,6 +419,54 @@ impl WorldState {
         self.snapshot_allows(e) && self.quest_gates(e) == Truth::True
     }
 
+    /// Strict tri-state admission. Unknown observations stay unknown.
+    /// `allows` is the Allowed wrapper and still fails closed.
+    pub fn admission(&self, e: &TransportEdge) -> EdgeAdmission {
+        if e.members_req && !self.map_members {
+            return EdgeAdmission::Denied;
+        }
+        if !e.item_req.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if !e.consumed_req.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if (!e.worn_req.is_empty() || !e.worn_all_req.is_empty() || !e.forbidden_worn.is_empty())
+            && !self.equipment_ready
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::EquipmentObservation);
+        }
+        if !e.forbidden_held.is_empty() && !self.inventory_ready {
+            return EdgeAdmission::Unknown(MissingRequirement::InventoryObservation);
+        }
+        if let Some(&(skill, _)) = e
+            .skill_req
+            .iter()
+            .find(|(skill, _)| !self.stats.contains_key(skill))
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::SkillObservation { skill });
+        }
+        if let Some(&(varp, _)) = e
+            .varp_req
+            .iter()
+            .find(|(varp, _)| !self.varps.contains_key(varp))
+        {
+            return EdgeAdmission::Unknown(MissingRequirement::VarpObservation { varp });
+        }
+        match self.quest_gates(e) {
+            Truth::Unknown => {
+                return EdgeAdmission::Unknown(MissingRequirement::QuestJournalObservation)
+            }
+            Truth::False => return EdgeAdmission::Denied,
+            Truth::True => {}
+        }
+        if self.snapshot_allows(e) {
+            EdgeAdmission::Allowed
+        } else {
+            EdgeAdmission::Denied
+        }
+    }
+
     /// The edge's quest-stage gates under [`Self::quest_evidence`]: `True`
     /// for an ungated edge or proven gates, `False` when evidence disproves
     /// one, otherwise `Unknown` (no evidence, stale evidence, another quest
@@ -375,6 +475,21 @@ impl WorldState {
     pub fn quest_gates(&self, e: &TransportEdge) -> Truth {
         e.quest_gates.as_ref().map_or(Truth::True, |gates| {
             gates.test(self.quest_evidence.as_ref())
+        })
+    }
+
+    /// Every gate on the edge is already proven or can be established by a
+    /// catalog-backed prerequisite window. Snapshot requirements are checked
+    /// separately and remain strict.
+    pub(crate) fn quest_gates_actionable(&self, e: &TransportEdge) -> bool {
+        e.quest_gates.as_ref().is_none_or(|gates| {
+            gates.gates().iter().all(|gate| {
+                self.quest_evidence
+                    .as_ref()
+                    .map_or(Truth::Unknown, |evidence| evidence.test(gate))
+                    == Truth::True
+                    || self.gate_actionable(gate)
+            })
         })
     }
 
@@ -437,8 +552,10 @@ impl WorldState {
             e,
             self.inventory_ready,
             self.equipment_ready,
-            |id| self.inv.get(&id).is_some_and(|&count| count > 0),
-            |id| self.worn.contains(&id),
+            self.inv
+                .iter()
+                .filter_map(|(&id, &count)| (count > 0).then_some(id)),
+            self.worn.iter().copied(),
         )
     }
 
@@ -452,18 +569,15 @@ impl WorldState {
             e,
             snapshot.inventory_packet_generation().is_some(),
             snapshot.equipment_packet_generation().is_some(),
-            |id| {
-                snapshot
-                    .inv()
-                    .iter()
-                    .any(|&(obj, count)| obj == id && count > 0)
-            },
-            |id| {
-                snapshot
-                    .equipment()
-                    .iter()
-                    .any(|item| item.def.id == id && item.count > 0)
-            },
+            snapshot
+                .inv()
+                .iter()
+                .filter_map(|&(id, count)| (count > 0).then_some(id)),
+            snapshot
+                .equipment()
+                .iter()
+                .filter(|item| item.count > 0)
+                .map(|item| item.def.id),
         )
     }
 
@@ -471,14 +585,17 @@ impl WorldState {
         e: &TransportEdge,
         inventory_ready: bool,
         equipment_ready: bool,
-        held: impl Fn(i32) -> bool,
-        worn: impl Fn(i32) -> bool,
+        held_ids: impl Iterator<Item = i32>,
+        worn_ids: impl Iterator<Item = i32>,
     ) -> Option<EntranceRequirement> {
         if !e.forbidden_held.is_empty() {
             if !inventory_ready {
                 return Some(EntranceRequirement::InventoryNotObserved { at: e.at });
             }
-            if let Some(&id) = e.forbidden_held.iter().find(|&&id| held(id)) {
+            if let Some(id) = held_ids
+                .filter(|id| e.forbidden_held.binary_search(id).is_ok())
+                .min()
+            {
                 return Some(EntranceRequirement::ForbiddenHeld { id, at: e.at });
             }
         }
@@ -486,7 +603,10 @@ impl WorldState {
             if !equipment_ready {
                 return Some(EntranceRequirement::EquipmentNotObserved { at: e.at });
             }
-            if let Some(&id) = e.forbidden_worn.iter().find(|&&id| worn(id)) {
+            if let Some(id) = worn_ids
+                .filter(|id| e.forbidden_worn.binary_search(id).is_ok())
+                .min()
+            {
                 return Some(EntranceRequirement::ForbiddenWorn { id, at: e.at });
             }
         }

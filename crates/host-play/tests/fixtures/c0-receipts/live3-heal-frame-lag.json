@@ -1,0 +1,1400 @@
+{
+ "run_purpose": "acceptance",
+ "quest": "desertrescue",
+ "display": "The Tourist Trap",
+ "stage": "desertrescue:6",
+ "step": "climb-cell-rock-1",
+ "start": {
+  "game_tick": 67,
+  "client_poll": 1
+ },
+ "start_seed": {
+  "profile": "Base40",
+  "stats": [
+   {
+    "skill": 0,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 1,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 2,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 3,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 4,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 5,
+    "base": 43,
+    "effective": 43
+   },
+   {
+    "skill": 6,
+    "base": 40,
+    "effective": 40
+   },
+   {
+    "skill": 9,
+    "base": 10,
+    "effective": 10
+   },
+   {
+    "skill": 13,
+    "base": 20,
+    "effective": 20
+   }
+  ],
+  "loadout": null,
+  "inventory": [
+   [
+    314,
+    50
+   ],
+   [
+    379,
+    8
+   ],
+   [
+    995,
+    1000
+   ],
+   [
+    1333,
+    1
+   ],
+   [
+    1823,
+    4
+   ],
+   [
+    1833,
+    1
+   ],
+   [
+    1835,
+    1
+   ],
+   [
+    1837,
+    1
+   ],
+   [
+    1854,
+    4
+   ],
+   [
+    2347,
+    1
+   ],
+   [
+    2349,
+    4
+   ]
+  ],
+  "equipment": [],
+  "tile": {
+   "x": 3282,
+   "z": 3035,
+   "level": 0
+  }
+ },
+ "pre_start_drain_send": {
+  "game_tick": 64,
+  "client_poll": 1
+ },
+ "R0": {
+  "game_tick": 70,
+  "client_poll": 49
+ },
+ "G_drop": {
+  "at": {
+   "game_tick": 73,
+   "client_poll": 76
+  },
+  "from": 8,
+  "to": 7
+ },
+ "L0": {
+  "game_tick": 79,
+  "client_poll": 152
+ },
+ "attempt_drain_send": {
+  "game_tick": 79,
+  "client_poll": 153
+ },
+ "S1": {
+  "game_tick": 80,
+  "client_poll": 165
+ },
+ "S_drop": {
+  "at": {
+   "game_tick": 89,
+   "client_poll": 280
+  },
+  "from": 7,
+  "to": 6
+ },
+ "R": {
+  "kind": "restart_prompt",
+  "at": {
+   "game_tick": 92,
+   "client_poll": 317
+  }
+ },
+ "restart_prompt": {
+  "game_tick": 92,
+  "client_poll": 317
+ },
+ "step2": {
+  "game_tick": 95,
+  "client_poll": 356
+ },
+ "slip_after_restart": null,
+ "end": {
+  "kind": "step2",
+  "at": {
+   "game_tick": 95,
+   "client_poll": 356
+  }
+ },
+ "g_gap_ticks": 3,
+ "s_gap_ticks": 9,
+ "r_gap_ticks": 3,
+ "s1_after_l0_ticks": 1,
+ "frame_clock": "raw PLAYER_INFO generation",
+ "survival_deadline_clock": "native script tick",
+ "survival_op_events": [
+  {
+   "event": "begin",
+   "tick": 72,
+   "player_info": 72,
+   "kind": "Eat { item_id: 379, before_count: 8 }",
+   "applied": "pending",
+   "deadline": 80,
+   "hostlog_tick": null
+  },
+  {
+   "event": "end",
+   "tick": 73,
+   "player_info": 73,
+   "kind": "Eat { item_id: 379, before_count: 8 }",
+   "applied": true,
+   "deadline": 80,
+   "hostlog_tick": null
+  },
+  {
+   "event": "begin",
+   "tick": 80,
+   "player_info": 80,
+   "kind": "Eat { item_id: 379, before_count: 7 }",
+   "applied": "pending",
+   "deadline": 88,
+   "hostlog_tick": null
+  },
+  {
+   "event": "end",
+   "tick": 88,
+   "player_info": 88,
+   "kind": "Eat { item_id: 379, before_count: 7 }",
+   "applied": false,
+   "deadline": 88,
+   "hostlog_tick": null
+  },
+  {
+   "event": "begin",
+   "tick": 88,
+   "player_info": 88,
+   "kind": "Eat { item_id: 379, before_count: 7 }",
+   "applied": "pending",
+   "deadline": 96,
+   "hostlog_tick": null
+  },
+  {
+   "event": "end",
+   "tick": 89,
+   "player_info": 89,
+   "kind": "Eat { item_id: 379, before_count: 7 }",
+   "applied": true,
+   "deadline": 96,
+   "hostlog_tick": null
+  }
+ ],
+ "survival_op_parse_errors": [],
+ "first_prompt_or_climb": {
+  "game_tick": 77,
+  "client_poll": 125
+ },
+ "death": false,
+ "failure": null,
+ "food_drops": [
+  {
+   "at": {
+    "game_tick": 73,
+    "client_poll": 76
+   },
+   "from": 8,
+   "to": 7
+  },
+  {
+   "at": {
+    "game_tick": 89,
+    "client_poll": 280
+   },
+   "from": 7,
+   "to": 6
+  }
+ ],
+ "chat_events": [
+  {
+   "at": {
+    "game_tick": 79,
+    "client_poll": 152
+   },
+   "sequence": 19,
+   "kind": "climb_start",
+   "text": "You start climbing the rocky elevation."
+  },
+  {
+   "at": {
+    "game_tick": 82,
+    "client_poll": 189
+   },
+   "sequence": 21,
+   "kind": "slip",
+   "text": "You slip a little and tumble the rest of the way down the slope."
+  },
+  {
+   "at": {
+    "game_tick": 94,
+    "client_poll": 342
+   },
+   "sequence": 24,
+   "kind": "climb_start",
+   "text": "You start climbing the rocky elevation."
+  }
+ ],
+ "frames": [
+  {
+   "at": {
+    "game_tick": 67,
+    "client_poll": 1
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Preparing",
+   "step_id": null,
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 68,
+    "client_poll": 14
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": null,
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 69,
+    "client_poll": 25
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "buy-shantay-passes",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 70,
+    "client_poll": 48
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": 8134,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "buy-shantay-passes",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 70,
+    "client_poll": 49
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "buy-shantay-passes",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 71,
+    "client_poll": 51
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 72,
+    "client_poll": 62
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 73,
+    "client_poll": 74
+   },
+   "hitpoints": 14,
+   "lobsters": 8,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 73,
+    "client_poll": 76
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 74,
+    "client_poll": 88
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3035,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 75,
+    "client_poll": 100
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3036,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 76,
+    "client_poll": 113
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3037,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 77,
+    "client_poll": 125
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": 359,
+   "prompt_open": true,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3037,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 78,
+    "client_poll": 140
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": 2459,
+   "prompt_open": false,
+   "climb_line": false,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3037,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 79,
+    "client_poll": 152
+   },
+   "hitpoints": 26,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": false,
+   "new_climb_line": true,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3281,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 80,
+    "client_poll": 165
+   },
+   "hitpoints": 14,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3280,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 81,
+    "client_poll": 177
+   },
+   "hitpoints": 14,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": false,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 82,
+    "client_poll": 189
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": true,
+   "hit_kind1": 7,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 83,
+    "client_poll": 203
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": 7,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 84,
+    "client_poll": 215
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": 7,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 85,
+    "client_poll": 228
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": 7,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 86,
+    "client_poll": 241
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": 7,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 86,
+    "client_poll": 248
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 87,
+    "client_poll": 254
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 88,
+    "client_poll": 267
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 89,
+    "client_poll": 279
+   },
+   "hitpoints": 7,
+   "lobsters": 7,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 89,
+    "client_poll": 280
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "Eating",
+   "survival_owner": "Step",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 89,
+    "client_poll": 281
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 90,
+    "client_poll": 302
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": 8134,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 90,
+    "client_poll": 303
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": null,
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 91,
+    "client_poll": 304
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 92,
+    "client_poll": 317
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": 359,
+   "prompt_open": true,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 93,
+    "client_poll": 331
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": 2459,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3282,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 94,
+    "client_poll": 342
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": true,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-1",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3281,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  },
+  {
+   "at": {
+    "game_tick": 95,
+    "client_poll": 356
+   },
+   "hitpoints": 19,
+   "lobsters": 6,
+   "main_modal": -1,
+   "chat_modal": -1,
+   "prompt_open": false,
+   "climb_line": true,
+   "slip_line": true,
+   "new_climb_line": false,
+   "new_slip_line": false,
+   "hit_kind1": null,
+   "decision": "None",
+   "survival_owner": "None",
+   "native_phase": "Working",
+   "step_id": "climb-cell-rock-2",
+   "stage": "desertrescue:6",
+   "npc_facing_or_attacking": false,
+   "tile": [
+    3280,
+    3038,
+    0
+   ],
+   "local_player": true,
+   "failure": null
+  }
+ ],
+ "hostlog": [
+  {
+   "tick": 27,
+   "source": "Script",
+   "message": "quester hazard step=climb-cell-rock-1 max=7 source=content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271 line=15"
+  },
+  {
+   "tick": 29,
+   "source": "Script",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 (interact) begin"
+  },
+  {
+   "tick": 51,
+   "source": "Script",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 (interact) settled"
+  },
+  {
+   "tick": 51,
+   "source": "Script",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 skipped: any(in_area({\"area\":\"surface_jail\"}), not near({\"tile\":[3282,3035,0],\"radius\":4}), near({\"tile\":[3279,3038,0],\"rad..."
+  },
+  {
+   "tick": 51,
+   "source": "Script",
+   "message": "quester hazard step=climb-cell-rock-2 max=7 source=content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271 line=15"
+  },
+  {
+   "tick": 51,
+   "source": "Script",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 (interact) begin (repeated 1 additional times)"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=begin tick=72 kind=Eat { item_id: 379, before_count: 8 } applied=pending deadline=80 player_info=72"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=end tick=73 kind=Eat { item_id: 379, before_count: 8 } applied=true deadline=80 player_info=73"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 (interact) player_info=73"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=begin tick=80 kind=Eat { item_id: 379, before_count: 7 } applied=pending deadline=88 player_info=80"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=end tick=88 kind=Eat { item_id: 379, before_count: 7 } applied=false deadline=88 player_info=88"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=begin tick=88 kind=Eat { item_id: 379, before_count: 7 } applied=pending deadline=96 player_info=88"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester survival op event=end tick=89 kind=Eat { item_id: 379, before_count: 7 } applied=true deadline=96 player_info=89"
+  },
+  {
+   "tick": null,
+   "source": "ScriptTrace",
+   "message": "quester desertrescue: stage desertrescue:6 step climb-cell-rock-1 (interact) player_info=91"
+  }
+ ],
+ "selected_hazard_logs": [
+  {
+   "tick": 27,
+   "source": "Script",
+   "message": "quester hazard step=climb-cell-rock-1 max=7 source=content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271 line=15"
+  }
+ ],
+ "undeclared_damage_logs": [],
+ "journal_retry_logs": [],
+ "source_refs": {
+  "path_step": "crates/script/paths/289/desertrescue.json:2747-2785",
+  "hazard": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:266-271",
+  "climb_start": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:262-266",
+  "climb_slip": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:267-271",
+  "restart_prompt": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:231-237",
+  "journal_root": "crates/script/src/quest_journal/native.rs:11"
+ },
+ "observability_limits": [
+  "ScriptStatus has no observed game tick; this receipt pairs its status with the same polling GameSnapshot tick.",
+  "Quest-step begin lines can be folded. Separate ScriptTrace lines retain PLAYER_INFO generations. Survival OneOp begin/end events retain their own ticks.",
+  "The engine does not publish a separate click-lock bit; applied=true/false is the observed OneOp outcome."
+ ]
+}

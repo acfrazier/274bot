@@ -1,11 +1,11 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
+use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat_rows::{
     DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
 };
 use crate::native::{HostEffect, InteractionReceipt};
-use crate::shim::InteractReq;
 use api::identity::RequestId;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
@@ -22,6 +22,7 @@ fn load() -> SlotScript {
         game_data: Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: crate::surface::no_wilderness(),
     })
     .unwrap();
     factory
@@ -94,6 +95,14 @@ fn read(slot: &mut SlotScript, token: u64, quest: &str) {
     slot.consume_api_control(&InteractReq::ProgressRead {
         request_id: token,
         name: quest.into(),
+        journal_only: false,
+    });
+}
+fn read_journal(slot: &mut SlotScript, token: u64, quest: &str) {
+    slot.consume_api_control(&InteractReq::ProgressRead {
+        request_id: token,
+        name: quest.into(),
+        journal_only: true,
     });
 }
 fn settle_read(slot: &mut SlotScript, snapshot: &GameSnapshot) {
@@ -124,7 +133,6 @@ fn journal_fixture(slot: &mut SlotScript, token: u64) {
     }];
     let path =
         crate::quester::compile::compile_uncached_for_test(&doc, &selected, &quests).unwrap();
-    let pin = selected.selected_pin().unwrap();
     let run = RunKey {
         slot: 400,
         run: token,
@@ -136,8 +144,9 @@ fn journal_fixture(slot: &mut SlotScript, token: u64) {
         run,
         prepared: PreparedProgress {
             selected,
-            pin,
-            path,
+            revision: api::selected::ClientRevision::R289,
+            path: Some(path),
+            requested_name: None,
             quests,
         },
         since: None,
@@ -202,6 +211,9 @@ fn finish_journal(slot: &mut SlotScript, snapshot: &mut GameSnapshot, body: &str
 
 #[test]
 fn unknown_path_refuses_without_preparation_and_duplicate_is_inert() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     read(&mut slot, 1, "nope");
     assert!(
@@ -219,6 +231,9 @@ fn unknown_path_refuses_without_preparation_and_duplicate_is_inert() {
 }
 #[test]
 fn every_released_path_resolves_complete_colour_without_quiet_lease() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     for (index, (quest, display, stage)) in [
         ("cook", "Cook's Assistant", "cook:2"),
@@ -262,6 +277,9 @@ fn every_released_path_resolves_complete_colour_without_quiet_lease() {
 }
 #[test]
 fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 3);
@@ -278,8 +296,72 @@ fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
     assert_eq!(row.evidence.tick, 5);
     slot.stop();
 }
+
+#[test]
+fn journal_only_reads_exact_quest_and_waits_for_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = load();
+    let mut snapshot = snapshot(0xf8f800);
+    read_journal(&mut slot, 30, "cOoK's Assistant");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drive_host(&mut slot, &snapshot, 1, false);
+        if slot.has_native_actions() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "journal-only preparation stalled"
+        );
+        std::thread::yield_now();
+    }
+    finish_journal(&mut slot, &mut snapshot, "Bring eggs: 12 eggs");
+    let Some(ProgressPage::JournalDone {
+        token,
+        result: Some(result),
+    }) = &slot.api.as_ref().unwrap().progress_page
+    else {
+        panic!("missing journal-only result");
+    };
+    assert_eq!(*token, 30);
+    assert_eq!(result.quest.as_ref(), "cook");
+    assert_eq!(result.root, 8134);
+    assert!(result
+        .lines
+        .iter()
+        .any(|line| line.as_ref() == "Bring eggs: 12 eggs"));
+    assert!(result.closed.meets(result.acquired));
+    assert_ne!(result.closed, result.acquired);
+    assert!(!slot.api_owns_foreground());
+
+    read_journal(&mut slot, 31, "not a quest");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drive_host(&mut slot, &snapshot, 6, false);
+        if matches!(
+            &slot.api.as_ref().unwrap().progress_page,
+            Some(ProgressPage::JournalDone {
+                token: 31,
+                result: None
+            })
+        ) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing quest did not settle");
+        std::thread::yield_now();
+    }
+    assert!(!slot.has_native_actions());
+    assert!(!slot.api_owns_foreground());
+    slot.stop();
+}
 #[test]
 fn journal_no_match_is_unknown_not_colour_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 4);
@@ -296,6 +378,9 @@ fn journal_no_match_is_unknown_not_colour_fallback() {
 }
 #[test]
 fn adopted_journal_closes_without_another_button() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     show_journal(&mut snapshot, "Bring eggs: 7 eggs");
@@ -318,6 +403,9 @@ fn adopted_journal_closes_without_another_button() {
 }
 #[test]
 fn gather_preparing_and_running_both_refuse_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     slot.consume_api_control(&InteractReq::GatherRun {
         request_id: 6,
@@ -347,6 +435,9 @@ fn gather_preparing_and_running_both_refuse_progress() {
 }
 #[test]
 fn reading_progress_refuses_gather_and_drops_only_game_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let run = slot.seat.as_ref().expect("armed gameplay seat").run();
     let interact = |request| SeatInteractDecoded {
@@ -363,7 +454,10 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
                 run: run.run,
                 session: run.session,
                 kind: NativeKind::QuestProgress,
-                args: SeatStartArgs::QuestProgress("cook".into()),
+                args: SeatStartArgs::QuestProgress {
+                    name: "cook".into(),
+                    journal_only: false,
+                },
             }],
             decisions: Vec::new(),
             cancels: Vec::new(),
@@ -380,6 +474,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
         },
         0,
         &[],
+        None,
     );
     assert_eq!(
         slot.seat.as_ref().unwrap().session(),
@@ -396,7 +491,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
     assert!(
         matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 10, reason }) if reason.as_ref() == "busy")
     );
-    let (_, rows, owned) = slot.drain_host_interacts();
+    let (_, rows, owned) = slot.drain_host_interacts(None);
     assert!(owned);
     assert_eq!(
         rows.into_iter()
@@ -409,6 +504,9 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
 }
 #[test]
 fn supersede_before_journal_replaces_preparing_and_reading() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     read(&mut slot, 11, "cook");
     read(&mut slot, 12, "cook");
@@ -430,6 +528,9 @@ fn supersede_before_journal_replaces_preparing_and_reading() {
 }
 #[test]
 fn supersede_open_journal_refuses_second_closes_first_and_third_resolves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 15);
@@ -456,6 +557,9 @@ fn supersede_open_journal_refuses_second_closes_first_and_third_resolves() {
 }
 #[test]
 fn unavailable_colour_waits_eight_active_seconds_and_hold_does_not_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let snapshot = GameSnapshot::new();
     journal_fixture(&mut slot, 18);
@@ -485,6 +589,9 @@ fn unavailable_colour_waits_eight_active_seconds_and_hold_does_not_read() {
 
 #[test]
 fn foreign_quest_journal_refuses_busy_without_quiet_lease_or_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     snapshot.seed_main_modal(
@@ -518,6 +625,9 @@ fn preparation_compile_refusal_preserves_specific_detail() {
 
 #[test]
 fn established_load_progress_post_read_idle_polls_allocate_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let snapshot = snapshot(0x00f800);
     read(&mut slot, 26, "cook");
@@ -547,6 +657,9 @@ fn established_load_progress_post_read_idle_polls_allocate_nothing() {
 }
 #[test]
 fn occupied_modal_refuses_busy_without_quiet_lease_or_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     snapshot.seed_main_modal(123, vec![]);
@@ -560,6 +673,9 @@ fn occupied_modal_refuses_busy_without_quiet_lease_or_click() {
 }
 #[test]
 fn reconnect_open_read_is_stale_and_explicit_reset_clears_pages_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 20);
@@ -583,6 +699,9 @@ fn reconnect_open_read_is_stale_and_explicit_reset_clears_pages_authority() {
 }
 #[test]
 fn established_load_progress_idle_polls_allocate_nothing_until_first_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let snapshot = snapshot(0x00f800);
     assert!(slot.api.is_none());
@@ -605,6 +724,9 @@ fn established_load_progress_idle_polls_allocate_nothing_until_first_row() {
 }
 #[test]
 fn progress_flag_count_is_bounded_to_nine_digits_by_shared_resolver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 23);

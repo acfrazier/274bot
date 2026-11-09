@@ -6,7 +6,7 @@ use api::selected::{QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use nav_planner::collision::{pack_walk, WorldCollision};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{Leg, RouteError};
 use nav_planner::transport::TransportGraph;
 #[cfg(feature = "test-support")]
@@ -16,7 +16,6 @@ use nav_planner::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
 use script::combat::request::{ActorKind, ActorRef};
 use script::combat::risk::{KindRisk, LiveRow, UnknownKind};
-use std::num::NonZeroU16;
 use std::sync::{Arc, LazyLock};
 
 fn tile(x: i32, z: i32) -> WorldTile {
@@ -28,6 +27,121 @@ fn selected_combat() -> Arc<CombatTables> {
         CombatTables::build(api::game_data::for_revision(ClientRevision::R289).unwrap()).unwrap()
     });
     Arc::clone(&TABLES)
+}
+
+#[test]
+fn explicit_377_tables_keep_selected_food_prayer_dose_and_condition_identity() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
+    let selected =
+        api::game_data::for_revision(ClientRevision::R377).expect("selected revision 377 facts");
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    bind_377_tables(&world, Some(Arc::clone(&selected))).expect("bind revision 377 tables");
+
+    let cached = tables(&world).expect("bound combat and risk tables");
+    assert_eq!(cached.combat.selected().revision(), 377);
+    assert!(Arc::ptr_eq(cached.combat.selected(), &selected));
+
+    let food = selected
+        .consumable("cooked_chompy")
+        .expect("revision 377 cooked chompy");
+    let food_fact = cached
+        .combat
+        .food(food.item.id)
+        .expect("selected food table contains cooked chompy");
+    assert_eq!(
+        food_fact.heal,
+        food.fixed_hp_heal().expect("fixed food heal")
+    );
+    assert!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .food(food.item.id)
+            .is_none(),
+        "the legacy R289 table has no cooked-chompy food row"
+    );
+
+    let prayer = selected
+        .prayer_by_name("Protect from Melee")
+        .expect("revision 377 melee prayer");
+    let selected_prayer = cached
+        .combat
+        .prayer(script::combat::tables::PrayerRole::Protect, 2)
+        .expect("selected protect-from-melee row");
+    assert!(std::ptr::eq(prayer, selected_prayer));
+
+    let dose_fact = selected
+        .consumable("1doseantipoison")
+        .expect("revision 377 one-dose antipoison");
+    let selected_dose = cached
+        .combat
+        .potion(script::combat::tables::PotionKind::Antipoison)
+        .expect("selected antipoison family")
+        .doses[0]
+        .expect("selected one-dose antipoison stage");
+    let next_id = selected
+        .item_by_alias(dose_fact.next_stage.as_deref().expect("selected next dose"))
+        .expect("selected next-dose item")
+        .id;
+    assert_eq!(selected_dose.id, dose_fact.item.id);
+    assert_eq!(
+        selected_dose.doses,
+        dose_fact.dose_count.expect("dose count")
+    );
+    assert_eq!(selected_dose.next_id, next_id);
+
+    let (condition_combat, poison_unknown_v) =
+        condition_tables(&world).expect("condition uses bound tables");
+    assert!(Arc::ptr_eq(&cached.combat, &condition_combat));
+    assert_eq!(poison_unknown_v, cached.risks.poison_unknown_v);
+    let (again, _) = condition_tables(&world).expect("condition tables stay warm");
+    assert!(Arc::ptr_eq(&condition_combat, &again));
+}
+
+#[test]
+fn unavailable_explicit_377_tables_do_not_fall_back_to_289() {
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    bind_377_tables(&world, None).expect("unavailable selected facts are a closed binding");
+
+    assert!(tables(&world).is_none());
+    assert!(condition_tables(&world).is_none());
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    assert_eq!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .selected()
+            .revision(),
+        289,
+        "the available legacy table is not selected for the explicitly bound world"
+    );
+}
+
+#[test]
+fn unbound_world_keeps_the_legacy_r289_table_default() {
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let legacy = script::combat::guard::shared_tables().expect("legacy tables");
+    let (first, _) = condition_tables(&world).expect("legacy default table");
+    let (again, _) = condition_tables(&world).expect("cached legacy default table");
+
+    assert_eq!(first.selected().revision(), 289);
+    assert!(Arc::ptr_eq(&legacy, &first));
+    assert!(Arc::ptr_eq(&first, &again));
 }
 
 fn ice_kind(combat: &CombatTables) -> ZoneKind {
@@ -152,21 +266,20 @@ fn empty_corridor() -> NavWorld {
 }
 
 fn input(hp: u8) -> RiskInput {
-    RiskInput {
-        pos: tile(0, 1),
-        poison: PoisonState::Clear,
-        tick: 10,
-        hp,
-        hp_max: 99,
-        prayer: 10,
-        prayer_base: 10,
-        combat: Some(50),
-        missing_facts: false,
-        unattributed: false,
-        input_locked: false,
-        overflow: false,
-        ..RiskInput::default()
-    }
+    let mut input = RiskInput::default();
+    input.pos = tile(0, 1);
+    input.poison = PoisonState::Clear;
+    input.tick = 10;
+    input.hp = hp;
+    input.hp_max = 99;
+    input.prayer = 10;
+    input.prayer_base = 10;
+    input.combat = Some(50);
+    input.set_missing_facts(false);
+    input.set_unattributed(false);
+    input.set_input_locked(false);
+    input.set_overflow(false);
+    input
 }
 
 fn make_admission(policy: RiskPolicy, input: RiskInput) -> Admission {
@@ -200,7 +313,12 @@ fn real_search(
         avoid,
     ) {
         Ok(route) => crate::RouteOutcome::Routed(route),
-        Err(RouteError::NoPath | RouteError::BudgetExhausted) => crate::RouteOutcome::NoPath,
+        Err(RouteError::BudgetExhausted) => crate::RouteOutcome::IncompleteSearch {
+            search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                settled: None,
+            },
+        },
+        Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
     }
 }
 
@@ -228,17 +346,18 @@ fn routed(result: &RouteAdmission) -> &Route {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             route
         }
-        crate::RouteOutcome::NoPath => panic!("expected a real router route"),
+        crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => {
+            panic!("expected a real router route")
+        }
     }
 }
-
 #[test]
 fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
     for map_members in [false, true] {
         let input = unavailable(map_members);
-        assert!(input.missing_facts);
-        assert!(!input.overflow && !input.unattributed);
-        assert_eq!(input.map_members, map_members);
+        assert!(input.missing_facts());
+        assert!(!input.overflow() && !input.unattributed());
+        assert_eq!(input.map_members(), map_members);
         assert_eq!(input.poison, PoisonState::Unknown { since: 0 });
     }
 }
@@ -251,20 +370,19 @@ fn count_kernels<T>(work: impl FnOnce() -> T) -> (T, usize) {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[3, 6, 9]);
     let from = tile(0, 1);
     let to = tile(23, 1);
     let state = WorldState::default();
     let avoid = [];
     let options = FindOptions::default();
-    let mut admission = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            prayer: 99,
-            prayer_base: 99,
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
     admission.allow.prayer = true;
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
@@ -305,9 +423,65 @@ fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
     assert_eq!(routed(&result).dest, to);
 }
 
+#[test]
+fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let world = known_corridor(&[3]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let state = WorldState::default();
+    let avoid = [];
+    let options = FindOptions::default();
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
+    admission.allow.prayer = true;
+    let mut searches = Vec::new();
+    let result = route(
+        &world,
+        &admission,
+        options,
+        |opts| {
+            searches.push(opts);
+            if searches.len() == 1 {
+                crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: Some(524_288),
+                    },
+                }
+            } else {
+                crate::RouteOutcome::NoPath
+            }
+        },
+        || real_witness(&world, from, to, options, &state, &avoid),
+    );
+
+    assert_eq!(searches.len(), 2, "one complete named-zone retry runs");
+    assert_eq!(searches[0].zones, ZoneExempt::NONE);
+    assert_eq!(
+        searches[1].zones,
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap()
+    );
+    assert_eq!(result.tried, 1);
+    assert!(matches!(result.outcome, crate::RouteOutcome::NoPath));
+    assert_eq!(
+        result.refusal,
+        Some(WalkRefusal::NoRouteWithinBounds {
+            tried: 1,
+            last: None
+        })
+    );
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_nine_zone_witness_is_bounded_and_never_researched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let spawns = [1, 3, 5, 7, 9, 11, 13, 15, 17];
     let combat = selected_combat();
     let kind = ice_kind(&combat);
@@ -360,6 +534,9 @@ fn u6_nine_zone_witness_is_bounded_and_never_researched() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kind = ice_kind(&combat);
     let zones = vec![zone(4, 0, Some(0)), zone(7, 0, Some(0))];
@@ -388,14 +565,10 @@ fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
     let state = WorldState::default();
     let avoid = [];
     let options = FindOptions::default();
-    let mut admission = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            prayer: 99,
-            prayer_base: 99,
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
     admission.allow.prayer = true;
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
@@ -430,6 +603,9 @@ fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_unknown_member_in_group_blocks_the_first_witness() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kinds = vec![ice_kind(&combat), missing_kind()];
     let zones = vec![zone(4, 0, Some(0)), zone(7, 1, Some(0))];
@@ -492,7 +668,10 @@ fn u6_unknown_member_in_group_blocks_the_first_witness() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
+fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let unknown_world = unknown_corridor(5);
     let lethal_world = known_corridor(&[5]);
     let lethal_hp = kind_facts(&lethal_world, 0).max_hit;
@@ -507,10 +686,13 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
         let options = FindOptions::default();
         let keys = real_witness(&world, from, to, options, &state, &[]).unwrap();
         assert_eq!(keys, [ZoneKey::Zone(0)]);
-        assert!(!witness_admissible(&world, &input, &keys));
+        assert_eq!(
+            witness_admissible(&world, &input, &keys),
+            expected_unknown.is_none()
+        );
         if let Some(why) = expected_unknown {
             let kind = kind_facts(&world, 0);
-            assert!(kind.unknown_for(input.map_members).is_some());
+            assert!(kind.unknown_for().is_some());
             assert_eq!(why, UnknownWhy::MissingFacts);
         } else {
             let max_hit = kind_facts(&world, 0).max_hit;
@@ -535,17 +717,26 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
             );
             (result, seen)
         });
-        assert_eq!(searches, 1);
-        assert_eq!(kernels, 3);
-        assert_eq!(result.tried, 0);
-        assert_eq!(
-            result.refusal,
-            Some(WalkRefusal::NoRouteWithinBounds {
-                tried: 0,
-                last: None
-            })
-        );
-        assert!(result.assessment.is_none());
+        if expected_unknown.is_some() {
+            assert_eq!(searches, 1);
+            assert_eq!(kernels, 3);
+            assert_eq!(result.tried, 0);
+            assert_eq!(
+                result.refusal,
+                Some(WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None
+                })
+            );
+            assert!(result.assessment.is_none());
+        } else {
+            // Old: no retry at hp == max_hit. New: assess the routed crossing.
+            assert_eq!(searches, 2);
+            assert_eq!(kernels, 5);
+            assert_eq!(result.tried, 1);
+            assert_eq!(result.refusal, Some(WalkRefusal::Unsurvivable));
+            assert!(result.assessment.is_some());
+        }
     }
 }
 
@@ -557,7 +748,10 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
 /// known group, a group with one missing member, mixed key sets and keys
 /// this pack does not name.
 #[test]
-fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
+fn witness_verdicts_check_supported_facts_without_a_max_hit_filter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kinds = vec![
         ice_kind(&combat),
@@ -645,18 +839,17 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
     // facts), or a hazard's curated damage (unknown when uncurated).
     let table = world.graph.zones.as_ref().unwrap();
     let risks = &tables(&world).unwrap().risks;
-    let row_ok = |row: u16, input: &RiskInput| {
+    let row_ok = |row: u16, _input: &RiskInput| {
         let Some(zone) = table.zones().get(usize::from(row)) else {
             return false;
         };
         let kind = &table.kinds()[usize::from(zone.kind)];
         if kind.npc_id == -1 {
-            nav_planner::zones::curated::hazard_damage(kind.id.as_ref())
-                .is_some_and(|max| max < input.hp)
+            nav_planner::zones::curated::hazard_damage(kind.id.as_ref()).is_some()
         } else {
-            risks.npc(kind.npc_id).is_some_and(|facts| {
-                facts.unknown_for(input.map_members).is_none() && facts.max_hit < input.hp
-            })
+            risks
+                .npc(kind.npc_id)
+                .is_some_and(|facts| facts.unknown_for().is_none())
         }
     };
     let round_two = |keys: &[ZoneKey], input: &RiskInput| {
@@ -691,27 +884,27 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
     let mut admitted = 0;
     for map_members in [false, true] {
         for hp in [1, 6, 7, 20, 21, 99] {
-            let input = RiskInput {
-                map_members,
-                ..input(hp)
-            };
+            let mut input = input(hp);
+            input.set_map_members(map_members);
             for (keys, max_hit) in cases {
                 let verdict = witness_admissible(&world, &input, keys);
                 let context = format!("keys {keys:?}, hp {hp}, members {map_members}");
-                assert_eq!(verdict, max_hit.is_some_and(|max| max < hp), "{context}");
+                assert_eq!(verdict, max_hit.is_some(), "{context}");
                 assert_eq!(verdict, round_two(keys, &input), "{context}");
                 admitted += usize::from(verdict);
             }
         }
     }
-    // Both verdicts occur, for each member flag: hp 7 and 20 admit 2 key
-    // sets each, hp 21 and 99 admit 5 each.
-    assert_eq!(admitted, 2 * (2 + 2 + 5 + 5));
+    // Five supported key sets at every HP, independent of membership.
+    assert_eq!(admitted, 2 * 6 * 5);
 }
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
+fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const BUDGET: usize = 1;
     const WIDTH: usize = 160;
     const WITNESS_X: i32 = 80;
@@ -748,8 +941,16 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
                 BUDGET,
             ) {
                 Ok(found) => crate::RouteOutcome::Routed(found),
-                Err(error) => {
-                    observed_errors.push(error);
+                Err(RouteError::BudgetExhausted) => {
+                    observed_errors.push(RouteError::BudgetExhausted);
+                    crate::RouteOutcome::IncompleteSearch {
+                        search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                            settled: None,
+                        },
+                    }
+                }
+                Err(RouteError::NoPath) => {
+                    observed_errors.push(RouteError::NoPath);
                     crate::RouteOutcome::NoPath
                 }
             },
@@ -773,15 +974,14 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
     );
     assert_eq!(
         kernels, 5,
-        "both bounded seam searches and the full witness diagnosis use real kernels"
+        "the incomplete search still runs the witness and one named retry"
     );
     assert_eq!(result.tried, 1);
-    assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
+    assert_eq!(result.blocked.len(), 1);
     assert_eq!(
         result.refusal,
-        Some(WalkRefusal::NoRouteWithinBounds {
-            tried: 1,
-            last: None
+        Some(WalkRefusal::SearchIncomplete {
+            nodes_settled: None
         })
     );
     assert!(result.assessment.is_none());
@@ -790,6 +990,9 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[10]);
     let from = tile(0, 1);
     let to = tile(10, 1);
@@ -831,6 +1034,9 @@ fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let mut graph = TransportGraph {
         wilderness: WildernessRules {
@@ -930,7 +1136,10 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_clear() {
+fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -951,19 +1160,18 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     });
     assert_eq!(kernels, 1, "endpoint completion needs no named retry");
     assert_eq!(crossing.tried, 0);
-    assert_eq!(
-        crossing.refusal,
-        Some(WalkRefusal::Unknown(UnknownWhy::Poison))
-    );
+    // Old: Unknown(Poison). New: the charged route at HP99 is admitted.
+    assert_eq!(crossing.refusal, None);
     let unknown_assessment = crossing.assessment.as_ref().unwrap();
     assert_eq!(
         unknown_assessment.input.poison,
         PoisonState::Unknown { since: 0 }
     );
-    assert!(unknown_assessment
-        .reason
-        .contains("Poison status is unknown until the bot can track it"));
-    assert!(!unknown_assessment.reason.contains("S2c"));
+    assert_eq!(unknown_assessment.verdict, Verdict::Survivable);
+    assert!(matches!(
+        unknown_assessment.poison_test,
+        risk::PoisonTest::PassesCharged { .. }
+    ));
 
     let override_admission = make_admission(RiskPolicy::Proceed, uncertain);
     let (overridden, override_kernels) = count_kernels(|| {
@@ -978,13 +1186,10 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     assert_eq!(override_kernels, 1);
     assert!(overridden.refusal.is_none());
     let override_assessment = overridden.assessment.as_ref().unwrap();
-    assert_eq!(
-        override_assessment.verdict,
-        Verdict::Unknown(UnknownWhy::Poison)
-    );
+    assert_eq!(override_assessment.verdict, Verdict::Survivable);
     assert!(override_assessment
         .reason
-        .starts_with("Poison status is unknown until the bot can track it; "));
+        .starts_with("walk proceeds without the check (Always)"));
 
     let safe_world = empty_corridor();
     let safe_to = tile(10, 1);
@@ -1034,6 +1239,9 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
 #[cfg(feature = "test-support")]
 #[test]
 fn u7_proceed_avoid_inherit_and_compat_keep_the_seam_contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = unknown_corridor(5);
     let from = tile(0, 1);
     let to = tile(10, 1);
@@ -1103,16 +1311,23 @@ fn u7_proceed_avoid_inherit_and_compat_keep_the_seam_contract() {
         )
     });
     assert_eq!(avoid_kernels, 2);
-    assert!(
-        avoided.refusal.is_none(),
-        "the request-scoped named grant admits the crossing"
+    assert_eq!(
+        avoided.refusal,
+        Some(WalkRefusal::Unsurvivable),
+        "a named grant does not bypass the P1-C death bound"
     );
-    assert!(avoided.assessment.is_some());
+    assert_eq!(
+        avoided.assessment.as_ref().unwrap().verdict,
+        script::combat::risk::Verdict::Unsurvivable
+    );
 }
 
 #[cfg(feature = "test-support")]
 #[test]
 fn u7_endpoint_unknown_and_unsafe_crossings_keep_typed_refusals() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let from = tile(0, 1);
     let to = tile(10, 1);
     let state = WorldState::default();
@@ -1160,16 +1375,12 @@ fn u7_endpoint_unknown_and_unsafe_crossings_keep_typed_refusals() {
     );
     assert!(matches!(
         unsafe_endpoint.refusal,
-        Some(WalkRefusal::Unsurvivable | WalkRefusal::FixableWith)
+        Some(WalkRefusal::Unsurvivable)
     ));
 }
 
 #[test]
 fn u7_refusal_mapping_preserves_typed_risk_refusals() {
-    assert_eq!(
-        verdict_refusal(Verdict::FixableWith),
-        WalkRefusal::FixableWith
-    );
     assert_eq!(
         verdict_refusal(Verdict::Unsurvivable),
         WalkRefusal::Unsurvivable
@@ -1182,6 +1393,9 @@ fn u7_refusal_mapping_preserves_typed_risk_refusals() {
 
 #[test]
 fn u11_fresh_ignores_only_clock_age() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let mut input = input(80);
     input.live_len = 1;
@@ -1242,7 +1456,7 @@ fn u11_fresh_ignores_only_clock_age() {
     };
     changed.push(poison);
     let mut off_debt = input;
-    off_debt.off_debt = true;
+    off_debt.set_off_debt(true);
     changed.push(off_debt);
 
     for value in changed {
@@ -1257,6 +1471,9 @@ fn u11_fresh_ignores_only_clock_age() {
 
 #[test]
 fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -1298,15 +1515,18 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
         .assessment
         .as_ref()
         .is_some_and(|fresh_assessment| !Arc::ptr_eq(fresh_assessment, &worker_assessment)));
-    assert!(bot.last_assessment.as_ref().unwrap().input.missing_facts);
+    assert!(bot.last_assessment.as_ref().unwrap().input.missing_facts());
     assert_eq!(
-        bot.risk_refusal.as_deref().map(|entry| entry.1),
-        Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+        bot.risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(&WalkRefusal::Unknown(UnknownWhy::MissingFacts))
     );
 }
 
 #[test]
 fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -1352,7 +1572,10 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
         Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
     );
     let reason = &arm.last_assessment.as_ref().unwrap().reason;
-    assert!(reason.contains("Unknown(MissingFacts)"));
+    assert!(
+        reason.contains("required combat facts are unavailable"),
+        "{reason}"
+    );
     assert!(
         arm.admission.is_none(),
         "the refusal closes this stale manual arm"
@@ -1361,6 +1584,9 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
 
 #[test]
 fn u11_publication_during_live_escape_refuses_without_reassessment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
@@ -1397,8 +1623,8 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
 
     assert!(bot.route.is_none());
     assert_eq!(
-        bot.risk_refusal.as_deref().map(|entry| entry.1),
-        Some(WalkRefusal::EscapeInProgress)
+        bot.risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(&WalkRefusal::EscapeInProgress)
     );
     assert!(Arc::ptr_eq(
         bot.last_assessment.as_ref().unwrap(),
@@ -1414,6 +1640,9 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
@@ -1460,7 +1689,6 @@ fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowe
 #[test]
 fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     let provider: Arc<dyn EvidenceProvider> = Arc::new(UnknownEvidence);
-    let family = QuestFamilyId::new([0x27; 32], NonZeroU16::new(1).unwrap());
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 3,
@@ -1470,7 +1698,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         tick: 40,
         sequence: 41,
     };
-    let evidence = QuestEvidence::new(provider, family, stamp);
+    let evidence = QuestEvidence::new(provider, stamp);
     let avoid = Arc::<[AvoidRect]>::from([AvoidRect {
         min_x: 3,
         max_x: 5,
@@ -1530,16 +1758,6 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
 
     assert_eq!(arm.basis.as_ref().unwrap().options, frozen_options);
     assert_eq!(arm.basis.as_ref().unwrap().avoid.as_ref(), avoid.as_ref());
-    assert_eq!(
-        arm.basis
-            .as_ref()
-            .unwrap()
-            .quest_evidence
-            .as_ref()
-            .unwrap()
-            .family(),
-        &family
-    );
     assert_eq!(retained._route.destination(), tile(1, 1));
     assert_eq!(retained.options, frozen_options);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
@@ -1555,7 +1773,6 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     assert!(!retained.options.allow_wilderness);
     assert!(!retained.options.allow_bank_fetch);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
-    assert_eq!(retained.quest_evidence.as_ref().unwrap().family(), &family);
 }
 
 #[cfg(feature = "test-support")]
@@ -1693,7 +1910,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     });
 
     let snapshot = api::snapshot::GameSnapshot::new();
-    let _ = capture(&snapshot, false, None, false);
+    let _ = capture(&snapshot, false, None, false, None);
     let publish_world = empty_corridor();
     let publish_from = tile(0, 1);
     let publish_to = tile(8, 1);
@@ -1775,12 +1992,31 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
         assert!(assessment.plan.complete);
         assert_eq!(assessment.plan.intervals.len(), 7);
         assert_eq!(assessment.plan.crossings.len(), 7);
-        assert!(!permitted);
+        assert!(permitted, "P1-C admits this bounded crossing route");
         if iteration >= WARMUPS {
             samples.push(elapsed);
         }
     }
     summarize("long_2048_tiles_64_legs_7_crossings", samples, 0);
+
+    // The stale publication path runs the full probability assessment on the
+    // pump. Keep a separate cell from the missing-input publication above.
+    let worker_assessment = assess(&long_route, &long_world, &long_admission);
+    let mut changed = long_admission;
+    changed.input.hp -= 1;
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for iteration in 0..(WARMUPS + SAMPLES) {
+        let started = Instant::now();
+        assert!(!fresh(&worker_assessment, changed.input));
+        let assessment = std::hint::black_box(assess(&long_route, &long_world, &changed));
+        let elapsed = started.elapsed().as_nanos();
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.input.hp, 98);
+        if iteration >= WARMUPS {
+            samples.push(elapsed);
+        }
+    }
+    summarize("publication_stale_reassessment", samples, 0);
 }
 
 #[cfg(feature = "test-support")]
@@ -1834,6 +2070,14 @@ fn escape(state: EscapeState) -> Escape {
 struct UnknownEvidence;
 
 impl EvidenceProvider for UnknownEvidence {
+    fn observe_gate(
+        &self,
+        _gate: &QuestGate,
+        _required_after: EvidenceStamp,
+    ) -> Option<api::prereq_knowledge::Observation> {
+        None
+    }
+
     fn test_gate(&self, _gate: &QuestGate, _required_after: EvidenceStamp) -> Truth {
         Truth::Unknown
     }
@@ -1841,19 +2085,18 @@ impl EvidenceProvider for UnknownEvidence {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn unknown_poison_witness_is_not_researched() {
+fn witness_retry_is_assessed_with_unknown_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[12]);
     let from = tile(0, 1);
     let to = tile(23, 1);
     let options = FindOptions::default();
     let state = WorldState::default();
-    let request = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            poison: PoisonState::default(),
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.poison = PoisonState::default();
+    let request = make_admission(RiskPolicy::Inherit, risk_input);
     let (result, kernels) = count_kernels(|| {
         route(
             &world,
@@ -1863,20 +2106,22 @@ fn unknown_poison_witness_is_not_researched() {
             || real_witness(&world, from, to, options, &state, &[]),
         )
     });
-    assert_eq!(
-        kernels, 3,
-        "strict plus diagnosis only; no doomed named retry"
-    );
-    assert_eq!(result.tried, 0);
+    // Old: three kernels, tried0 and NoRouteWithinBounds. New: one retry.
+    assert_eq!(kernels, 5);
+    assert_eq!(result.tried, 1);
     assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
-    assert!(matches!(
+    assert!(result.assessment.is_some());
+    assert_ne!(
         result.refusal,
-        Some(WalkRefusal::NoRouteWithinBounds { tried: 0, .. })
-    ));
+        Some(WalkRefusal::Unknown(UnknownWhy::Poison))
+    );
 }
 
 #[test]
 fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let route = Arc::new(
         nav_planner::router::find_with_avoid(
@@ -1929,6 +2174,9 @@ fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
 
 #[test]
 fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
@@ -1947,20 +2195,14 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
             (tile(0, 1), tile(23, 1)),
         ] {
             let expected = real_search(&world, from, to, options, &state, &[]);
+            let mut risk_input = input(1);
+            risk_input.pos = from;
+            risk_input.poison = PoisonState::default();
+            risk_input.set_unattributed(true);
             let request = Admission {
                 policy: globals.risk_policy(Default::default(), Default::default()),
                 enforce: globals.enforces_risk(Default::default(), Default::default()),
-                ..Admission::manual(
-                    options,
-                    RiskInput {
-                        pos: from,
-                        poison: PoisonState::default(),
-                        unattributed: true,
-                        ..input(1)
-                    },
-                    1,
-                    globals,
-                )
+                ..Admission::manual(options, risk_input, 1, globals)
             };
             let actual = route(
                 &world,
@@ -1985,11 +2227,55 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
     }
 }
 
+/// An empty declared stage overrides a global danger grant. The old inherited
+/// walk crosses this only route, but the stage's empty grant set avoids it.
+#[test]
+fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const { assert!(!crate::NET_AVAILABLE) };
+    let world = known_corridor(&[12]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let state = WorldState::default();
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Always);
+    let script = script::native::WalkPermissions::default();
+
+    let inherited = script::native::WalkOptions::default();
+    assert!(!globals.enforces_risk(script, inherited));
+    assert_eq!(globals.risk_policy(script, inherited), RiskPolicy::Proceed);
+    let old_route_options = globals.manual_options(false);
+    assert!(matches!(
+        real_search(&world, from, to, old_route_options, &state, &[]),
+        crate::RouteOutcome::Routed(_)
+    ));
+
+    let empty_stage = script::native::WalkOptions {
+        allow_danger_zones: script::native::WalkBit::Forbid,
+        ..Default::default()
+    };
+    assert!(globals.enforces_risk(script, empty_stage));
+    assert_eq!(globals.risk_policy(script, empty_stage), RiskPolicy::Avoid);
+    let no_zone_exemptions = nav_planner::router::FindOptions {
+        zones: ZoneExempt::NONE,
+        ..old_route_options
+    };
+    assert!(matches!(
+        real_search(&world, from, to, no_zone_exemptions, &state, &[]),
+        crate::RouteOutcome::NoPath
+    ));
+}
+
 /// R3 M-A: the named retry's keys never reach `admission.grants`, so the
 /// retried route must be judged. From a fringe origin (inside E_z, outside
 /// A_z) walking into A_z is a crossing, never an unjudged escape.
 #[test]
 fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kind = ice_kind(&combat);
     let spawn = 30;
@@ -2007,13 +2293,9 @@ fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
     let state = WorldState::default();
     let options = FindOptions::default();
     for (hp, refusal) in [(12, Some(WalkRefusal::Unsurvivable)), (99, None)] {
-        let request = make_admission(
-            RiskPolicy::Inherit,
-            RiskInput {
-                pos: from,
-                ..input(hp)
-            },
-        );
+        let mut risk_input = input(hp);
+        risk_input.pos = from;
+        let request = make_admission(RiskPolicy::Inherit, risk_input);
         let result = route(
             &world,
             &request,
@@ -2036,6 +2318,9 @@ fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
 /// refusals keep S2b's retained arm refusal.
 #[test]
 fn held_manual_no_path_leaves_walk_arms_untouched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
@@ -2064,12 +2349,11 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
             ..Default::default()
         })),
     );
+    let mut risk_input = input(99);
+    risk_input.pos = tile(0, 1);
     let held = Admission::manual(
         FindOptions::default(),
-        RiskInput {
-            pos: tile(0, 1),
-            ..input(99)
-        },
+        risk_input,
         1,
         crate::WalkGlobals::default(),
     );
@@ -2119,18 +2403,18 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
 }
 
 fn unknown_poison(hp: u8) -> RiskInput {
-    RiskInput {
-        poison: PoisonState::Unknown { since: 0 },
-        ..input(hp)
-    }
+    let mut input = input(hp);
+    input.poison = PoisonState::Unknown { since: 0 };
+    input
 }
 
-/// SURVIVABLE-DEST-GRANTS: a `cross` walk names its transit grant and relies
-/// on the router's endpoint completion for the zone it ends in. That
-/// destination zone is granted, not judged, so Unknown poison (no S2c
-/// observer yet) does not refuse the walk the Path authored.
+/// A named grant lets the router enter. It does not omit any attack.
+/// Unknown poison is tested with the charged and clear timelines.
 #[test]
 fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[5, 20]);
     let (from, to) = (tile(0, 1), tile(20, 1));
     let state = WorldState::default();
@@ -2153,7 +2437,7 @@ fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
     assert_eq!(result.refusal, None);
     assert_eq!(routed(&result).dest, to);
     let assessment = result.assessment.as_ref().unwrap();
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
     assert_eq!(
         assessment.plan.crossings.len(),
         2,
@@ -2162,15 +2446,16 @@ fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
     assert_eq!(
         assessment.input.poison,
         PoisonState::Unknown { since: 0 },
-        "admission grants the zone; it never claims the poison clear"
+        "admission never claims that poison is clear"
     );
 }
 
-/// The destination grant is the route endpoint's zones only. A crossing of an
-/// unnamed zone on the way, separate from or merged into the destination's
-/// crossing, is still judged and refused while poison is Unknown.
+/// Naming extra zones cannot change the death bound or bypass a refusal.
 #[test]
 fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let state = WorldState::default();
     let (from, to) = (tile(0, 1), tile(20, 1));
     for (spawns, shape) in [([5, 12, 20], "separate"), ([5, 18, 20], "merged")] {
@@ -2197,19 +2482,27 @@ fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
             ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
         };
         let assessment = assess(&crossing, &world, &named);
-        assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-        assert!(
-            !permits(&crossing, &world, &named, &assessment),
-            "{shape}: the unnamed zone at {} is judged",
-            spawns[1]
-        );
+        if shape == "separate" {
+            assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+            assert!(
+                assessment.reason.contains("no way out"),
+                "{}",
+                assessment.reason
+            );
+        } else {
+            assert_eq!(assessment.verdict, Verdict::Survivable);
+        }
+        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+        let named_passes = permits(&crossing, &world, &named, &assessment);
         let both = Admission {
             grants: ZoneExempt::named(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]).unwrap(),
             ..named
         };
-        assert!(
-            permits(&crossing, &world, &both, &assessment),
-            "{shape}: naming it as well grants every crossing"
+        let both_assessment = assess(&crossing, &world, &both);
+        assert_eq!(assessment.bound, both_assessment.bound, "{shape}");
+        assert_eq!(
+            named_passes,
+            permits(&crossing, &world, &both, &both_assessment)
         );
         let held = Admission {
             enforce: false,
@@ -2269,18 +2562,17 @@ fn real_squire_walk(
     )
     .unwrap();
     let globals = crate::WalkGlobals::default();
+    let mut risk_input = unknown_poison(40);
+    risk_input.pos = from;
+    risk_input.combat = Some(40);
+    risk_input.hp_max = 40;
     let admission = Admission {
         policy: globals.risk_policy(Default::default(), Default::default()),
         // A nonempty `cross` arms enforcement while the default is held.
         enforce: true,
         grants: opts.zones,
         allow: WalkAllow::default(),
-        input: RiskInput {
-            pos: from,
-            combat: Some(40),
-            hp_max: 40,
-            ..unknown_poison(40)
-        },
+        input: risk_input,
         generation: 1,
         compat_v1: false,
         escape: None,
@@ -2288,6 +2580,7 @@ fn real_squire_walk(
     let request = crate::ScriptRouteRequest {
         candidate_goals: None,
         admission,
+        prereq_catalog: None,
         generation: 1,
         request_id: 1,
         world: Arc::clone(world),
@@ -2297,7 +2590,7 @@ fn real_squire_walk(
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
         opts,
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -2318,10 +2611,27 @@ fn real_squire_walk(
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison() {
-    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
-    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+    let Some(pack) = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "real 289 navigation pack for the squire ice-chain admission test",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&pack).unwrap());
+    let Some(squire_path) = api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../script/paths/289/squire.json"
+        ),
+        "real 289 Squire route",
+    ) else {
+        return;
+    };
+    let squire_source = std::fs::read_to_string(squire_path).expect("read real Squire route");
     let squire: serde_json::Value =
-        serde_json::from_str(include_str!("../../script/paths/289/squire.json")).unwrap();
+        serde_json::from_str(&squire_source).expect("parse real Squire route");
     let mut from = WorldTile {
         x: 3009,
         z: 9550,
@@ -2350,20 +2660,27 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
         assert!((route.dest.x - to.x).abs() <= 1 && (route.dest.z - to.z).abs() <= 1);
         assert_eq!(assessment.input.poison, PoisonState::Unknown { since: 0 });
         let zones = producer::zones_view(&world).unwrap().unwrap();
-        let named_only = assessment.plan.crossings.is_empty()
-            || risk::admission_passes(
-                producer::route_view(&*world, route).unwrap(),
-                assessment,
-                zones,
-                &tables(&world).unwrap().combat,
-                WalkAllow::default(),
-                risk::Grants::named(producer::bind_exempt(zones, grants).unwrap()),
-            )
-            .unwrap_or(false);
-        assert_eq!(
-            !named_only, endpoint_granted,
-            "{step}: whether only the endpoint grant admits it"
+        let named_assessment = risk::assess(
+            producer::route_view(&*world, route).unwrap(),
+            &Estimate {
+                zones: Some(zones),
+                wilderness: producer::wilderness_view(&world).unwrap(),
+                grants: Some(risk::Grants::named(
+                    producer::bind_exempt(zones, grants).unwrap(),
+                )),
+                risks: &tables(&world).unwrap().risks,
+                combat: &tables(&world).unwrap().combat,
+                allow: WalkAllow::default(),
+                generation: 1,
+            },
+            assessment.input,
         );
+        assert_eq!(assessment.bound, named_assessment.bound, "{step}");
+        assert_eq!(
+            assessment.verdict, named_assessment.verdict,
+            "{step}: endpoint completion is not a physics grant"
+        );
+        let _ = endpoint_granted;
         from = route.dest;
     }
 }
@@ -2501,11 +2818,14 @@ mod compact_final_route_tests {
         );
         let custody: Arc<dyn std::any::Any + Send + Sync> =
             Arc::new(reservation.hold(plan.clone()));
-        crate::walk_plan::RoutePath::compact(plan, lease, custody)
+        crate::walk_plan::RoutePath::compact(plan, lease, custody, None)
     }
 
     #[test]
     fn compact_script_nav_paint_borrows_the_compact_route_projection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(3, 1);
@@ -2541,6 +2861,9 @@ mod compact_final_route_tests {
     /// panicked on every compact plan the route service publishes.
     #[test]
     fn bank_fetch_trace_reads_a_compact_final_route() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(3, 1);
@@ -2701,13 +3024,16 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_carried_wear_final_route_reassesses_post_session_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(10, 1);
         let final_route = compact_route_path(&world, from, dest);
         let admission = make_admission(RiskPolicy::Proceed, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
-        assert!(!before.input.missing_facts);
+        assert!(!before.input.missing_facts());
         let mut snapshot = post_wear_snapshot(from);
         let mut food = wearable_item(379);
         food.container = api::snapshot::ItemContainer::Inventory;
@@ -2721,13 +3047,13 @@ mod compact_final_route_tests {
         let after = bot.assessment.as_ref().expect("reassessed final route");
         assert!(!Arc::ptr_eq(&before, after));
         assert!(
-            after.input.missing_facts,
+            after.input.missing_facts(),
             "post-wear facts must replace stale input"
         );
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
@@ -2740,13 +3066,16 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_carried_wear_final_route_refuses_unknown_post_session_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(known_corridor(&[5]));
         let from = tile(0, 1);
         let dest = tile(10, 1);
         let final_route = compact_route_path(&world, from, dest);
         let admission = make_admission(RiskPolicy::Inherit, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
-        assert!(!before.input.missing_facts);
+        assert!(!before.input.missing_facts());
         let snapshot = post_wear_snapshot(from);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
 
@@ -2756,18 +3085,71 @@ mod compact_final_route_tests {
         assert!(!Arc::ptr_eq(&before, after));
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert!(
-            after.input.missing_facts,
+            after.input.missing_facts(),
             "incomplete post-wear facts fail closed"
         );
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "refusal clears the compact route");
         assert_eq!(
-            bot.risk_refusal.as_deref().map(|(_, refusal)| *refusal),
-            Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+            bot.risk_refusal.as_deref().map(|(_, refusal)| refusal),
+            Some(&WalkRefusal::Unknown(UnknownWhy::MissingFacts))
         );
         assert_eq!(bot.route_destination(), None);
     }
+}
+
+#[test]
+fn poison_deadline_without_world_preserves_the_typed_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let world = known_corridor(&[12]);
+    let route = nav_planner::router::find_with(
+        &world.collision,
+        &world.graph,
+        tile(0, 1),
+        tile(23, 1),
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..FindOptions::default()
+        },
+        &WorldState::default(),
+    )
+    .unwrap();
+    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let assessment = assess(&route, &world, &admission);
+    let mut bot = crate::script_runtime::NavBot {
+        route: Some(Arc::new(route)),
+        assessment: Some(Arc::clone(&assessment)),
+        walk_request_id: 19,
+        ..Default::default()
+    };
+    let refusal = WalkRefusal::PoisonUnsettled {
+        waited: 18,
+        cause: api::condition::WindowReset::FrameGap,
+    };
+    let expected_detail = refusal.to_string();
+    refuse(&mut bot, None, tile(23, 1), refusal);
+    assert!(bot.route.is_none());
+    assert!(matches!(
+        bot.risk_refusal.as_deref(),
+        Some((
+            19,
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::FrameGap
+            }
+        ))
+    ));
+    assert!(Arc::ptr_eq(
+        bot.last_assessment.as_ref().unwrap(),
+        &assessment
+    ));
+    assert_eq!(
+        bot.walk_outcome_detail.as_deref(),
+        Some(expected_detail.as_str())
+    );
 }

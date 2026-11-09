@@ -5,10 +5,11 @@
 //! snapshot encoder and reads them back without running a JavaScript entity
 //! query, i.e. without the old spread's accidental transition warming.
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{SceneEntityInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, encode_snapshot_delta},
+};
 
 mod common;
 
@@ -562,6 +563,7 @@ fn main() {
         let label = match revision {
             client::io::ClientRevision::R274 => "R274",
             client::io::ClientRevision::R289 => "R289",
+            client::io::ClientRevision::R377 => "R377",
         };
         let data = api::game_data::for_revision(revision).expect("selected revision game data");
         let content_iso = LoadIsolate::spawn_with_game_data(

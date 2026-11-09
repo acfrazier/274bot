@@ -295,8 +295,8 @@ fn local_family_reads_real_content() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         cache_dir: Some(required("BOT_CACHE_DIR")),
         unpack_dir: Some(home.join(".274bot/unpack-289")),
         vault_path: Some(home.join("vault")),
@@ -349,10 +349,24 @@ fn local_family_reads_real_content() {
     .expect("spawn fresh Engine A account");
     let deadline = Instant::now() + Duration::from_secs(240);
     if seed_config.is_some() {
+        // The seed logs its scriptless bot out once to complete the tutorial;
+        // the approved scriptless policy then parks it, so post the operator's
+        // explicit Login once after that logout.
+        let mut login_posted = false;
         loop {
             let state = prep.lock().unwrap();
             if let Some(error) = state.error.as_ref() {
                 panic!("gather seed preparation failed: {error}");
+            }
+            if matches!(
+                state.phase,
+                Some(PrepPhase::WaitLogout | PrepPhase::WaitRelog)
+            ) && !login_posted
+            {
+                login_posted = true;
+                if let Some(arm) = play.arm(account) {
+                    arm.arm_explicit_login();
+                }
             }
             if state.phase == Some(PrepPhase::Ready) {
                 break;
@@ -428,8 +442,8 @@ fn local_family_reads_real_content() {
         "source_sha256": source_sha,
         "expected_source": expected_path,
         "result": observed,
-        "game_port": 44594,
-        "http_port": 1080,
+        "game_port": host_play::live_ports::game_port(),
+        "http_port": host_play::live_ports::http_port(),
         "stopped": true,
     });
     if let Some((path, seed)) = seed_config.as_ref() {

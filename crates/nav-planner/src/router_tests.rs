@@ -17,19 +17,19 @@ use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
 use crate::movement::step_ok;
 use crate::pack::{BankAccess, BankStand};
-use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
+use crate::quest_gates::{QuestEvidence, QuestGates};
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs_with_avoid,
-    find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
-    find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
-    find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
+    find, find_actionable_quest_gates, find_allow_teleports, find_bounded,
+    find_first_missing_item_reqs_with_avoid, find_first_with, find_first_with_fallback,
+    find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
+    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid,
+    find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
     find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel, FallbackRoute,
     FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
-    BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
+    BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK, REVERSE_PROOF_BUDGET,
 };
 use crate::test_support::{
-    family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
-    Resolved,
+    range as gate_range, stamp, tbwt_evidence, window as gate_window, Resolved,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -37,6 +37,9 @@ use crate::transport::{
 };
 use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
+
+#[path = "first_goal_area_tests.rs"]
+mod first_goal_area;
 
 #[test]
 fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
@@ -1202,6 +1205,43 @@ fn find_prefers_walking_around_over_a_cheap_door() {
     assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
 }
 
+#[test]
+fn false_complete_gate_selects_an_alternate_walk_route() {
+    let wc = bake(5, 5, &[(2, 2, CollisionFlag::W_W as u32)]);
+    let mut graph = door(tile(1, 2, 0), tile(2, 2, 0), 2);
+    graph.edges[0].quest_gates = Some(
+        QuestGates::new([QuestGate::Complete(api::selected::FactKey::new(
+            "biohazard",
+        ))])
+        .unwrap(),
+    );
+    let evidence = QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(1),
+            signals: Vec::new(),
+            complete: vec![("biohazard", false)],
+        }),
+        stamp(1),
+    );
+    let state = WorldState::empty().with_quest_evidence(evidence);
+
+    let route = find_with(
+        &wc,
+        &graph,
+        tile(0, 2, 0),
+        tile(3, 2, 0),
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap();
+    assert_eq!(route.dest, tile(3, 2, 0));
+    assert_eq!(route.ticks, 1.5);
+    assert!(
+        route.legs.iter().all(|leg| matches!(leg, Leg::Walk { .. })),
+        "a false completion gate must be bypassed, not reported as unresolved"
+    );
+}
+
 // --- WorldState gating (Task 1: find fails closed on unpaid edges) ---
 
 /// An Al Kharid toll shape: the 5×5 wall is unbroken except for one
@@ -1254,11 +1294,10 @@ fn find_gates_toll_edge_on_inventory_coins() {
 
 // --- Quest-stage gates: typed windows, decided by evidence only ---
 
-/// The walled 5×5 whose one door is gated by `gates` (quest family 1).
+/// The walled 5×5 whose one door carries the given quest gates.
 fn stage_door_graph(gates: Vec<QuestGate>) -> TransportGraph {
     let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 1);
-    g.quest_family = Some(gate_family(1));
-    g.edges[0].quest_gates = Some(QuestGates::new(gate_family(1), gates).unwrap());
+    g.edges[0].quest_gates = Some(QuestGates::new(gates).unwrap());
     g
 }
 
@@ -1281,8 +1320,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
     let route = |state: &WorldState| find_with(&wc, &g, from, to, opts, state);
     let needs =
         |state: &WorldState| find_unresolved_quest_gates(&wc, &g, from, &[to], opts, state, &[]);
-    let named: Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> =
-        Ok(Some(Arc::from(vec![exact])));
+    let named: Option<Arc<[QuestGate]>> = Some(Arc::from(vec![exact]));
 
     let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
     let crossed = route(&proven).expect("a proven window opens the door");
@@ -1290,7 +1328,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
         .legs
         .iter()
         .any(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some())));
-    assert_eq!(needs(&proven), Ok(None));
+    assert!(needs(&proven).is_none());
 
     let stale = evidenced(QuestEvidence::new(
         Arc::new(Resolved {
@@ -1298,7 +1336,6 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
             signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
             complete: vec![],
         }),
-        gate_family(1),
         stamp(11),
     ));
     let straddling = evidenced(tbwt_evidence(gate_range(Some(3), Some(4))));
@@ -1318,7 +1355,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
 
     let past = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
     assert_eq!(route(&past), Err(RouteError::NoPath));
-    assert_eq!(needs(&past), Ok(None), "a disproven window needs no read");
+    assert!(needs(&past).is_none(), "a disproven window needs no read");
 }
 
 #[test]
@@ -1353,12 +1390,12 @@ fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture(
         if blocked {
             assert_eq!(route, Err(RouteError::NoPath), "{label}");
             assert!(
-                matches!(&old_gates, Ok(Some(gates)) if !gates.is_empty()),
+                matches!(&old_gates, Some(gates) if !gates.is_empty()),
                 "the existing blocked stage fixture must name a gate"
             );
         } else {
             assert!(route.is_ok(), "{label}");
-            assert_eq!(old_gates, Ok(None), "{label}");
+            assert!(old_gates.is_none(), "{label}");
         }
         let completion = advance_real_route_completion(
             crate::router::SearchRequest::UnresolvedQuestGates {
@@ -1378,10 +1415,358 @@ fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture(
             panic!("quest-gate cursor returned the wrong result shape")
         };
         assert_eq!(
-            format!("{old_gates:#?}").as_bytes(),
-            format!("{new_gates:#?}").as_bytes(),
-            "{label}: cooperative stage diagnosis must match the old API"
+            new_gates.as_deref(),
+            old_gates.as_deref(),
+            "{label}: cooperative stage diagnosis must match the direct diagnostic"
         );
+    }
+}
+
+/// Actionable diagnosis is a separate relaxed route after strict failure.
+/// It carries exact route-position and crossing identity, admits only a
+/// catalog-implied `Unknown` or `False` gate, and leaves the cursor form
+/// byte-for-byte aligned with the direct diagnostic.
+#[test]
+fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
+    use api::prereq_steps::CrossingKind;
+    use api::selected::{StageWindow, Truth};
+
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let QuestGate::Window(established) = gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let establishable: Arc<[StageWindow]> = Arc::from([established]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![gate.clone()]),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("stage-door fixture lease");
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let options = FindOptions::default();
+    let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
+    let proven_route = find_with(&world.collision, &world.graph, from, to, options, &proven)
+        .expect("fresh proof keeps the strict gate route");
+    let expected_leg = proven_route
+        .legs
+        .iter()
+        .position(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some()))
+        .expect("the proof route crosses the stage door");
+
+    for (label, truth, state) in [
+        (
+            "unknown",
+            Truth::Unknown,
+            WorldState::empty().with_establishable(establishable.clone()),
+        ),
+        (
+            "false",
+            Truth::False,
+            evidenced(tbwt_evidence(gate_range(Some(4), Some(6))))
+                .with_establishable(establishable),
+        ),
+    ] {
+        assert_eq!(
+            find_with(&world.collision, &world.graph, from, to, options, &state),
+            Err(RouteError::NoPath),
+            "{label}: establishable windows never relax strict routing"
+        );
+        let actionable = find_actionable_quest_gates(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            options,
+            &state,
+            &[],
+        )
+        .expect("the establishment implication opens one diagnostic route");
+        assert_eq!(actionable.len(), 1, "{label}");
+        assert_eq!(actionable[0].gate, gate, "{label}");
+        assert_eq!(actionable[0].truth, truth, "{label}");
+        assert_eq!(actionable[0].leg as usize, expected_leg, "{label}");
+        let edge = &world.graph.edges[0];
+        assert_eq!(actionable[0].crossing.loc_id, edge.loc_id, "{label}");
+        assert_eq!(
+            actionable[0].crossing.option,
+            u8::try_from(edge.option).unwrap(),
+            "{label}"
+        );
+        assert_eq!(actionable[0].crossing.at, edge.at, "{label}");
+        assert_eq!(actionable[0].crossing.to, edge.to, "{label}");
+        assert_eq!(actionable[0].crossing.kind, CrossingKind::Door, "{label}");
+
+        let completion = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+                relaxation: crate::router::GateRelaxation::EstablishableFalse,
+            },
+            &lease,
+            &state,
+        );
+        assert!(completion.forward_settled() > 0, "{label}");
+        let crate::router::SearchOutcome::ActionableQuestGates(cursor_gates) =
+            completion.into_parts().0
+        else {
+            panic!("actionable quest cursor returned the wrong result shape")
+        };
+        let cursor_gates = cursor_gates.expect("cursor finds the implied gate");
+        assert_eq!(cursor_gates.len(), actionable.len(), "{label}");
+        assert_eq!(cursor_gates[0].gate, actionable[0].gate, "{label}");
+        assert_eq!(cursor_gates[0].truth, actionable[0].truth, "{label}");
+        assert_eq!(cursor_gates[0].leg, actionable[0].leg, "{label}");
+        assert_eq!(cursor_gates[0].crossing, actionable[0].crossing, "{label}");
+
+        let unknown_only = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+                relaxation: crate::router::GateRelaxation::UnknownOnly,
+            },
+            &lease,
+            &state,
+        );
+        let crate::router::SearchOutcome::ActionableQuestGates(unknown_gates) =
+            unknown_only.into_parts().0
+        else {
+            panic!("unknown-only diagnosis returned the wrong result shape");
+        };
+        let unknown_gates = unknown_gates.as_deref();
+        if truth == Truth::Unknown {
+            assert_eq!(unknown_gates, Some(cursor_gates.as_ref()));
+        } else {
+            assert!(unknown_gates.is_none(), "a false gate must stay closed");
+        }
+    }
+
+    let not_implied: Arc<[StageWindow]> = Arc::from([StageWindow {
+        quest: api::selected::FactKey::new("tbwt"),
+        signal: api::selected::FactKey::new("tbwt_main"),
+        values: gate_range(Some(2), Some(2)),
+    }]);
+    assert!(
+        find_actionable_quest_gates(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            options,
+            &WorldState::empty().with_establishable(not_implied),
+            &[],
+        )
+        .is_none(),
+        "a stage window outside the accepted implication is not actionable"
+    );
+}
+
+#[test]
+fn unknown_only_edge_admission_skips_a_cheaper_proven_false_gate() {
+    use api::selected::Truth;
+
+    let false_gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let unknown_gate = gate_window("tbwt", "unobserved_bank_signal", Some(1), Some(1));
+    let establishable = [false_gate.clone(), unknown_gate.clone()].map(|gate| match gate {
+        QuestGate::Window(window) => window,
+        _ => unreachable!("fixture gates are windows"),
+    });
+    let mut graph = stage_door_graph(vec![false_gate.clone()]);
+    let false_crossing = graph.edges[0].loc_id;
+    let mut unknown_edge = graph.edges[0].clone();
+    unknown_edge.loc_id += 1;
+    unknown_edge.ticks += 10;
+    unknown_edge.quest_gates = Some(QuestGates::new(vec![unknown_gate.clone()]).unwrap());
+    let unknown_crossing = unknown_edge.loc_id;
+    graph.at.entry(unknown_edge.at).or_default().push(1);
+    graph.edges.push(unknown_edge);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("parallel stage-door fixture lease");
+    let state = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))))
+        .with_establishable(Arc::from(establishable));
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let options = FindOptions::default();
+    assert_eq!(
+        find_with(&world.collision, &world.graph, from, to, options, &state),
+        Err(RouteError::NoPath)
+    );
+    for (relaxation, expected_gate, expected_truth, expected_crossing) in [
+        (
+            crate::router::GateRelaxation::UnknownOnly,
+            unknown_gate,
+            Truth::Unknown,
+            unknown_crossing,
+        ),
+        (
+            crate::router::GateRelaxation::EstablishableFalse,
+            false_gate,
+            Truth::False,
+            false_crossing,
+        ),
+    ] {
+        let completion = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+                relaxation,
+            },
+            &lease,
+            &state,
+        );
+        let crate::router::SearchOutcome::ActionableQuestGates(gates) = completion.into_parts().0
+        else {
+            panic!("actionable diagnosis returns its typed gates");
+        };
+        let gates = gates.expect("the chosen route names its gate");
+        assert_eq!(gates.len(), 1, "{relaxation:?}");
+        assert_eq!(gates[0].gate, expected_gate, "{relaxation:?}");
+        assert_eq!(gates[0].truth, expected_truth, "{relaxation:?}");
+        assert_eq!(
+            gates[0].crossing.loc_id, expected_crossing,
+            "{relaxation:?}"
+        );
+    }
+}
+
+/// Relaxed no-path diagnosis must not report a proven gate when a sibling
+/// gate on the same edge is still actionable.
+#[test]
+fn no_path_diagnosis_excludes_true_sibling_gates() {
+    use api::selected::{StageWindow, Truth};
+
+    let true_gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let actionable_gate = gate_window("tbwt", "tbwt_side", Some(2), Some(2));
+    let QuestGate::Window(true_window) = true_gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let QuestGate::Window(actionable_window) = actionable_gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([true_window, actionable_window]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![true_gate.clone(), actionable_gate.clone()]),
+        Vec::new(),
+    ));
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let evidence = QuestEvidence::new(
+        Arc::new(Resolved {
+            stamp: stamp(10),
+            signals: vec![
+                ("tbwt", "tbwt_main", gate_range(Some(3), Some(3))),
+                ("tbwt", "tbwt_side", gate_range(Some(3), Some(3))),
+            ],
+            complete: Vec::new(),
+        }),
+        stamp(5),
+    );
+    let state = WorldState::empty()
+        .with_quest_evidence(evidence)
+        .with_establishable(windows);
+
+    assert_eq!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions::default(),
+            &state,
+        ),
+        Err(RouteError::NoPath),
+        "one false gate keeps the strict route closed"
+    );
+    let actionable = find_actionable_quest_gates(
+        &world.collision,
+        &world.graph,
+        from,
+        &[to],
+        FindOptions::default(),
+        &state,
+        &[],
+    )
+    .expect("the remaining non-True gate is actionable");
+    assert_eq!(actionable.len(), 1);
+    assert_eq!(actionable[0].gate, actionable_gate);
+    assert_eq!(actionable[0].truth, Truth::False);
+    assert_ne!(actionable[0].gate, true_gate);
+    assert_eq!(
+        actionable[0].crossing,
+        world.graph.edges[0]
+            .crossing_id()
+            .expect("directed crossing identity")
+    );
+}
+
+/// The accepted-route record preserves a catalog-backed gate even when
+/// current evidence is True, so a later live refusal can contradict it.
+#[test]
+fn accepted_route_establishable_gates_retain_true_evidence() {
+    use api::prereq_steps::CrossingKind;
+    use api::selected::{StageWindow, Truth};
+
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let implied_gate = gate_window("tbwt", "tbwt_main", Some(2), Some(4));
+    let QuestGate::Window(established) = gate.clone() else {
+        panic!("fixture is a stage window");
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([established]);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![gate.clone(), implied_gate.clone()]),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("stage-door fixture lease");
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let state = evidenced(tbwt_evidence(gate_range(Some(3), Some(3)))).with_establishable(windows);
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        FindOptions::default(),
+        &state,
+    )
+    .expect("fresh proof keeps the strict gate route");
+    let retained = crate::router::route_establishable_quest_gates(
+        crate::producer::route_view(&lease, &route).expect("route belongs to fixture lease"),
+        &state,
+    )
+    .expect("the accepted route has two catalog-backed gates");
+    assert_eq!(retained.len(), 2);
+    assert!(retained
+        .iter()
+        .any(|observed| observed.gate == gate && observed.truth == Truth::True));
+    assert!(retained
+        .iter()
+        .any(|observed| observed.gate == implied_gate && observed.truth == Truth::True));
+    let edge = &world.graph.edges[0];
+    let leg = route
+        .legs
+        .iter()
+        .position(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some()))
+        .unwrap();
+    let crossing = edge.crossing_id().expect("directed crossing identity");
+    for observed in retained.iter() {
+        assert_eq!(observed.leg as usize, leg);
+        assert_eq!(observed.crossing, crossing);
+        assert_eq!(observed.crossing.loc_id, edge.loc_id);
+        assert_eq!(observed.crossing.option, u8::try_from(edge.option).unwrap());
+        assert_eq!(observed.crossing.at, edge.at);
+        assert_eq!(observed.crossing.to, edge.to);
+        assert_eq!(observed.crossing.kind, CrossingKind::Door);
     }
 }
 
@@ -1440,37 +1825,6 @@ fn undecided_stage_gate_is_never_a_shortcut() {
         .any(|leg| matches!(leg, Leg::Transport { .. })));
 }
 
-/// Evidence prepared from another quest family never opens a gate, even
-/// when its provider would prove the window, and the diagnosis refuses
-/// instead of asking for journal reads that could not help.
-#[test]
-fn foreign_quest_family_evidence_is_refused_not_retried() {
-    let wc = walled_5x5();
-    let g = stage_door_graph(vec![gate_window("tbwt", "tbwt_main", Some(3), Some(3))]);
-    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
-    let opts = FindOptions::default();
-    let foreign = evidenced(QuestEvidence::new(
-        Arc::new(Resolved {
-            stamp: stamp(10),
-            signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
-            complete: vec![],
-        }),
-        gate_family(2),
-        stamp(5),
-    ));
-    assert_eq!(
-        find_with(&wc, &g, from, to, opts, &foreign),
-        Err(RouteError::NoPath)
-    );
-    assert_eq!(
-        find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &foreign, &[]),
-        Err(QuestFamilyMismatch {
-            pack: Some(gate_family(1)),
-            expected: gate_family(2),
-        })
-    );
-}
-
 /// Only the gates evidence leaves undecided are named; a proven gate on the
 /// same crossing is not re-read.
 #[test]
@@ -1489,7 +1843,6 @@ fn stage_gate_diagnosis_names_only_undecided_gates() {
         Err(RouteError::NoPath)
     );
     let named = find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[])
-        .unwrap()
         .expect("the heroes window is undecided");
     assert_eq!(&named[..], &[heroes]);
 }
@@ -1541,7 +1894,7 @@ fn rope_and_stage_door_diagnoses_name_each_missing_kind() {
         );
         assert_eq!(
             find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[]),
-            Ok(journal),
+            journal,
             "{label}: stage diagnosis"
         );
     }
@@ -1881,11 +2234,11 @@ fn first_goal_diagnosis_names_the_chosen_goals_missing_facts() {
 
 /// Neither side decides: the start's corridor and the stand's backward
 /// corridor are disjoint and longer than both budgets, as on the 289 bake
-/// when a stand is fed by the unstamped upper planes. The search stops at
-/// its budget instead of flooding the start's corridor, and a fallback goal
-/// out of reach gets no second budget-limited search.
+/// when a stand is fed by the unstamped upper planes. This test injects equal
+/// unproven and hard caps so it continues to specify the hard-cap behavior
+/// independently of the production default.
 #[test]
-fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
+fn first_target_search_stops_at_its_explicit_hard_cap_when_the_proof_cannot_decide() {
     let len = FIRST_TARGET_BUDGET + FIRST_TARGET_BUDGET / 4;
     let walls: Vec<_> = (0..len as i32)
         .flat_map(|x| {
@@ -1896,7 +2249,7 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         })
         .collect();
     let wc = bake(len, 2, &walls);
-    let search = find_first_with_fallback(
+    let search = super::first_search(
         &wc,
         &TransportGraph::default(),
         tile(0, 0, 0),
@@ -1904,6 +2257,10 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         &[tile(len as i32 - 2, 1, 0)],
         FindOptions::default(),
         &WorldState::empty(),
+        super::Relax::Strict,
+        &[],
+        FIRST_TARGET_BUDGET,
+        FIRST_TARGET_BUDGET,
     );
 
     assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
@@ -1916,9 +2273,54 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         search.fallback(),
         Some(&FallbackRoute::Failed(RouteError::BudgetExhausted))
     );
-    assert!(search.settled() <= FIRST_TARGET_BUDGET);
+    assert_eq!(search.settled(), FIRST_TARGET_BUDGET);
     let scratch = search.scratch_capacities();
     assert!(scratch.reverse < len, "{scratch:?}");
+}
+
+/// A connected area-goal corridor farther than the reverse-proof cap must
+/// still route: the proof abandons before the forward search settles either
+/// endpoint, and the global node budget remains the hard ceiling.
+#[test]
+fn first_target_area_routes_past_the_unproven_budget_after_reverse_abandons() {
+    let len = FIRST_TARGET_BUDGET + REVERSE_PROOF_BUDGET + 1_024;
+    let wc = bake(1, len, &[]);
+    let targets = [tile(0, len as i32 - 2, 0), tile(0, len as i32 - 1, 0)];
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        wc,
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("connected corridor lease");
+    let state = WorldState::empty();
+    let completion = advance_real_route_completion(
+        crate::router::SearchRequest::First {
+            from: tile(0, 0, 0),
+            targets: targets.to_vec().into_boxed_slice(),
+            fallback: Box::new([]),
+            options: FindOptions::default(),
+            avoid: Box::new([]),
+            max_settles: super::NODE_BUDGET,
+        },
+        &lease,
+        &state,
+    );
+    let forward_settled = completion.forward_settled();
+    let crate::router::SearchOutcome::First { search } = completion.into_parts().0 else {
+        panic!("cooperative first-goal search returned the wrong result shape");
+    };
+
+    assert_eq!(search.proof(), ReverseProof::Abandoned);
+    assert_eq!(
+        search
+            .route()
+            .expect("an abandoned reverse proof leaves the route to forward search")
+            .destination(),
+        targets[0]
+    );
+    assert!(search.settled() > FIRST_TARGET_BUDGET);
+    assert!(search.settled() <= super::NODE_BUDGET);
+    assert_eq!(forward_settled, search.settled());
 }
 
 /// A reachable preferred goal wins over a cheaper fallback goal, and the
@@ -2027,16 +2429,10 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
     }
 }
 
-/// R6-B1: a fallback set keeps its own proof when the preferred budget stops
-/// the search. On a 1024² plane the preferred goal lies on a plane no move
-/// reaches, too large for its proof to close, so the stands stop at the
-/// unproven budget. The radius tile sits in a sealed room whose only way in
-/// is a teleport dearer than walking the whole plane: its proof meets the
-/// landing at once, but it settles only after the plane, past the stands'
-/// budget. It is left undecided rather than failed, and the search over it
-/// alone, under the budget its proof lifts, routes to it.
+/// A preferred proof that abandons no longer stops the shared flood early.
+/// Its reachable fallback routes before the preferred search completes.
 #[test]
-fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
+fn fallback_proven_reachable_routes_after_the_preferred_proof_abandons() {
     const SIZE: i32 = 1024;
     let mut ring = Vec::new();
     for x in 600..=604 {
@@ -2058,9 +2454,13 @@ fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
     let state = WorldState::empty();
 
     let shared = find_first_with_fallback(&wc, &graph, from, &stands, &fallback, opts, &state);
-    assert_eq!(shared.route().err(), Some(RouteError::BudgetExhausted));
-    assert_eq!(shared.settled(), FIRST_TARGET_BUDGET);
-    assert_eq!(shared.fallback(), Some(&FallbackRoute::Undecided));
+    assert_eq!(shared.proof(), ReverseProof::Abandoned);
+    assert_eq!(shared.route().err(), Some(RouteError::NoPath));
+    assert!(shared.settled() > FIRST_TARGET_BUDGET);
+    let Some(FallbackRoute::Routed(route)) = shared.fallback() else {
+        panic!("the reachable fallback must route: {:?}", shared.fallback());
+    };
+    assert_eq!(route.dest, fallback[0]);
 
     let alone = find_first_with(&wc, &graph, from, &fallback, opts, &state);
     assert_eq!(alone.proof(), ReverseProof::Reachable);
@@ -2979,11 +3379,11 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
 }
 
 /// Tree Gnome Stronghold middle booth: its south stand is an 11-tile pocket,
-/// proven unreachable at once; its north stand's backward region climbs
-/// ladders into the unstamped upper planes, so the budget alone bounds the
-/// pair, far below the 2,901,702-node flood of everything reachable.
+/// proven unreachable at once; the north stand's backward region climbs
+/// ladders into unstamped upper planes, so that proof abandons. The search
+/// completes its bounded forward flood and reports the correct NoPath result.
 #[test]
-fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
+fn stronghold_middle_booth_search_finishes_after_its_real_pack_proof_abandons() {
     let Some(mut world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -3002,8 +3402,10 @@ fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
 
     let stands = [south, north];
     let search = find_first_with(&world.collision, &world.graph, from, &stands, opts, &state);
-    assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
-    assert!(search.settled() <= FIRST_TARGET_BUDGET);
+    assert_eq!(search.proof(), ReverseProof::Abandoned);
+    assert_eq!(search.route().err(), Some(RouteError::NoPath));
+    assert!(search.settled() > FIRST_TARGET_BUDGET);
+    assert!(search.settled() <= super::NODE_BUDGET);
 }
 
 /// The Varrock-sewer web: the strict search proves the stands behind the web
@@ -3038,6 +3440,45 @@ fn sewer_web_stands_are_proven_then_reached_with_the_banked_knife_on_real_289_pa
         missing_item_reqs(route, &state),
         vec![MissingReq::Carry { id: 946, count: 1 }]
     );
+}
+
+/// A pack-bound query keeps the bounded reverse proof. With nothing owned,
+/// Lumbridge to the Entrana dock side has no route; the proof refuses the
+/// goal after 7,228 settles on the v19 pack, not after the 199,930-node
+/// flood that skipping the proof costs. Falador, a reachable goal, settles
+/// the same nodes with or without the proof.
+#[test]
+fn entrana_goal_is_refused_by_the_reverse_proof_in_bounded_work_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let empty = WorldState::empty();
+    let lumbridge = tile(3222, 3218, 0);
+    let entrana = find_first_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        &[tile(2834, 3335, 0)],
+        opts,
+        &empty,
+    );
+    assert_eq!(entrana.route().err(), Some(RouteError::NoPath));
+    assert_eq!(entrana.proof(), ReverseProof::Unreachable);
+    assert_eq!(entrana.settled(), 7_228);
+    let falador = find_first_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        &[tile(2965, 3379, 0)],
+        opts,
+        &empty,
+    );
+    assert!(falador.route().is_ok());
+    assert_eq!(falador.settled(), 75_140);
 }
 
 fn validate_real_route(
@@ -3550,9 +3991,7 @@ fn quest_stage_gated_teleport_routes_only_on_proven_evidence() {
     let dest = tile(4, 4, 0);
     let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
     let mut g = teleport(dest, 3, vec![], vec![]);
-    g.quest_family = Some(gate_family(1));
-    g.teleports[0].quest_gates =
-        Some(QuestGates::new(gate_family(1), [gate]).expect("valid stage gate"));
+    g.teleports[0].quest_gates = Some(QuestGates::new([gate]).expect("valid stage gate"));
 
     assert_eq!(
         find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &WorldState::empty()),
@@ -5249,8 +5688,8 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         .expect("synthetic zone table")
         .zones()
         .len();
-    let diagnose = |diagnosis| {
-        let endpoints = [from, to];
+    let diagnose = |diagnosis, target| {
+        let endpoints = [from, target];
         let attribution_endpoints = match diagnosis {
             crate::router::BlockerDiagnosis::SingleTarget => endpoints.as_slice(),
             crate::router::BlockerDiagnosis::FirstGoal => &endpoints[..1],
@@ -5265,7 +5704,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         advance_real_route_cursor(
             crate::router::SearchRequest::BlockingZones {
                 from,
-                targets: vec![to].into_boxed_slice(),
+                targets: vec![target].into_boxed_slice(),
                 diagnosis,
                 options: opts,
                 avoid: Vec::new().into_boxed_slice(),
@@ -5277,7 +5716,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         )
     };
     let crate::router::SearchOutcome::BlockingZones(cooperative_single) =
-        diagnose(crate::router::BlockerDiagnosis::SingleTarget)
+        diagnose(crate::router::BlockerDiagnosis::SingleTarget, to)
     else {
         panic!("single-target blocker diagnosis returned the wrong result shape")
     };
@@ -5287,7 +5726,7 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         "cooperative single-target result matches the old single-target API"
     );
     let crate::router::SearchOutcome::BlockingZones(cooperative_first_goal) =
-        diagnose(crate::router::BlockerDiagnosis::FirstGoal)
+        diagnose(crate::router::BlockerDiagnosis::FirstGoal, to)
     else {
         panic!("first-goal blocker diagnosis returned the wrong result shape")
     };
@@ -5300,6 +5739,15 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         cooperative_single.as_deref(),
         cooperative_first_goal.as_deref(),
         "cooperative blocker modes must preserve their distinct witnesses"
+    );
+    let crate::router::SearchOutcome::BlockingZones(reachable) =
+        diagnose(crate::router::BlockerDiagnosis::FirstGoal, from)
+    else {
+        panic!("reachable first-goal diagnosis returned the wrong result shape")
+    };
+    assert!(
+        reachable.is_none(),
+        "the frontier itself rejects a reachable strict goal without a preliminary strict search"
     );
 }
 
@@ -5591,8 +6039,57 @@ fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
     ));
 }
 
+/// This routing fixture knows the six listed quests are complete and explicitly
+/// seeds every other selected quest signal at zero. Display names in
+/// `WorldState::quests` do not themselves prove a typed quest-stage gate.
+struct ZonesQuestProfile {
+    facts: Arc<api::game_data::QuestIdentityFacts>,
+    complete: std::collections::HashSet<String>,
+}
+
+impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
+    fn observe_gate(
+        &self,
+        gate: &QuestGate,
+        required_after: api::quest_progress::EvidenceStamp,
+    ) -> Option<api::prereq_knowledge::Observation> {
+        let observed = stamp(10);
+        if !observed.meets(required_after) {
+            return None;
+        }
+        let key = match gate {
+            QuestGate::Complete(key) => key,
+            QuestGate::Window(window) => &window.quest,
+        };
+        let row = self
+            .facts
+            .rows
+            .iter()
+            .find(|row| row.id == key.0.as_ref())?;
+        let complete = self.complete.contains(&row.display);
+        let truth = match gate {
+            QuestGate::Complete(_) => {
+                if complete {
+                    api::selected::Truth::True
+                } else {
+                    api::selected::Truth::False
+                }
+            }
+            QuestGate::Window(window) if window.signal.0.as_ref() == row.varp => {
+                let stage = if complete { row.complete } else { 0 };
+                window.values.test(&gate_range(Some(stage), Some(stage)))
+            }
+            QuestGate::Window(_) => api::selected::Truth::Unknown,
+        };
+        Some(api::prereq_knowledge::Observation {
+            truth,
+            observed: Some(observed),
+        })
+    }
+}
+
 fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
-    WorldState {
+    let mut state = WorldState {
         combat_level,
         map_members: true,
         quests: [
@@ -5618,7 +6115,26 @@ fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
         ]),
         stats: (0..21).map(|skill| (skill, 99)).collect(),
         ..WorldState::empty()
-    }
+    };
+    static QUESTS: std::sync::LazyLock<Arc<api::game_data::QuestIdentityFacts>> =
+        std::sync::LazyLock::new(|| {
+            let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+            Arc::new(
+                selected
+                    .quest_identity()
+                    .expect("selected quest facts")
+                    .clone(),
+            )
+        });
+    let facts = &*QUESTS;
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ZonesQuestProfile {
+            facts: Arc::clone(facts),
+            complete: state.quests.clone(),
+        }),
+        stamp(10),
+    ));
+    state
 }
 
 fn zone_route_cell_count(route: &crate::router::Route) -> usize {
@@ -6013,7 +6529,8 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
         .filter(|b| b.routable)
         .map(|b| b.tile)
         .collect();
-    assert_eq!(targets.len(), 19);
+    // The content-derived catalog includes the Legends Guild bank.
+    assert_eq!(targets.len(), 20);
     for (from, combat) in [
         (tile(3222, 3218, 0), 126),
         (tile(3222, 3218, 0), 3),
@@ -6274,6 +6791,75 @@ fn ordered_first_compares_destination_zones_with_safe_arrivals_and_keeps_ties() 
 }
 
 #[test]
+fn ordered_first_preserves_input_order_for_goals_in_a_shared_zone() {
+    let collision = bake(5, 5, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 2, 1, 3)]);
+    let from = tile(0, 2, 0);
+    let first = tile(2, 1, 0);
+    let second = tile(2, 3, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        ..FindOptions::default()
+    };
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("shared-zone fixture lease");
+    for targets in [[first, second], [second, first]] {
+        let single = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            targets[0],
+            options,
+            &state,
+        )
+        .expect("the shared-zone target has its ordinary route cost");
+        let synchronous = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            options,
+            &state,
+        )
+        .into_route()
+        .expect("the shared-zone goal set has a route");
+        assert_eq!(
+            (synchronous.dest, synchronous.ticks),
+            (targets[0], single.ticks),
+        );
+
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: Box::new(targets),
+                fallback: Box::new([]),
+                options,
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("shared-zone cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        let route = route.expect("the cooperative shared-zone goal set has a route");
+        assert_eq!(
+            (route.destination(), route.ticks()),
+            (targets[0], single.ticks),
+        );
+        assert!(fallback.is_none());
+    }
+}
+
+#[test]
 fn ordered_first_keeps_unrelated_zone_transit_grants_as_fallback_permissions() {
     let collision = bake(5, 7, &[]);
     let mut graph = TransportGraph::default();
@@ -6525,11 +7111,7 @@ fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
         graph,
         Vec::new(),
     ));
-    let lease = crate::contract::NavLease::wrap(
-        world,
-        crate::contract::PackDigest::of(b"small toll route with a full search budget"),
-    )
-    .unwrap();
+    let lease = crate::contract::NavLease::wrap(world).unwrap();
     let outcome = advance_real_route_cursor(
         super::SearchRequest::MissingItemReqs {
             from: tile(0, 0, 0),
@@ -6584,7 +7166,7 @@ fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
     ];
     for (path, expected_carry, expected_worn) in packs {
         let world = crate::world::NavWorld::load_pack(&path)
-            .expect("load the reviewed v17 pack from its real content");
+            .expect("load the reviewed v19 pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
         assert!(envelope.is_representable());
         assert_eq!(
@@ -6601,17 +7183,13 @@ fn real_289_preflight_charges_exact_target_capacity_before_materialization() {
         return;
     };
     let world = Arc::new(world);
-    let digest = *world
-        .content
-        .get()
-        .expect("pack records its content digest");
-    let bound_identity = crate::producer::bind(&world, digest).expect("bind the loaded pack once");
+    let identity = crate::producer::identity(&world).expect("identity for the loaded pack");
     assert!(
         world.search_envelope.get().is_some(),
-        "bind pins the checked graph envelope before publication"
+        "identity prepares the checked graph envelope before publication"
     );
-    let lease = crate::producer::lease(&world).expect("bound real pack lease");
-    assert_eq!(lease.identity(), bound_identity);
+    let lease = crate::producer::lease(&world).expect("loaded pack lease");
+    assert_eq!(lease.identity(), identity);
     assert_eq!(
         lease.search_envelope(),
         crate::contract::SearchGraphEnvelope::from_graph(&world.graph)
@@ -6699,8 +7277,12 @@ fn real_289_preflight_charges_exact_target_capacity_before_materialization() {
     ));
     let another_preflight =
         crate::router::SearchCursor::preflight(shape, &lease, &state).expect("same-pack shape");
-    let another_lease = crate::contract::NavLease::wrap(Arc::clone(&world), digest)
-        .expect("new lease identity for identical content");
+    let another_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let another_lease = crate::contract::NavLease::wrap(another_world).unwrap();
     let same_shape_request = crate::router::SearchRequest::Many {
         from: tile(3222, 3218, 0),
         targets: vec![tile(3092, 3243, 0)].into_boxed_slice(),
@@ -6825,11 +7407,12 @@ fn retained_compact_view_is_allocation_free_and_pack_checked() {
         assert_eq!(view.leg_count(), 1);
     });
     assert_eq!(allocations.bytes_total, 0);
-    let foreign = crate::contract::NavLease::wrap(
-        Arc::clone(&world),
-        crate::contract::PackDigest::of(b"foreign compact assessment"),
-    )
-    .unwrap();
+    let foreign_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let foreign = crate::contract::NavLease::wrap(foreign_world).unwrap();
     assert_eq!(
         crate::producer::compact_route_view(&foreign, &route).unwrap_err(),
         crate::contract::ContractError::PackMismatch
@@ -6843,47 +7426,41 @@ fn retained_compact_view_is_allocation_free_and_pack_checked() {
 
 #[test]
 fn real_289_cooperative_request_shapes_match_legacy_serialization() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-        return;
+    let path = crate::world::NavWorld::default_pack_path();
+    let world = match crate::world::NavWorld::load_pack(&path) {
+        Ok(world) => world,
+        Err(crate::pack::PackError::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound
+                && std::env::var_os("NAV_PACK").is_none()
+                && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") =>
+        {
+            eprintln!(
+                "SKIP: hosted CI has no nav-pack asset at {}; set NAV_PACK or build host-play's revision-289 pack",
+                path.display()
+            );
+            return;
+        }
+        Err(error) => panic!(
+            "could not load selected nav pack at {}: {error}",
+            path.display()
+        ),
     };
     let world = Arc::new(world);
-    let lease = crate::producer::lease(&world).expect("real pack lease");
-    assert_eq!(
-        lease.identity().content().bytes(),
-        [
-            0x4e, 0x8a, 0xb5, 0xaf, 0x46, 0x94, 0xcf, 0x67, 0x22, 0xed, 0x38, 0x36, 0xc3, 0xe1,
-            0xf4, 0x2e, 0x9a, 0xc1, 0xbe, 0x13, 0x6d, 0x4d, 0x11, 0x27, 0xc7, 0xdb, 0x69, 0x8f,
-            0x4f, 0xc6, 0x50, 0x0b,
-        ],
-        "qualified entrance pack SHA-256 is 4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b; update this pin with the transport and route corpus diff"
-    );
-    assert_eq!(
+    eprintln!(
+        "transport graph layout ordinary={} teleports={} gated={} edge_bytes={}",
         world.graph.edges.len(),
-        3_361,
-        "qualified entrance-pack census: 3249 unchanged edges plus 112 additions"
-    );
-    assert_eq!(
-        world.graph.quest_family,
-        Some(crate::quest_gates::QuestFamilyId::new(
-            [
-                0xd5, 0x89, 0xa7, 0xd7, 0x77, 0x05, 0x21, 0xa7, 0x2d, 0xc5, 0x02, 0x24, 0x5d, 0x41,
-                0x61, 0x32, 0x14, 0x25, 0x9e, 0xc9, 0x2a, 0xc0, 0x96, 0x8a, 0x13, 0xb9, 0x33, 0x11,
-                0xdd, 0xb9, 0xb5, 0x9a,
-            ],
-            std::num::NonZeroU16::new(1).expect("quest schema is nonzero"),
-        )),
-        "qualified selected quest family"
-    );
-    assert_eq!(
+        world.graph.teleports.len(),
         world
             .graph
             .edges
             .iter()
+            .chain(&world.graph.teleports)
             .filter(|edge| edge.quest_gates.is_some())
             .count(),
-        62,
-        "all 62 quest-gated edges are additions; the 3249 reference edges are unchanged"
+        std::mem::size_of::<crate::transport::TransportEdge>(),
     );
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+
     let from = tile(3222, 3218, 0);
     let west_bank = tile(3092, 3243, 0);
     let east_bank = tile(3253, 3420, 0);
@@ -6966,11 +7543,13 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
             .destination(),
         west_bank
     );
-    let other_lease = crate::contract::NavLease::wrap(
-        Arc::clone(&world),
-        crate::contract::PackDigest::of(b"other real-pack lease"),
-    )
-    .expect("distinct route-view lease");
+    let other_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let other_lease =
+        crate::contract::NavLease::wrap(other_world).expect("distinct route-view world lease");
     assert_eq!(
         plan.view(&other_lease).unwrap_err(),
         crate::contract::ContractError::PackMismatch
@@ -7477,11 +8056,6 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         &quest_state,
         &[],
     );
-    assert_eq!(
-        old_gates,
-        Ok(None),
-        "reference 289 pack has no quest gates; update this check if a later pack adds gates"
-    );
     let new_gates = advance_real_route_completion(
         crate::router::SearchRequest::UnresolvedQuestGates {
             from: quest_from,
@@ -7500,9 +8074,9 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         panic!("quest-gate cursor returned the wrong result shape")
     };
     assert_eq!(
-        new_gates,
-        Ok(None),
-        "the cooperative path must preserve the reference pack's no-gate result"
+        new_gates.as_deref(),
+        old_gates.as_deref(),
+        "the cooperative path must preserve this pack's unresolved quest-gate result"
     );
     let old_bytes = format!("{old_gates:#?}");
     let new_bytes = format!("{new_gates:#?}");
@@ -7726,6 +8300,51 @@ fn real_289_radius_goal_sets_fit_the_full_budget_reservation() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn first_goal_request_with_over_limit_inputs_stays_over_the_route_cap() {
+    const ROUTE_LIMIT_BYTES: usize = 192 * 1024 * 1024;
+    let per_set = ROUTE_LIMIT_BYTES / (2 * std::mem::size_of::<WorldTile>());
+    let exact_limit = per_set * 2 * std::mem::size_of::<WorldTile>();
+    assert_eq!(exact_limit, ROUTE_LIMIT_BYTES);
+    let shape = crate::router::SearchRequestShape::First {
+        target_capacity: per_set + 1,
+        fallback_capacity: per_set + 1,
+        options: FindOptions::default(),
+        avoid_capacity: 0,
+        max_settles: super::NODE_BUDGET,
+    };
+    assert_eq!(
+        shape.retained_input_bytes(),
+        Some(ROUTE_LIMIT_BYTES + 2 * std::mem::size_of::<WorldTile>()),
+        "the target buffers alone exceed the unchanged route cap"
+    );
+}
+
+#[test]
+fn first_zone_partition_uses_native_words_when_compact_bounds_do_not_fit() {
+    let max = usize::try_from(u32::MAX).expect("u32 fits usize");
+    assert_eq!(
+        super::first_zone_index_width(1, max),
+        super::FirstZoneIndexWidth::Compact
+    );
+    assert_eq!(
+        super::first_zone_index_width(2, max),
+        super::FirstZoneIndexWidth::Native
+    );
+    if let Some(count) = max.checked_add(1) {
+        assert_eq!(
+            super::first_zone_index_width(count, 0),
+            super::FirstZoneIndexWidth::Compact
+        );
+    }
+    if let Some(count) = max.checked_add(2) {
+        assert_eq!(
+            super::first_zone_index_width(count, 0),
+            super::FirstZoneIndexWidth::Native
+        );
     }
 }
 

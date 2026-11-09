@@ -32,9 +32,8 @@ pub enum InteractReq {
         stand_op: Option<i32>,
         choose: Option<String>,
     },
-    /// Packed nav (`Traveller` / `ScriptWalkArm`). FindOptions bits are
-    /// per-request; serde/old buffers default all three off. v1 world
-    /// walk writers set wilderness and bank-fetch explicitly.
+    /// Packed nav (`Traveller` / `ScriptWalkArm`). Legacy travel bits default
+    /// off. Prerequisite grants inherit unless a request explicitly forbids them.
     #[serde(rename = "walk")]
     Walk {
         x: i32,
@@ -46,6 +45,12 @@ pub enum InteractReq {
         allow_wilderness: bool,
         #[serde(default)]
         allow_bank_fetch: bool,
+        /// None inherits additive grants. Some(false) forbids dialogue repair.
+        #[serde(default)]
+        allow_prereq_dialogue: Option<bool>,
+        /// None inherits additive grants. Some(false) forbids quest starts.
+        #[serde(default)]
+        allow_quest_start: Option<bool>,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
@@ -73,6 +78,12 @@ pub enum InteractReq {
         allow_wilderness: bool,
         #[serde(default)]
         allow_bank_fetch: bool,
+        /// None inherits additive grants. Some(false) forbids dialogue repair.
+        #[serde(default)]
+        allow_prereq_dialogue: Option<bool>,
+        /// None inherits additive grants. Some(false) forbids quest starts.
+        #[serde(default)]
+        allow_quest_start: Option<bool>,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
@@ -120,6 +131,9 @@ pub enum InteractReq {
         cross: Vec<String>,
         #[serde(default)]
         request_id: u64,
+        /// Optional bounded expansion count for route inspection.
+        #[serde(default)]
+        max_expansions: Option<u64>,
     },
     /// Isolate-applied inspect consume-ack. Not a public JS request.
     /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
@@ -196,6 +210,19 @@ pub enum InteractReq {
         component: i32,
         generation: u64,
     },
+    /// Drag one bank row to `target_slot` (`INV_BUTTOND`). Host dispatch
+    /// re-resolves the exact posted bank row by id/slot/component under
+    /// `bank_generation`; `insert` is the client's mode byte, which the
+    /// server ignores in favour of `%bankinsert` (`bank.rs2:6-11`).
+    #[serde(rename = "bank-drag")]
+    BankDrag {
+        id: i32,
+        slot: i32,
+        component: i32,
+        target_slot: i32,
+        insert: bool,
+        bank_generation: u64,
+    },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,
@@ -261,6 +288,9 @@ pub enum InteractReq {
         z: i32,
         level: i32,
         index: Option<i32>,
+        /// Expected scene-entity type for fail-closed native targets.
+        #[serde(default)]
+        target_id: Option<i32>,
     },
     /// Continue the open chat dialog or an explicitly selected visible pause button.
     #[serde(rename = "continue")]
@@ -268,6 +298,10 @@ pub enum InteractReq {
         #[serde(default)]
         component_id: Option<i32>,
     },
+    /// Send a public message through the API's typed MESSAGE_PUBLIC builder
+    /// (`api::prot::Send::message_public`, colour/effect 0) and normal Driver dispatch.
+    #[serde(rename = "say-public")]
+    SayPublic { text: String },
     /// Answer the chat modal's `option`-th choice (1-based).
     #[serde(rename = "answer")]
     Answer { option: i32 },
@@ -353,7 +387,17 @@ pub enum InteractReq {
     CombatStop { request_id: u64 },
     /// Reserved native progress-family control; public JS interact rows cannot forge it.
     #[serde(rename = "progress-read", skip_deserializing)]
-    ProgressRead { request_id: u64, name: String },
+    ProgressRead {
+        request_id: u64,
+        name: String,
+        journal_only: bool,
+    },
+    /// Native cast-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "cast-npc", skip_deserializing)]
+    CastNpc {
+        request_id: u64,
+        request: crate::combat::CastNpcRequest,
+    },
     /// Native `RunManager.override` replacement. The V8 binding is the only
     /// producer; public JS interact rows cannot forge this host policy update.
     #[serde(rename = "run-policy", skip_deserializing)]
@@ -457,6 +501,7 @@ impl InteractReq {
                 | Self::CombatFight { .. }
                 | Self::CombatStop { .. }
                 | Self::ProgressRead { .. }
+                | Self::CastNpc { .. }
                 | Self::NoteProgress
                 | Self::LoopSettled
                 | Self::WaitEnqueued
@@ -633,5 +678,48 @@ pub struct QueuedInteract {
 impl std::borrow::Borrow<InteractReq> for QueuedInteract {
     fn borrow(&self) -> &InteractReq {
         &self.req
+    }
+}
+
+#[cfg(test)]
+mod prerequisite_wire_tests {
+    use super::InteractReq;
+    use crate::native::WalkBit;
+
+    #[test]
+    fn packed_walk_consent_defaults_to_inherit_and_preserves_false_as_forbid() {
+        for op in ["walk", "walk-near"] {
+            for value in [None, Some(false), Some(true)] {
+                let mut request = serde_json::json!({
+                    "op": op, "x": 3408, "z": 3489, "level": 0, "radius": 1
+                });
+                if let Some(value) = value {
+                    request["allow_prereq_dialogue"] = value.into();
+                    request["allow_quest_start"] = value.into();
+                }
+                let request: InteractReq = serde_json::from_value(request).expect("compat walk");
+                let (dialogue, quest_start) = match request {
+                    InteractReq::Walk {
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        ..
+                    }
+                    | InteractReq::WalkNear {
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        ..
+                    } => (allow_prereq_dialogue, allow_quest_start),
+                    _ => unreachable!("the selected wire operation is a packed walk"),
+                };
+                assert_eq!((dialogue, quest_start), (value, value));
+                let expected = match value {
+                    None => WalkBit::Inherit,
+                    Some(false) => WalkBit::Forbid,
+                    Some(true) => WalkBit::Allow,
+                };
+                assert_eq!(WalkBit::from(dialogue), expected);
+                assert_eq!(WalkBit::from(quest_start), expected);
+            }
+        }
     }
 }

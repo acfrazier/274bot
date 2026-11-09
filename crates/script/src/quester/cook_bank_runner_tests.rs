@@ -1,7 +1,7 @@
 use super::*;
+use crate::interact::InteractReq;
 use crate::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use crate::quester::families::tests::{def, local_player, with_tick_output, with_tick_output_bank};
-use crate::shim::InteractReq;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::snapshot::{
     stat_name, stat_used, GameSnapshot, GroundItemView, ItemActionFamily, ItemContainer, ItemView,
@@ -14,7 +14,7 @@ struct Capture {
 }
 impl NativeOutput for Capture {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, line: &str) {
         self.logs.push(line.to_owned());
     }
@@ -250,19 +250,21 @@ impl CookFixture {
                     crate::bank::BankPickReceipt {
                         request_id: authority.request_id().get(),
                         evidence,
-                        selected: crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: self.bank_fixture.tile,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank_fixture,
-                                stand_tile: self.bank_fixture.tile,
-                                kind: crate::bank::AccessKind::Booth,
-                                stand_op: 1,
-                                name: None,
-                                choose: None,
-                            })),
-                        },
+                        outcome: crate::bank::BankPickOutcome::Selected(
+                            crate::bank::SelectedBank {
+                                bank_index: 0,
+                                access_tile: self.bank_fixture.tile,
+                                kind: crate::bank::PickKind::Reachable,
+                                access: Some(Arc::new(crate::bank::BankStandAccess {
+                                    bank: self.bank_fixture,
+                                    stand_tile: self.bank_fixture.tile,
+                                    kind: crate::bank::AccessKind::Booth,
+                                    stand_op: 1,
+                                    name: None,
+                                    choose: None,
+                                })),
+                            },
+                        ),
                     },
                 ),
                 HostEffect::Walk(request) => {
@@ -282,6 +284,7 @@ impl CookFixture {
                         refusal: None,
                         assessment: None,
                         escape: None,
+                        prereq_allow: None,
                     });
                 }
                 HostEffect::ServicePick(_) => {
@@ -297,6 +300,11 @@ impl CookFixture {
                             self.observe_bank(tick);
                         }
                         InteractReq::SetNoteMode { on: false } => {}
+                        // The provisioner closes the bank when its session ends.
+                        InteractReq::Close => {
+                            self.snapshot
+                                .seed_bank_observation(-1, tick, None, Vec::new());
+                        }
                         // The root step is polled on its begin tick (TICK-FIX
                         // #4); these tests stop at that begin.
                         InteractReq::Npc { ref action, .. } if action == "Talk-to" => {}
@@ -432,6 +440,9 @@ impl CookFixture {
 
 #[test]
 fn real_cook_in_progress_held_ingredients_do_not_scan_bank_for_optional_tools() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -450,6 +461,9 @@ fn real_cook_in_progress_held_ingredients_do_not_scan_bank_for_optional_tools() 
 
 #[test]
 fn real_cook_held_ingredients_do_not_scan_bank_for_optional_tools() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.until_root_begin();
     assert_eq!(
@@ -461,6 +475,9 @@ fn real_cook_held_ingredients_do_not_scan_bank_for_optional_tools() {
 
 #[test]
 fn real_cook_not_started_talks_first_without_bank_scan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.until_root_begin();
     assert_eq!(
@@ -476,6 +493,9 @@ fn real_cook_not_started_talks_first_without_bank_scan() {
 
 #[test]
 fn real_cook_banked_ingredients_share_one_open_bank_visit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     // Gated items are only due from cook:1, so the banked withdrawal
     // run happens after the start talk, not before it.
@@ -495,6 +515,9 @@ fn real_cook_banked_ingredients_share_one_open_bank_visit() {
 
 #[test]
 fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     // Flour now leads the acquisition order, so hold it: the test
     // exercises the ground egg leg that follows.
@@ -530,6 +553,9 @@ fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
 
 #[test]
 fn real_cook_provisioned_acquisition_emits_child_begin_and_terminal_settle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.seed_in_progress();
     fixture.hold("pot_flour");
@@ -554,6 +580,9 @@ fn real_cook_provisioned_acquisition_emits_child_begin_and_terminal_settle() {
 
 #[test]
 fn real_cook_terminal_stage_finishes_without_any_bank_or_walk_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.seed_junk(26);
     let finished_at = fixture.snapshot.local_player().unwrap().player.actor.tile;
@@ -595,6 +624,9 @@ fn real_cook_terminal_stage_finishes_without_any_bank_or_walk_work() {
 
 #[test]
 fn real_cook_unrelated_junk_with_enough_slots_makes_no_bank_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.seed_junk(1);
     fixture.until_root_begin();
@@ -608,6 +640,9 @@ fn real_cook_unrelated_junk_with_enough_slots_makes_no_bank_trip() {
 
 #[test]
 fn real_cook_unrelated_junk_deposits_only_the_missing_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
     // Gated items are only due from cook:1; at cook:0 this fixture
@@ -628,6 +663,9 @@ fn real_cook_unrelated_junk_deposits_only_the_missing_slot() {
 
 #[test]
 fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::queue::{Queue, QueueSettings, ReleaseIndex};
 
     let mut fixture = CookFixture::new(false, true);
@@ -679,6 +717,7 @@ fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
             &quests,
             cap,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
     })
     .unwrap();
@@ -876,6 +915,9 @@ fn r2_until_provision_decision(fixture: &mut CookFixture) {
 
 #[test]
 fn r2_sheep_optional_coin_float_does_not_park_a_full_path_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("sheep", |_| {});
     r2_seed_rows(&mut fixture, &[("shears", 1), ("wool", 27)]);
     r2_seed_bank(&mut fixture, &[("coins", 100)]);
@@ -898,6 +940,9 @@ fn r2_sheep_optional_coin_float_does_not_park_a_full_path_pack() {
 
 #[test]
 fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("cook", |value| {
         value["quest"]["items"]
             .as_array_mut()
@@ -932,6 +977,9 @@ fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
 
 #[test]
 fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("cook", |_| {});
     // A full pack of preserved tools that overlap no flour peak input:
     // neither the grain nor the final flour has a slot.
@@ -954,6 +1002,9 @@ fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
 
 #[test]
 fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for held_wool in [0, 20] {
         let mut fixture = sheep_fixture(held_wool, false);
         fixture.until_root_begin();
@@ -965,6 +1016,9 @@ fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() 
 
 #[test]
 fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = sheep_fixture(0, true);
     fixture.until_root_begin();
     assert!(!fixture.script.parked, "{:?}", fixture.output.logs);
@@ -984,6 +1038,9 @@ fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
 
 #[test]
 fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
     fixture.seed_in_progress();
@@ -1006,6 +1063,9 @@ fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
 /// first withdraw click goes out on the tick the scan settles.
 #[test]
 fn real_cook_provisioning_withdraws_on_the_scan_receipt_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_in_progress();
     let scanned = "quester cook: provision bank scan settled";
@@ -1033,6 +1093,9 @@ fn real_cook_provisioning_withdraws_on_the_scan_receipt_tick() {
 
 #[test]
 fn r1_provisioner_capacity_deposit_is_traced() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
     // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
@@ -1050,14 +1113,24 @@ fn r1_provisioner_capacity_deposit_is_traced() {
 
 #[test]
 fn r1_finish_is_emitted_after_trace_event_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
-    for event in 0..=RUN_TRACE_EVENT_LIMIT {
+    // Fill the first stage's own trace budget. The finish line is terminal,
+    // so it is logged even while the stage trace stays capped.
+    let steps = fixture.script.path.sequences[fixture.script.seq_index]
+        .steps
+        .len();
+    fixture.script.trace.begin_stage(&mut fixture.output, steps);
+    for event in 0..=stage_event_limit(steps) {
         fixture.script.trace.record(
             &mut fixture.output,
             api::hostlog::Level::Info,
             format_args!("quester cook: distinct event {event}"),
         );
     }
+    assert!(fixture.script.trace.truncated);
     fixture.snapshot.seed_quest_statuses(
         vec![QuestStatusView {
             name: "Cook's Assistant".into(),
@@ -1072,6 +1145,15 @@ fn r1_finish_is_emitted_after_trace_event_cap() {
         1,
         &mut fixture.output,
         |native| assert_eq!(fixture.script.tick(native).unwrap(), ScriptFlow::Complete),
+    );
+    assert!(
+        fixture
+            .output
+            .logs
+            .iter()
+            .any(|line| line == "quester trace truncated after the event limit"),
+        "the capped stage trace reports its truncation: {:?}",
+        fixture.output.logs
     );
     assert_eq!(
         fixture
@@ -1090,107 +1172,135 @@ fn r1_finish_is_emitted_after_trace_event_cap() {
 fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
     // Bundled gather Paths compile against the prepared catalog; keep it
     // alive for the whole loop.
+    let Some(lease) = super::super::compile::real_nav_lease(api::selected::ClientRevision::R289)
+    else {
+        return;
+    };
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let _gathering =
         super::super::compile::prepare_for_test(move |worker| selected.prepare_gathering(worker))
             .expect("289 gather catalog");
+    let zones = lease.zones().expect("real 289 zone catalog");
     for entry in super::super::registry::BUNDLED_INDEX.paths.iter() {
         let Some(bytes) = super::super::registry::bundled_path(&entry.id) else {
             continue;
         };
-        let mut fixture = CookFixture::new(false, false);
         let document: super::super::path::PathDocument = serde_json::from_slice(bytes).unwrap();
-        fixture.script.path = super::super::compile::compile_uncached_for_test(
-            &document,
-            &fixture.script.selected,
-            &fixture.script.quests,
-        )
-        .unwrap();
-        if fixture.script.path.provisioning.owns_inventory {
-            continue;
-        }
-        fixture.snapshot.seed_quest_statuses(
-            vec![QuestStatusView {
-                name: fixture
-                    .script
-                    .selected
-                    .quest_identity()
-                    .unwrap()
-                    .rows
-                    .iter()
-                    .find(|row| row.id == entry.id)
-                    .unwrap()
-                    .display
-                    .clone(),
-                component_id: 43,
-                colour: 0xf80000,
-            }],
-            true,
-        );
-        // Required supplies are available in the bank, not preloaded in the
-        // pack. This sweep tests inventory capacity, not a supply shortfall.
-        // An empty pack still observes empty equipment: loadout-first Paths
-        // (e.g. fluffs) need worn evidence to evaluate their first skip.
-        fixture.snapshot.seed_equipment(Vec::new());
-        fixture.stock = fixture
-            .script
-            .path
-            .provisioning
-            .items
-            .iter()
-            .enumerate()
-            .map(|(slot, item)| {
-                let mut definition = def(item.id, &item.name);
-                definition.stackable = item.stackable;
-                ItemView {
-                    def: definition,
-                    container: ItemContainer::Bank,
-                    action_family: ItemActionFamily::Component,
-                    slot: slot as i32,
-                    count: item.qty as i32,
-                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
-                    component_id: 7,
+        // A partner Path compiles only as a gang member, so compile it once
+        // for each declared gang. A solo Path compiles once.
+        let mut compiled = Vec::new();
+        match &document.partner {
+            Some(declaration) => {
+                for role in declaration.roles.iter() {
+                    let mut fixture = CookFixture::new(false, false);
+                    fixture.script.path =
+                        super::super::compile::compile_uncached_for_test_as_with_zones(
+                            &document,
+                            &fixture.script.selected,
+                            &fixture.script.quests,
+                            role.gang,
+                            zones,
+                        )
+                        .unwrap();
+                    compiled.push((format!("{} {:?}", entry.id, role.gang), fixture));
                 }
-            })
-            .collect();
-        for carry in fixture
-            .script
-            .path
-            .provisioning
-            .loadout_carry
-            .values()
-            .flat_map(|rows| rows.iter())
-        {
-            if let Some(stock) = fixture
-                .stock
-                .iter_mut()
-                .find(|row| row.def.id == carry.item.id)
-            {
-                stock.count = stock.count.max(carry.qty);
-            } else {
-                let mut definition = def(carry.item.id, &carry.item.name);
-                definition.stackable = carry.stackable;
-                fixture.stock.push(ItemView {
-                    def: definition,
-                    container: ItemContainer::Bank,
-                    action_family: ItemActionFamily::Component,
-                    slot: fixture.stock.len() as i32,
-                    count: carry.qty,
-                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
-                    component_id: 7,
-                });
+            }
+            None => {
+                let mut fixture = CookFixture::new(false, false);
+                fixture.script.path = super::super::compile::compile_uncached_for_test_with_zones(
+                    &document,
+                    &fixture.script.selected,
+                    &fixture.script.quests,
+                    zones,
+                )
+                .unwrap();
+                compiled.push((entry.id.clone(), fixture));
             }
         }
-        fixture.until_root_begin();
-        assert!(
-            !fixture.script.parked,
-            "{}: {:?}",
-            entry.id, fixture.output.logs
-        );
-        assert_eq!(
-            fixture.deposits, 0,
-            "empty {} pack needs no deposits",
-            entry.id
-        );
+        for (label, mut fixture) in compiled {
+            if fixture.script.path.provisioning.owns_inventory {
+                continue;
+            }
+            fixture.snapshot.seed_quest_statuses(
+                vec![QuestStatusView {
+                    name: fixture
+                        .script
+                        .selected
+                        .quest_identity()
+                        .unwrap()
+                        .rows
+                        .iter()
+                        .find(|row| row.id == entry.id)
+                        .unwrap()
+                        .display
+                        .clone(),
+                    component_id: 43,
+                    colour: 0xf80000,
+                }],
+                true,
+            );
+            // Required supplies are available in the bank, not preloaded in
+            // the pack. This sweep tests inventory capacity, not a supply
+            // shortfall. An empty pack still observes empty equipment:
+            // loadout-first Paths (e.g. fluffs) need worn evidence to
+            // evaluate their first skip.
+            fixture.snapshot.seed_equipment(Vec::new());
+            fixture.stock = fixture
+                .script
+                .path
+                .provisioning
+                .items
+                .iter()
+                .enumerate()
+                .map(|(slot, item)| {
+                    let mut definition = def(item.id, &item.name);
+                    definition.stackable = item.stackable;
+                    ItemView {
+                        def: definition,
+                        container: ItemContainer::Bank,
+                        action_family: ItemActionFamily::Component,
+                        slot: slot as i32,
+                        count: item.qty as i32,
+                        actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                        component_id: 7,
+                    }
+                })
+                .collect();
+            for carry in fixture
+                .script
+                .path
+                .provisioning
+                .loadout_carry
+                .values()
+                .flat_map(|rows| rows.iter())
+            {
+                if let Some(stock) = fixture
+                    .stock
+                    .iter_mut()
+                    .find(|row| row.def.id == carry.item.id)
+                {
+                    stock.count = stock.count.max(carry.qty);
+                } else {
+                    let mut definition = def(carry.item.id, &carry.item.name);
+                    definition.stackable = carry.stackable;
+                    fixture.stock.push(ItemView {
+                        def: definition,
+                        container: ItemContainer::Bank,
+                        action_family: ItemActionFamily::Component,
+                        slot: fixture.stock.len() as i32,
+                        count: carry.qty,
+                        actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                        component_id: 7,
+                    });
+                }
+            }
+            fixture.until_root_begin();
+            assert!(
+                !fixture.script.parked,
+                "{}: {:?}",
+                label, fixture.output.logs
+            );
+            assert_eq!(fixture.deposits, 0, "empty {label} pack needs no deposits");
+        }
     }
 }

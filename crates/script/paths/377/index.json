@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "paths": [
+    { "id": "cook", "file": "cook.json" },
+    { "id": "imp", "file": "imp.json" },
+    { "id": "doric", "file": "doric.json" },
+    { "id": "sheep", "file": "sheep.json" },
+    { "id": "runemysteries", "file": "runemysteries.json" },
+    { "id": "romeojuliet", "file": "romeojuliet.json" },
+    { "id": "hetty", "file": "hetty.json" },
+    { "id": "gobdip", "file": "gobdip.json" },
+    { "id": "vampire", "file": "vampire.json" },
+    { "id": "demon", "file": "demon.json" },
+    { "id": "squire", "file": "squire.json" }
+  ]
+}

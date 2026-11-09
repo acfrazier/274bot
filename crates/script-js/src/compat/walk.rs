@@ -50,7 +50,7 @@
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
 //! - The baked leg is frozen `Traversal.walkTo` (`Traversal.ts:160–170`),
 //!   whose failed walk runs `recoverBoatFare` (`Traversal.ts:80–95`) before
-//!   its one re-walk: [`crate::boat_fare::Recover`] after a baked pass that
+//!   its one re-walk: [`crate::compat::boat_fare::Recover`] after a baked pass that
 //!   did not arrive, then the ladder goes on as frozen does.
 //! - Options (`Traversal.ts:19–35, 102–112, 160–170`): `sceneRadius`
 //!   (default `radius + 1`) bounds the scene step; the teleport choice is
@@ -63,13 +63,10 @@
 //!   walk). `avoidZones` rectangles ride the walk request and the verify
 //!   probe, and every host search of the walk keeps out of them; a catalog
 //!   zone id (not a host table) is refused loud, not dropped. `bankItemCounts` is only the bank-plan input; the
-//!   host bank fetch reads the bank itself (FENCE 2026-09-18). `maxBudget`
-//!   bounds the frozen PathFinder's probe and big-budget rebake; the host
-//!   router is a different, stronger search with its own bound
-//!   (the router's node budget, 4,000,000 expansions) that never searches
-//!   less than a frozen caller asked, and has no `budget` outcome, so the
-//!   option is accepted and there is no big-budget rebake
-//!   (`walkLadder.ts:73–75`).
+//!   host bank fetch reads the bank itself (FENCE 2026-09-18).
+//!   `maxBudget` remains part of the caller contract, but compat does not run
+//!   the upstream `PathFinder`. Verify probes leave `max_expansions` unset so
+//!   the Rust router uses its own `NODE_BUDGET`.
 
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:171–174`): the host follow ends `EndBlocked` next to a
@@ -78,16 +75,79 @@
 //!   with `isArrived`.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, SceneRow};
-use crate::walk_wait;
+use crate::scene::observed::{self, SceneRow};
+use crate::scene::walk_wait;
 use api::line_of_sight::CollisionQuery;
 use api::query::{SceneQuery, SceneReachOptions};
 use api::snapshot::{SceneView, WorldTile};
-use script::shim::{InspectAvoidWire, InteractReq};
+use script::interact::{InspectAvoidWire, InteractReq};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WalkExecutorOutcome {
+    Arrived,
+    Closest,
+    Blocked,
+    Budget,
+    Interrupted,
+    Failed,
+    Unreachable,
+}
+
+impl WalkExecutorOutcome {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Arrived => "arrived",
+            Self::Closest => "closest",
+            Self::Blocked => "blocked",
+            Self::Budget => "budget",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Unreachable => "unreachable",
+        }
+    }
+}
+
+thread_local! {
+    static LAST_OUTCOME: std::cell::Cell<Option<WalkExecutorOutcome>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn last_outcome() -> Option<&'static str> {
+    LAST_OUTCOME.with(|outcome| outcome.get().map(WalkExecutorOutcome::as_str))
+}
+
+pub(crate) fn set_last_outcome(outcome: Option<WalkExecutorOutcome>) {
+    LAST_OUTCOME.with(|last| last.set(outcome));
+}
+
+pub(crate) fn reset_executor_status() {
+    set_last_outcome(None);
+}
+
+pub(crate) fn outcome_for_walk(
+    result: bool,
+    blocked: bool,
+    no_path: bool,
+    dest: WorldTile,
+    radius: i32,
+) -> WalkExecutorOutcome {
+    if blocked {
+        WalkExecutorOutcome::Blocked
+    } else if !result {
+        if no_path {
+            WalkExecutorOutcome::Unreachable
+        } else {
+            WalkExecutorOutcome::Failed
+        }
+    } else if crate::materialize::reach_query::arrived(dest, radius) {
+        WalkExecutorOutcome::Arrived
+    } else {
+        WalkExecutorOutcome::Closest
+    }
+}
 
 /// Frozen `opts.timeoutMs ?? 90000` (`Traversal.ts:107`).
 pub(crate) const BAKED_TIMEOUT_MS: u64 = 90_000;
@@ -201,6 +261,14 @@ struct WalkResilientOpts {
     attempts: Option<u32>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// Retained for the caller API; compat does not apply PathFinder's budget
+    /// to Rust routing.
+    #[expect(
+        dead_code,
+        reason = "the accepted caller budget is not applied under F1"
+    )]
+    #[serde(default)]
+    max_budget: Option<u64>,
     #[serde(default)]
     scene_radius: Option<i32>,
     #[serde(default)]
@@ -214,6 +282,11 @@ struct WalkResilientOpts {
     /// Per-walk named danger-zone exemptions.
     #[serde(default)]
     cross_zones: Vec<String>,
+    /// Additive prerequisite grants; an explicit false narrows global allow.
+    #[serde(default)]
+    allow_prereq_dialogue: Option<bool>,
+    #[serde(default)]
+    allow_quest_start: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -301,7 +374,7 @@ pub(crate) fn here() -> Option<WorldTile> {
 /// Whether this walking operation has a runtime event or user-movement
 /// intent pending. Guardian `hold` freezes the row rather than interrupting.
 pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
-    crate::event_signal::pending()
+    crate::scene::event_signal::pending()
         || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
         || cx.user_move_intent_interrupted()
 }
@@ -311,7 +384,7 @@ pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
 /// This is the same helper `walk_wait` uses (`posted_here` + flood origin +
 /// `canReachAdjacent`).
 fn arrived(dest: WorldTile, radius: i32) -> bool {
-    crate::reach_query::arrived(dest, radius)
+    crate::materialize::reach_query::arrived(dest, radius)
 }
 
 /// Frozen `backoffTicks` (`walkLadder.ts:39–40`).
@@ -648,7 +721,7 @@ fn barrier_still_shut(tile: WorldTile, name: &str) -> bool {
 }
 
 fn can_reach_adjacent(tile: WorldTile, max_steps: Option<u32>) -> bool {
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         view.can_reach(
             tile,
             &SceneReachOptions {
@@ -660,7 +733,7 @@ fn can_reach_adjacent(tile: WorldTile, max_steps: Option<u32>) -> bool {
 }
 
 fn can_step(from: WorldTile, to: WorldTile) -> bool {
-    crate::reach_query::with_view(|view| view.can_step(from, to))
+    crate::materialize::reach_query::with_view(|view| view.can_step(from, to))
 }
 
 /// Frozen `pickUnstickStep` (`walkLadder.ts:96–104`).
@@ -725,6 +798,8 @@ fn shut_obstacle_at(door: WorldTile, obstacles: &[String]) -> Option<SceneRow> {
 struct WalkOptions {
     avoid: Vec<InspectAvoidWire>,
     cross: Vec<String>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
 }
 
 /// One native walk: arrival check, then the settled outcome. Frozen
@@ -775,12 +850,18 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            None,
+            None,
             false,
             cx,
         )
     }
 
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve the original routing policy and both request-level consent overrides"
+    )]
     pub(crate) fn begin_compat_avoiding(
         dest: WorldTile,
         radius: i32,
@@ -788,6 +869,8 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         Self::begin_with_intent(
@@ -797,6 +880,8 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            allow_prereq_dialogue,
+            allow_quest_start,
             true,
             cx,
         )
@@ -810,14 +895,17 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         compat_tile_intent: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
+        walk_wait::take_repath();
         if here().is_none() {
             return Err(false);
         }
 
-        if crate::reach_query::arrived(dest, radius) {
+        if crate::materialize::reach_query::arrived(dest, radius) {
             return Err(true);
         }
 
@@ -832,10 +920,19 @@ impl Walk {
         }))
         .as_u64()
         .unwrap_or(0);
-        let options = if avoid.is_empty() && cross.is_empty() {
+        let options = if avoid.is_empty()
+            && cross.is_empty()
+            && allow_prereq_dialogue.is_none()
+            && allow_quest_start.is_none()
+        {
             None
         } else {
-            Some(Box::new(WalkOptions { avoid, cross }))
+            Some(Box::new(WalkOptions {
+                avoid,
+                cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
+            }))
         };
         let walk = Self {
             token,
@@ -848,6 +945,35 @@ impl Walk {
         cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
         Ok(walk)
+    }
+    /// Stop the old follow and submit a fresh route request while preserving
+    /// the walk's overall deadline.
+    pub(crate) fn repath(&mut self, cx: &mut Cx<'_>) -> bool {
+        if here().is_none() {
+            return false;
+        }
+        let WorldTile { x, z, level } = self.dest;
+        let token = walk_wait::dispatch(&json!({
+            "op": "begin",
+            "x": x,
+            "z": z,
+            "level": level,
+            "radius": self.radius,
+            "allow_teleports": self.allow_teleports,
+            "intent_baseline": cx.user_move_intent_baseline(),
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        if token == 0 {
+            return false;
+        }
+        let previous = self.token;
+        self.token = token;
+        cx.emit(InteractReq::AbortWalk {
+            request_id: previous,
+        });
+        cx.emit(self.request());
+        true
     }
 
     /// `Some(settled)` once the walk wait settled or timed out. A timeout
@@ -883,10 +1009,18 @@ impl Walk {
     /// The host walk this wait is for.
     fn request(&self) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
-        let (avoid, cross) = self.options.as_ref().map_or_else(
-            || (Vec::new(), Vec::new()),
-            |options| (options.avoid.clone(), options.cross.clone()),
-        );
+        let (avoid, cross, allow_prereq_dialogue, allow_quest_start) =
+            self.options.as_ref().map_or_else(
+                || (Vec::new(), Vec::new(), None, None),
+                |options| {
+                    (
+                        options.avoid.clone(),
+                        options.cross.clone(),
+                        options.allow_prereq_dialogue,
+                        options.allow_quest_start,
+                    )
+                },
+            );
         if self.radius > 0 {
             InteractReq::WalkNear {
                 x,
@@ -900,6 +1034,8 @@ impl Walk {
                 request_id: self.token,
                 cross,
                 avoid,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         } else {
             InteractReq::Walk {
@@ -912,6 +1048,8 @@ impl Walk {
                 request_id: self.token,
                 avoid,
                 cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         }
     }
@@ -923,6 +1061,11 @@ impl Walk {
         }
     }
 
+    pub(crate) fn no_path(&self) -> bool {
+        walk_wait::dispatch(&json!({ "op": "no-path", "token": self.token }))
+            .as_bool()
+            .unwrap_or(false)
+    }
     /// The settled walk ended frozen `'blocked'`: the host follow stood next
     /// to a route end the live scene refuses (`WalkExecutor.ts:1092–1094`).
     pub(crate) fn blocked(&self) -> bool {
@@ -969,7 +1112,7 @@ enum Phase {
     },
     /// Frozen `Traversal.walkTo`'s `recoverBoatFare` (`Traversal.ts:89`)
     /// after a failed baked walk.
-    BoatFare(Box<crate::boat_fare::Recover>),
+    BoatFare(Box<crate::compat::boat_fare::Recover>),
 }
 
 /// Frozen walkResilient ladder over baked [`Walk`]s. Shared by `walk-hops`.
@@ -999,6 +1142,8 @@ pub(crate) struct Resilient {
     /// Per-walk zone names are preserved across repaths, but apply only to
     /// this request.
     cross: Box<[String]>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
     logs: VecDeque<String>,
 }
 
@@ -1030,6 +1175,8 @@ impl Resilient {
             avoid: Vec::new(),
             logs: VecDeque::new(),
             cross: Box::default(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }
     }
 
@@ -1047,6 +1194,15 @@ impl Resilient {
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
         self.cross = cross.into_boxed_slice();
+        self
+    }
+    pub(crate) fn with_prereq_permissions(
+        mut self,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
+    ) -> Self {
+        self.allow_prereq_dialogue = allow_prereq_dialogue;
+        self.allow_quest_start = allow_quest_start;
         self
     }
 
@@ -1108,6 +1264,7 @@ impl Resilient {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
         if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1116,10 +1273,12 @@ impl Resilient {
             return Some(false);
         }
         if arrived(self.dest, self.radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Some(true);
         }
         if let Some(max) = self.attempts {
             if self.no_progress >= max {
+                set_last_outcome(Some(WalkExecutorOutcome::Budget));
                 self.logs.push_back(format!(
                     "walkResilient: {max} passes made no progress — stopping (bounded caller)"
                 ));
@@ -1202,22 +1361,37 @@ impl Resilient {
                     self.kick_walk(cx)
                 }
             }
-            Phase::Walking(walk) => {
+            Phase::Walking(mut walk) => {
+                if walk_wait::take_repath() && !walk.repath(cx) {
+                    walk_wait::request_repath();
+                }
                 let owns_wait = walk_wait::owns(walk.token);
                 match walk.step(cx) {
                     None => {
                         self.phase = Phase::Walking(walk);
                         None
                     }
-                    // Frozen `outcome === 'blocked'` returns true
-                    // (`Traversal.ts:171–174`).
-                    Some(_) if owns_wait && walk.blocked() => Some(true),
-                    Some(_) if owns_wait => self.after_baked(cx),
+                    Some(value) if owns_wait => {
+                        let blocked = walk.blocked();
+                        let no_path = walk.no_path();
+                        set_last_outcome(Some(outcome_for_walk(
+                            value,
+                            blocked,
+                            no_path,
+                            self.dest,
+                            self.radius,
+                        )));
+                        if blocked {
+                            Some(true)
+                        } else {
+                            self.after_baked(cx)
+                        }
+                    }
                     Some(_) => self.after_displaced_walk(cx),
                 }
             }
             Phase::Verify { token } => {
-                let settled = crate::inspect_wait::dispatch(&json!({
+                let settled = crate::scene::inspect_wait::dispatch(&json!({
                     "op": "settled",
                     "token": token,
                 }))
@@ -1227,7 +1401,7 @@ impl Resilient {
                     self.phase = Phase::Verify { token };
                     return None;
                 }
-                let routed = crate::inspect_wait::dispatch(&json!({
+                let routed = crate::scene::inspect_wait::dispatch(&json!({
                     "op": "value",
                     "token": token,
                 }))
@@ -1258,13 +1432,22 @@ impl Resilient {
             allow_teleports,
             self.avoid.clone(),
             self.cross.to_vec(),
+            self.allow_prereq_dialogue,
+            self.allow_quest_start,
             cx,
         ) {
             Ok(walk) => {
                 self.phase = Phase::Walking(walk);
                 None
             }
-            Err(done) => Some(done),
+            Err(done) => {
+                set_last_outcome(Some(if done {
+                    WalkExecutorOutcome::Arrived
+                } else {
+                    WalkExecutorOutcome::Failed
+                }));
+                Some(done)
+            }
         }
     }
 
@@ -1312,15 +1495,19 @@ impl Resilient {
     fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
         if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
         }
         if arrived(self.dest, self.radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Some(true);
         }
         if self.recover {
-            if let Ok(recover) = crate::boat_fare::Recover::start(self.dest, cx, &mut self.logs) {
+            if let Ok(recover) =
+                crate::compat::boat_fare::Recover::start(self.dest, cx, &mut self.logs)
+            {
                 self.phase = Phase::BoatFare(Box::new(recover));
                 return None;
             }
@@ -1464,7 +1651,7 @@ impl Resilient {
         let Some(me) = here() else {
             return self.after_verify(false, cx);
         };
-        let token = crate::inspect_wait::dispatch(&json!({
+        let token = crate::scene::inspect_wait::dispatch(&json!({
             "op": "begin",
             "from": { "x": me.x, "z": me.z, "level": me.level },
             "to": { "x": self.dest.x, "z": self.dest.z, "level": self.dest.level },
@@ -1487,6 +1674,7 @@ impl Resilient {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            max_expansions: None,
             avoid: self.avoid.clone(),
             cross: self.cross.to_vec(),
             request_id: token,
@@ -1527,6 +1715,7 @@ impl Resilient {
                 "walkResilient: ({},{},{}) unreachable from here — stopping (best {} tiles)",
                 self.dest.x, self.dest.z, self.dest.level, self.best_dist
             ));
+            set_last_outcome(Some(WalkExecutorOutcome::Unreachable));
             self.unreachable = true;
             return Some(false);
         }
@@ -1556,23 +1745,29 @@ impl Family for WalkResilient {
     type Args = WalkResilientArgs;
     type Output = bool;
 
-    fn begin(args: WalkResilientArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+    fn begin(args: WalkResilientArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        reset_executor_status();
         let opts = args.opts;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
         }
         if opts.cross_zones.len() > 8 {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse("crossZones: more than 8 zone ids".into());
         }
-        if interrupted(_cx) {
+        if interrupted(cx) {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             return Begin::Done(false);
         }
         let dest = args.tile.world();
         let radius = opts.radius;
-        let Some(_) = here() else {
+        if here().is_none() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Done(false);
-        };
+        }
         if arrived(dest, radius) {
+            set_last_outcome(Some(WalkExecutorOutcome::Arrived));
             return Begin::Done(true);
         }
         let drive = Resilient::new(
@@ -1585,6 +1780,7 @@ impl Family for WalkResilient {
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
         .with_cross(opts.cross_zones)
+        .with_prereq_permissions(opts.allow_prereq_dialogue, opts.allow_quest_start)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
             drive,
@@ -1600,12 +1796,14 @@ impl Family for WalkResilient {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         if cx.user_move_intent_interrupted() {
+            set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             if let Some(stop) = self.drive.release() {
                 cx.emit(stop);
             }
             return Step::Done(false);
         }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
+            set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Step::Fail(thrown);
         }
         loop {
@@ -1635,7 +1833,27 @@ impl Family for WalkResilient {
                 });
             }
             match self.drive.step(cx) {
-                Some(result) => self.result = Some(result),
+                Some(result) => {
+                    if result {
+                        if last_outcome() != Some("blocked") {
+                            set_last_outcome(Some(
+                                if crate::materialize::reach_query::arrived(
+                                    self.drive.dest,
+                                    self.drive.radius,
+                                ) {
+                                    WalkExecutorOutcome::Arrived
+                                } else {
+                                    WalkExecutorOutcome::Closest
+                                },
+                            ));
+                        }
+                    } else if self.drive.unreachable {
+                        set_last_outcome(Some(WalkExecutorOutcome::Unreachable));
+                    } else if !matches!(last_outcome(), Some("interrupted" | "budget")) {
+                        set_last_outcome(Some(WalkExecutorOutcome::Failed));
+                    }
+                    self.result = Some(result);
+                }
                 None if self.drive.logs.is_empty() => {
                     self.pumped = false;
                     return Step::Wait;
@@ -1643,6 +1861,117 @@ impl Family for WalkResilient {
                 None => self.waiting = true,
             }
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProbeDestArgs {
+    #[serde(default)]
+    dest: Value,
+    #[serde(default)]
+    max_expansions: Value,
+}
+
+const MAX_SAFE_JS_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+fn probe_dest_integer(value: &Value) -> Option<i32> {
+    let number = value.as_f64()?;
+    (number.is_finite()
+        && number.fract() == 0.0
+        && (i32::MIN as f64..=i32::MAX as f64).contains(&number))
+    .then_some(number as i32)
+}
+
+fn probe_dest_tile(value: &Value) -> Option<WorldTile> {
+    let fields = value.as_object()?;
+    let x = probe_dest_integer(fields.get("x")?)?;
+    let z = probe_dest_integer(fields.get("z")?)?;
+    let level = fields
+        .get("level")
+        .filter(|value| !value.is_null())
+        .map_or(Some(0), probe_dest_integer)?;
+    Some(WorldTile { x, z, level })
+}
+
+fn probe_dest_max_expansions(value: &Value) -> Option<u64> {
+    let number = value.as_f64()?;
+    (number.is_finite() && number.fract() == 0.0 && (1.0..=MAX_SAFE_JS_INTEGER).contains(&number))
+        .then_some(number as u64)
+}
+
+pub(crate) struct ProbeDest {
+    token: u64,
+}
+
+impl Family for ProbeDest {
+    const NAME: &'static str = "walk-probe-dest";
+    type Args = ProbeDestArgs;
+    type Output = Value;
+
+    fn begin(args: ProbeDestArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let (Some(dest), Some(_), Some(from)) = (
+            probe_dest_tile(&args.dest),
+            probe_dest_max_expansions(&args.max_expansions),
+            here(),
+        ) else {
+            return Begin::Done(json!({"ok": false, "terminal": null}));
+        };
+        // The count is accepted at the API boundary, but native routing uses
+        // NODE_BUDGET just like the walk verifier.
+        let token = crate::scene::inspect_wait::dispatch(&json!({
+            "op": "begin",
+            "from": { "x": from.x, "z": from.z, "level": from.level },
+            "to": { "x": dest.x, "z": dest.z, "level": dest.level },
+            "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": false,
+            "timeout_ms": PROBE_TIMEOUT_MS,
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        if token == 0 {
+            return Begin::Done(json!({"ok": false, "terminal": null}));
+        }
+        cx.emit(InteractReq::InspectRoute {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+            from_x: from.x,
+            from_z: from.z,
+            from_level: from.level,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: false,
+            max_expansions: None,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+            request_id: token,
+        });
+        Begin::Run(Self { token })
+    }
+
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        let settled = crate::scene::inspect_wait::dispatch(&json!({
+            "op": "settled",
+            "token": self.token,
+        }))
+        .as_bool()
+        .unwrap_or(false);
+        if !settled {
+            return Step::Wait;
+        }
+        let route = crate::scene::inspect_wait::dispatch(&json!({
+            "op": "value",
+            "token": self.token,
+        }));
+        let ok = route.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let terminal = if ok {
+            route.get("terminal").cloned().unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        Step::Done(json!({"ok": ok, "terminal": terminal}))
     }
 }
 
@@ -1731,6 +2060,8 @@ impl WalkOpening {
                         false,
                         Vec::new(),
                         Vec::new(),
+                        None,
+                        None,
                         cx,
                     ) {
                         Ok(walk) => {
@@ -1897,7 +2228,7 @@ fn scene_click(dest: WorldTile, cx: &mut Cx<'_>) -> bool {
         z: clamp(dest.z, me.z),
         level: me.level,
     };
-    let in_scene = crate::reach_query::with_view(|view| {
+    let in_scene = crate::materialize::reach_query::with_view(|view| {
         let lx = target.x - view.base_x;
         let lz = target.z - view.base_z;
         view.available && lx >= 0 && lz >= 0 && lx < view.width && lz < view.height
@@ -2044,10 +2375,10 @@ const SUSTAIN: usize = 1;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
-    use crate::observed::{self, WalkOutcome};
-    use crate::walk_wait;
+    use crate::materialize::callback_v8::HeldCallback;
+    use crate::scene::observed::{self, WalkOutcome};
+    use crate::scene::walk_wait;
     use serde_json::Value;
 
     pub(crate) struct NoJs;
@@ -2074,8 +2405,8 @@ pub(crate) mod tests {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
-        crate::inspect_wait::on_reset();
-        crate::reach_query::on_reset();
+        crate::scene::inspect_wait::on_reset();
+        crate::materialize::reach_query::on_reset();
         machine::on_hold(false);
         reset_scene_time();
     }
@@ -2098,20 +2429,24 @@ pub(crate) mod tests {
     }
 
     fn walk_token() -> u64 {
+        walk_token_for(10, 0)
+    }
+
+    fn walk_token_for(x: i32, z: i32) -> u64 {
         match machine::merge_ops(Vec::new()).as_slice() {
             [InteractReq::Walk {
-                x: 10,
-                z: 0,
+                x: actual_x,
+                z: actual_z,
                 request_id,
                 ..
             }]
             | [InteractReq::WalkNear {
-                x: 10,
-                z: 0,
+                x: actual_x,
+                z: actual_z,
                 request_id,
                 ..
-            }] => *request_id,
-            other => panic!("expected the walk, got {other:?}"),
+            }] if (*actual_x, *actual_z) == (x, z) => *request_id,
+            other => panic!("expected the walk to ({x},{z}), got {other:?}"),
         }
     }
 
@@ -2144,6 +2479,7 @@ pub(crate) mod tests {
                     radius,
                     allow_teleports: false,
                     blocked: false,
+                    ..WalkOutcome::default()
                 });
         });
     }
@@ -2366,40 +2702,44 @@ pub(crate) mod tests {
 
     /// `passes` no-progress ladder passes (baked fail, scene, unstick),
     /// with the backoff between them. Returns the next walk-outcome seq.
-    fn no_progress_passes(h: machine::Handle, seq: u64, passes: u32) -> u64 {
-        ladder_no_progress_passes(h, seq, passes, 0)
+    fn ladder_no_progress_passes(h: machine::Handle, seq: u64, passes: u32, radius: i32) -> u64 {
+        ladder_no_progress_passes_to(
+            h,
+            seq,
+            passes,
+            radius,
+            WorldTile {
+                x: 10,
+                z: 0,
+                level: 0,
+            },
+        )
     }
 
-    /// [`no_progress_passes`] for any row whose ladder walks from (0,0) to
-    /// (10,0) with walk `radius`: every baked walk fails where it began.
-    fn ladder_no_progress_passes(
+    fn ladder_no_progress_passes_to(
         h: machine::Handle,
         mut seq: u64,
         passes: u32,
         radius: i32,
+        dest: WorldTile,
     ) -> u64 {
         let here = WorldTile {
             x: 0,
             z: 0,
             level: 0,
         };
-        let dest = WorldTile {
-            x: 10,
-            z: 0,
-            level: 0,
-        };
         for pass in 0..passes {
             machine::step(&mut NoJs);
-            let token = walk_token();
+            let token = walk_token_for(dest.x, dest.z);
             post_walk_outcome(seq, token, here, dest, radius, true);
             seq += 1;
             machine::step(&mut NoJs);
             assert_eq!(
                 machine::merge_ops(Vec::new()),
                 vec![InteractReq::WalkTo {
-                    x: 10,
-                    z: 0,
-                    level: 0,
+                    x: dest.x,
+                    z: dest.z,
+                    level: dest.level,
                 }]
             );
             machine::age(h, SCENE_TIMEOUT_MS + 1);
@@ -2413,12 +2753,131 @@ pub(crate) mod tests {
         seq
     }
 
+    #[test]
+    fn walk_verify_and_probe_dest_ignore_caller_budgets_below_node_budget_for_long_route() {
+        // The planner half of this test is `host-play/tests/compat_walk_route_budget.rs`, on a 768-tile-wide map.
+        const LONG_ROUTE_X: i32 = 767;
+        reset();
+        let from = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: LONG_ROUTE_X,
+            z: 0,
+            level: 0,
+        };
+        post_here(from.x, from.z);
+        let probe_args = serde_json::from_value::<ProbeDestArgs>(json!({
+            "dest": { "x": to.x, "z": to.z, "level": to.level },
+            "maxExpansions": 300_000
+        }))
+        .expect("probeDest accepts the caller's expansion count");
+        let mut probe_ops = Vec::new();
+        let mut probe_clock = crate::scene::task_clock::InstantTaskClock::new();
+        let mut probe_cx = crate::machine::Cx::test(&mut probe_ops, &mut probe_clock, None);
+        let crate::machine::Begin::Run(_) =
+            <ProbeDest as crate::machine::Family>::begin(probe_args, &mut probe_cx)
+        else {
+            panic!("probeDest accepts a valid destination and expansion count");
+        };
+        drop(probe_cx);
+        let [InteractReq::InspectRoute {
+            x: probe_x,
+            z: probe_z,
+            level: probe_level,
+            from_x: probe_from_x,
+            from_z: probe_from_z,
+            from_level: probe_from_level,
+            max_expansions: probe_max_expansions,
+            ..
+        }] = probe_ops.as_slice()
+        else {
+            panic!("expected the probeDest route request, got {probe_ops:?}");
+        };
+        assert_eq!(*probe_max_expansions, None);
+        assert_eq!((*probe_x, *probe_z, *probe_level), (to.x, to.z, to.level));
+        assert_eq!(
+            (*probe_from_x, *probe_from_z, *probe_from_level),
+            (from.x, from.z, from.level)
+        );
+        let probe_bytes = crate::wire::encode_interact_batch(&probe_ops);
+        let probe_batch = crate::wire::InteractBatch::from_bytes(&probe_bytes)
+            .expect("the probeDest request encodes");
+        assert_eq!(probe_batch.reqs().unwrap().get(0).max_expansions(), None);
+
+        let args = serde_json::from_value::<WalkResilientArgs>(json!({
+            "tile": { "x": to.x, "z": to.z, "level": to.level },
+            "opts": { "radius": 0, "maxBudget": 300_000 }
+        }))
+        .expect("the walk options deserialize with the caller budget");
+        let mut ops = Vec::new();
+        let mut clock = crate::scene::task_clock::InstantTaskClock::new();
+        let mut cx = crate::machine::Cx::test(&mut ops, &mut clock, None);
+        let crate::machine::Begin::Run(mut row) =
+            <WalkResilient as crate::machine::Family>::begin(args, &mut cx)
+        else {
+            panic!("the long-route walk starts");
+        };
+        row.drive.kick_verify(&mut cx);
+        drop(cx);
+
+        let [InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            avoid,
+            cross,
+            max_expansions,
+            ..
+        }] = ops.as_slice()
+        else {
+            panic!("expected the long-route verify probe, got {ops:?}");
+        };
+        assert_eq!(*max_expansions, None);
+        let bytes = crate::wire::encode_interact_batch(&ops);
+        let batch = crate::wire::InteractBatch::from_bytes(&bytes)
+            .expect("the long-route verify probe encodes");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        let wire_probe = requests.get(0);
+        assert_eq!(wire_probe.op(), Some("inspect-route"));
+        assert_eq!(wire_probe.max_expansions(), None);
+        assert!(avoid.is_empty());
+        assert!(cross.is_empty());
+        let request_from = WorldTile {
+            x: *from_x,
+            z: *from_z,
+            level: *from_level,
+        };
+        let request_to = WorldTile {
+            x: *x,
+            z: *z,
+            level: *level,
+        };
+        assert_eq!(request_from, from);
+        assert_eq!(request_to, to);
+
+        // The planner half takes exactly these options (`FindOptions` of the router test).
+        assert_eq!(
+            (*allow_teleports, *allow_wilderness, *allow_bank_fetch),
+            (false, true, false)
+        );
+    }
+
     /// Drive a row's (0,0) to (10,0) ladder with walk `radius` through every
     /// no-progress pass to its verify probe, and settle that probe dead.
     pub(crate) fn ladder_to_a_dead_probe(h: machine::Handle, radius: i32) {
         ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, radius);
         let probe = probe_token();
-        crate::inspect_wait::settle_for_tests(probe, false);
+        crate::scene::inspect_wait::settle_for_tests(probe, false);
     }
 
     fn probe_token() -> u64 {
@@ -2447,7 +2906,7 @@ pub(crate) mod tests {
             "radius": 0,
             "crossZones": ["test-barrier"],
         }));
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
 
         let ops = machine::merge_ops(Vec::new());
         let bytes = crate::wire::encode_interact_batch(&ops);
@@ -2457,6 +2916,7 @@ pub(crate) mod tests {
         assert_eq!(requests.len(), 1);
         let probe = requests.get(0);
         assert_eq!(probe.op(), Some("inspect-route"));
+        assert_eq!(probe.max_expansions(), None);
         let cross = probe
             .cross()
             .map(|names| names.iter().collect::<Vec<_>>())
@@ -2465,14 +2925,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn stalled_verify_probe_does_not_apply_caller_max_budget() {
+        reset();
+        post_here(0, 0);
+        let budget = 123_456;
+        let h = start_with(json!({ "radius": 0, "maxBudget": budget }));
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
+
+        let ops = machine::merge_ops(Vec::new());
+        assert!(matches!(
+            ops.as_slice(),
+            [InteractReq::InspectRoute {
+                max_expansions: None,
+                ..
+            }]
+        ));
+        let bytes = crate::wire::encode_interact_batch(&ops);
+        let batch = crate::wire::InteractBatch::from_bytes(&bytes)
+            .expect("the default-budget verify route encodes");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests.get(0).max_expansions(), None);
+    }
+
+    #[test]
     fn a_routed_verify_probe_keeps_walking_until_its_terminal_repeats() {
         reset();
         post_here(0, 0);
         let h = start(None);
-        let seq = no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        let seq = ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         let first = probe_token();
         assert_eq!(machine::take(h), Take::Pending, "verify waits on the probe");
-        crate::inspect_wait::settle_for_tests(first, true);
+        crate::scene::inspect_wait::settle_for_tests(first, true);
         machine::step(&mut NoJs);
         assert_eq!(
             machine::take(h),
@@ -2480,9 +2964,9 @@ pub(crate) mod tests {
             "a fresh probe is not unreachable"
         );
         machine::step(&mut NoJs);
-        no_progress_passes(h, seq, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, seq, UNREACHABLE_PASSES, 0);
         let second = probe_token();
-        crate::inspect_wait::settle_for_tests(second, true);
+        crate::scene::inspect_wait::settle_for_tests(second, true);
         machine::step(&mut NoJs);
         assert_eq!(
             machine::take(h),
@@ -2496,9 +2980,9 @@ pub(crate) mod tests {
         reset();
         post_here(0, 0);
         let h = start(None);
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         let probe = probe_token();
-        crate::inspect_wait::settle_for_tests(probe, false);
+        crate::scene::inspect_wait::settle_for_tests(probe, false);
         machine::step(&mut NoJs);
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
     }
@@ -2508,7 +2992,7 @@ pub(crate) mod tests {
         reset();
         post_here(0, 0);
         let h = start(Some(UNREACHABLE_PASSES));
-        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, 0);
         assert!(
             machine::merge_ops(Vec::new()).is_empty(),
             "attempts <= 3 ends before verify (Traversal.ts:149–153)"
@@ -2517,7 +3001,21 @@ pub(crate) mod tests {
     }
 
     fn start_with(opts: Value) -> machine::Handle {
-        let args = json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": opts });
+        start_with_tile(
+            WorldTile {
+                x: 10,
+                z: 0,
+                level: 0,
+            },
+            opts,
+        )
+    }
+
+    fn start_with_tile(tile: WorldTile, opts: Value) -> machine::Handle {
+        let args = json!({
+            "tile": { "x": tile.x, "z": tile.z, "level": tile.level },
+            "opts": opts,
+        });
         let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
             panic!("walk-resilient runs");
         };
@@ -2614,6 +3112,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn walk_resilient_preserves_prerequisite_overrides_on_host_walk() {
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "tile": { "x": 10, "z": 0, "level": 0 },
+            "opts": { "radius": 0, "allowQuestStart": false },
+        });
+        let Started::Running(_) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        machine::step(&mut NoJs);
+        match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }] => {
+                assert_eq!(*allow_prereq_dialogue, None);
+                assert_eq!(*allow_quest_start, Some(false));
+            }
+            other => panic!("expected the compat walk, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn closer_tile_rebakes_after_nopath() {
         reset();
         post_here(0, 0);
@@ -2679,6 +3202,7 @@ pub(crate) mod tests {
                     radius: 0,
                     allow_teleports: false,
                     blocked: true,
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);
@@ -2734,8 +3258,9 @@ pub(crate) mod tests {
 
     #[test]
     fn walk_resilient_closest_with_fresh_negative_reach_does_not_arrive() {
-        use crate::wire::{
-            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, Snapshot, TileInput,
+        use {
+            crate::wire::{encode_snapshot_with_native, Snapshot},
+            script::native::snapshot_source::{NativeFactsInput, ReachViewInput, TileInput},
         };
 
         reset();
@@ -2815,7 +3340,7 @@ pub(crate) mod tests {
             let bytes = encode_snapshot_with_native(&input, native);
             let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
             observed::apply(&snap);
-            crate::reach_query::apply(&snap);
+            crate::materialize::reach_query::apply(&snap);
             walk_wait::on_snapshot(&snap);
             view
         };
@@ -2883,6 +3408,8 @@ pub(crate) mod tests {
                     radius: 0,
                     allow_teleports: false,
                     blocked: false,
+                    no_path: true,
+                    ..WalkOutcome::default()
                 });
         });
         machine::step(&mut NoJs);
@@ -2964,9 +3491,9 @@ pub(crate) mod tests {
         assert_eq!(machine::take(h), Take::Pending);
     }
 
-    pub(crate) fn door_loc(id: i32, x: i32, z: i32) -> crate::observed::SceneRow {
+    pub(crate) fn door_loc(id: i32, x: i32, z: i32) -> crate::scene::observed::SceneRow {
         let dist = x.abs().max(z.abs());
-        crate::observed::SceneRow {
+        crate::scene::observed::SceneRow {
             id,
             name: Some("Door".into()),
             x,
@@ -3012,7 +3539,7 @@ pub(crate) mod tests {
     fn post_counterfactual_scene(
         here: WorldTile,
         scene: &api::snapshot::SceneView,
-        doors: Vec<crate::observed::SceneRow>,
+        doors: Vec<crate::scene::observed::SceneRow>,
     ) {
         use std::sync::Arc;
         observed::post(1, |post| {
@@ -3035,7 +3562,7 @@ pub(crate) mod tests {
         });
     }
 
-    fn straight_wall_door(door_on_player_side: bool) -> Option<crate::observed::SceneRow> {
+    fn straight_wall_door(door_on_player_side: bool) -> Option<crate::scene::observed::SceneRow> {
         use client::dash3d::CollisionFlag;
         let mut scene = counterfactual_scene(0);
         for z in -16..16 {
@@ -3177,7 +3704,7 @@ pub(crate) mod tests {
         scene
     }
 
-    pub(crate) fn post_walled_scene(doors: Vec<crate::observed::SceneRow>) {
+    pub(crate) fn post_walled_scene(doors: Vec<crate::scene::observed::SceneRow>) {
         use std::sync::Arc;
         let scene = wall_west_of_dest();
         let here = WorldTile {
@@ -3206,7 +3733,10 @@ pub(crate) mod tests {
         let flood = api::query::SceneQuery::new(&scene, Some(here))
             .flood_reach()
             .expect("origin is in-scene");
-        crate::reach_query::set_view_for_tests(api::query::pack_reach_query(&scene, Some(&flood)));
+        crate::materialize::reach_query::set_view_for_tests(api::query::pack_reach_query(
+            &scene,
+            Some(&flood),
+        ));
     }
 
     fn fail_baked_then_scene(h: machine::Handle) {
@@ -3585,7 +4115,7 @@ pub(crate) mod tests {
         machine::on_pause();
         machine::on_resume();
         // The host posts no snapshot while Paused. Resume is queued first.
-        crate::observed::post(2, |post| {
+        crate::scene::observed::post(2, |post| {
             post.user_move_intent_seq(1);
         });
         machine::step(&mut NoJs);

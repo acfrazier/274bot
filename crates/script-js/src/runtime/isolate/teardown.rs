@@ -78,6 +78,9 @@ pub(super) struct TeardownState {
     /// Producer evidence generation. Independent of native input identity
     /// and execution lifecycle; shared only to publish the host's delta key.
     pub(super) snapshot_evidence_sequence: u64,
+    /// Test seam: `SeatPage` commands that passed the early gate and ran.
+    #[cfg(feature = "test-hooks")]
+    pub(super) executed_seat_pages: u64,
 }
 
 impl TeardownState {
@@ -102,6 +105,8 @@ impl TeardownState {
             pause_requested: false,
             execution_interrupt: None,
             snapshot_evidence_sequence: 0,
+            #[cfg(feature = "test-hooks")]
+            executed_seat_pages: 0,
         }
     }
 }
@@ -162,15 +167,14 @@ pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
     st.phase != TeardownPhase::Running || st.execution_interrupt.is_some()
 }
 
-/// Claim the next tick/recovery eval. This closes the race where Pause sees no
-/// active eval immediately before the isolate thread enters a queued one.
-pub(super) fn begin_interruptible_execution(
+fn begin_execution(
     teardown: &Mutex<TeardownState>,
     tick: u64,
     generation: u64,
+    honor_pause: bool,
 ) -> bool {
     let mut st = teardown.lock().unwrap();
-    if st.phase != TeardownPhase::Running || st.pause_requested {
+    if st.phase != TeardownPhase::Running || (honor_pause && st.pause_requested) {
         return false;
     }
     st.execution_id = st.execution_id.wrapping_add(1);
@@ -181,6 +185,35 @@ pub(super) fn begin_interruptible_execution(
     st.execution_deadline_armed = false;
     st.execution_deadline_owner = None;
     true
+}
+
+/// Claim the next tick/recovery eval. This closes the race where Pause sees no
+/// active eval immediately before the isolate thread enters a queued one.
+pub(super) fn begin_interruptible_execution(
+    teardown: &Mutex<TeardownState>,
+    tick: u64,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, tick, generation, true)
+}
+
+/// Client-frame listeners belong to BotHost, not the paused ScriptRunner
+/// work loop, so they remain deliverable while the operator has paused it.
+pub(super) fn begin_frame_execution(
+    teardown: &Mutex<TeardownState>,
+    tick: u64,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, tick, generation, false)
+}
+
+/// Pause/resume lifecycle callbacks are allowed while ScriptRunner work is
+/// paused, but their synchronous JavaScript body still has an execution bound.
+pub(super) fn begin_lifecycle_hook_execution(
+    teardown: &Mutex<TeardownState>,
+    generation: u64,
+) -> bool {
+    begin_execution(teardown, super::LIFECYCLE_HOOK_TICK, generation, false)
 }
 
 /// Finish the active eval and cancel its terminate while holding the same lock
@@ -227,7 +260,7 @@ pub(super) fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState
 
 pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
     let bot_log: Result<Vec<String>, rustyscript::Error> =
-        super::super::lineage_v8::call_function_immediate(
+        crate::materialize::lineage_v8::call_function_immediate(
             runtime,
             None,
             "__rs2b0t_drain_log",
@@ -326,7 +359,7 @@ pub(super) fn teardown_once(
         .invoked
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let threw: Result<Option<String>, rustyscript::Error> =
-        super::super::lineage_v8::call_function_immediate(
+        crate::materialize::lineage_v8::call_function_immediate(
             runtime,
             None,
             "__rs2b0t_invoke_on_stop",
@@ -342,7 +375,7 @@ pub(super) fn teardown_once(
         }
     }
     drain_bot_log(runtime, out);
-    let _ = super::super::lineage_v8::eval::<()>(
+    let _ = crate::materialize::lineage_v8::eval::<()>(
         runtime,
         "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
     );

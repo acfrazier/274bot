@@ -24,8 +24,8 @@ pub const MAX_IMAGE_TILES: usize =
 pub const MAX_PNG_BYTES: u32 = 512 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 pub const NAVPOIS_MAGIC: &[u8; 4] = b"274P";
-pub const NAVPOIS_VERSION: u16 = 1;
-pub const NAVPOIS_HEADER_BYTES: usize = 77;
+pub const NAVPOIS_VERSION: u16 = 2;
+pub const NAVPOIS_HEADER_BYTES: usize = 13;
 pub const SHIPPED_IMAGES_SCHEMA: u16 = 1;
 /// One identity, one receipt and two totals; far below the JSON cap.
 pub const MAX_SHIPPED_IMAGES_BYTES: usize = 4 * 1024;
@@ -523,58 +523,20 @@ impl ShippedCatalogue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ServiceIdentity {
-    pub revision: u16,
-    pub content: Digest,
-    pub nav_sha256: Digest,
-    pub source_sha256: Digest,
-    pub generator_sha256: Digest,
-    pub policy: Digest,
-}
-impl ServiceIdentity {
-    /// SHA256("274bot.map.services\0" || version:u16be || revision:u16be ||
-    /// content || nav || source || generator || policy), each digest raw 32 bytes.
-    pub fn binding(self) -> Result<Digest, MapError> {
-        use sha2::{Digest as _, Sha256};
-        super::revision(self.revision)?;
-        let mut h = Sha256::new();
-        h.update(b"274bot.map.services\0");
-        h.update(NAVPOIS_VERSION.to_be_bytes());
-        h.update(self.revision.to_be_bytes());
-        for digest in [
-            self.content,
-            self.nav_sha256,
-            self.source_sha256,
-            self.generator_sha256,
-            self.policy,
-        ] {
-            h.update(digest.0);
-        }
-        Ok(Digest(h.finalize().into()))
-    }
-}
-
 /// Data-only service supplement. Binary framing deliberately wraps the same
 /// typed POI JSON records, not Rust enum discriminants or imagery.
 /// Wire: "274P" (4), version:u8 (1), JSON bytes:u32le (4), count:u32le (4),
-/// identity-binding (32), JSON SHA256 (32), UTF-8 ServicePois JSON. No trailing data.
+/// UTF-8 ServicePois JSON. No trailing data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServicePois {
     pub schema: u16,
-    pub identity: ServiceIdentity,
     pub coverage: Coverage,
     pub records: Rows<PoiRecord, MAX_POIS>,
 }
 impl ServicePois {
-    pub fn validate(&self, expected: ServiceIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("navpois", self.schema, NAVPOIS_VERSION)?;
-        self.identity.binding()?;
-        if self.identity != expected {
-            return Err(MapError::Identity);
-        }
         validate_records(self.records.as_slice())?;
         for record in self.records.as_slice() {
             match record.key.entity {
@@ -584,35 +546,21 @@ impl ServicePois {
                     if matches!(record.key.source, SourceSpace::ClientVisual { .. }) => {}
                 _ => return Err(MapError::Invalid("service source space")),
             }
-            if record
-                .walk_target
-                .is_some_and(|t| t.nav_sha256 != expected.nav_sha256)
-            {
-                return Err(MapError::Identity);
-            }
         }
         Ok(())
     }
     pub fn encode_navpois(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         let body = encode_json(self)?;
         let mut out = Vec::with_capacity(NAVPOIS_HEADER_BYTES + body.len());
         out.extend_from_slice(NAVPOIS_MAGIC);
         out.push(NAVPOIS_VERSION as u8);
         out.extend_from_slice(&(body.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.records.as_slice().len() as u32).to_le_bytes());
-        out.extend_from_slice(&self.identity.binding()?.0);
-        out.extend_from_slice(&Digest::of(&body).0);
         out.extend_from_slice(&body);
         Ok(out)
     }
-    /// expected_file_sha256 comes from the authenticated nav identity/manifest,
-    /// not from this sidecar's own assertions. Header checks precede POI allocation.
-    pub fn decode_navpois(
-        bytes: &[u8],
-        expected: ServiceIdentity,
-        expected_file_sha256: Digest,
-    ) -> Result<Self, MapError> {
+    pub fn decode_navpois(bytes: &[u8]) -> Result<Self, MapError> {
         if bytes.len() < NAVPOIS_HEADER_BYTES {
             return Err(MapError::Truncated);
         }
@@ -636,14 +584,8 @@ impl ServicePois {
         if bytes.len() != NAVPOIS_HEADER_BYTES + length {
             return Err(MapError::Invalid("navpois length"));
         }
-        if bytes[13..45] != expected.binding()?.0 {
-            return Err(MapError::Identity);
-        }
-        if Digest::of(bytes) != expected_file_sha256 {
-            return Err(MapError::Digest);
-        }
-        let document: Self = super::json(&bytes[77..], MAX_JSON_BYTES)?;
-        document.validate(expected)?;
+        let document: Self = super::json(&bytes[NAVPOIS_HEADER_BYTES..], MAX_JSON_BYTES)?;
+        document.validate()?;
         if document.records.as_slice().len() != count {
             return Err(MapError::Invalid("navpois count"));
         }

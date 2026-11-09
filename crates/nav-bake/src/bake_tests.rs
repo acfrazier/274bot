@@ -15,7 +15,15 @@ fn content_inputs_follow_the_content_root() {
 }
 
 #[test]
-fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
+fn bake_rejects_unknown_revision_before_reading_local_game_data() {
+    assert!(matches!(
+        selected_game_data(Some(300), Path::new(".")),
+        Err(crate::GenerationError::UnsupportedRevision { revision: 300 })
+    ));
+}
+
+#[test]
+fn config_jag_uses_the_selected_revision_layout() {
     assert_eq!(
         config_jag_for(289, Path::new("/289/engine/data/pack/client")).unwrap(),
         PathBuf::from("/289/engine/data/pack/client/config")
@@ -24,146 +32,15 @@ fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
         config_jag_for(274, Path::new("/274/engine/data/pack/client")).unwrap(),
         PathBuf::from("/274/engine/data/pack/config")
     );
-}
-
-#[test]
-fn generator_identity_tracks_the_manual_id_format_and_sources() {
-    let base = generator_identity(&[("crates/nav-bake/src/pack.rs", "fn a() {}")]);
-    assert_eq!(base.len(), 64);
-    assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
-    assert_ne!(
-        base,
-        generator_identity(&[("crates/nav-bake/src/pack.rs", "fn b() {}")])
-    );
-    assert_ne!(
-        base,
-        generator_identity(&[("crates/nav-bake/src/collision.rs", "fn a() {}")])
-    );
-    // Order and labels are part of the identity.
-    assert_ne!(
-        generator_identity(&[("a.rs", "x"), ("b.rs", "y")]),
-        generator_identity(&[("b.rs", "x"), ("a.rs", "y")])
-    );
-}
-
-#[test]
-fn movement_sources_invalidate_a_warm_reach_stamp() {
-    // Reach production and routing share the movement primitive, not search code.
-    assert!(!GENERATOR_SOURCES.contains(&"crates/nav-planner/src/router.rs"));
-    assert!(
-        GENERATOR_SOURCES.contains(&"crates/nav-planner/src/movement.rs"),
-        "the shared movement primitive must invalidate generated reach bits"
-    );
-    assert!(GENERATOR_SOURCES.contains(&"crates/nav-planner/src/paint.rs"));
-    assert!(
-        GENERATOR_SOURCES.contains(&"crates/nav-bake/src/canlight.rs"),
-        "the canlight producer must invalidate generated masks"
-    );
-    assert!(
-        GENERATOR_SOURCES.contains(&"crates/nav-bake/src/transport/condparse.rs"),
-        "the transport condition parser must invalidate generated edges"
-    );
-
-    let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
-        .iter()
-        .map(|path| (*path, "fn a() {}"))
-        .collect();
-    let mut movement_only = baseline.clone();
-    for (label, text) in &mut movement_only {
-        if *label == "crates/nav-planner/src/movement.rs" {
-            *text = "fn step_ok_changed() {}";
-        }
-    }
     assert_eq!(
-        movement_only
-            .iter()
-            .find(|(path, _)| *path == "crates/nav-planner/src/paint.rs")
-            .map(|(_, text)| *text),
-        Some("fn a() {}"),
-        "paint bytes stay the same; only the shared movement rule changes"
+        config_jag_for(377, Path::new("/377/cache")).unwrap(),
+        PathBuf::from("/377/cache/config")
     );
-
-    let warm = generator_identity(&baseline);
-    let after_movement = generator_identity(&movement_only);
-    assert_ne!(
-        warm, after_movement,
-        "shared movement bytes join generator_identity"
-    );
-
-    let input_sha = "56".repeat(32);
-    let pack_sha = "ab".repeat(32);
-    let flags_sha = "cd".repeat(32);
-    let reach_sha = "ef".repeat(32);
-    let canlight_sha = "12".repeat(32);
-    let manifest_sha = "13".repeat(32);
-    let inputs = [crate::bundle::InputFingerprint {
-        path: "/content/maps/m1.jm2".into(),
-        bytes: 10,
-        modified_nanos: 5,
-        sha256: input_sha,
-    }];
-    let baked = crate::bundle::BakeStamp {
-        content_id: None,
-        source_sha256: None,
-        generator: warm,
-        format: "274V16".into(),
-        revision: 289,
-        cache_id: "cache-1".into(),
-        cache_manifest: None,
-        nav_sha256: pack_sha.clone(),
-        flags_sha256: flags_sha.clone(),
-        reach_sha256: reach_sha.clone(),
-        canlight_sha256: canlight_sha.clone(),
-        canlight_identity: "34".repeat(32),
-        pack_bytes: 11,
-        flags_bytes: 7,
-        reach_bytes: 9,
-        canlight_bytes: 5,
-        manifest_sha256: Some(manifest_sha.clone()),
-        manifest_bytes: Some(13),
-        relative_pack: "nav/289/274bot.navpack".into(),
-        relative_flags: "nav/289/274bot.navflags".into(),
-        relative_reach: "nav/289/274bot.navreach".into(),
-        relative_canlight: "nav/289/274bot.navcanlight".into(),
-        relative_manifest: Some("nav/289/274bot.navpack.json".into()),
-        pois_sha256: Some("56".repeat(32)),
-        pois_bytes: Some(3),
-        relative_pois: Some("nav/289/274bot.navpois".into()),
-        pois_generator: Some("pois-gen".into()),
-        inputs: inputs.to_vec(),
-    };
-    let expected = crate::bundle::StampExpectation {
-        revision: 289,
-        format: "274V16",
-        generator: &after_movement,
-        cache_id: "cache-1",
-        inputs: &inputs,
-        staged_pack_bytes: Some(11),
-        staged_pack_sha256: Some(&pack_sha),
-        staged_flags_bytes: Some(7),
-        staged_flags_sha256: Some(&flags_sha),
-        staged_reach_bytes: Some(9),
-        staged_reach_sha256: Some(&reach_sha),
-        staged_canlight_bytes: Some(5),
-        staged_canlight_sha256: Some(&canlight_sha),
-        staged_manifest_bytes: Some(13),
-        staged_manifest_sha256: Some(&manifest_sha),
-        staged_pois_bytes: Some(3),
-        staged_pois_sha256: Some(
-            "5656565656565656565656565656565656565656565656565656565656565656",
-        ),
-        pois_generator: "pois-gen",
-    };
-    let error = baked
-        .covers(&expected)
-        .expect_err("shared movement change must fail covers and force reach rebake");
-    assert!(
-        matches!(
-            &error,
-            crate::GenerationError::StaleStamp(crate::StaleStampError::GeneratorChanged)
-        ),
-        "{error}"
-    );
+    assert!(matches!(
+        config_jag_for(274, Path::new("")),
+        Err(crate::GenerationError::CachePathMissingParent { cache_dir })
+            if cache_dir.as_os_str().is_empty()
+    ));
 }
 
 #[test]
@@ -184,16 +61,16 @@ fn a_missing_door_config_fails_the_bake() {
     std::fs::write(doors.join("doors.loc"), "[loc_100]\nop1=Open\n").unwrap();
     std::fs::write(&config_jag, b"").unwrap();
     let gates = root.join("content/scripts/general_use/configs/gates.loc");
+    let game_data_dir = root.join("game-data");
     let request = BakeRequest {
         revision: None,
+        game_data_dir: &game_data_dir,
         maps_dir: &maps,
         doors_dir: &doors,
         gates: &gates,
         config_jag: &config_jag,
-        cache: None,
+        server_loc_dat_377: None,
         require_all_door_configs: true,
-        input_fingerprints: None,
-        content_id: None,
     };
     let error = bake_world(&request)
         .err()
@@ -210,34 +87,6 @@ fn a_missing_door_config_fails_the_bake() {
         "{error}"
     );
     std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn bake_requires_the_config_archive_source_fingerprint() {
-    let content_root = PathBuf::from("/content");
-    let maps = content_root.join("maps");
-    let doors = content_root.join("scripts/doors/configs");
-    let gates = content_root.join("scripts/general_use/configs/gates.loc");
-    let config_jag = content_root.join("engine/data/pack/config");
-    let input_fingerprints: [crate::bundle::InputFingerprint; 0] = [];
-    let request = BakeRequest {
-        revision: None,
-        maps_dir: &maps,
-        doors_dir: &doors,
-        gates: &gates,
-        config_jag: &config_jag,
-        cache: None,
-        require_all_door_configs: false,
-        input_fingerprints: Some(&input_fingerprints),
-        content_id: None,
-    };
-
-    assert!(matches!(
-        bake_world(&request),
-        Err(crate::GenerationError::SourceInput(
-            crate::SourceInputError::NotFingerprinted { path }
-        )) if path == config_jag
-    ));
 }
 
 fn collision_with_flags(

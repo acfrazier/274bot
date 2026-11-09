@@ -1,0 +1,282 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "horror",
+  "display_name": "Horror from the Deep",
+  "required": [
+    "agility-35"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "agility-35",
+        "kind": {
+          "Skill": {
+            "skill": "agility",
+            "level": 35
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_horror/scripts/horror_journal.rs2:3-7"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:horror_key",
+      "obj:woodplank",
+      "obj:nails",
+      "obj:hammer", "obj:swamp_tar", "obj:molten_glass", "obj:tinderbox",
+      "obj:firerune", "obj:waterrune", "obj:earthrune", "obj:airrune", "obj:bronze_sword", "obj:bronze_arrow"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:horror",
+      "progress": {
+        "colour": {
+          "not_started": "horror:0",
+          "in_progress": "horror:1",
+          "complete": "horror:10"
+        },
+        "rules": [
+          {"stage":"horror:4","all":["i must search this place"],"any":[],"not":[],"varp":4},
+          {"stage":"horror:2","all":["lighthouse lamp"],"any":[],"not":[],"varp":2},
+          {"stage":"horror:2","all":["i have relit the lighthouse torch"],"any":[],"not":["i managed to repair"],"varp":2}
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "horror:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "horror_girlfriend_prequest",
+                "anchor": {
+                  "tile": [
+                    2508,
+                    3635,
+                    0
+                  ],
+                  "source": "content/maps/m39_56.jm2:5550; pack/npc.pack:1337"
+                },
+                "leash": 8,
+                "prefer": [
+                  "With what?",
+                  "But how can I help?",
+                  "Okay, I'll help!",
+                  "I'll see what I can do"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "horror",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_horror/scripts/horror_girlfriend.rs2:49-53,81-93,107-119; maps/m39_56.jm2:5550.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "horror:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "gunnjorn-key",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "gunnjorn",
+                "anchor": {
+                  "tile": [
+                    2540,
+                    3548,
+                    0
+                  ],
+                  "source": "content/maps/m39_55.jm2:6149; pack/npc.pack:608"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "horror_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "horror_key"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_barbarian_outpost/scripts/gunnjorn.rs2:1-27; content/maps/m39_55.jm2:6149.",
+              "advances": false
+            },
+            {
+              "id": "repair-bridge-left",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "woodplank",
+                "target": {
+                  "loc": "horror_broken_bridge_left_spot"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "woodplank",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "woodplank",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_horror/scripts/quest_horror.rs2:110-137; content/maps/m40_56.jm2:4102,4882; engine/src/engine/GameMap.ts:263-266.",
+              "advances": false
+            },
+            {"id":"cross-east","kind":"interact","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:63-108; content/maps/m40_56.jm2:4102,4882.",
+             "args":{"target":{"loc":"horror_broken_bridge_left_spot","tile":[2596,3608,0],"source":"content/maps/m40_56.jm2:4102,4882; engine/src/engine/GameMap.ts:263-266"},"op":"Cross","radius":4},
+             "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2599,3608,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2599,3608,0],"radius":0}}}},
+            {"id":"repair-bridge-right","kind":"use_on","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:139-166; content/maps/m40_56.jm2:4108,4889.",
+             "args":{"item":"woodplank","target":{"loc":"horror_broken_bridge_right_spot"},"anchor":{"tile":[2598,3608,0],"source":"content/maps/m40_56.jm2:4108,4889; engine/src/engine/GameMap.ts:263-266"},"radius":4},
+             "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}}},
+            {"id":"cross-west","kind":"interact","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:63-95; content/maps/m40_56.jm2:4108,4889.",
+             "args":{"target":{"loc":"horror_broken_bridge_right_spot","tile":[2598,3608,0],"source":"content/maps/m40_56.jm2:4108,4889; engine/src/engine/GameMap.ts:263-266"},"op":"Cross","radius":4},
+             "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2595,3608,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2595,3608,0],"radius":0}}}},
+            {"id":"unlock-lighthouse","kind":"use_on","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:50-60; content/maps/m39_56.jm2:5133.",
+             "args":{"item":"horror_key","target":{"loc":"horror_lighthouse_doorway"},"anchor":{"tile":[2509,3636,0],"source":"content/maps/m39_56.jm2:5133"},"radius":4},
+             "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"horror_key"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"horror_key"}}}}},
+            {"id":"enter-lighthouse","kind":"interact","version":1,"advances":true,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:22-29; content/maps/m39_56.jm2:5133.",
+             "args":{"target":{"loc":"horror_lighthouse_doorway","tile":[2509,3636,0],"source":"content/maps/m39_56.jm2:5133"},"op":"Walk-through","radius":4},
+             "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"horror","any":["horror:2"]}}}}
+          ]
+        },
+        {"stage":"horror:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"climb-lighthouse-base","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:186-188; content/maps/m38_71.jm2:5104.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_base","tile":[2442,4600,0],"source":"content/maps/m38_71.jm2:5104"},"op":"Climb-up","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}}},
+          {"id":"climb-lighthouse-middle","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:200-203; content/maps/m38_71.jm2:5380.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_middle","tile":[2442,4600,1],"source":"content/maps/m38_71.jm2:5380"},"op":"Climb-up","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}}},
+          {"id":"tar-lamp","kind":"use_on","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:260-268; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"swamp_tar","target":{"loc":"horror_lighthouse_cog_broken"},"anchor":{"tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swamp_tar"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swamp_tar"}}}}},
+          {"id":"glass-lamp","kind":"use_on","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:270-278; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"molten_glass","target":{"loc":"horror_lighthouse_cog_broken"},"anchor":{"tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}}},
+          {"id":"light-lamp","kind":"use_on","version":1,"advances":true,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:245-258,283-287; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"tinderbox","target":{"loc":"horror_lighthouse_cog_broken"},"anchor":{"tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"horror","any":["horror:4"]}}}}
+        ]},
+        {"stage":"horror:4","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"descend-lighthouse-top","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:209-212,283-287; content/maps/m39_56.jm2:5480.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_top","tile":[2506,3641,2],"source":"content/maps/m39_56.jm2:5480"},"op":"Climb-down","radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}}},
+          {"id":"descend-lighthouse-middle","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:205-207; content/maps/m38_71.jm2:5380.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_middle","tile":[2442,4600,1],"source":"content/maps/m38_71.jm2:5380"},"op":"Climb-down","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":0}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":0}}}},
+          {"id":"descend-iron-ladder","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:168-178; content/maps/m38_71.jm2:5137.",
+           "args":{"target":{"loc":"horror_ladder_top","tile":[2445,4604,0],"source":"content/maps/m38_71.jm2:5137"},"op":"Climb","radius":4},
+           "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2518,4618,1],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2518,4618,1],"radius":0}}}},
+          {"id":"wall-fire","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:329-348; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"firerune","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"firerune"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place a fire rune","There is no space to put a fire rune"]}}}},
+          {"id":"wall-water","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:350-363; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"waterrune","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"waterrune"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place a water rune","There is no space to put a water rune"]}}}},
+          {"id":"wall-earth","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:365-378; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"earthrune","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"earthrune"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place an earth rune","There is no space to put an earth rune"]}}}},
+          {"id":"wall-air","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:380-393; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"airrune","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"airrune"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place an air rune","There is no space to put an air rune"]}}}},
+          {"id":"wall-sword","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:395-409; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"bronze_sword","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_sword"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place a sword","There is no space to put a weapon"]}}}},
+          {"id":"wall-arrow","kind":"use_on","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:411-424; content/maps/m39_72.jm2:2481.",
+           "args":{"item":"bronze_arrow","target":{"loc":"horror_mid_right_door"},"anchor":{"tile":[2515,4627,1],"source":"content/maps/m39_72.jm2:2481"},"radius":4,"dialogue":{"prefer":["Yes"],"strict":true}},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_arrow"}}}},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["You place an arrow","There is no space to put an arrow"]}}}},
+          {"id":"open-wall","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:308-321; content/maps/m39_72.jm2:2501.",
+           "args":{"target":{"loc":"horror_far_right_door","tile":[2516,4627,1],"source":"content/maps/m39_72.jm2:2501"},"op":"Open","radius":4},
+           "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2516,4627,1],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2516,4627,1],"radius":0}}}},
+          {"id":"descend-to-jossik","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:471-473; content/maps/m39_72.jm2:2484.",
+           "args":{"target":{"loc":"horror_ladder_top2","tile":[2515,4630,1],"source":"content/maps/m39_72.jm2:2484"},"op":"Climb","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2515,4632,0],"radius":0}}}}
+        ]},
+        {
+          "stage": "horror:10",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

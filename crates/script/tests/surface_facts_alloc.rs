@@ -1,5 +1,8 @@
 #![cfg(feature = "test-hooks")]
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+use api::native_input::NativeInputAuthority;
+
 use script::{
     native::recovery_hints::{HintTile, RecoveryHintsCell},
     native::snapshot_source::{
@@ -37,6 +40,7 @@ fn start() -> SurfaceStart {
         game_data: None,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::default()),
         loadouts: Arc::from([]),
+        wilderness_rules: script::surface::no_wilderness(),
     }
 }
 
@@ -323,12 +327,28 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
     }
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 #[test]
-fn slot_size_stays_within_the_full_build_parent_layout() {
+fn slot_native_input_authority_survives_run_context_replacement() {
+    let mut slot = SlotScript::new();
+    drop(slot.native_input());
+    let authority = NativeInputAuthority::new();
+    slot.bind_native_input(Arc::clone(&authority));
+    assert!(Arc::ptr_eq(&authority, &slot.native_input()));
+
+    let factory = Arc::new(StubSurfaceFactory::new());
+    start_slot(&mut slot, &factory);
+    assert!(Arc::ptr_eq(&authority, &slot.native_input()));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[test]
+fn slot_size_matches_the_measured_linux_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
-    println!("S0d SlotScript layout: {actual} bytes");
+    println!("Prerequisite-aware SlotScript layout: {actual} bytes");
+    // Measured composed layout: W1 boxed replay and the cold prerequisite handover.
     assert_eq!(
-        actual, 1624,
+        actual, 1600,
         "the surface slot changed from its measured size"
     );
 }

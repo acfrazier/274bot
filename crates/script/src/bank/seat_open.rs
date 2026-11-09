@@ -11,15 +11,15 @@ use crate::bank::request::{
     HOOK_LOG,
 };
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
+use crate::interact::InteractReq;
 use crate::native::{
-    ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkEnd, WalkOptions,
-    WalkRequest,
+    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd,
+    WalkOptions, WalkRequest,
 };
 use crate::native_bank::{
-    nearest_eligible_bank as select_nearest_eligible_bank, BankSelector, PickKind, Select,
-    SelectArgs, SelectedBank,
+    nearest_eligible_bank as select_nearest_eligible_bank, BankPickOutcome, BankSelector, PickKind,
+    Select, SelectArgs, SelectedBank,
 };
-use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
 use nav_planner::contract::ArrivalKind;
@@ -37,11 +37,20 @@ const ADJACENT_INTERACT_TIMEOUT_MS: u64 = 4_000;
 const DIALOG_OPEN_TIMEOUT_MS: u64 = 4_000;
 
 /// The request and immutable content facts needed by the opening owner.
+#[derive(Clone)]
 pub struct OpeningArgs {
     pub request: BankSeatArgs,
     pub facts: Arc<NamedBankFacts>,
     pub preferences: BankPreferences,
     pub hooks: Arc<Mutex<TransferHooks>>,
+    pub(crate) selection_refused: bool,
+}
+
+impl OpeningArgs {
+    pub(crate) fn after_prerequisite_refusal(mut self) -> Self {
+        self.selection_refused = true;
+        self
+    }
 }
 
 /// Result returned by low-level opening and selection operations.
@@ -97,8 +106,12 @@ impl NativeMachine for Opening {
                     None => Core::Immediate(OpeningValue::Bool(false)),
                 }
             }
-            BankSeatOperation::OpenNearestWorld => {
-                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            BankSeatOperation::OpenNearestWorld | BankSeatOperation::Open => {
+                let mut open = BankingOpen::new(&args.request, args.preferences);
+                if args.selection_refused {
+                    open.phase = BankingPhase::Access(open.default_access());
+                }
+                Core::Banking(open)
             }
             BankSeatOperation::OpenObject => match args.request.object_access.as_ref() {
                 Some(access) => Core::Object(ObjectOpen::new(object_access(access))),
@@ -114,8 +127,11 @@ impl NativeMachine for Opening {
                 args.request.fallback_access.as_ref().map(object_access),
                 default_access("Bank booth", "Use-quickly"),
             )),
-            BankSeatOperation::Open => {
-                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            BankSeatOperation::Select if args.selection_refused => {
+                Core::Immediate(OpeningValue::Selected {
+                    bank: None,
+                    selected: no_candidate_selection(),
+                })
             }
             BankSeatOperation::Select => {
                 let preferences = effective_preferences(&args.request, args.preferences);
@@ -175,6 +191,20 @@ impl NativeMachine for Opening {
                     Poll::Ready(Ok(OpeningValue::Selected { bank, selected }))
                 }
             },
+        }
+    }
+}
+
+impl Opening {
+    pub(crate) fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        match &self.core {
+            Core::Select(select) => select.prereq_allow(cx),
+            Core::Banking(banking) => banking.prereq_allow(cx),
+            Core::Immediate(_)
+            | Core::Booth(_)
+            | Core::Object(_)
+            | Core::Npc(_)
+            | Core::Access(_) => None,
         }
     }
 }
@@ -253,10 +283,6 @@ fn lock_hooks(hooks: &Mutex<TransferHooks>) -> std::sync::MutexGuard<'_, Transfe
 
 fn unavailable(message: &'static str) -> ActionError {
     ActionError::Unavailable(Arc::from(message))
-}
-
-fn failed(message: &'static str) -> ActionError {
-    ActionError::Failed(Arc::from(message))
 }
 
 #[derive(Clone, Copy)]
@@ -370,8 +396,10 @@ fn build_walk_request(
         required_after,
         evidence: None,
         cross: Box::default(),
+        avoid: Box::default(),
         protect: false,
         food_guard: false,
+        cure_guard: false,
         allow: WalkAllow::default(),
     }
 }
@@ -381,6 +409,7 @@ fn access_walk_options() -> WalkOptions {
         allow_teleports: WalkBit::Forbid,
         allow_wilderness: WalkBit::Allow,
         allow_danger_zones: WalkBit::Inherit,
+        ..WalkOptions::default()
     }
 }
 
@@ -389,6 +418,7 @@ fn world_walk_options() -> WalkOptions {
         allow_teleports: WalkBit::Forbid,
         allow_wilderness: WalkBit::Inherit,
         allow_danger_zones: WalkBit::Inherit,
+        ..WalkOptions::default()
     }
 }
 
@@ -1156,6 +1186,13 @@ impl ObjectOpen {
                 }
                 ObjectPhase::NearRetry { attempt, loc } => {
                     self.retry_beside(attempt, Some(loc), cx);
+                    // A spent action budget leaves the phase at `NearRetry`.
+                    // It resets only with the next observed tick, so wait for
+                    // that tick. Looping here would never end: nothing inside
+                    // this poll can restore the budget.
+                    if matches!(self.phase, ObjectPhase::NearRetry { .. }) {
+                        return Poll::Pending;
+                    }
                 }
                 ObjectPhase::Continue {
                     attempt,
@@ -1904,11 +1941,23 @@ struct BankingOpen {
     booth_op: String,
     prefer_nearby: bool,
     nearby_radius: f64,
-    unsupported_obstacles: bool,
     preferences: BankPreferences,
 }
 
 impl BankingOpen {
+    fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        match &self.phase {
+            BankingPhase::Select(select) => select.prereq_allow(cx),
+            BankingPhase::Choose
+            | BankingPhase::WalkStart { .. }
+            | BankingPhase::Walk(_)
+            | BankingPhase::Access(_)
+            | BankingPhase::Booth(_)
+            | BankingPhase::Ready(_)
+            | BankingPhase::Done(_) => None,
+        }
+    }
+
     fn new(request: &BankSeatArgs, preferences: BankPreferences) -> Self {
         let (booth_name, booth_op) = request.object_access.as_ref().map_or_else(
             || ("Bank booth".to_owned(), "Use-quickly".to_owned()),
@@ -1922,7 +1971,6 @@ impl BankingOpen {
             booth_op,
             prefer_nearby: request.prefer_nearby != Some(false),
             nearby_radius: request.nearby_radius.unwrap_or(14.0),
-            unsupported_obstacles: request.obstacles.iter().any(|name| !name.trim().is_empty()),
             preferences,
         }
     }
@@ -2090,9 +2138,9 @@ impl BankingOpen {
                 WorldTarget::Access(Some(AccessSpec::from_bank(bank))),
             );
         } else if let Some(stand) = self.stand {
-            if self.unsupported_obstacles {
-                return Poll::Ready(Err(failed("not impl: Banking.open.obstacles")));
-            }
+            // Caller obstacles (`door`, `gate`) need no separate opener: the
+            // native walk opens every door edge on its packed route
+            // (`nav-executor/src/traveller.rs:974-1216`).
             let known = nearest_eligible_bank(facts, self.preferences, cx, stand)
                 .filter(|bank| within_radius(stand, bank.tile, self.nearby_radius));
             let access = known.map(AccessSpec::from_bank);
@@ -2237,6 +2285,7 @@ impl SelectorCore {
                 WalkBit::Forbid
             },
             allow_danger_zones: WalkBit::Inherit,
+            ..WalkOptions::default()
         };
         let machine = Select::begin(
             SelectArgs {
@@ -2245,7 +2294,6 @@ impl SelectorCore {
                 preferences,
                 options,
                 explicit: None,
-                excluded_banks: None,
                 allow_air_fallback,
             },
             cx,
@@ -2253,13 +2301,23 @@ impl SelectorCore {
         Ok(Some(Self { machine, facts }))
     }
 
+    fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        self.machine.prereq_allow(cx)
+    }
+
     fn poll(
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<Option<SelectionResult>, ActionError>> {
-        self.machine
-            .poll(cx)
-            .map(|result| result.map(|selected| selected_bank(&self.facts, selected)))
+        self.machine.poll_outcome(cx).map(|result| {
+            result.and_then(|outcome| match outcome {
+                BankPickOutcome::Selected(selected) => Ok(selected_bank(&self.facts, selected)),
+                // Opening keeps its existing scene fallback and false/backoff
+                // contract. Strict native selection retains the NoPath detail.
+                BankPickOutcome::NoCandidate { .. } => Ok(None),
+                BankPickOutcome::NeedsStep { gates, .. } => Err(ActionError::NeedsStep(gates)),
+            })
+        })
     }
 }
 
@@ -2282,7 +2340,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -2331,6 +2389,7 @@ mod tests {
             facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
             preferences: BankPreferences::default(),
             hooks: Arc::new(Mutex::new(TransferHooks::default())),
+            selection_refused: false,
         }
     }
 
@@ -2346,6 +2405,9 @@ mod tests {
 
     #[test]
     fn closed_duel_chest_opens_before_banking_and_waits_for_the_new_state() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tile(tile(3382, 3269));
@@ -2379,8 +2441,155 @@ mod tests {
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
+    fn shantay_chest(tile: WorldTile, distance: i32) -> LocView {
+        LocView {
+            id: 2693,
+            name: Some("Shantay chest".into()),
+            actions: vec![Some("Open".into())],
+            tile,
+            distance,
+            ..duel_chest(false)
+        }
+    }
+
+    /// A 3x3 reach window in which only its centre, `stand`, is reachable.
+    fn lone_stand_reach(stand: WorldTile) -> api::query::ReachQueryView {
+        let centre = 4; // lx 1, lz 1: lx * height + lz
+        let mut exact_rank = vec![u16::MAX; 9];
+        exact_rank[centre] = 0;
+        api::query::ReachQueryView {
+            available: true,
+            base_x: stand.x - 1,
+            base_z: stand.z - 1,
+            level: stand.level,
+            width: 3,
+            height: 3,
+            walkable: vec![0],
+            reachable: vec![1 << centre],
+            reachable_adj: vec![1 << centre],
+            exact_rank: exact_rank.clone(),
+            adjacent_rank: exact_rank,
+            step: vec![0; 9],
+            canlight: Vec::new(),
+        }
+    }
+
+    fn queued_effects(ledger: &Option<Box<ledger::Ledger>>) -> Vec<String> {
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        outbox
+            .iter()
+            .map(|action| match &action.effect {
+                HostEffect::Walk(_) => "walk".to_owned(),
+                HostEffect::Interaction(InteractReq::Loc { action, .. }) => {
+                    format!("loc {action}")
+                }
+                _ => "other".to_owned(),
+            })
+            .collect()
+    }
+
+    /// What one chest opening queued, tick by tick.
+    struct ChestRun {
+        /// The poll that follows the log answer in the walk's own tick.
+        wake_pending: bool,
+        /// The effects queued up to and including that tick.
+        after_wake: Vec<String>,
+        /// The effects queued up to and including the next tick.
+        after_next_tick: Vec<String>,
+    }
+
+    /// Hang of `tui.live-jive-kq` (EVENT-RUNTIME-WAKE-HANG): the Shantay chest
+    /// did not open, so the opening walked to its counter stand. The bot
+    /// already stood on that tile, so the walk had arrived at once. The
+    /// walk spent the tick's only action. The log line that announces the
+    /// walk is a script callback, and its answer wakes the seat in the same
+    /// observed tick. The retry click then found the budget spent and parked
+    /// in `NearRetry`, which looped inside one poll for ever.
+    #[test]
+    fn a_retry_click_with_the_tick_budget_spent_waits_for_the_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (done, finished) = std::sync::mpsc::channel();
+        // The poll runs on its own thread so that a loop fails the test
+        // instead of hanging it. A looping thread spins until the process exits.
+        std::thread::spawn(move || {
+            let stand = tile(3308, 3120);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(stand));
+            snapshot.seed_locs(vec![shantay_chest(tile(3309, 3120), 2)]);
+            let reach = lone_stand_reach(stand);
+            let hooks = Arc::new(Mutex::new(TransferHooks::default()));
+            let mut request = BankSeatArgs::new(BankSeatOperation::OpenObject);
+            request.object_access = Some(BankSeatObjectAccess {
+                name: "Shantay chest".into(),
+                op: "Open".into(),
+                open_first_name: None,
+                open_first_op: None,
+            });
+            request.hooks_present = HOOK_LOG;
+            let args = OpeningArgs {
+                request,
+                facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
+                preferences: BankPreferences::default(),
+                hooks: Arc::clone(&hooks),
+                selection_refused: false,
+            };
+            let mut ledger = None;
+
+            // Tick 1: the first click on the chest. It never opens the bank.
+            let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+                let handle = tick.actions.begin::<Opening>(args, &mut tick.cx).unwrap();
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                handle
+            });
+            assert_eq!(take_chest_action(&mut ledger), (2693, "Open".into()));
+
+            // Tick 15: the click's 8 s bound has passed. The poll walks to the
+            // stand, which is the bot's own tile, and announces it. The log
+            // call posts on the next poll and the script answers it, all
+            // inside this one observed tick.
+            let wake_pending = with_tick_reach(&snapshot, &reach, &mut ledger, 15, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                {
+                    let mut mailbox = lock_hooks(&hooks);
+                    let call = mailbox.pending.take().expect("the walk log posted");
+                    assert_eq!(call.hook, "log");
+                    mailbox.answer = Some(TransferAnswer::Value(Value::Null));
+                }
+                tick.actions.poll(&handle, &mut tick.cx).is_pending()
+            });
+            let after_wake = queued_effects(&ledger);
+            with_tick_reach(&snapshot, &reach, &mut ledger, 16, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            let after_next_tick = queued_effects(&ledger);
+            done.send(ChestRun {
+                wake_pending,
+                after_wake,
+                after_next_tick,
+            })
+            .ok();
+        });
+        let run = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the poll after the log answer must return, not loop");
+        assert!(run.wake_pending);
+        assert_eq!(run.after_wake, ["walk"], "no second action in a spent tick");
+        assert_eq!(
+            run.after_next_tick,
+            ["walk", "loc Open"],
+            "the retry click goes out at the next tick"
+        );
+    }
+
     #[test]
     fn already_open_duel_chest_skips_the_opener() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tile(tile(3382, 3269));
@@ -2398,6 +2607,9 @@ mod tests {
 
     #[test]
     fn already_loaded_bank_skips_all_chest_actions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_locs(vec![duel_chest(false)]);
@@ -2421,7 +2633,8 @@ mod tests {
     }
 
     fn catalog_bank(name: &str) -> NamedBank {
-        let definition = api::named_banks::BANK_CATALOG
+        let definition = api::named_banks::bank_catalog()
+            .unwrap()
             .iter()
             .find(|definition| definition.name == name)
             .unwrap();
@@ -2435,6 +2648,9 @@ mod tests {
 
     #[test]
     fn banking_open_preferences_gate_the_closer_mage_arena_choice() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mage = catalog_bank("Mage Arena");
         let public = NamedBank::new("Public", tile(mage.air_tile().x + 1, mage.air_tile().z));
         let facts = Arc::new(NamedBankFacts::from_banks(vec![public, mage]));

@@ -188,9 +188,11 @@ mod tests {
     fn fixture() -> (Arc<SelectedGameData>, ShopKeeperFacts, i32) {
         let data = api::game_data::for_revision(ClientRevision::R289).expect("selected content");
         let gerrant = keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "gerrant")
             .unwrap();
         let harry = keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "harry")
             .unwrap();
         let gerrant = KeeperFact {
@@ -395,6 +397,7 @@ mod tests {
     fn diagnostic_records_keep_three_keepers_and_count_the_rest_without_allocating() {
         let data = api::game_data::for_revision(ClientRevision::R289).expect("selected content");
         let rows: Box<[_]> = keepers(&data)
+            .unwrap()
             .take(5)
             .enumerate()
             .map(|(index, keeper)| {

@@ -6,14 +6,18 @@
 //! inline copy of that body (the reference) and the native export over the same
 //! inputs and compares target/blocked identity plus the callback sequence.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, ItemRowInput, SceneEntityInput, SnapshotFingerprint,
-    StatInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{ItemRowInput, SceneEntityInput, StatInput},
+    script_js::wire::{encode_snapshot, encode_snapshot_delta, SnapshotFingerprint},
+};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const SRC: &str = r#"
 import { chooseTarget } from '../../api/thieving/targets.js';
@@ -665,6 +669,9 @@ fn expected_npc_op(name: &str, action: &str) -> InteractReq {
 
 #[test]
 fn npc_pickpocket_clicks_through_open_chat_modal() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = thieving_data();
     let (id, required) = workman(&data);
     let actions = ["Pickpocket".to_string()];
@@ -685,6 +692,9 @@ fn npc_pickpocket_clicks_through_open_chat_modal() {
 
 #[test]
 fn npc_pickpocket_rowless_zealot_defaults_to_level_one() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = thieving_data();
     assert_eq!(
         data.required_thieving_npc(1528),
@@ -709,6 +719,9 @@ fn npc_pickpocket_rowless_zealot_defaults_to_level_one() {
 
 #[test]
 fn npc_pickpocket_does_not_gate_on_unobserved_inventory() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = thieving_data();
     let (id, required) = workman(&data);
     let actions = ["Pickpocket".to_string()];
@@ -729,6 +742,9 @@ fn npc_pickpocket_does_not_gate_on_unobserved_inventory() {
 
 #[test]
 fn npc_steal_from_clicks_through_unknown_chat_state() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = thieving_data();
     let (id, required) = workman(&data);
     let actions = ["Steal-from".to_string()];
@@ -749,6 +765,9 @@ fn npc_steal_from_clicks_through_unknown_chat_state() {
 
 #[test]
 fn npc_pickpocket_gate_uses_effective_not_base_thieving() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = thieving_data();
     let (id, required) = workman(&data);
     let actions = ["Pickpocket".to_string()];

@@ -37,11 +37,21 @@ fn session(epoch: u64) -> SessionKey {
 const DROP: LifecycleFact = LifecycleFact::SessionExited {
     clean: false,
     resumable: true,
+    idle_request_pending: false,
 };
 
+/// A server logout with no idle request of the client pending.
 const CLEAN_EXIT: LifecycleFact = LifecycleFact::SessionExited {
     clean: true,
     resumable: false,
+    idle_request_pending: false,
+};
+
+/// The server's logout after the client's own idle request.
+const IDLE_EXIT: LifecycleFact = LifecycleFact::SessionExited {
+    clean: true,
+    resumable: false,
+    idle_request_pending: true,
 };
 
 #[test]
@@ -352,10 +362,13 @@ fn login_success_retires_the_attempt_and_identity_or_script_changes_invalidate_i
     let receipt = mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
     assert!(receipt.invalidated_attempt());
     mailbox.acknowledge_login(command);
+    // A script keeps the relog; a bot without one parks (see the idle park
+    // tests below).
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
     mailbox.observe(DROP).unwrap();
     assert!(
         mailbox.snapshot().login_wanted(),
-        "the preference still wants the relog"
+        "the script still wants the relog"
     );
     assert!(
         !mailbox.attempt_is_current(command, 0),
@@ -1700,4 +1713,295 @@ fn response_sixteen_queue_hold_has_its_own_typed_slot_event() {
         },
         "a server response 16 is not the slot's start-spacing rule"
     );
+}
+
+/// A bot with a script running when its session ends keeps today's relog.
+fn scripted_online() -> IntentMailbox {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    mailbox
+}
+
+#[test]
+fn a_bot_without_a_script_parks_after_any_unexpected_disconnect() {
+    for (exit, park, reason) in [
+        (DROP, IdlePark::Disconnect, ParkReason::IdleDisconnect),
+        (
+            LifecycleFact::SessionExited {
+                clean: false,
+                resumable: false,
+                idle_request_pending: false,
+            },
+            IdlePark::Disconnect,
+            ParkReason::IdleDisconnect,
+        ),
+        (CLEAN_EXIT, IdlePark::ServerLogout, ParkReason::ServerLogout),
+        (IDLE_EXIT, IdlePark::IdleLogout, ParkReason::IdleLogout),
+    ] {
+        let mut mailbox = armed();
+        online(&mut mailbox);
+        mailbox.observe(exit).unwrap();
+        let snapshot = mailbox.snapshot();
+        assert_eq!(snapshot.idle_park(), Some(park), "{exit:?}");
+        assert_eq!(snapshot.park_reason(), Some(reason), "{exit:?}");
+        assert_eq!(snapshot.latch(), None, "a park is not a latch: {exit:?}");
+        assert!(!snapshot.login_wanted(), "{exit:?}");
+        assert!(!mailbox.relogs_after_drop(), "{exit:?}");
+        assert!(mailbox.login_command(false).is_none(), "{exit:?}");
+    }
+}
+
+#[test]
+fn a_bot_with_a_script_still_reconnects_after_an_unexpected_exit() {
+    for exit in [DROP, CLEAN_EXIT, IDLE_EXIT] {
+        let mut mailbox = scripted_online();
+        mailbox.observe(exit).unwrap();
+        let snapshot = mailbox.snapshot();
+        assert_eq!(snapshot.idle_park(), None, "{exit:?}");
+        assert!(snapshot.login_wanted(), "{exit:?}");
+        assert!(mailbox.relogs_after_drop(), "{exit:?}");
+        assert!(mailbox.login_command(false).is_some(), "{exit:?}");
+    }
+}
+
+#[test]
+fn an_exit_somebody_asked_for_is_not_a_park() {
+    let mut logout = armed();
+    online(&mut logout);
+    logout.post(Intent::Logout).unwrap();
+    logout.observe(CLEAN_EXIT).unwrap();
+    assert_eq!(logout.snapshot().idle_park(), None);
+    assert_eq!(
+        logout.snapshot().park_reason(),
+        Some(ParkReason::OperatorLogout)
+    );
+
+    for turnover in [Intent::RelogNow, Intent::SwitchWorld(4)] {
+        let mut mailbox = armed();
+        online(&mut mailbox);
+        mailbox.post(turnover).unwrap();
+        mailbox.observe(CLEAN_EXIT).unwrap();
+        assert_eq!(mailbox.snapshot().idle_park(), None, "{turnover:?}");
+        assert!(
+            mailbox.login_command(false).is_some(),
+            "{turnover:?}: the turnover's login half is owed"
+        );
+    }
+
+    let mut removed = armed();
+    online(&mut removed);
+    removed.post(Intent::RemoveSlot).unwrap();
+    removed.observe(CLEAN_EXIT).unwrap();
+    assert_eq!(removed.snapshot().idle_park(), None);
+
+    let mut guarded = armed();
+    online(&mut guarded);
+    guarded
+        .observe(LifecycleFact::RepeatGuardTripped {
+            count: 3,
+            window_seconds: 600,
+        })
+        .unwrap();
+    guarded.observe(DROP).unwrap();
+    assert_eq!(guarded.snapshot().idle_park(), None);
+    assert_eq!(
+        guarded.snapshot().park_reason(),
+        Some(ParkReason::RepeatGuard)
+    );
+}
+
+#[test]
+fn a_park_ends_with_an_explicit_login_and_the_next_exit_parks_again() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    assert!(mailbox.login_command(false).is_none());
+    mailbox.post(Intent::Login).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), None);
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), Some(IdlePark::Disconnect));
+    assert!(mailbox.login_command(false).is_none());
+}
+
+#[test]
+fn a_script_that_starts_during_a_park_logs_the_bot_in() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    let snapshot = mailbox.snapshot();
+    assert_eq!(snapshot.idle_park(), None);
+    assert!(snapshot.login_wanted());
+    let command = mailbox.login_command(false).unwrap();
+    mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
+    assert_eq!(mailbox.acknowledge_login(command), Acknowledgement::Applied);
+    assert!(
+        mailbox.snapshot().login_wanted(),
+        "the script still needs it"
+    );
+}
+
+#[test]
+fn a_script_start_does_not_override_an_operator_latch() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.post(Intent::Logout).unwrap();
+    mailbox.observe(CLEAN_EXIT).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    assert!(!mailbox.snapshot().login_wanted());
+    assert_eq!(
+        mailbox.snapshot().park_reason(),
+        Some(ParkReason::OperatorLogout)
+    );
+}
+
+#[test]
+fn the_end_of_the_script_cancels_the_reconnect_it_was_running_through() {
+    let mut mailbox = scripted_online();
+    mailbox.observe(DROP).unwrap();
+    let command = mailbox.login_command(false).unwrap();
+    let receipt = mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert!(
+        receipt.invalidated_attempt(),
+        "the relog in progress is cancelled"
+    );
+    assert!(!mailbox.attempt_is_current(command, 0));
+    let snapshot = mailbox.snapshot();
+    assert_eq!(snapshot.idle_park(), Some(IdlePark::Disconnect));
+    assert!(!snapshot.login_wanted());
+    assert!(mailbox.login_command(false).is_none());
+
+    // A server logout parks with its own reason, and only the client's own
+    // idle request makes it an idle logout.
+    let mut logout = scripted_online();
+    logout.observe(CLEAN_EXIT).unwrap();
+    logout.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert_eq!(logout.snapshot().idle_park(), Some(IdlePark::ServerLogout));
+    let mut idle = scripted_online();
+    idle.observe(IDLE_EXIT).unwrap();
+    idle.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert_eq!(idle.snapshot().idle_park(), Some(IdlePark::IdleLogout));
+}
+
+#[test]
+fn an_explicit_login_keeps_the_reconnect_when_the_script_ends() {
+    let mut mailbox = scripted_online();
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::Login).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), None);
+    assert!(
+        mailbox.snapshot().login_wanted(),
+        "the operator asked for it"
+    );
+}
+
+#[test]
+fn a_script_that_ends_while_online_leaves_the_next_exit_to_park() {
+    let mut mailbox = scripted_online();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), None, "still online");
+    mailbox.observe(DROP).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), Some(IdlePark::Disconnect));
+}
+
+#[test]
+fn a_stale_script_flag_at_the_exit_is_corrected_by_the_boundary_sync() {
+    // The mailbox still says "no script" when the session ends, but a script
+    // was started while online: the boundary sync posts the need afterwards.
+    let mut started = armed();
+    online(&mut started);
+    started.observe(DROP).unwrap();
+    assert_eq!(started.snapshot().idle_park(), Some(IdlePark::Disconnect));
+    started.post(Intent::ScriptNeedsSession(true)).unwrap();
+    assert!(
+        started.relogs_after_drop(),
+        "the script's reconnect proceeds"
+    );
+}
+
+#[test]
+fn saving_auto_login_again_keeps_a_park_and_turning_it_on_ends_it() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::AutoLogin(true)).unwrap();
+    assert_eq!(
+        mailbox.snapshot().idle_park(),
+        Some(IdlePark::Disconnect),
+        "a re-Load saves the same preference"
+    );
+    mailbox.post(Intent::AutoLogin(false)).unwrap();
+    mailbox.post(Intent::AutoLogin(true)).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), None);
+    assert!(mailbox.login_command(false).is_some());
+}
+
+/// A script that starts on a parked bot and stops before the bot is back
+/// leaves it parked: the saved auto-login preference is not a login request.
+#[test]
+fn a_script_started_and_stopped_on_a_parked_bot_leaves_it_parked() {
+    for exit in [DROP, CLEAN_EXIT, IDLE_EXIT] {
+        let mut mailbox = armed();
+        online(&mut mailbox);
+        mailbox.observe(exit).unwrap();
+        let parked = mailbox.snapshot().idle_park();
+        assert!(parked.is_some(), "{exit:?}");
+
+        mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+        let command = mailbox.login_command(false).expect("the script's login");
+        let receipt = mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+        assert!(
+            receipt.invalidated_attempt(),
+            "{exit:?}: the script's own login is cancelled"
+        );
+        assert!(!mailbox.attempt_is_current(command, 0), "{exit:?}");
+        let snapshot = mailbox.snapshot();
+        assert_eq!(snapshot.idle_park(), parked, "{exit:?}: parked again");
+        assert!(!snapshot.login_wanted(), "{exit:?}");
+        assert!(
+            mailbox.login_command(false).is_none(),
+            "{exit:?}: no scriptless auto-login attempt"
+        );
+    }
+}
+
+/// Start and stop leave the park to the operator: the operator's Login
+/// connects, and a Login that came while the script ran is not undone by the
+/// script's stop.
+#[test]
+fn the_operator_still_ends_a_park_a_script_start_and_stop_went_through() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert!(mailbox.login_command(false).is_none());
+    mailbox.post(Intent::Login).unwrap();
+    assert!(mailbox.login_command(false).is_some());
+
+    // The operator's Login while the script runs is not undone by its stop.
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    mailbox.post(Intent::Login).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert!(mailbox.snapshot().login_wanted());
+    assert!(mailbox.login_command(false).is_some());
+}
+
+/// The stale-flag path: the exit read "no script", the boundary sync then
+/// posts the script's start and, later, its stop.
+#[test]
+fn a_stale_script_flag_start_then_stop_leaves_the_bot_parked() {
+    let mut mailbox = armed();
+    online(&mut mailbox);
+    mailbox.observe(DROP).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    assert_eq!(mailbox.snapshot().idle_park(), Some(IdlePark::Disconnect));
+    assert!(mailbox.login_command(false).is_none());
 }

@@ -4,14 +4,14 @@
 //! Frozen `buildCookLocations(BANK_LOCATIONS)` (`data/cookLocations.ts:118-132`)
 //! pairs every bank, in catalog order, with a curated camp surface
 //! (`curatedPlan`, `:92-116`) or else the nearest placed surface within
-//! `MAX_SURFACE_CHEB` of the bank tile on its plane, ovens first
+//! the configured Chebyshev radius of the bank tile on its plane, ovens first
 //! (`nearestCookSurface` / `betterSurface`, `:54-78`; `derivePlan`, `:80-89`).
 //! `resolveCookLocation` (`api/cooking/CookLocations.ts:25-49`) then picks a
 //! named location only when unlocked, or for `Auto` the unlocked one whose
 //! bank approach is nearest in a straight x/z line.
 
 use api::cook_locations::{
-    CookSurface, CookSurfaceKind, COOK_CAMPS, DERIVED_ARRIVE_RADIUS, MAX_SURFACE_CHEB,
+    cook_camps, derived_arrive_radius, max_surface_cheb, CookCamp, CookSurface, CookSurfaceKind,
 };
 use api::named_banks::NamedBank;
 use api::snapshot::WorldTile;
@@ -42,8 +42,8 @@ pub(crate) struct CookLocation {
 }
 
 /// Frozen `curatedPlan` (`data/cookLocations.ts:98-116`).
-fn curated(bank: &str) -> Option<CookPlan> {
-    let camp = COOK_CAMPS.iter().find(|camp| camp.bank == bank)?;
+fn curated(bank: &str, camps: &[CookCamp]) -> Option<CookPlan> {
+    let camp = camps.iter().find(|camp| camp.bank == bank)?;
     Some(CookPlan {
         stand: camp.stand,
         approach: camp.approach,
@@ -55,8 +55,8 @@ fn curated(bank: &str) -> Option<CookPlan> {
     })
 }
 
-/// Frozen `nearestCookSurface(origin, MAX_SURFACE_CHEB)`: same plane, within
-/// the Chebyshev radius, an oven beats a fire, else the strictly nearer one.
+/// Frozen `nearestCookSurface(origin, max_surface_cheb())`: same plane, within
+/// the configured Chebyshev radius, an oven beats a fire, else the nearer one.
 pub(crate) fn nearest_surface(
     origin: WorldTile,
     surfaces: &[CookSurface],
@@ -89,9 +89,34 @@ pub(crate) fn nearest_surface(
     best.map(|(surface, _)| surface)
 }
 
+/// Frozen `nearestCookingRange(origin, maxCheb)` (`data/cookingRanges.ts:50-71`) over the selected placements:
+/// among the surfaces named `Range` (`COOKING_RANGE_LOCS`, `:29-31`), the one with the least Chebyshev distance
+/// not above `max_cheb`; the first wins a tie. `distance` answers a surface's distance from the caller's origin,
+/// or `None` when it is on another plane, and may fail (a script getter threw). A NaN distance is never above the
+/// radius and never replaces an earlier pick, as in the frozen `d > maxCheb` / `d < best.d` tests.
+pub(crate) fn nearest_range<E>(
+    surfaces: &[CookSurface],
+    max_cheb: f64,
+    mut distance: impl FnMut(&CookSurface) -> Result<Option<f64>, E>,
+) -> Result<Option<(&CookSurface, f64)>, E> {
+    let mut best: Option<(&CookSurface, f64)> = None;
+    for surface in surfaces.iter().filter(|surface| surface.name == "Range") {
+        let Some(d) = distance(surface)? else {
+            continue;
+        };
+        if d > max_cheb {
+            continue;
+        }
+        if best.is_none_or(|(_, current)| d < current) {
+            best = Some((surface, d));
+        }
+    }
+    Ok(best)
+}
+
 /// Frozen `derivePlan` (`data/cookLocations.ts:80-89`; the stand is one tile
 /// south, `rangeStandFromLoc`, `data/cookingRanges.ts:35-37`).
-fn derived(surface: &CookSurface) -> CookPlan {
+fn derived(surface: &CookSurface, arrive_radius: i32) -> CookPlan {
     CookPlan {
         stand: WorldTile {
             x: surface.x,
@@ -102,25 +127,48 @@ fn derived(surface: &CookSurface) -> CookPlan {
         loc_name: surface.name.clone(),
         kind: surface.kind,
         loc: surface.tile(),
-        arrive_radius: DERIVED_ARRIVE_RADIUS,
+        arrive_radius,
         label: format!("{} @ {},{}", surface.name, surface.x, surface.z),
     }
 }
 
 /// Frozen `buildCookLocations(banks)`: one location per bank, in order.
-pub(crate) fn build(banks: &[NamedBank], surfaces: &[CookSurface]) -> Vec<CookLocation> {
+pub(crate) fn build(
+    banks: &[NamedBank],
+    surfaces: &[CookSurface],
+) -> Result<Vec<CookLocation>, api::selected::FactError> {
+    let camps = cook_camps()?;
+    let max_cheb = max_surface_cheb()?;
+    let arrive_radius = derived_arrive_radius()?;
+    Ok(build_with_facts(
+        banks,
+        surfaces,
+        camps,
+        max_cheb,
+        arrive_radius,
+    ))
+}
+
+fn build_with_facts(
+    banks: &[NamedBank],
+    surfaces: &[CookSurface],
+    camps: &[CookCamp],
+    max_cheb: i32,
+    arrive_radius: i32,
+) -> Vec<CookLocation> {
     banks
         .iter()
         .enumerate()
         .map(|(index, bank)| {
-            let curated = curated(bank.name);
-            let verified = curated.is_some();
+            let verified = camps.iter().any(|camp| camp.bank == bank.name);
+            let surface = curated(bank.name, camps).or_else(|| {
+                nearest_surface(bank.tile, surfaces, f64::from(max_cheb))
+                    .map(|surface| derived(surface, arrive_radius))
+            });
             CookLocation {
                 bank: index,
                 name: bank.name,
-                surface: curated.or_else(|| {
-                    nearest_surface(bank.tile, surfaces, f64::from(MAX_SURFACE_CHEB)).map(derived)
-                }),
+                surface,
                 verified,
             }
         })
@@ -215,7 +263,7 @@ mod tests {
             surface(3230, 3200, 0, CookSurfaceKind::Oven),
         ];
         let banks = [bank("Somewhere", 3200, 3200), bank("Far", 3000, 3000)];
-        let built = build(&banks, &surfaces);
+        let built = build_with_facts(&banks, &surfaces, &[], 20, 7);
         let plan = built[0].surface.as_ref().expect("paired");
         assert_eq!(plan.loc, surfaces[1].tile());
         assert_eq!(
@@ -226,17 +274,25 @@ mod tests {
                 level: 0
             }
         );
-        assert_eq!(plan.arrive_radius, DERIVED_ARRIVE_RADIUS);
+        assert_eq!(plan.arrive_radius, 7);
         assert_eq!(plan.label, "Range @ 3215,3200");
         assert!(!built[0].verified);
         assert_eq!(built[1].surface, None, "nothing within the radius");
     }
 
+    /// Curated camp rows remain the exact hand-walked surface facts.
     #[test]
     fn a_curated_bank_keeps_its_hand_walked_surface() {
+        if !crate::test_support::local_api_asset(
+            "data/game-data/cook-catalog.json",
+            "local cooking catalog (generate with `python tools/local-data/build.py`)",
+        ) {
+            return;
+        }
         let surfaces = [surface(2810, 3441, 0, CookSurfaceKind::Oven)];
-        let built = build(&[bank("Catherby", 2809, 3441)], &surfaces);
-        let camp = COOK_CAMPS
+        let built = build(&[bank("Catherby", 2809, 3441)], &surfaces).expect("local cook catalog");
+        let camp = cook_camps()
+            .expect("local cook catalog")
             .iter()
             .find(|camp| camp.bank == "Catherby")
             .unwrap();
@@ -246,5 +302,52 @@ mod tests {
             (camp.stand, camp.loc, 0)
         );
         assert!(built[0].verified);
+    }
+    /// Frozen `nearestCookingRange`: only `Range` placements, the radius is inclusive, the first of equal
+    /// distances wins, and a placement on another plane never competes.
+    #[test]
+    fn the_nearest_range_is_the_first_closest_within_the_radius() {
+        let mut ranges = vec![
+            surface(10, 10, 0, CookSurfaceKind::Oven),
+            surface(14, 10, 0, CookSurfaceKind::Oven),
+            surface(6, 10, 0, CookSurfaceKind::Oven),
+            surface(11, 10, 1, CookSurfaceKind::Oven),
+        ];
+        ranges.push(surface(12, 10, 0, CookSurfaceKind::Fire));
+        let from = |ranges: &[CookSurface], max: f64| {
+            nearest_range(ranges, max, |surface| {
+                Ok::<_, std::convert::Infallible>(
+                    (surface.level == 0)
+                        .then(|| f64::from((12 - surface.x).abs().max((10 - surface.z).abs()))),
+                )
+            })
+            .unwrap()
+            .map(|(surface, d)| (surface.x, d))
+        };
+        assert_eq!(
+            from(&ranges, 64.0),
+            Some((10, 2.0)),
+            "the first of two equally near wins"
+        );
+        assert_eq!(
+            from(&ranges, 2.0),
+            Some((10, 2.0)),
+            "the radius is inclusive"
+        );
+        assert_eq!(from(&ranges, 1.0), None);
+        assert_eq!(
+            from(&ranges[3..], 64.0),
+            None,
+            "another plane never competes, and a Fireplace is no Range"
+        );
+        let nan = nearest_range(&ranges, 64.0, |_| {
+            Ok::<_, std::convert::Infallible>(Some(f64::NAN))
+        })
+        .unwrap();
+        assert_eq!(
+            nan.map(|(surface, _)| surface.x),
+            Some(10),
+            "a NaN distance picks the first row and keeps it"
+        );
     }
 }

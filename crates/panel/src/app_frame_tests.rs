@@ -332,11 +332,29 @@ fn slot_io() -> SlotIo {
 /// arm, rail entry and slot io per name, the first focused. The workers are
 /// never spawned: tests publish status rows by hand.
 fn session_with_play(label: &str, names: &[&str]) -> (Session, TestDir) {
+    session_with_play_and_quester_settings(label, names, None)
+}
+
+/// [`session_with_play`] where the first profile carries `quester_settings`
+/// as its Quester card settings, so a test chooses the queue it discloses.
+fn session_with_play_and_quester_settings(
+    label: &str,
+    names: &[&str],
+    quester_settings: Option<serde_json::Map<String, serde_json::Value>>,
+) -> (Session, TestDir) {
     IsolatedStores::ensure_thread();
     let dir = TestDir::new(label);
     let mut vault = VaultFixture::create(&dir.join("v.vault"), "test-passphrase-01");
     for (i, name) in names.iter().enumerate() {
-        vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
+        let mut profile = FixtureProfile::new(name, "pw").uid(1 + i as i32);
+        if let (0, Some(settings)) = (i, quester_settings.as_ref()) {
+            profile = frontend_core::test_support::session::with_settings_bag(
+                profile,
+                &format!("compiled:{}", CompiledCardId::QUESTER.as_str()),
+                settings.clone(),
+            );
+        }
+        vault.put(profile);
     }
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
@@ -684,6 +702,9 @@ const PATHS_RUNNING: [&str; 2] = [
 /// a frame that stops advancing the reload never settles it, and one that
 /// advances it after the drawing draws the running notice.
 fn frames_settle_a_quester_paths_reload(drive: Drive) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut session, _dir) = session_with_play("frame-quester-paths", &["alice"]);
     session.script_prefs_open = true;
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
@@ -1546,6 +1567,10 @@ fn the_rail_tiles_scroll_under_the_sticky_toolbar() {
 /// three whose script was walking. Under `UiFrame` the drawn text says the
 /// same.
 fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const NINE: [&str; 9] = [
         "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
     ];
@@ -1717,4 +1742,185 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
             "grid={grid}: {tile}"
         );
     }
+}
+#[test]
+fn panel_driver_shows_quester_zone_disclosure_before_start() {
+    // The default queue lists every qualified guide first, so its first screen
+    // changes whenever a guide qualifies. This test chooses the Prince queue.
+    let quester_settings = serde_json::json!({
+        "schema_version": 3,
+        "values": { "quests": ["prince"], "include_draft_guides": true }
+    })
+    .as_object()
+    .expect("settings object")
+    .clone();
+    let (mut session, _dir) = session_with_play_and_quester_settings(
+        "frame-quester-zone-disclosure",
+        &["alice"],
+        Some(quester_settings),
+    );
+    session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!(
+            "panel_driver_shows_quester_zone_disclosure_before_start: no headless GPU, skipped"
+        );
+        return;
+    };
+    rig.frames_until("the panel preferences", |rig| {
+        rig.session().panel_preferences_ready()
+    });
+    rig.session()
+        .ui
+        .collapsed
+        .entry("alice".into())
+        .or_default()
+        .insert("script".into(), false);
+    rig.frames_until("the expanded Script section", |rig| {
+        rig.text.contains("Start zone scope")
+    });
+    assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
+    assert!(
+        rig.text.contains("Start accepts only these zones."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("The food guard is armed for the whole walk"),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("protection runs only where a step requests it."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Prince Ali Rescue (prince)"),
+        "{}",
+        rig.text
+    );
+    assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
+    assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
+}
+
+/// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
+/// whose pump phase is the production `frame_pumps` order and whose staged
+/// GameInput submit follows it. The CI lanes have no GPU adapter
+/// (`SKIP_GPU=1`), so the drawing half of `ui_frame` stays under the
+/// per-surface warm-frame tests; this gate bounds the composed warm frame.
+///
+/// The steady pump frame is not allocation-free: the core poll pass clones
+/// the host's status rows every poll and `pump_shots` pays one call, so
+/// the bound is the measured warm count plus headroom — both lab hosts
+/// measure 23 calls/frame with two published rows, and the ceiling is
+/// that measurement plus 2%, rounded up — plus the no-growth equality: a
+/// second block of 100 unchanged frames must cost exactly the same. The
+/// count is the frame thread's own, and a block counts only when no
+/// wall-clock arrival (the preference store's first snapshot, the resource
+/// meter's once-a-second sample) landed in it.
+#[test]
+fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() {
+    const CHILD: &str = "PANEL_WHOLE_FRAME_GATE_CHILD";
+    const TEST_PATH: &str =
+        "app::frame_tests::the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        // The process-wide log store carries every earlier test's lines,
+        // and the pump's per-frame cost depends on what the ring holds, so
+        // an in-process count depends on the test's position in the
+        // binary. A fresh child starts an empty ring and measures the same
+        // cost a fresh panel process pays.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated whole-frame gate");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "whole-frame gate child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let (session, _dir) = session_with_play("frame-alloc-whole", &["alice", "bob"]);
+    let Some(mut rig) = Rig::new(Drive::Pumps, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    publish_ingame(rig.session(), "bob");
+    // Warm: the first status transitions, the log lines they publish, the
+    // ImGui frame queues and every lazy per-frame buffer settle here.
+    for _ in 0..16 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    // The process preference store reads its file on its own thread, so
+    // the first readable snapshot lands on whatever frame the clock gives
+    // it: the core follows it on one frame and the panel adopts it on the
+    // next, and that one-time arrival costs hundreds of calls. It is not
+    // part of an unchanged frame: frame until it landed, then let the
+    // adoption settle for another warm run.
+    let settle_by = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !rig.session().panel_preferences_ready() {
+        assert!(!rig.frame(Pointer::Away));
+        assert!(
+            std::time::Instant::now() < settle_by,
+            "the process preference store never published a readable snapshot"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..16 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    // The resource meter asks its probe thread for a sample once a second
+    // by the wall clock, and taking a published sample or counting the
+    // fleet again can allocate on the frame that does it. That is a
+    // cadence of its own, not growth in an unchanged frame, so a block
+    // counts only when the meter was idle through all of it: no sample in
+    // flight at either end and none published inside. A block that met
+    // the sampler is dropped and measured again; the first one, with the
+    // startup sample still on its way, is dropped the same way. Growth in
+    // the frame itself shows in every block, so it still fails.
+    let quiet_block = |rig: &mut Rig| -> Option<usize> {
+        let published = rig.session().core.resource_probe_generation();
+        let idle_before = !rig.session().core.resource_probe_in_flight();
+        let before = crate::test_alloc::alloc_calls();
+        for _ in 0..100 {
+            assert!(
+                !rig.frame(Pointer::Away),
+                "an unchanged frame ended the run"
+            );
+        }
+        let calls = crate::test_alloc::alloc_calls() - before;
+        let idle_after = !rig.session().core.resource_probe_in_flight();
+        let quiet = idle_before
+            && idle_after
+            && rig.session().core.resource_probe_generation() == published;
+        quiet.then_some(calls)
+    };
+    let mut measured = None;
+    for _ in 0..20 {
+        if let Some(first) = quiet_block(&mut rig) {
+            if let Some(second) = quiet_block(&mut rig) {
+                measured = Some((first, second));
+                break;
+            }
+        }
+    }
+    let (first, second) =
+        measured.expect("20 pairs of 100 frames each met the once-a-second resource sample");
+    assert_eq!(
+        second, first,
+        "100 unchanged whole frames must cost exactly what the first block cost"
+    );
+    // Call counts can differ between hosts, so the ceiling carries
+    // headroom instead of pinning one host's measurement: the measured
+    // warm count (23 calls/frame on both lab hosts) plus 2%, rounded up.
+    const WHOLE_FRAME_CALL_CEILING_PER_FRAME: usize = 24;
+    assert!(
+        second <= WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {second} calls exceeds the measured warm count plus 2% headroom ({})",
+        WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100
+    );
 }

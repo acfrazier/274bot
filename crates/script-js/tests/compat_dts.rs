@@ -1,5 +1,5 @@
 // Compat (JS API v1) declarations — generated declarations gated against the live shim.
-use script_js::compat_dts::{
+use script_js::tooling::compat_dts::{
     check_compat_dts_drift, collect_compat_surface_from, compat_dts_path, drift_against_shim,
     load_authored_dts, load_authored_dts_from, shim_source_pairs, CompatExport, Member, MemberKind,
 };
@@ -34,14 +34,14 @@ fn drift_for_shim_replacement(suffix: &str, before: &str, after: &str) -> Vec<St
 fn drift_gate_rejects_async_to_sync_bank_member_mutation() {
     let drifts = drift_for_shim_replacement(
         "/api/bank/Bank.js",
-        "async depositAllExcept(",
-        "depositAllExcept(",
+        "async depositInventory(",
+        "depositInventory(",
     );
     assert!(
         drifts
             .iter()
-            .any(|drift| drift.contains("Bank.depositAllExcept async-ness")),
-        "a synchronous Bank.depositAllExcept must not satisfy a Promise declaration: {drifts:?}"
+            .any(|drift| drift.contains("Bank.depositInventory async-ness")),
+        "a synchronous Bank.depositInventory must not satisfy a Promise declaration: {drifts:?}"
     );
 }
 
@@ -63,7 +63,7 @@ fn drift_gate_rejects_async_to_sync_function_mutation() {
 #[test]
 fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
     let authored = load_authored_dts().expect("generated compat declarations");
-    let shim = script_js::compat_dts::collect_compat_surface();
+    let shim = script_js::tooling::compat_dts::collect_compat_surface();
     let drifts = drift_against_shim(&authored, &shim);
     assert!(
         !drifts
@@ -76,7 +76,7 @@ fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
         .iter()
         .flat_map(|module| module.exports.iter())
         .find_map(|export| match export {
-            script_js::compat_dts::CompatExport::Class { name, members, .. }
+            script_js::tooling::compat_dts::CompatExport::Class { name, members, .. }
                 if name == "LoopingBot" =>
             {
                 members.iter().find(|member| member.name == "loop")
@@ -94,7 +94,7 @@ fn drift_gate_accepts_sync_or_async_bot_loop_contract() {
 #[test]
 fn authored_tree_preserves_header_and_sibling_imports() {
     let dir = unique_temp_path("tree");
-    script_js::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
+    script_js::tooling::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
     let index = fs::read_to_string(compat_dts_path()).expect("read generated declarations");
     let header_end = index.find("declare module").expect("ambient module header");
     let header = &index[..header_end];
@@ -116,7 +116,9 @@ fn authored_tree_preserves_header_and_sibling_imports() {
 fn compat_dts_is_fresh() {
     check_compat_dts_drift().unwrap_or_else(|e| panic!("{e}"));
 }
-fn paint_frame_members(authored: &mut script_js::compat_dts::AuthoredSurface) -> &mut Vec<Member> {
+fn paint_frame_members(
+    authored: &mut script_js::tooling::compat_dts::AuthoredSurface,
+) -> &mut Vec<Member> {
     let module = authored
         .modules
         .iter_mut()
@@ -142,8 +144,12 @@ fn preserve_members_rejects_an_unbacked_extra_member() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts
             .iter()
@@ -153,7 +159,7 @@ fn preserve_members_rejects_an_unbacked_extra_member() {
 }
 
 fn inventory_item_members(
-    authored: &mut script_js::compat_dts::AuthoredSurface,
+    authored: &mut script_js::tooling::compat_dts::AuthoredSurface,
 ) -> &mut Vec<Member> {
     let module = authored
         .modules
@@ -180,7 +186,10 @@ fn preserve_members_accepts_only_the_native_inventory_field_schema() {
         .collect();
     fields.sort_unstable();
     assert_eq!(fields, ["cert", "count", "id", "name", "noted", "slot"]);
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts.is_empty(),
         "the six initialized fields must pass: {drifts:?}"
@@ -197,8 +206,12 @@ fn preserve_members_rejects_an_uninitialized_inventory_field() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts.iter().any(|drift| {
             drift.contains("InvItem extra authored member unbackedInventoryField")
@@ -211,7 +224,10 @@ fn preserve_members_rejects_an_uninitialized_inventory_field() {
 fn preserve_members_rejects_an_emptied_class() {
     let mut authored = load_authored_dts().expect("generated compat declarations");
     paint_frame_members(&mut authored).clear();
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts
             .iter()
@@ -222,13 +238,13 @@ fn preserve_members_rejects_an_emptied_class() {
 
 /// Re-run the frozen emitter and named runtime overlay without rewriting index.d.ts.
 /// The integration owner runs this with RS2B0T pointing at the frozen
-/// rs2b0t revision 90a69240a4617155f280f098958c3cd7f044f234 source.
+/// rs2b0t revision ae56ccc95ba5681b12f1f66ec2adea14427fe497 source.
 #[test]
 #[ignore = "requires RS2B0T set to the frozen rs2b0t source"]
 fn generator_check_matches_frozen_emit_and_overlay() {
     let rs2b0t = std::env::var_os("RS2B0T").unwrap_or_else(|| {
         panic!(
-            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 90a69240a4617155f280f098958c3cd7f044f234 source before \
+            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t ae56ccc95ba5681b12f1f66ec2adea14427fe497 source before \
              running `cargo test -p script --test compat_dts -- --include-ignored`"
         )
     });
@@ -260,7 +276,7 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
 fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
     let rs2b0t = std::env::var_os("RS2B0T")
-        .expect("set RS2B0T to the frozen rs2b0t 90a69240a4617155f280f098958c3cd7f044f234 source");
+        .expect("set RS2B0T to the frozen rs2b0t ae56ccc95ba5681b12f1f66ec2adea14427fe497 source");
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let scratch = unique_temp_path("runtime-extension");
     let crate_copy = scratch.join("crate");
@@ -341,7 +357,10 @@ export const Gatherer: {
         gatherer.extension_file,
         "Gatherer comes from the typed sidecar"
     );
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts.is_empty(),
         "rendered runtime barrel plus typed sidecar must satisfy the live drift gate: {drifts:?}"
@@ -406,7 +425,7 @@ export const Gatherer: {
         .to_string();
     assert_ne!(
         actual_wrong_commit,
-        "90a69240a4617155f280f098958c3cd7f044f234"
+        "ae56ccc95ba5681b12f1f66ec2adea14427fe497"
     );
     let rejected = Command::new("node")
         .arg("generate.cjs")
@@ -421,7 +440,7 @@ export const Gatherer: {
     );
     assert!(
         stderr.contains(
-            "RS2B0T revision check failed: expected 90a69240 (90a69240a4617155f280f098958c3cd7f044f234)"
+            "RS2B0T revision check failed: expected ae56ccc95b (ae56ccc95ba5681b12f1f66ec2adea14427fe497)"
         ),
         "wrong-revision failure must have the stable prefix: {stderr}"
     );
@@ -441,7 +460,7 @@ fn write_compat_dts_tree_to_env() {
     let dir = persistent.as_deref().map(PathBuf::from).unwrap_or_else(|| {
         std::env::temp_dir().join(format!("compat-dts-tree-{}", std::process::id()))
     });
-    script_js::compat_dts::write_compat_dts_tree(&dir).expect("write compat dts tree");
+    script_js::tooling::compat_dts::write_compat_dts_tree(&dir).expect("write compat dts tree");
     eprintln!("wrote tree {}", dir.display());
     if persistent.is_none() {
         fs::remove_dir_all(&dir).expect("remove temporary compat dts tree");
@@ -542,7 +561,7 @@ fn tsc_valid_consumer_probe_has_zero_diagnostics() {
 #[ignore = "requires npx and TypeScript 5.8.3"]
 fn tsc_generated_bank_tree_resolves_sibling_imports() {
     let dir = unique_temp_path("bank-tree-consumer");
-    script_js::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
+    script_js::tooling::compat_dts::write_compat_dts_tree(&dir).expect("write declaration tree");
     let consumer = dir.join("consumer.ts");
     fs::write(
         &consumer,
@@ -769,7 +788,10 @@ fn extension_accepted_when_typed_module_and_barrel_exist() {
     let _ = fs::remove_dir_all(&dir);
     write_gatherer_extension(&dir, true, true);
     let authored = load_authored_dts_from(&dir).expect("load extension directory");
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts.is_empty(),
         "typed Gatherer module plus barrel export must be accepted: {drifts:?}"
@@ -783,7 +805,9 @@ fn extension_accepted_when_typed_module_and_barrel_exist() {
         .exports
         .iter()
         .find_map(|export| match export {
-            script_js::compat_dts::CompatExport::Object { name, members } if name == "Gatherer" => {
+            script_js::tooling::compat_dts::CompatExport::Object { name, members }
+                if name == "Gatherer" =>
+            {
                 members.iter().find(|member| member.name == "start")
             }
             _ => None,
@@ -801,7 +825,10 @@ fn extension_rejected_without_barrel_export() {
     let _ = fs::remove_dir_all(&dir);
     write_gatherer_extension(&dir, false, true);
     let authored = load_authored_dts_from(&dir).expect("load extension directory");
-    let drifts = drift_against_shim(&authored, &script_js::compat_dts::collect_compat_surface());
+    let drifts = drift_against_shim(
+        &authored,
+        &script_js::tooling::compat_dts::collect_compat_surface(),
+    );
     assert!(
         drifts
             .iter()

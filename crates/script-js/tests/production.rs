@@ -3,13 +3,16 @@
 // and the host re-resolves the exact posted control. A queued click is not
 // a completed make.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot_with_native, ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput,
-    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+        ReachViewInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::encode_snapshot_with_native,
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
@@ -489,32 +492,6 @@ fn pause_hold_and_session_reset_abort_a_parked_make_x() {
         iso.drain_interacts().is_empty(),
         "a reset session must not answer later"
     );
-    iso.join();
-}
-
-#[test]
-fn make_one_stays_not_impl() {
-    let src = r#"
-import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__one = null;
-        try { globalThis.__one = await ChatDialog.makeOne('Flax'); }
-        catch (e) { globalThis.__one = String(e.message || e); }
-    }
-}
-"#;
-    let iso = spawn(src);
-    post(&iso, &base(), Some(&[]));
-    tick(&iso, 1);
-    let one = iso.probe("__one").unwrap();
-    assert!(
-        one.as_str().unwrap_or("").contains("not impl"),
-        "makeOne stays not impl, got {one:?}"
-    );
-    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
 

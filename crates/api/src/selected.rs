@@ -58,7 +58,10 @@ impl FactStrings {
 // Refusal paths clone a fixed key, without allocating or taking an intern lock.
 pub(crate) static QUESTS_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("quests"));
 pub(crate) static GATHERING_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("gathering"));
-pub(crate) static PIN_FAMILY: LazyLock<FactKey> = LazyLock::new(|| FactKey::new("selected-pin"));
+pub(crate) static PREREQ_STEPS_FAMILY: LazyLock<FactKey> =
+    LazyLock::new(|| FactKey::new("prereq_steps"));
+pub(crate) static LOCAL_GAME_DATA_FAMILY: LazyLock<FactKey> =
+    LazyLock::new(|| FactKey::new("local_game_data"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -158,20 +161,6 @@ impl Truth {
     }
 }
 
-/// Runtime attachment: the final manifest digest is never embedded in its own bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectedPin {
-    pub revision: ClientRevision,
-    pub engine_commit: Arc<str>,
-    pub content_commit: Arc<str>,
-    pub cache_id: Arc<str>,
-    pub content_id: Arc<str>,
-    pub nav_sha256: [u8; 32],
-    pub flags_sha256: [u8; 32],
-    pub schema: u16,
-    pub manifest_sha256: [u8; 32],
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactError {
     FamilyUnavailable(FactKey),
@@ -180,11 +169,16 @@ pub enum FactError {
         expected: u16,
         actual: u16,
     },
-    PinMismatch,
     Invalid {
         source: SourceSpan,
         reason: Arc<str>,
     },
+}
+
+/// The refusal every compiled catalog table gives when this build embeds no local game data.
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+pub(crate) fn local_game_data_unavailable() -> FactError {
+    FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
 }
 
 /// Process-local identity of one operator run, stamped with the session it

@@ -65,6 +65,9 @@ mod tests {
 
     #[test]
     fn seven_escape_ids_match_both_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = api::game_data::for_revision(revision).expect("selected game data");
             for id in [

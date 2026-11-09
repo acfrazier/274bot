@@ -1,5 +1,12 @@
 {
   "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "expected_failure_notes": [
+    {
+      "file": "api/input/input.test.ts",
+      "case": " > Input > exposes every driver operation",
+      "why": "Approved cut plan-r3.md:762-776; operator scope call 2026-10-29; the test checks that driver operations exist; no catalog script or upstream Load path calls them."
+    }
+  ],
   "files": [
     {
       "file": "api/acquisition/Tools.test.ts",
@@ -1244,53 +1251,43 @@
       "cases": [
         {
           "name": " > resolveWoodcuttingLocation > Use Start Position and Use Custom Position are freeform (null)",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest near Draynor willows",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest near Seers maples",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > Use Closest still snaps even NW of Crafting Guild (no chunk gate)",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > resolveWoodcuttingLocation > named match is case-insensitive",
-          "status": "fail",
-          "reason": "Error: not impl: resolveWoodcuttingLocation"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > dropdown is Auto + Use Closest + Use Start Position + Use Custom Position + legacy None + camps",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > every bankStand is a known BANK_LOCATIONS tile",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > core catalog entries are verified; tick-manip camps may be provisional",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > includes tick-manip WC camps (#160)",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS.map"
+          "status": "pass"
         },
         {
           "name": " > WOODCUTTING_LOCATIONS table > fire spots are not mixed into chop camps",
-          "status": "fail",
-          "reason": "Error: not impl: WOODCUTTING_LOCATIONS"
+          "status": "pass"
         },
         {
           "name": " > ENT_NPC_IDS > covers pack 444-452 and stops before suit of armour",
@@ -1473,7 +1470,8 @@
       "cases": [
         {
           "name": " > Input > exposes every driver operation",
-          "status": "pass"
+          "status": "fail",
+          "reason": "Error: not impl: Input.useItemOnLoc"
         }
       ]
     },
@@ -1572,32 +1570,32 @@
         {
           "name": " > PaintState > click inside a widget region queues for that widget; next-frame consume",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.publishRegions"
         },
         {
           "name": " > PaintState > click on the panel backdrop swallows but queues nothing",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.publishRegions"
         },
         {
           "name": " > PaintState > click outside every region is not swallowed",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.publishRegions"
         },
         {
           "name": " > PaintState > hover tracks the pointer and only swallows moves inside regions",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.publishRegions"
         },
         {
           "name": " > PaintState > widget kv store persists across frames (tabs, collapse)",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.reset"
         },
         {
           "name": " > PaintState > reset clears regions so a stopped bot swallows nothing",
           "status": "fail",
-          "reason": "Error: not impl: PaintState"
+          "reason": "Error: not impl: PaintState.publishRegions"
         },
         {
           "name": " > paintCols > counts whole monospace characters that fit inside the padding",
@@ -1627,23 +1625,19 @@
         },
         {
           "name": " > clipText > text that fits is untouched",
-          "status": "fail",
-          "reason": "Error: not impl: clipText"
+          "status": "pass"
         },
         {
           "name": " > clipText > overlong text ends in an ellipsis inside the column count",
-          "status": "fail",
-          "reason": "Error: not impl: clipText"
+          "status": "pass"
         },
         {
           "name": " > clipText > leading spaces survive, so padded list columns stay aligned",
-          "status": "fail",
-          "reason": "Error: not impl: clipText"
+          "status": "pass"
         },
         {
           "name": " > clipText > no columns means nothing to draw",
-          "status": "fail",
-          "reason": "Error: not impl: clipText"
+          "status": "pass"
         },
         {
           "name": " > cellWidths > splits the total evenly when every cell weighs the same",

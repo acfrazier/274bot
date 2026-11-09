@@ -29,16 +29,25 @@ fn cell(label: &str, stage: &str, mode: Mode) -> Cell {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_stage_0() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     quester_live::run(cell("stage-0", "vampire:0", fixture::stage("vampire:1"))).unwrap();
 }
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_stage_1() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     quester_live::run(cell("stage-1", "vampire:1", fixture::stage("vampire:2"))).unwrap();
 }
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_stage_2() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A pre-completed fixture is skipped by the native queue. Starting at
     // stage 2 and waiting for lifecycle completion exercises stage 3's exit.
     let receipt = quester_live::run(cell(
@@ -55,11 +64,17 @@ fn vampire_stage_2() {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_clean() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     quester_live::run(cell("clean", "vampire:0", Mode::Clean)).unwrap();
 }
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_resume() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     quester_live::run(cell(
         "resume",
         "vampire:0",
@@ -72,6 +87,9 @@ fn vampire_resume() {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local 289 engine"]
 fn vampire_death() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     quester_live::run(cell(
         "death",
         "vampire:2",
@@ -85,6 +103,9 @@ fn vampire_death() {
 
 #[test]
 fn vampire_path_compiles_against_selected_content() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let document: script::quester::path::PathDocument =

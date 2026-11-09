@@ -3,14 +3,139 @@
 // batching, the waits and the settlement, and the host re-resolves the exact
 // posted row the queued op names. A queued click is never a transfer.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot_with_native, ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
+use api::identity::{ExecutionId, RequestId};
+use api::script_contract::ChildOrigin;
+use api::selected::RunKey;
+use script::interact::InteractReq;
+use script::native::{
+    request::NativeKind,
+    seat::{SeatEntry, SeatResult, SeatTerminal},
+    seat_rows::{SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs},
+    snapshot_source::{
+        ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput, SceneEntityInput,
+        SnapshotInput, TileInput,
+    },
+    NativePhase,
 };
+use script_js::wire::encode_snapshot_with_native;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+fn spawn_native(src: &str) -> LoadIsolate {
+    LoadIsolate::spawn_with_execution(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        ExecutionId::first(RunKey {
+            slot: 37,
+            run: 1,
+            session: 1,
+        }),
+    )
+    .unwrap()
+}
 
+fn post_native_seat_page(
+    iso: &LoadIsolate,
+    snap: &SnapshotInput<'_>,
+    live: &[SeatEntry],
+    results: &[SeatResult],
+    details: &[SeatLiveDetails<'_>],
+    values: &[SeatResultValue<'_>],
+) {
+    let page = SeatPageInput::new(live, results, details, 0)
+        .expect("valid native seat page")
+        .with_result_values(values)
+        .expect("valid native seat result values");
+    iso.post_snapshot(encode_snapshot_with_native(
+        snap,
+        NativeFactsInput {
+            shop_player: Some(&[]),
+            seat_page: Some(page),
+            ..NativeFactsInput::default()
+        },
+    ));
+    iso.on_game_tick(snap.tick);
+    let _ = iso.probe("true").expect("posted seat page tick completes");
+}
+fn shop_live_entry(id: RequestId) -> SeatEntry {
+    SeatEntry {
+        id,
+        parent: None,
+        kind: NativeKind::Shop,
+        origin: ChildOrigin::Started,
+        depth: 1,
+        decisions_consumed: 0,
+        prompt: None,
+    }
+}
+
+fn post_shop_live(iso: &LoadIsolate, snap: &SnapshotInput<'_>, id: RequestId) {
+    let live = [shop_live_entry(id)];
+    let details = [SeatLiveDetails {
+        id,
+        phase: NativePhase::Waiting,
+        prompt: None,
+    }];
+    post_native_seat_page(iso, snap, &live, &[], &details, &[]);
+}
+
+fn post_shop_result(iso: &LoadIsolate, snap: &SnapshotInput<'_>, id: RequestId, bought: i32) {
+    let results = [SeatResult {
+        id,
+        seq: 1,
+        outcome: SeatTerminal::Done,
+        prior_parent: None,
+        session: Some(id),
+        authority_revoked: false,
+    }];
+    let encoded = script::channel::encode(&Value::from(bought)).expect("encoded Shop result");
+    let values = [SeatResultValue {
+        id,
+        value: &encoded,
+    }];
+    post_native_seat_page(iso, snap, &[], &results, &[], &values);
+}
+
+fn assert_shop_start(iso: &LoadIsolate, item_id: f64, quantity: f64) -> RequestId {
+    let batches = iso.drain_seat_batches();
+    let starts: Vec<_> = batches
+        .iter()
+        .flat_map(|batch| batch.batch.starts.iter())
+        .collect();
+    assert_eq!(starts.len(), 1, "one typed native Shop request starts");
+    let start = starts[0];
+    assert_eq!(start.kind, NativeKind::Shop);
+    assert_eq!(
+        start.args,
+        SeatStartArgs::Shop(script::native_shop::ShopBuyByIdArgs { item_id, quantity }),
+        "the requested object id and additional quantity cross the native seat wire"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the shim does not queue a legacy ShopButton"
+    );
+    start.id
+}
+
+fn assert_no_shop_restart(iso: &LoadIsolate) {
+    let batches = iso.drain_seat_batches();
+    assert!(
+        batches
+            .iter()
+            .flat_map(|batch| batch.batch.starts.iter())
+            .all(|start| start.kind != NativeKind::Shop),
+        "a live native Shop request is not started twice"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the shim does not queue legacy interactions"
+    );
+}
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
 }
@@ -192,6 +317,22 @@ export default class T extends LoopingBot {
 }
 "#;
 
+const BUY_BY_ID: &str = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__bought = null;
+        try {
+            globalThis.__bought = await Shop.buyById(377, globalThis.__qty ?? 2);
+        } catch (e) {
+            globalThis.__bought = String(e.message || e);
+        }
+    }
+}
+"#;
+
 const SELL: &str = r#"
 import { Shop } from '../../api/shop/Shop.js';
 export default class T extends LoopingBot {
@@ -226,6 +367,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn buy_on_a_closed_shop_is_refused_without_a_packet() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(BUY);
     let snap = base();
     post(&iso, &snap, Some(&[]));
@@ -241,6 +385,9 @@ fn buy_on_a_closed_shop_is_refused_without_a_packet() {
 
 #[test]
 fn buy_queues_the_frozen_batch_and_counts_only_the_moved_items() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(BUY);
     let stock = [row("Lobster", 377, 100, 9201, 5)];
     let held = [row("Lobster", 377, 0, 0, 0)];
@@ -310,6 +457,9 @@ fn buy_queues_the_frozen_batch_and_counts_only_the_moved_items() {
 
 #[test]
 fn sell_acts_on_the_shop_player_pack_not_the_stock_row_of_the_same_name() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(SELL);
     let stock = [row("Shark", 385, 50, 3900, 1)];
     let player = [row("Shark", 385, 4, 3823, 2)];
@@ -351,6 +501,9 @@ fn sell_acts_on_the_shop_player_pack_not_the_stock_row_of_the_same_name() {
 
 #[test]
 fn sell_without_a_decoded_player_pack_fails_closed() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(SELL);
     let stock = [row("Shark", 385, 50, 3900, 1)];
     let mut snap = base();
@@ -395,6 +548,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(SELL_PICK);
     let player = [
         row("Rune essence", 1436, 1, 3823, 0),
@@ -464,6 +620,9 @@ fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
 
 #[test]
 fn sell_treats_a_promise_returning_pick_as_sync_truthy() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(SELL_PICK);
     let player = [
         row("Rune essence", 1436, 2, 3823, 0),
@@ -503,6 +662,9 @@ fn sell_treats_a_promise_returning_pick_as_sync_truthy() {
 
 #[test]
 fn sell_with_a_refusing_or_throwing_pick_sends_nothing() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(SELL_PICK);
     let player = [row("Rune essence", 1436, 4, 3823, 0)];
     let mut snap = base();
@@ -534,6 +696,9 @@ fn sell_with_a_refusing_or_throwing_pick_sends_nothing() {
 
 #[test]
 fn open_presses_the_keepers_trade_op_and_reports_the_opened_shop() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Talk-to".to_string(), "Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -569,6 +734,9 @@ fn open_presses_the_keepers_trade_op_and_reports_the_opened_shop() {
 
 #[test]
 fn open_without_a_keeper_resolves_false_without_a_packet() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Attack".to_string()];
     let guards = [npc("Guard", &actions)];
@@ -601,6 +769,9 @@ fn trades(ops: &[InteractReq]) -> usize {
 /// its tick deadline, however long the wall clock runs.
 #[test]
 fn open_sends_one_trade_while_the_keeper_takes_longer_than_three_seconds() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Talk-to".to_string(), "Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -635,6 +806,9 @@ fn open_sends_one_trade_while_the_keeper_takes_longer_than_three_seconds() {
 
 #[test]
 fn open_ignores_a_usable_page_posted_on_its_trade_tick() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -661,6 +835,9 @@ fn open_ignores_a_usable_page_posted_on_its_trade_tick() {
 
 #[test]
 fn cant_reach_ends_each_attempt_and_three_resolve_false() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -702,6 +879,9 @@ fn cant_reach_ends_each_attempt_and_three_resolve_false() {
 #[test]
 fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
     const CAP: u64 = 116;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [npc("Shop keeper", &actions)];
@@ -738,6 +918,9 @@ fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
 #[test]
 fn open_with_a_stale_flood_waits_the_cap() {
     const CAP: u64 = 116;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [keeper_at(&actions, 16, 13)];
@@ -768,6 +951,9 @@ fn open_with_a_stale_flood_waits_the_cap() {
 /// settles on it and never sends a shop button; three attempts end false.
 #[test]
 fn a_shop_closed_before_its_page_never_opens_and_ends_false() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [keeper_at(&actions, 12, 1)];
@@ -899,6 +1085,9 @@ fn keeper_at<'a>(actions: &'a [String], x: i32, distance: i32) -> SceneEntityInp
 /// slack), and the shop that opens on that deadline tick is accepted.
 #[test]
 fn open_waits_out_the_keepers_route_with_one_trade() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [keeper_at(&actions, 16, 14)];
@@ -965,6 +1154,9 @@ fn open_waits_out_the_keepers_route_with_one_trade() {
 /// to it first; once beside it, one Trade.
 #[test]
 fn open_walks_to_a_door_blocked_keeper_then_trades_once() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [keeper_at(&actions, 12, 7)];
@@ -1020,6 +1212,9 @@ fn open_walks_to_a_door_blocked_keeper_then_trades_once() {
 /// without a Trade (here: the user takes the walk over).
 #[test]
 fn open_fails_without_a_trade_when_the_walk_to_the_keeper_fails() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(OPEN);
     let actions = ["Trade".to_string()];
     let npcs = [keeper_at(&actions, 12, 7)];
@@ -1045,6 +1240,9 @@ fn open_fails_without_a_trade_when_the_walk_to_the_keeper_fails() {
 
 #[test]
 fn closing_the_shop_mid_batch_ends_the_transfer_with_its_partial_count() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(BUY);
     let stock = [row("Lobster", 377, 100, 9201, 5)];
     let held = [row("Lobster", 377, 0, 0, 0)];
@@ -1085,6 +1283,9 @@ fn closing_the_shop_mid_batch_ends_the_transfer_with_its_partial_count() {
 /// with the settled count, and the closed shop gets no further button.
 #[test]
 fn an_if_close_after_a_settled_batch_ends_buy_with_its_settled_count() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(BUY);
     let stock = [row("Lobster", 377, 100, 9201, 5)];
     let held = [row("Lobster", 377, 0, 0, 0)];
@@ -1127,6 +1328,9 @@ fn an_if_close_after_a_settled_batch_ends_buy_with_its_settled_count() {
 
 #[test]
 fn pause_hold_and_session_reset_abort_a_parked_transfer() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(BUY);
     let stock = [row("Lobster", 377, 100, 9201, 5)];
     let held = [row("Lobster", 377, 0, 0, 0)];
@@ -1190,6 +1394,9 @@ fn pause_hold_and_session_reset_abort_a_parked_transfer() {
 /// missing items or issue a post-relog shop button.
 #[test]
 fn sell_kept_reconnect_preserves_partial_count_without_a_post_relog_click() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     for post_relog_count in [8, 6] {
         let iso = spawn(SELL);
         let stock = [row("Shark", 385, 50, 3900, 1)];
@@ -1245,4 +1452,320 @@ fn sell_kept_reconnect_preserves_partial_count_without_a_post_relog_click() {
         );
         iso.join();
     }
+}
+
+const INDEX_D_TS: &str = include_str!("../compat-js/index.d.ts");
+const MODULES_JSON: &str = include_str!("../compat-js/modules.json");
+const ABI_CONTRACT: &str = include_str!("../compat-js/abi-contract.json");
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_shop__unitprice__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let src = r#"
+import { unitPrice } from '../../api/shop/StockModel.js';
+export default class T extends LoopingBot {
+    loop() {
+        const item = { cost: 2, baseline: 500 };
+        const shop = { sell: 1300, delta: 20 };
+        globalThis.__prices = [
+            unitPrice(item, shop, 20),
+            unitPrice(item, shop, 600),
+            unitPrice(item, shop, 400),
+            unitPrice({ cost: 0, baseline: 0 }, { sell: 100, delta: 10 }, 0),
+        ];
+    }
+}
+"#;
+    let iso = spawn(src);
+    let snap = base();
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__prices").unwrap(),
+        serde_json::json!([12, 1, 6, 1]),
+        "unitPrice applies the posted stock haggle, floor, and one-gp minimum"
+    );
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_shop__buyoutcost__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let src = r#"
+import { buyoutCost } from '../../api/shop/shopPrice.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__costs = [
+            buyoutCost(20, 3),
+            buyoutCost(20, 2.5),
+            buyoutCost(20, 0),
+        ];
+    }
+}
+"#;
+    let iso = spawn(src);
+    let snap = base();
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__costs").unwrap(),
+        serde_json::json!([6, 6, 0]),
+        "buyoutCost sums each stock-dependent unit and follows the loop boundary"
+    );
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_shop__shopbuyprice__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let src = r#"
+import { shopBuyPrice } from '../../api/shop/shopPrice.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__prices = [
+            shopBuyPrice(20, 0),
+            shopBuyPrice(20, 1),
+            shopBuyPrice(20, 10),
+            shopBuyPrice(20, 700),
+        ];
+    }
+}
+"#;
+    let iso = spawn(src);
+    let snap = base();
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__prices").unwrap(),
+        serde_json::json!([2, 2, 4, 102]),
+        "shopBuyPrice prices the next unit at each stock count with bounded haggle"
+    );
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_shop__shop_buybyid__contract() {
+    let iso = spawn_native(BUY_BY_ID);
+    let stock = [
+        row("Lobster", 999, 100, 3900, 3),
+        row("Lobster", 377, 1, 3900, 1),
+        row("Lobster", 377, 8, 3900, 2),
+    ];
+    let coins = [row("Coins", 995, 1000, 0, 0)];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    snap.inv = &coins;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    let id = assert_shop_start(&iso, 377.0, 2.0);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+
+    snap.tick = 2;
+    post_shop_live(&iso, &snap, id);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+    assert_no_shop_restart(&iso);
+
+    snap.tick = 3;
+    post_shop_result(&iso, &snap, id, 1);
+    assert_eq!(
+        iso.probe("__bought").unwrap(),
+        Value::from(1),
+        "buyById resolves with the actual count only after the native terminal result"
+    );
+    assert_no_shop_restart(&iso);
+    iso.join();
+
+    let zero = spawn_native(BUY_BY_ID);
+    zero.probe("globalThis.__qty = 0").unwrap();
+    let mut snap = base();
+    post(&zero, &snap, Some(&[]));
+    tick(&zero, 1);
+    let id = assert_shop_start(&zero, 377.0, 0.0);
+    assert_eq!(zero.probe("__bought").unwrap(), Value::Null);
+    snap.tick = 2;
+    post_shop_result(&zero, &snap, id, 0);
+    assert_eq!(
+        zero.probe("__bought").unwrap(),
+        Value::from(0),
+        "zero quantity also waits for the native terminal result"
+    );
+    assert_no_shop_restart(&zero);
+    zero.join();
+
+    let fractional = spawn_native(BUY_BY_ID);
+    fractional.probe("globalThis.__qty = 1.5").unwrap();
+    let mut snap = base();
+    post(&fractional, &snap, Some(&[]));
+    tick(&fractional, 1);
+    let id = assert_shop_start(&fractional, 377.0, 1.5);
+    snap.tick = 2;
+    post_shop_result(&fractional, &snap, id, 2);
+    assert_eq!(
+        fractional.probe("__bought").unwrap(),
+        Value::from(2),
+        "a positive fractional quantity resolves with every completed unit"
+    );
+    fractional.join();
+}
+
+#[test]
+fn buy_by_id_pause_and_reset_do_not_repeat_or_credit_unobserved_items() {
+    let iso = spawn_native(BUY_BY_ID);
+    let stock = [row("Lobster", 377, 100, 3900, 1)];
+    let coins = [row("Coins", 995, 1000, 0, 0)];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    snap.inv = &coins;
+    iso.probe("globalThis.__qty = 3").unwrap();
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    let id = assert_shop_start(&iso, 377.0, 3.0);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+
+    iso.pause();
+    snap.tick = 2;
+    post_shop_live(&iso, &snap, id);
+    snap.tick = 3;
+    post_shop_live(&iso, &snap, id);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+    assert_no_shop_restart(&iso);
+
+    iso.resume();
+    snap.hold = true;
+    snap.tick = 4;
+    post_shop_live(&iso, &snap, id);
+    snap.tick = 5;
+    post_shop_live(&iso, &snap, id);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+    assert_no_shop_restart(&iso);
+
+    iso.reset_session_work(None);
+    snap.hold = false;
+    snap.tick = 6;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 6);
+    tick(&iso, 7);
+    assert_eq!(
+        iso.probe("__bought").unwrap(),
+        Value::from(0),
+        "a reset session aborts the native Shop request without a fabricated count"
+    );
+    assert_no_shop_restart(&iso);
+    iso.join();
+}
+
+#[test]
+fn buy_by_id_kept_reconnect_returns_settled_count_without_a_post_relog_click() {
+    let iso = spawn_native(BUY_BY_ID);
+    let stock = [row("Lobster", 377, 100, 3900, 1)];
+    let coins = [row("Coins", 995, 1000, 0, 0)];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.shop_stock = &stock;
+    snap.inv = &coins;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    let id = assert_shop_start(&iso, 377.0, 2.0);
+
+    snap.tick = 2;
+    post_shop_live(&iso, &snap, id);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+    iso.reconnect_session_work(None);
+
+    snap.tick = 3;
+    snap.hold = true;
+    snap.shop_open = false;
+    snap.shop_stock = &[];
+    post_shop_live(&iso, &snap, id);
+    assert_eq!(iso.probe("__bought").unwrap(), Value::Null);
+    assert_no_shop_restart(&iso);
+
+    snap.tick = 4;
+    snap.hold = false;
+    post_shop_result(&iso, &snap, id, 2);
+    assert_eq!(
+        iso.probe("__bought").unwrap(),
+        Value::from(2),
+        "kept reconnect returns the observed native result"
+    );
+    assert_no_shop_restart(&iso);
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this removal test")]
+fn compat_v1_shop__shop_player__removed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+const trap = key => {
+    try { Shop[key]; return 'read'; }
+    catch (error) { return String(error.message || error); }
+};
+globalThis.__shop_player = {
+    own: Object.prototype.hasOwnProperty.call(Shop, 'player'),
+    descriptor: Object.getOwnPropertyDescriptor(Shop, 'player') === undefined,
+    listed: Object.keys(Shop).includes('player'),
+    removed: trap('player'),
+    unknown: trap('__noSuchShopMember'),
+    siblings: [
+        Shop.isOpen, Shop.stock, Shop.open, Shop.buy, Shop.buyById,
+        Shop.sell, Shop.sellAll, Shop.close,
+    ].every(member => typeof member === 'function'),
+};
+export default class T extends LoopingBot {
+    loop() {}
+}
+"#;
+    let iso = spawn(src);
+    let snap = base();
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 1);
+    let facts = iso.probe("__shop_player").unwrap();
+    assert_eq!(facts["own"], false);
+    assert_eq!(facts["descriptor"], true);
+    assert_eq!(facts["listed"], false);
+    assert_eq!(facts["siblings"], true);
+    assert_eq!(
+        facts["removed"]
+            .as_str()
+            .map(|message| message.replace("player", "<key>")),
+        facts["unknown"]
+            .as_str()
+            .map(|message| message.replace("__noSuchShopMember", "<key>")),
+        "Shop.player uses the generic unknown-member trap"
+    );
+
+    let start = INDEX_D_TS
+        .find("declare module '*api/shop/Shop.js' {")
+        .expect("index.d.ts declares the Shop module");
+    let block = &INDEX_D_TS[start..];
+    let block = &block[..block.find("\n}\n").expect("the Shop module block closes")];
+    assert!(
+        !block.contains("player()"),
+        "index.d.ts still promises Shop.player"
+    );
+    assert!(
+        !ABI_CONTRACT.contains("Shop.player"),
+        "abi-contract.json still promises Shop.player"
+    );
+    assert!(
+        MODULES_JSON.contains("api/shop/Shop.js"),
+        "the supported Shop module remains registered"
+    );
+    iso.join();
 }

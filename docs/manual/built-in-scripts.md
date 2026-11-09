@@ -32,29 +32,21 @@ The Quester follows one guide for each quest. A guide tells it where to walk, wh
 to talk to, what to fight and which items to take from the bank. The Quester
 reads your quest list in the game to see how far each quest has gone.
 
-Twenty quests have a released guide:
+This release supports **The Restless Ghost**. The other authored guides are
+drafts. Release builds offer only guides that passed live qualification.
+See the [known issues](../known-issues.toml) for the unsupported draft quests.
 
-- Cook's Assistant, Sheep Shearer, Rune Mysteries and Romeo & Juliet
-- Imp Catcher, Vampire Slayer, Doric's Quest and Goblin Diplomacy
-- Witch's Potion, Prince Ali Rescue, Pirate's Treasure and Demon Slayer
-- The Knight's Sword, Death Plateau, The Tourist Trap and Priest in Peril
-- Clock Tower, Monk's Friend, Hazeel Cult and Plague City
-
-The other quests have no guide yet. See the [known issues](../known-issues.toml).
-
-Five more guides are drafts: Druidic Ritual, Gertrude's Cat, Jungle Potion, Sea
-Slug Quest and Tribal Totem. A draft is marked `[draft]` in the quest list. While
-a draft runs, the **Path status** row reads `Untested draft Path`. The list also
-holds Haunted Mine. You cannot tick it, because this server's game content has
-no Haunted Mine quest.
+A saved draft choice shows why it cannot start. It does not enable the draft.
+The list also holds Haunted Mine. You cannot tick it because this server's
+game content has no Haunted Mine quest.
 
 ## Quester: choose the quests
 
 Open **Script prefs** with the Quester picked. The setting **Quests** shows a
 checkbox for each quest.
 
-- With no quest ticked, the Quester runs every released quest, in list order.
-- With quests ticked, it runs only those quests.
+- With no quest ticked, the Quester runs every qualified quest, in list order.
+- With quests ticked, it runs only those qualified quests.
 - **Order override** names quests to run first. **Skip** names quests to leave out.
 
 To run one quest, tick it while the script is stopped, then click **Start**.
@@ -64,12 +56,11 @@ The Quester reads its settings at each start.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Quests** | none ticked | The quests to run. None ticked means all released quests. |
-| **Include draft guides when no quests are picked** | off | Adds the draft guides to the run when no quest is ticked. |
-| **Order override** | none | Quests that run first. A draft listed here also runs when no quest is ticked. |
-| **Skip** | none | Released quests that do not run. |
+| **Quests** | none ticked | The quests to run. None ticked means all qualified quests. |
+| **Order override** | none | Qualified quests that run first. A draft priority is refused. |
+| **Skip** | none | Qualified quests that do not run. |
 | **Maximum deaths** | 2 | The Quester stops with a reason when the bot dies more often than this. The count covers all quests of one run. |
-| **Partner account**, **Gang**, **Family Crest gauntlets** | empty, empty, `chaos` | Choices for two-account quests and for one enchantment. No guide that ships with 274bot uses them. |
+| **Partner account**, **Gang**, **Family Crest gauntlets** | empty, empty, `chaos` | Choices for two-account quests and for one enchantment. No qualified guide uses them. |
 | **Allow teleports**, **Allow wilderness**, **Allow danger zones** | off | Walk permissions for this script. See [Run scripts on your bots](running-scripts.md#change-a-scripts-settings). |
 
 ## Quester: what it checks before a quest
@@ -97,15 +88,18 @@ next quest. Two stops need your action:
 
 | Reason | What to do |
 | --- | --- |
-| `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
+| `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then start the Quester again` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
 The Log window shows the run in more detail. When a guide starts, the Log names
 the guide, where it loaded from, a fingerprint of the exact file, and the first
 step's comment. Stage changes, step starts, step skips and step finishes follow.
+
 A skip line names the check that passed. Warnings name failed steps and the
-reason a run parked. Repeated retries fold into one line with a count. The trace
-keeps the last 32 different events.
+reason a run parked. Repeated retries fold into one line with a count.
+
+Each stage keeps its own step lines and the collect-step lines those steps
+produce. The log of a long stage continues beyond its first few steps.
 
 If a quest needs items first, the Quester collects them before the quest steps
 begin. Those lines look the same as the lines of a collect step. A step start

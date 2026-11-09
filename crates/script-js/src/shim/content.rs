@@ -1,6 +1,8 @@
 /// Host-owned policy plus optional selected-revision generated facts, posted
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
-pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
+pub fn content_json(
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<String, api::selected::FactError> {
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use script::content::{FIRE_PLOTS, LOG_LEVELS};
     let food_heals = game_data
@@ -12,6 +14,10 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
         .unwrap_or_default();
     let rock_type_names = game_data
         .map(api::gather_methods::rock_type_names)
+        .unwrap_or_default();
+    let shops = game_data
+        .map(api::shop_facts::content_json_value)
+        .transpose()?
         .unwrap_or_default();
     let spell_db = game_data
         .map(|data| {
@@ -51,7 +57,7 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
                 .collect::<serde_json::Map<_, _>>()
         })
         .unwrap_or_default();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
@@ -104,9 +110,7 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
                     .collect::<serde_json::Map<_, _>>()
             })
             .unwrap_or_default(),
-        "shops": game_data
-            .map(api::shop_facts::content_json_value)
-            .unwrap_or_default(),
+        "shops": shops,
         "autocast": game_data.and_then(|data| {
             data.autocast_controls().map(|controls| {
                 serde_json::json!({
@@ -154,11 +158,38 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
             })
         }),
     })
-    .to_string()
+    .to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unselected_content_keeps_the_empty_shop_object() {
+        let posted: serde_json::Value =
+            serde_json::from_str(&super::content_json(None).unwrap()).unwrap();
+        assert_eq!(posted["selected_facts"], false);
+        assert_eq!(posted["shops"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn selected_shop_absence_still_propagates_its_family_error() {
+        let selected = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "revision": 274,
+            "items": [],
+            "consumption": [],
+            "pickpocket": []
+        }))
+        .expect("selected data without shops");
+        assert!(matches!(
+            super::content_json(Some(&selected)),
+            Err(api::selected::FactError::FamilyUnavailable(_)),
+        ));
+    }
+}
+
+#[cfg(test)]
+mod shop_heap_tests {
     use super::content_json;
     use client::io::ClientRevision;
     use rustyscript::{Runtime, RuntimeOptions};
@@ -319,7 +350,7 @@ mod tests {
     }
 
     fn runtime_with_empty_host() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).expect("create clean V8 runtime");
         runtime
             .eval::<()>("globalThis.__rs2b0t_host = {};")
@@ -350,7 +381,7 @@ mod tests {
     fn production_shop_content_retains_bounded_v8_heap_across_replacements() {
         let game_data =
             api::game_data::for_revision(ClientRevision::R289).expect("R289 selected facts");
-        let full_json = content_json(Some(&game_data));
+        let full_json = content_json(Some(&game_data)).expect("R289 shop content");
         let (twelve_json, twelve_coverage, full_coverage) = original_twelve_content(&full_json);
         assert_eq!(twelve_coverage.records, ORIGINAL_TWELVE_SHOPS.len());
         assert_eq!(full_coverage.records, POSTED_SHOP_KEYS.len());

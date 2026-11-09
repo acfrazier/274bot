@@ -9,6 +9,7 @@
 //! replay branch; its exact reference uses the same callback. No production API
 //! or collision semantics are changed.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -17,6 +18,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use nav_planner::collision::WorldCollision;
 use nav_planner::world::NavWorld;
+use sha2::{Digest, Sha256};
 
 const RADIUS: i32 = 104;
 const CANDIDATE_SIDE: usize = (RADIUS as usize * 2) + 1;
@@ -616,6 +618,20 @@ fn broad_candidates(world: &NavWorld, destination: WorldTile, radius: i32) -> Ve
     candidates
 }
 
+fn pack_digest(path: &Path) -> String {
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).unwrap();
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    format!("{:x}", digest.finalize())
+}
+
 #[test]
 #[ignore = "capture ordered real-kernel parity corpus; set both navpack variables and T5W_ARRIVAL_CAPTURE_DIR"]
 fn capture_real_arrival_candidate_corpus() {
@@ -627,11 +643,7 @@ fn capture_real_arrival_candidate_corpus() {
         let world = NavWorld::load_pack(&path).unwrap();
         let root = output.join(revision.revision_label);
         std::fs::create_dir(&root).unwrap();
-        std::fs::write(
-            root.join("pack.sha256"),
-            nav_planner::manifest::hash_file(&path).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(root.join("pack.sha256"), pack_digest(&path)).unwrap();
         let mut cases = 0usize;
         for destination in DENSE_DESTINATIONS {
             capture_parity_case(

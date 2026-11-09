@@ -1,14 +1,20 @@
 //! Synthetic mini-catalog regressions: bright Start, module-graph load, and
 //! import-remap stamping (no `$RS2B0T` / persisted rs2b0t-path).
+//! Bright Start supplies selected local R289 facts to native callbacks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use script_js::wire::StatInput;
+use script::native::snapshot_source::StatInput;
 use script_js::{JsLibrary, LoadIsolate};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -117,6 +123,11 @@ fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
 
 #[test]
 fn synthetic_bright_catalog_cards_start_without_not_impl() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("selected R289 game data for bright Start");
     let dir = scratch("start");
     let mut lib = register_fixture(&dir);
     let names: Vec<String> = lib
@@ -148,7 +159,6 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
     let loading_bytes = script_js::wire::encode_snapshot(&snap);
     snap.stats = &common::FRESH_STATS;
     let loaded_bytes = script_js::wire::encode_snapshot(&snap);
-    let content = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
 
     for name in &names {
         if let Err(e) = lib.ensure_js(ScriptSource::Catalog, name) {
@@ -178,11 +188,12 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
         };
         let bag = script::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
         for (scene, bytes) in [("pre-stats", &loading_bytes), ("loaded", &loaded_bytes)] {
-            let iso = match LoadIsolate::spawn_with_game_data(
+            let iso = match LoadIsolate::spawn_with_content(
                 card.js.clone(),
                 card.shape,
                 siblings.clone(),
-                content.clone(),
+                Some(Arc::clone(&selected)),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             ) {
                 Ok(iso) => iso,
                 Err(e) => {
@@ -219,7 +230,6 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("register");
-    let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     for name in ["CookBot", "HerbCard"] {
         lib.ensure_js(ScriptSource::Catalog, name)
             .unwrap_or_else(|e| panic!("{name} transpile: {e}"));
@@ -237,15 +247,189 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
             },
         )
         .expect("siblings");
-        let iso = LoadIsolate::spawn_with_game_data(
+        let iso = LoadIsolate::spawn_with_content(
             card.js.clone(),
             card.shape,
             siblings,
-            content.clone(),
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         )
         .expect("spawn");
         iso.probe("true").expect("probe barrier after spawn");
         assert_eq!(iso.poll_ready(), script_js::Ready::Ready);
         iso.join();
     }
+}
+
+#[test]
+#[ignore = "requires the frozen ae56ccc95 catalog at RS2B0T"]
+fn frozen_bright_catalog_cards_load_and_run_first_tick() {
+    const FROZEN_REVISION: &str = "ae56ccc95ba5681b12f1f66ec2adea14427fe497";
+    let Some(root) = api::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
+    else {
+        return;
+    };
+    let revision = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("run git rev-parse for the frozen catalog");
+    assert!(
+        revision.status.success(),
+        "RS2B0T is not a git checkout: {}",
+        String::from_utf8_lossy(&revision.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(revision.stdout).unwrap().trim(),
+        FROZEN_REVISION,
+        "RS2B0T must be the exact frozen catalog pin"
+    );
+
+    let dir = scratch("frozen-first-tick");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("register frozen catalog");
+
+    let mut bright_names = Vec::new();
+    let mut dim = 0usize;
+    let mut preexisting_unresolved = 0usize;
+    let mut failures = BTreeSet::new();
+    for card in lib.cards() {
+        if card.source != ScriptSource::Catalog {
+            continue;
+        }
+        // Catalog dim policy also includes explicit special cases and
+        // exact-version defects whose names are not in CATALOG_DIM.
+        let is_dim = script_js::is_catalog_dim(&card.name)
+            || card
+                .unloadable
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("dim: "));
+        if is_dim {
+            if card.unloadable.is_none() {
+                failures.insert(format!("{}: dim card has no unloadable reason", card.name));
+            }
+            dim += 1;
+        } else if let Some(reason) = &card.unloadable {
+            // The frozen baseline also rejects this exact import: there is no
+            // served journal.js shim, while the pinned source contains journal.ts.
+            if card.name == "AccountLeveler"
+                && reason == "../../api/ai/quests/defs/dragonslayer/journal.js"
+            {
+                preexisting_unresolved += 1;
+            } else {
+                failures.insert(format!(
+                    "{}: unexpected unloadable reason {reason}",
+                    card.name
+                ));
+            }
+        } else {
+            bright_names.push(card.name.clone());
+        }
+    }
+    assert!(
+        !bright_names.is_empty(),
+        "frozen catalog has no bright cards"
+    );
+
+    let cache = JsCache::new(dir.join("siblings"));
+    let bytes = script_js::wire::encode_snapshot(&common::ingame_snapshot());
+    let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let mut started = 0usize;
+    for name in bright_names {
+        if let Err(error) = lib.ensure_js(ScriptSource::Catalog, &name) {
+            failures.insert(format!("{name}: transpile {error}"));
+            continue;
+        }
+        let Some(card) = lib.get(ScriptSource::Catalog, &name).cloned() else {
+            failures.insert(format!("{name}: missing after ensure_js"));
+            continue;
+        };
+        let siblings = match script_js::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            &cache,
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::Catalog,
+                shape: Some(format!("{:?}", card.shape)),
+                api_family: None,
+            },
+        ) {
+            Ok(siblings) => siblings,
+            Err(error) => {
+                failures.insert(format!("{name}: siblings {error}"));
+                continue;
+            }
+        };
+        let mut settings_input = serde_json::Map::new();
+        if name == "MuleCrafter" {
+            // The default Crafter has bankFill=false and needs an Air talisman.
+            // The shared first-tick snapshot has an empty inventory.
+            // The outside Mule setup needs neither a talisman nor bank state.
+            settings_input.insert("mode".into(), serde_json::Value::String("Mule".into()));
+            settings_input.insert(
+                "partner".into(),
+                serde_json::Value::String("fixture".into()),
+            );
+            settings_input.insert(
+                "meetingPoint".into(),
+                serde_json::Value::String("Ruins (outside)".into()),
+            );
+        }
+        let settings = script::merge_bag(&card.settings_schema, &settings_input, None);
+        let isolate = match LoadIsolate::spawn_with_game_data(
+            card.js.clone(),
+            card.shape,
+            siblings,
+            content.clone(),
+        ) {
+            Ok(isolate) => isolate,
+            Err(error) => {
+                failures.insert(format!("{name}: load {error}"));
+                continue;
+            }
+        };
+        if !settings.is_empty() {
+            isolate.post_settings_bag(&settings);
+        }
+        isolate.post_snapshot(bytes.clone());
+        isolate.on_game_tick(1);
+        if let Err(probe_error) = isolate.probe("true") {
+            match isolate.poll_ready() {
+                script_js::Ready::Failed(load_error)
+                    if name == "MuleCrafter"
+                        && load_error.contains("bankTile: unknown bank 'Falador East'") =>
+                {
+                    eprintln!("Frozen catalog expected baseline failure {name}: {load_error}");
+                }
+                script_js::Ready::Failed(load_error) => {
+                    failures.insert(format!(
+                        "{name}: loader failed after first-tick probe ({probe_error}): {load_error}"
+                    ));
+                }
+                state => {
+                    failures.insert(format!(
+                        "{name}: first-tick probe {probe_error}; loader state {state:?}"
+                    ));
+                }
+            }
+        }
+        for line in isolate.drain_logs() {
+            if throw_shaped(&line) {
+                failures.insert(format!("{name}: {line}"));
+            }
+        }
+        isolate.join();
+        started += 1;
+    }
+    eprintln!(
+        "Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped; {preexisting_unresolved} pre-existing unresolved imports skipped"
+    );
+    assert!(
+        failures.is_empty(),
+        "frozen catalog first-tick failures:\n{}",
+        failures.into_iter().collect::<Vec<_>>().join("\n")
+    );
 }

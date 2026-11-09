@@ -1,7 +1,4 @@
-//! Operator-owned public endpoints, loaded once at process startup.
-
-use std::collections::HashSet;
-use std::path::Path;
+//! Public endpoint rosters resolved from the current server profiles.
 
 use serde::{Deserialize, Serialize};
 
@@ -68,72 +65,6 @@ impl PublicWorlds {
                                 })
                     })
             })
-    }
-
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let defaults = Self::default();
-                let json = serde_json::to_vec_pretty(&defaults).expect("serializable worlds");
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("worlds {}: {e}", path.display()))?;
-                }
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(path)
-                {
-                    Ok(mut file) => {
-                        use std::io::Write;
-                        file.write_all(&json)
-                            .map_err(|e| format!("worlds {}: {e}", path.display()))?;
-                        return Ok(defaults);
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::fs::read(path)
-                        .map_err(|e| format!("worlds {}: {e}", path.display()))?,
-                    Err(e) => return Err(format!("worlds {}: {e}", path.display())),
-                }
-            }
-            Err(e) => return Err(format!("worlds {}: {e}", path.display())),
-        };
-        let config: Self = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("worlds {}: {e}", path.display()))?;
-        config
-            .validate()
-            .map_err(|e| format!("worlds {}: {e}", path.display()))?;
-        Ok(config)
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 || self.worlds.is_empty() {
-            return Err("expected schema_version 1 and a nonempty worlds list".into());
-        }
-        let mut numbers = HashSet::new();
-        let mut hosts = HashSet::new();
-        for world in &self.worlds {
-            if world.number == 0
-                || world.port == 0
-                || world.node_id <= 0
-                || world.host.is_empty()
-                || !world
-                    .host
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-                || world.host.starts_with(['.', '-'])
-                || world.host.ends_with(['.', '-'])
-            {
-                return Err(format!("invalid world {} endpoint/node id", world.number));
-            }
-            if !numbers.insert(world.number) || !hosts.insert(world.host.as_str()) {
-                return Err(format!(
-                    "duplicate world number or host at world {}",
-                    world.number
-                ));
-            }
-        }
-        Ok(())
     }
 
     pub fn by_number(&self, number: u16) -> Option<&PublicWorld> {
@@ -280,37 +211,6 @@ pub fn modulus_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn absent_file_written_and_invalid_file_refused() {
-        let dir = std::env::temp_dir().join(format!("274bot-worlds-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("worlds.json");
-        let _ = std::fs::remove_file(&path);
-        let defaults = PublicWorlds::load(&path).unwrap();
-        for (number, host, node_id) in [
-            (1, "w1.rs2b2t.com", 10),
-            (2, "w2.rs2b2t.com", 11),
-            (3, "w3.rs2b2t.com", 12),
-        ] {
-            let world = defaults.by_number(number).unwrap();
-            assert_eq!(
-                (world.host.as_str(), world.port, world.node_id),
-                (host, 443, node_id)
-            );
-        }
-        let loaded = PublicWorlds::load(&path).unwrap();
-        assert_eq!(loaded.by_number(3), defaults.by_number(3));
-        std::fs::write(
-            &path,
-            r#"{"schema_version":1,"worlds":[{"number":1,"host":"bad/path","port":443,"node_id":10}]}"#,
-        )
-        .unwrap();
-        assert!(PublicWorlds::load(&path)
-            .unwrap_err()
-            .contains(path.to_str().unwrap()));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
 
     #[test]
     fn full_round_rotates_and_pinned_waits() {

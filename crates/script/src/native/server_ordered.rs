@@ -3,7 +3,7 @@
 use api::interact::server_ordered::{ServerOrderedDispatch, ServerOrderedRequest};
 use api::quest_progress::EvidenceStamp;
 
-use super::ledger::{HostAction, HostEffect};
+use super::ledger::{HostAction, HostCustody, HostEffect};
 use super::{ActionContext, ActionError};
 use crate::surface::ServerOrderedEnvelope;
 
@@ -14,13 +14,28 @@ pub struct ServerOrderedCompletion {
 }
 
 impl ActionContext<'_> {
+    /// Preflight the native reservation without mutating the cycle or its budget.
+    pub(crate) fn server_ordered_available(&self) -> bool {
+        let Ok(owner) = self.owner() else {
+            return false;
+        };
+        let Some(ledger) = self.ledger.as_ref() else {
+            return false;
+        };
+        self.budget.events == 0
+            && ledger.outbox.len() < ledger.outbox.capacity()
+            && owner.batch_free() != 0
+            && !ledger
+                .server_ordered_request
+                .is_some_and(|request| owner.batch_live(request))
+    }
     /// Admit named native content, without an external-script declaration.
     /// The host revalidates the complete request against its drain snapshot.
     pub fn emit_server_ordered(
         &mut self,
         request: ServerOrderedRequest,
     ) -> Result<u64, ActionError> {
-        request.validate_shape(self.pin.revision)?;
+        request.validate_shape(self.revision)?;
         self.emit_server_ordered_envelope(ServerOrderedEnvelope::content(request))
     }
 
@@ -32,13 +47,7 @@ impl ActionContext<'_> {
         let ledger = self.ledger.as_ref().expect("owner checked");
         // Only this native runtime's emissions charge this observed tick.
         // Foreign packet observations never enter TickBudget.
-        if self.budget.events != 0
-            || ledger.outbox.len() == ledger.outbox.capacity()
-            || owner.batch_free() == 0
-            || ledger
-                .server_ordered_request
-                .is_some_and(|request| owner.batch_live(request))
-        {
+        if !self.server_ordered_available() {
             return Err(ActionError::BudgetExhausted);
         }
         let request_id = ledger.id_range(1)?;
@@ -58,7 +67,7 @@ impl ActionContext<'_> {
         ledger.server_ordered = None;
         ledger.server_ordered_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::ServerOrdered(envelope),
@@ -68,8 +77,14 @@ impl ActionContext<'_> {
         Ok(request_id.get())
     }
 
-    /// Read the terminal dispatch for this owner. Server outcomes are separate.
+    /// Read the terminal dispatch for this owner. Its tick is the Client packet clock.
     pub fn server_ordered_receipt(&self, request_id: u64) -> Option<&ServerOrderedDispatch> {
+        self.server_ordered_completion(request_id)
+            .map(|completion| &completion.dispatch)
+    }
+
+    /// Read the owned completion, whose evidence retains the native runtime clock.
+    pub fn server_ordered_completion(&self, request_id: u64) -> Option<&ServerOrderedCompletion> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
         let completion = ledger.server_ordered.as_deref()?;
@@ -77,7 +92,7 @@ impl ActionContext<'_> {
             && owner.id.get() == self.action_id
             && completion.evidence.run == self.run()
             && completion.dispatch.request_id == request_id)
-            .then_some(&completion.dispatch)
+            .then_some(completion)
     }
 }
 
@@ -88,7 +103,7 @@ mod tests {
     use super::super::{RetainedMemory, SnapshotView, WalkCancelReason};
     use super::*;
     use api::interact::server_ordered::{CloseModalReason, ExpectedModalRoot, ServerOrderedError};
-    use api::selected::{RunKey, SelectedPin};
+    use api::selected::{ClientRevision, RunKey};
     use std::num::NonZeroU64;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -104,15 +119,13 @@ mod tests {
         ledger: Option<Box<Ledger>>,
         budget: TickBudget,
         retained: RetainedMemory,
-        pin: Arc<SelectedPin>,
+        revision: ClientRevision,
         evidence: EvidenceStamp,
         owner: Arc<Owner>,
     }
 
     impl Frame {
         fn new() -> Self {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let evidence = EvidenceStamp {
                 run: RunKey {
                     slot: 1,
@@ -131,7 +144,7 @@ mod tests {
                 ledger: Some(ledger),
                 budget,
                 retained: RetainedMemory::default(),
-                pin: selected.selected_pin().unwrap(),
+                revision: ClientRevision::R289,
                 evidence,
                 owner,
             }
@@ -139,17 +152,20 @@ mod tests {
 
         fn with<R>(&mut self, f: impl FnOnce(&mut ActionContext<'_>) -> R) -> R {
             let mut cx = ActionContext {
+                stage_cross: None,
+                walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 evidence: self.evidence,
-                pin: &self.pin,
+                revision: self.revision,
                 snapshot: SnapshotView::new(None, self.evidence),
                 shop_keepers: None,
                 retained: &mut self.retained,
                 action_id: self.owner.id.get(),
                 observed_walk_outcome_seq: 0,
                 observed_walk_cancel_reason: WalkCancelReason::None,
+                wilderness: None,
                 active_now: Duration::ZERO,
                 wall_now: Instant::now(),
                 ledger: &mut self.ledger,
@@ -229,6 +245,30 @@ mod tests {
     }
 
     #[test]
+    fn ordered_completion_keeps_native_evidence_separate_from_packet_tick() {
+        let mut frame = Frame::new();
+        frame.evidence.tick = 42;
+        frame.budget.observe(42);
+        let id = frame.with(|cx| cx.emit_server_ordered(request())).unwrap();
+        let action = frame.ledger.as_mut().unwrap().outbox.pop().unwrap();
+        frame.complete(&action.authority());
+        frame
+            .ledger
+            .as_mut()
+            .unwrap()
+            .server_ordered
+            .as_mut()
+            .unwrap()
+            .dispatch
+            .dispatch_tick = 7;
+        frame.with(|cx| {
+            assert_eq!(cx.server_ordered_receipt(id).unwrap().dispatch_tick, 7);
+            assert_eq!(cx.server_ordered_completion(id).unwrap().evidence.tick, 42);
+            assert!(cx.server_ordered_completion(id + 1).is_none());
+        });
+    }
+
+    #[test]
     fn ordered_cancellation_and_refusal_release_repeated_requests_without_leaks() {
         let mut frame = Frame::new();
         for round in 0..32 {
@@ -285,7 +325,7 @@ mod tests {
             assert_eq!(cx.emit_server_ordered(request()), Err(ActionError::Held));
         });
         assert!(frame
-            .with(|cx| cx.emit(crate::shim::InteractReq::CloseModal))
+            .with(|cx| cx.emit(crate::interact::InteractReq::CloseModal))
             .is_ok());
         assert_eq!(
             frame.with(|cx| cx.emit_server_ordered(request())),
@@ -361,10 +401,12 @@ mod tests {
                     let ledger = frame.ledger.as_mut().unwrap();
                     for offset in 0..ledger.outbox.capacity() {
                         ledger.outbox.push(HostAction {
-                            owner: Arc::clone(&frame.owner),
+                            custody: HostCustody::owner(Arc::clone(&frame.owner)),
                             request_id: NonZeroU64::new(100 + offset as u64).unwrap(),
                             batch: 0,
-                            effect: HostEffect::Interaction(crate::shim::InteractReq::CloseModal),
+                            effect: HostEffect::Interaction(
+                                crate::interact::InteractReq::CloseModal,
+                            ),
                             observed_walk_outcome_seq: 0,
                             bank_deposit: None,
                         });
@@ -397,7 +439,8 @@ mod tests {
 
     #[test]
     fn ordered_completion_memory_is_bounded_and_default_native_has_no_packet_buffer() {
-        assert_eq!(std::mem::size_of::<Owner>(), 112);
+        // The modal-wait lease slot (the script-owned auto-run hold) adds 8 B.
+        assert_eq!(std::mem::size_of::<Owner>(), 120);
         assert_eq!(std::mem::size_of::<Option<NonZeroU64>>(), 8);
         assert_eq!(
             std::mem::size_of::<Option<Box<ServerOrderedCompletion>>>(),
@@ -407,9 +450,23 @@ mod tests {
         assert_eq!(std::mem::size_of::<ServerOrderedCompletion>(), 72);
         // The 32 B dispatch receipt stays Copy on the stack: prefix results without heap growth.
         assert_eq!(std::mem::size_of::<ServerOrderedDispatch>(), 32);
-        // A3's unresolved-gate pick result adds 16 B to the shared receipt slot.
-        // The ledger remains fixed-size and retains no advanced packet buffer.
-        assert_eq!(std::mem::size_of::<Ledger>(), 928);
+        // Frozen walk consent and aligned receipt storage add 24 B to the
+        // existing native ledger allocation; ordered dispatch adds no buffer.
+        // The modal-wait lease sequence adds 8 B. The two lease deadlines
+        // (the quiet read's window and the modal wait's bound, R4S-1) add one
+        // `(lease, WaitDeadline)` slot each. The quiet read's own wall bound
+        // for the hold (F2 of the hold model) adds one `Instant` (16 B) to
+        // its record: each click renews it, and the begin's time cannot move.
+        // The typed bank selection outcome adds 8 B to its inline receipt, and
+        // the typed service pick (its own outcome and request identity) adds 8 B
+        // more: 1,024 B on 64-bit targets.
+        assert_eq!(
+            std::mem::size_of::<Ledger>(),
+            944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
+                + std::mem::size_of::<std::time::Instant>()
+                + 8
+                + 8
+        );
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());
         frame.with(|cx| cx.emit_server_ordered(request())).unwrap();

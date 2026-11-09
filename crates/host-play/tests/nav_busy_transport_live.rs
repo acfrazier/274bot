@@ -133,9 +133,9 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(44594),
+        port: Some(host_play::live_ports::game_port()),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(1080),
+        http_port: Some(host_play::live_ports::http_port()),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("WORLD_ENGINE_DIR").map(PathBuf::from),
@@ -148,8 +148,16 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         .bind()
         .expect("R289 local profile bind");
     assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
-    assert_eq!(profile.client().game_port(), 44594, "Engine A only");
-    assert_eq!(profile.client().asset_port(), 1080, "Engine A only");
+    assert_eq!(
+        profile.client().game_port(),
+        host_play::live_ports::game_port(),
+        "the cell must use the configured engine"
+    );
+    assert_eq!(
+        profile.client().asset_port(),
+        host_play::live_ports::http_port(),
+        "the cell must use the configured engine"
+    );
     let template = SharedClientTemplate::load(Arc::clone(&profile))
         .expect("selected R289 template and nav pack load");
     assert!(template.world().is_some(), "selected nav pack must load");
@@ -460,13 +468,13 @@ fn two_bots_cross(shortcut: &Shortcut) {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, Engine A on 127.0.0.1:44594/1080 and a matching nav pack"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default) and a matching nav pack"]
 fn nav_busy_transport_two_bots_cross_the_same_ledge() {
     two_bots_cross(&LEDGE);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, Engine A on 127.0.0.1:44594/1080 and a matching nav pack"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default) and a matching nav pack"]
 fn nav_busy_transport_two_bots_cross_the_same_rope_swing() {
     two_bots_cross(&ROPE_SWING);
 }

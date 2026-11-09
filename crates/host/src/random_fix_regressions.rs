@@ -2,6 +2,9 @@
 
 #[test]
 fn guardian_r1_tree_spirit_still_targeting_after_apparent_escape_stays_held() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // diag3/guardian_skill_tree_spirit-4: first targeted at t99 from
     // (3109,3238), apparent escape at (3109,3245) t104, release t105,
     // then targeted hits t108,112,116,120,128. Translate to scene tiles.
@@ -40,6 +43,9 @@ fn guardian_r1_tree_spirit_still_targeting_after_apparent_escape_stays_held() {
 
 #[test]
 fn guardian_r1_tree_spirit_anchor_is_observed_before_targeting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // dryad spawn delays its attack by one tick. A spawn sighting must
     // survive the later first-targeting sighting after movement.
     let mut c = new_client();
@@ -67,6 +73,9 @@ fn guardian_r1_tree_spirit_anchor_is_observed_before_targeting() {
 
 #[test]
 fn guardian_r1_disengaged_attacker_holds_until_observed_despawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // round4 troll: escape t76, release t77, return t78 while present.
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -227,6 +236,9 @@ fn guardian_r1_lost_pickaxe_refused_send_does_not_abandon_recovery() {
 /// (`macro_events.rs2:166-173`, `antimacro.npc:130`) still bounds the wait.
 #[test]
 fn guardian_r2_missing_swarm_continues_flee_and_finishes_cleanup() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -264,6 +276,9 @@ fn guardian_r2_missing_swarm_continues_flee_and_finishes_cleanup() {
 /// no route is possible. Active attacks have a separate shorter bound.
 #[test]
 fn guardian_r2_disengaged_attacker_gives_up_without_return_or_reacquisition() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -301,6 +316,9 @@ fn guardian_r2_disengaged_attacker_gives_up_without_return_or_reacquisition() {
 /// `content/pack/npc.pack:74` versus macro zombies at :420-425.
 #[test]
 fn guardian_r2_world_zombie_73_never_starts_or_sustains_evade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -333,6 +351,9 @@ fn guardian_r2_world_zombie_73_never_starts_or_sustains_evade() {
 
 #[test]
 fn guardian_r2_visible_former_attacker_does_not_mask_strange_box() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -404,16 +425,25 @@ fn replay_boxed_targeting_attacker(type_id: usize, name: &str, radius: i32, boun
 
 #[test]
 fn guardian_r3_boxed_targeting_swarm_releases_after_21_fresh_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     replay_boxed_targeting_attacker(411, "Swarm", 10, 21);
 }
 
 #[test]
 fn guardian_r3_boxed_targeting_tree_spirit_releases_after_9_fresh_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     replay_boxed_targeting_attacker(438, "Tree spirit", 5, 9);
 }
 
 #[test]
 fn guardian_r3_only_new_furthest_distance_resets_engaged_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", -1, 0);
@@ -447,6 +477,9 @@ fn guardian_r3_only_new_furthest_distance_resets_engaged_budget() {
 
 #[test]
 fn guardian_evade_stunned_ticks_do_not_consume_the_stalled_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // FIX-025-F-WATCHMAN recorded sequence: the Watchman is summoned, the
     // bot fails a pickpocket attempt on a Man and the content applies its
     // 8-tick stun (`pickpocket.dbrow:10`). The `stunned` walktrigger then
@@ -501,6 +534,9 @@ fn guardian_evade_stunned_ticks_do_not_consume_the_stalled_budget() {
 
 #[test]
 fn guardian_evade_player_chat_stun_text_does_not_stop_the_stalled_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Only the server game message proves a blocked walk. The content
     // sends both stun texts with `mes`. The client stores that message
     // as chat type 0 with no sender. Another player can type the same

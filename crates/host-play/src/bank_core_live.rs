@@ -363,7 +363,6 @@ impl Script for WithdrawCell {
                         },
                         options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::clone(&self.bank_name)),
-                        excluded_banks: None,
                         allow_air_fallback: false,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
@@ -755,6 +754,19 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     shared.lock().snapshot = Some(snapshot);
 }
 
+/// Post the operator Login for the shared fixture's own Relog step. The bot
+/// has no script during preparation, so the idle-park policy keeps it logged
+/// out after the fixture's logout until an explicit Login. The slot's arm is
+/// owned by `play`; the request is one-shot, so a poll with no arm yet leaves
+/// it pending.
+pub(super) fn post_relog_login(play: &super::Play, account: &str, cell: &Mutex<Cell>) {
+    if let Some(arm) = play.arm(account) {
+        if cell.lock().session_runner.take_relog_login() {
+            arm.arm_explicit_login();
+        }
+    }
+}
+
 pub(super) fn check_prerequisites(
     play: &super::Play,
     account: &str,
@@ -762,6 +774,7 @@ pub(super) fn check_prerequisites(
     login_ready: &mut bool,
     cell: &Arc<Mutex<Cell>>,
 ) {
+    post_relog_login(play, account, cell);
     let status = play
         .statuses()
         .into_iter()

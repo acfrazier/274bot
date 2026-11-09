@@ -4,7 +4,9 @@ use super::buy::{BuyMachine, BuyReceipt, BuyRequest, PurchaseRefusal};
 use super::vendor::{self, VendorDecision};
 use super::*;
 use crate::native::walk::Walk;
-use crate::native::{ActionHandle, NativeActions, NativeTick, ReturnStallRecovery, WalkRequest};
+use crate::native::{
+    ActionHandle, NativeActions, NativeTick, WalkRequest, WalkRetryState, GATHER_WALK_MAX_ATTEMPTS,
+};
 use crate::native_bank::{SelectService, ServiceFacts, ServicePickRequest};
 use api::service_pick::{ServiceKind, ShopKeeperFacts};
 use api::shop_facts::{self, KeeperFact};
@@ -37,7 +39,9 @@ enum Active {
     None,
     Select(ActionHandle<SelectService>),
     Walk(ActionHandle<Walk>),
-    Buy(ActionHandle<BuyMachine>),
+    /// Boxed: the buy machine is the one large handle, and a shop run holds it
+    /// only for the length of one purchase.
+    Buy(Box<ActionHandle<BuyMachine>>),
 }
 
 pub(super) enum Outcome {
@@ -65,8 +69,7 @@ pub(super) struct ShopRun {
     target: Option<WorldTile>,
     nearest: bool,
     retry_used: bool,
-    walk_recovery: ReturnStallRecovery,
-    walk_retry_after_tick: Option<u64>,
+    walk_retry: WalkRetryState,
     total_walk_retries: u8,
     excluded_shops: Vec<u16>,
     last_walk_failure: Option<Arc<str>>,
@@ -80,8 +83,8 @@ impl ShopRun {
         purchase: Purchase,
         cx: &crate::native::ActionContext<'_>,
     ) -> Result<Self, ActionError> {
-        let data = api::game_data::for_revision(cx.pin().revision)
-            .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+        let data = api::game_data::for_revision(cx.revision)
+            .map_err(|error| ActionError::Unavailable(Arc::from(format!("{error:?}"))))?;
         let snapshot = cx.snapshot();
         let need = &request.needs[usize::from(purchase.need)];
         let tiered = plan::tiered_shop_need(need);
@@ -107,8 +110,7 @@ impl ShopRun {
             target: None,
             nearest: false,
             retry_used: false,
-            walk_recovery: ReturnStallRecovery::default(),
-            walk_retry_after_tick: None,
+            walk_retry: WalkRetryState::with_max_attempts(GATHER_WALK_MAX_ATTEMPTS),
             total_walk_retries: 0,
             excluded_shops: Vec::new(),
             last_walk_failure: None,
@@ -122,6 +124,7 @@ impl ShopRun {
                 anchor,
             } => {
                 run.keeper = shop_facts::keepers(&data)
+                    .map_err(|error| ActionError::Unavailable(Arc::from(format!("{error:?}"))))?
                     .find(|keeper| keeper.keeper_config == keeper_config.as_ref());
                 run.target = *anchor;
                 if anchor.is_some() {
@@ -182,7 +185,7 @@ impl ShopRun {
             Active::None => {}
             Active::Select(handle) => actions.cancel(handle),
             Active::Walk(handle) => actions.cancel(handle),
-            Active::Buy(handle) => actions.cancel(handle),
+            Active::Buy(handle) => actions.cancel(*handle),
         }
     }
 
@@ -233,8 +236,7 @@ impl ShopRun {
                                 self.keeper = Some(facts.rows()[usize::from(index)].keeper);
                                 self.keeper_index = Some(index);
                                 self.target = Some(access_tile);
-                                self.walk_recovery.reset();
-                                self.walk_retry_after_tick = None;
+                                self.walk_retry.reset();
                                 self.phase = Phase::Walk;
                             }
                             VendorDecision::Retry => self.phase = Phase::Select,
@@ -278,29 +280,28 @@ impl ShopRun {
                     Poll::Ready(Ok(receipt))
                         if matches!(&receipt.end, crate::native::WalkEnd::Arrived) =>
                     {
-                        self.walk_recovery.reset();
-                        self.walk_retry_after_tick = None;
+                        self.walk_retry.reset();
                         self.last_walk_failure = None;
                         self.phase = Phase::Buy;
                     }
                     Poll::Ready(Ok(receipt)) => {
-                        if !ReturnStallRecovery::receipt_retryable(&receipt) {
+                        if !WalkRetryState::retryable_receipt(&receipt) {
                             return Poll::Ready(Err(receipt
                                 .into_arrival()
                                 .expect_err("non-arrival is an error")));
                         }
                         let now = tick.cx.evidence().tick;
                         self.last_walk_failure = Some(receipt.failure_detail_or_fallback());
-                        if self.total_walk_retries < MAX_SHOP_ACCESS_RETRIES
-                            && self.walk_recovery.observe_receipt(&receipt)
-                        {
-                            self.walk_retry_after_tick = Some(now);
-                        } else if let Err(error) = self.exclude_failed_shop(now) {
-                            return Poll::Ready(Err(error));
+                        let retry = self.total_walk_retries < MAX_SHOP_ACCESS_RETRIES
+                            && self.walk_retry.observe_approach_failure(&receipt, now);
+                        if !retry {
+                            if let Err(error) = self.exclude_failed_shop(now) {
+                                return Poll::Ready(Err(error));
+                            }
                         }
                     }
                 },
-                Active::Buy(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Active::Buy(handle) => match tick.actions.poll(&*handle, &mut tick.cx) {
                     Poll::Pending => {
                         self.active = Active::Buy(handle);
                         return Poll::Pending;
@@ -374,7 +375,7 @@ impl ShopRun {
                         self.phase = Phase::Buy;
                         continue;
                     };
-                    let retrying = self.walk_recovery.pending();
+                    let retrying = self.walk_retry.pending();
                     let handle = tick
                         .actions
                         .begin::<Walk>(
@@ -391,13 +392,14 @@ impl ShopRun {
                                 protect: false,
                                 food_guard: false,
                                 allow: Default::default(),
+                                avoid: Box::new([]),
+                                cure_guard: false,
                             },
                             &mut tick.cx,
                         )
                         .map_err(|error| self.attach_last_walk(error))?;
                     if retrying {
-                        self.walk_recovery.action_submitted();
-                        self.walk_retry_after_tick = None;
+                        self.walk_retry.action_submitted();
                         self.total_walk_retries = self.total_walk_retries.saturating_add(1);
                     }
                     self.active = Active::Walk(handle);
@@ -409,7 +411,7 @@ impl ShopRun {
                     let Some(keeper) = self.keeper else {
                         return Poll::Ready(Ok(self.block(request, BlockReason::NoVendor, tick)));
                     };
-                    self.active = Active::Buy(tick.actions.begin::<BuyMachine>(
+                    self.active = Active::Buy(Box::new(tick.actions.begin::<BuyMachine>(
                         BuyRequest {
                             npc_id: keeper.keeper_id,
                             npc_name: Arc::from(keeper.keeper_name),
@@ -418,7 +420,7 @@ impl ShopRun {
                             qty: self.purchase.target,
                         },
                         &mut tick.cx,
-                    )?);
+                    )?));
                 }
             }
         }
@@ -509,8 +511,7 @@ impl ShopRun {
             self.keeper_index = None;
             self.target = None;
             self.retry_used = false;
-            self.walk_recovery.reset();
-            self.walk_retry_after_tick = None;
+            self.walk_retry.reset();
             self.phase = Phase::Select;
             return TierAdvance::Advanced;
         }
@@ -518,14 +519,7 @@ impl ShopRun {
     }
 
     fn wait_for_access_retry(&mut self, now: u64) -> bool {
-        match self.walk_retry_after_tick {
-            Some(after) if now <= after => true,
-            Some(_) => {
-                self.walk_retry_after_tick = None;
-                false
-            }
-            None => false,
-        }
+        self.walk_retry.waiting_for_next_tick(now)
     }
 
     fn exclude_failed_shop(&mut self, now: u64) -> Result<(), ActionError> {
@@ -557,8 +551,8 @@ impl ShopRun {
         self.keeper = None;
         self.target = None;
         self.retry_used = false;
-        self.walk_recovery.reset();
-        self.walk_retry_after_tick = Some(now);
+        self.walk_retry.reset();
+        self.walk_retry.hold_next_tick(now);
         self.phase = Phase::Select;
         Ok(())
     }
@@ -600,10 +594,12 @@ impl ShopRun {
             }));
         }
         let keeper = self.keeper.expect("buyer retained exact keeper");
-        let data = api::game_data::for_revision(tick.cx.pin().revision)
-            .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+        let data = api::game_data::for_revision(tick.cx.revision)
+            .map_err(|error| ActionError::Unavailable(Arc::from(format!("{error:?}"))))?;
         let fact =
             shop_facts::vendor_by_keeper_config(&data, keeper.keeper_config, self.purchase.item)
+                .ok()
+                .flatten()
                 .ok_or(ActionError::Stale)?;
         let reason = match receipt.refusal.ok_or(ActionError::Stale)? {
             PurchaseRefusal::Coins => {
@@ -806,9 +802,11 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let item = data.item_by_alias("harpoon").unwrap().id;
         let gerrant = shop_facts::keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "gerrant")
             .unwrap();
         let harry = shop_facts::keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "harry")
             .unwrap();
         let facts = Arc::new(ShopKeeperFacts::from_rows(
@@ -1001,6 +999,7 @@ mod tests {
             refusal,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         });
     }
 
@@ -1362,9 +1361,11 @@ mod tests {
         let rune = data.item_by_alias("rune_pickaxe").unwrap().id;
         let bronze = data.item_by_alias("bronze_pickaxe").unwrap().id;
         let nurmof = shop_facts::keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "nurmof")
             .unwrap();
         let bob = shop_facts::keepers(&data)
+            .unwrap()
             .find(|row| row.keeper_config == "bob")
             .unwrap();
         let facts = Arc::new(ShopKeeperFacts::from_rows(
@@ -1540,7 +1541,9 @@ mod tests {
         let (request, purchase, mut snapshot, facts) = fixture();
         snapshot.seed_inventory(vec![row(purchase.item, 1), row(995, 7)], 26);
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let fact = shop_facts::vendor_by_keeper_config(&data, "gerrant", purchase.item).unwrap();
+        let fact = shop_facts::vendor_by_keeper_config(&data, "gerrant", purchase.item)
+            .unwrap()
+            .unwrap();
         let expected_quote = shop_facts::quote(fact.record, fact.item, 2, 0);
         for origin in [Origin::Session, Origin::Hint] {
             let bank = BankMemory::seeded(&[(995, 80)], origin);
@@ -1617,7 +1620,9 @@ mod tests {
     fn final_stock_refusal_reports_the_next_observed_restock_edge() {
         let (request, purchase, snapshot, facts) = fixture();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let fact = shop_facts::vendor_by_keeper_config(&data, "gerrant", purchase.item).unwrap();
+        let fact = shop_facts::vendor_by_keeper_config(&data, "gerrant", purchase.item)
+            .unwrap()
+            .unwrap();
         let rate = u64::try_from(fact.item.restock_ticks).unwrap();
         for aligned_to in [None, Some(4)] {
             let now = 4 + rate * 2;

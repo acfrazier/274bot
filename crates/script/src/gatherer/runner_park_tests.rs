@@ -342,7 +342,7 @@ fn held_exact_or_lower_wieldable_tool_wakes_to_wear_without_a_bank_or_purchase()
                 let actions = &ledger.as_ref().expect("core wear action").outbox;
                 assert!(matches!(actions.as_slice(), [action] if matches!(
                     &action.effect,
-                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held { target_item_id: Some(sent), action, .. })
+                    crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held { target_item_id: Some(sent), action, .. })
                         if *sent == id && action == "Wield"
                 )));
             }

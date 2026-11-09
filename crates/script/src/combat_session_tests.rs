@@ -1,10 +1,10 @@
 //! Native-ledger checks of the `api.combat` card. These call [`Script::tick`]
 //! with the shared Combat machine over a seeded snapshot.
 use super::*;
+use crate::interact::InteractReq;
 use crate::native::{
     ledger, HostEffect, InteractionReceipt, NativeActions, NativeOutput, RetainedMemory,
 };
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
@@ -21,7 +21,7 @@ impl NativeOutput for Statuses {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
@@ -67,6 +67,8 @@ pub(crate) struct World {
     local: LocalPlayerView,
     attacking: bool,
     pub(crate) held: bool,
+    /// The operator's global PvP setting this world's ticks carry.
+    pub(crate) pvp_globals: Option<crate::native::PvpGlobals>,
 }
 
 impl World {
@@ -152,6 +154,7 @@ impl World {
             local,
             attacking: false,
             held: false,
+            pvp_globals: None,
         };
         world.refresh();
         world
@@ -218,6 +221,33 @@ impl World {
         });
         self.local.player.actor.in_combat = true;
         self.attacking = true;
+        self.refresh();
+    }
+
+    /// The bot stands in a duel pen beside `bob`, who offers "Fight".
+    fn duel_with_bob(&mut self) {
+        self.npcs.clear();
+        let here = WorldTile {
+            x: 3340,
+            z: 3250,
+            level: 0,
+        };
+        self.local.player.network = here;
+        self.local.player.actor.tile = here;
+        let at = WorldTile { x: 3341, ..here };
+        self.players = vec![PlayerView {
+            index: 2,
+            network: at,
+            actor: ActorView {
+                name: Some("bob".into()),
+                actions: vec![None, Some("Fight".into())],
+                ..actor(at)
+            },
+            combat_level: 60,
+            skill_level: 0,
+            headicons: 0,
+            weapon: None,
+        }];
         self.refresh();
     }
 
@@ -291,7 +321,6 @@ fn with_tick<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    let pin = world.data.selected_pin().unwrap();
     let evidence = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -307,11 +336,14 @@ fn with_tick<R>(
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
         walk_danger: None,
+        pvp_globals: world.pvp_globals,
         state: None,
         service_authority: None,
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -319,7 +351,8 @@ fn with_tick<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             shop_keepers: None,
-            pin: &pin,
+            wilderness: None,
+            revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
             retained: &mut retained,
             action_id: 0,
@@ -337,10 +370,13 @@ fn with_tick<R>(
             snapshot: Some(&world.snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                nav: None,
                 condition: None,
                 poison_unknown_pulse: None,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 walk_danger: None,
+                wilderness: None,
+                pvp_globals: None,
                 selected: Some(&world.data),
                 reach: None,
                 reach_flood: None,
@@ -486,7 +522,81 @@ impl Harness {
 }
 
 #[test]
+fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::native::{WalkEnd, WalkReceipt, WalkRefusal};
+
+    for refusal in [None, Some(WalkRefusal::Unsurvivable)] {
+        let mut harness = Harness::npc(World::new("imp"));
+        let stand = WorldTile {
+            x: STAND.x + 20,
+            ..STAND
+        };
+        Arc::make_mut(&mut harness.card.request).stand = Some(stand);
+        assert_eq!(harness.tick(1), ScriptFlow::Continue);
+        let mut previous_request = None;
+        for (attempt, tick, detail) in [
+            (1, 2, "first default fight route failure"),
+            (2, 4, "second default fight route failure"),
+            (3, 6, "last default fight route failure"),
+        ] {
+            assert_eq!(harness.tick(tick), ScriptFlow::Continue);
+            let ledger = harness.ledger.as_mut().unwrap();
+            let action = ledger
+                .outbox
+                .last()
+                .expect("the card must request its stand walk");
+            let HostEffect::Walk(request) = &action.effect else {
+                panic!("a default fight must approach its stand before attacking");
+            };
+            assert_eq!(request.target, stand);
+            assert_eq!(request.required_after.tick, tick);
+            let request_id = action.request_id.get();
+            assert_ne!(Some(request_id), previous_request);
+            previous_request = Some(request_id);
+            let evidence = EvidenceStamp {
+                run: action.run(),
+                tick,
+                sequence: tick,
+            };
+            ledger.outbox.clear();
+            ledger.walk = Some(WalkReceipt {
+                request_id,
+                evidence,
+                goal: None,
+                end: WalkEnd::NoPath,
+                blocked: None,
+                detail: Some(Arc::from(detail)),
+                refusal: refusal.clone(),
+                assessment: None,
+                escape: None,
+                prereq_allow: None,
+            });
+            let flow = harness.tick(tick + 1);
+            assert!(harness.outbox().is_empty(), "a failed walk never attacks");
+            assert!(harness.ledger.as_ref().unwrap().outbox.is_empty());
+            if refusal.is_some() || attempt == 3 {
+                assert_eq!(flow, ScriptFlow::Complete);
+                assert_eq!(
+                    harness.settled(),
+                    Some(Settle::Failed(Arc::from(format!("blocked:{detail}"))))
+                );
+                break;
+            }
+            assert_eq!(flow, ScriptFlow::Continue);
+            assert_eq!(harness.tick(tick + 1), ScriptFlow::Continue);
+            assert!(harness.ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+}
+
+#[test]
 fn pause_clears_only_the_bot_raised_prayer_and_settles_interrupted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -522,6 +632,9 @@ fn pause_clears_only_the_bot_raised_prayer_and_settles_interrupted() {
 
 #[test]
 fn death_retires_the_obligation_without_clicking_prayers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let raised = world.prayer("Protect from Missiles");
     world.attack();
@@ -543,6 +656,9 @@ fn death_retires_the_obligation_without_clicking_prayers() {
 
 #[test]
 fn an_unsettled_stop_reports_the_accepted_raise_for_the_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -557,6 +673,9 @@ fn an_unsettled_stop_reports_the_accepted_raise_for_the_host() {
 
 #[test]
 fn attackers_players_never_initiates_against_a_player_who_is_not_attacking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.bystander();
     let mut harness = Harness::new(
@@ -589,6 +708,9 @@ fn attackers_players_never_initiates_against_a_player_who_is_not_attacking() {
 
 #[test]
 fn a_target_that_never_appears_settles_the_machine_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.npcs.clear();
     world.refresh();
@@ -633,6 +755,9 @@ fn a_target_that_never_appears_settles_the_machine_report() {
 
 #[test]
 fn a_held_frame_neither_begins_nor_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.held = true;
     let mut harness = Harness::npc(world);
@@ -661,4 +786,106 @@ fn card_stays_compact() {
     let size = std::mem::size_of::<CombatSessionCard>();
     println!("api.combat live card={size}B");
     assert!(size <= 1024);
+}
+
+fn player_card(globals: Option<crate::native::PvpGlobals>, pvp: bool) -> Harness {
+    let mut world = World::new("imp");
+    world.duel_with_bob();
+    world.pvp_globals = globals;
+    let tables = CombatTables::build(Arc::clone(&world.data)).expect("tables");
+    let request = CombatRequest {
+        target: crate::combat::Target::Player {
+            name: Arc::from("bob"),
+        },
+        pvp,
+        fallback: crate::combat::Fallback::Fight,
+        lost_radius: 32,
+        ..CombatRequest::default()
+    };
+    let cell = SettleCell::default();
+    let card = CombatSessionCard::new(Arc::new(request), tables, Arc::clone(&cell));
+    Harness {
+        world,
+        card,
+        cell,
+        ledger: None,
+        output: Statuses::default(),
+    }
+}
+
+#[test]
+fn a_player_target_without_any_source_is_refused_with_the_script_code() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // No request field, and no ready setting (the host sends none): refused
+    // before any fight, with the code the script matches.
+    for globals in [None, Some(crate::native::PvpGlobals::fail_closed())] {
+        let mut harness = player_card(globals, false);
+        assert_eq!(harness.tick(1), ScriptFlow::Complete);
+        assert_eq!(
+            harness.settled(),
+            Some(Settle::Refused(Arc::from(
+                "invalid-setting:target:pvp-not-allowed"
+            )))
+        );
+        assert!(harness.outbox().is_empty());
+    }
+}
+
+#[test]
+fn the_global_setting_alone_starts_a_fight_through_the_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = player_card(
+        Some(crate::native::PvpGlobals { start_fights: true }),
+        false,
+    );
+    // Tick 1 begins the machine; tick 2 is its first poll.
+    assert_eq!(harness.tick(1), ScriptFlow::Continue);
+    assert_eq!(harness.tick(2), ScriptFlow::Continue);
+    assert!(harness.settled().is_none());
+    assert!(
+        harness.outbox().iter().any(|request| matches!(
+            request,
+            InteractReq::Player { name, action } if name == "bob" && action == "Fight"
+        )),
+        "the card began the fight with the label the content gave"
+    );
+}
+
+#[test]
+fn the_request_field_alone_starts_a_fight_through_the_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = player_card(None, true);
+    assert_eq!(harness.tick(1), ScriptFlow::Continue);
+    assert_eq!(harness.tick(2), ScriptFlow::Continue);
+    assert!(harness
+        .outbox()
+        .iter()
+        .any(|request| matches!(request, InteractReq::Player { action, .. } if action == "Fight")));
+}
+
+#[test]
+fn a_zone_refusal_reaches_the_script_with_its_zone_code() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // The bot stands in Lumbridge: not a Wilderness, not a pen.
+    let mut harness = player_card(Some(crate::native::PvpGlobals { start_fights: true }), true);
+    harness.world.npcs.clear();
+    harness.world.players.clear();
+    harness.world.local.player.network = STAND;
+    harness.world.local.player.actor.tile = STAND;
+    harness.world.refresh();
+    assert_eq!(harness.tick(1), ScriptFlow::Complete);
+    assert_eq!(
+        harness.settled(),
+        Some(Settle::Refused(Arc::from(
+            "invalid-setting:target:pvp-outside-wilderness"
+        )))
+    );
 }

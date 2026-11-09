@@ -1,15 +1,13 @@
 import {
     parseJm2LocPlacements,
     parseMapsquarePath,
-    placementMapInputs,
+    placementMapFiles,
     requireGatherText,
-    sourceFile,
     worldFromMapsquare,
 } from './common.ts';
 
 type IdentityRow = { id: number; config: string; display?: string | null; ops?: string[] };
 type PlacementRow = { npc_id: number; x: number; z: number; plane: number; mapsquare: string };
-type SourceInput = { path: string; bytes: number; sha256: string };
 
 export type KaramjaSpawn = {
     config: string;
@@ -214,11 +212,13 @@ export function extractKaramjaFacts(
     npcNames: { rows: IdentityRow[] },
     locNames: { rows: IdentityRow[] },
     npcPlacements: { rows: PlacementRow[] },
-): { facts: KaramjaFacts; inputs: SourceInput[] } {
+    revision = 289,
+): { facts: KaramjaFacts } {
     const luthasScript = requireGatherText(content, SOURCES.luthas);
     const crateScript = requireGatherText(content, SOURCES.banana_crate);
     const treeScript = requireGatherText(content, SOURCES.banana_tree);
-    const plantation = requireGatherText(content, SOURCES.plantation);
+    const plantationSource = revision === 377 ? 'scripts/_unpack/377/all.loc' : SOURCES.plantation;
+    const plantation = requireGatherText(content, plantationSource);
     const luthasConfig = onlyHandlerConfig(luthasScript, /^\[opnpc1,([^\]]+)\]$/gm, 'Luthas NPC');
     const crateConfig = onlyHandlerConfig(crateScript, /^\[oploc1,([^\]]+)\]$/gm, 'banana crate loc');
     const treeConfigs = bananaTreeConfigs(plantation, treeScript);
@@ -235,10 +235,10 @@ export function extractKaramjaFacts(
     }
     const locIds = new Set(configByLocId.keys());
     const spawns = new Map<string, KaramjaSpawn>();
-    const maps = placementMapInputs(content);
+    const maps = placementMapFiles(content);
     for (const map of maps) {
-        const { mx, mz } = parseMapsquarePath(map.path);
-        const text = requireGatherText(content, map.path);
+        const { mx, mz } = parseMapsquarePath(map);
+        const text = requireGatherText(content, map);
         for (const placement of parseJm2LocPlacements(text, locIds)) {
             const config = configByLocId.get(placement.loc_id);
             if (config === undefined) throw new Error(`karamja: no config for loc id ${placement.loc_id}`);
@@ -264,11 +264,6 @@ export function extractKaramjaFacts(
     const treeSpawns = plantationSpawns.filter((spawn) => treeIds.has(spawn.config)).sort((a, b) =>
         a.plane - b.plane || a.z - b.z || a.x - b.x || (a.config < b.config ? -1 : a.config > b.config ? 1 : 0));
     if (treeSpawns.length === 0) throw new Error("karamja: no fruiting banana tree placements on Luthas's plantation mapsquare");
-    const inputs = [
-        ...maps,
-        ...[SOURCES.loc_pack, SOURCES.npc_pack, SOURCES.plantation, SOURCES.banana_tree, SOURCES.banana_crate, SOURCES.luthas]
-            .map((relative) => sourceFile(content, relative)),
-    ].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     return {
         facts: {
             luthas_spawn: { config: luthasConfig, x: luthasPlacement.x, z: luthasPlacement.z, plane: luthasPlacement.plane },
@@ -279,7 +274,6 @@ export function extractKaramjaFacts(
             coin_payout: payout,
             dialogue,
         },
-        inputs,
     };
 }
 

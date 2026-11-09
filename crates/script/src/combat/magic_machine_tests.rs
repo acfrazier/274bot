@@ -1,7 +1,8 @@
 use super::*;
+use crate::combat::CastNpc;
 use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
 
-fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
+pub(super) fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(6, level, level);
     scene
@@ -40,7 +41,7 @@ fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
     refresh_magic(&mut scene, 3, false);
     scene
 }
-fn refresh_magic(scene: &mut Scene, value: i32, panel: bool) {
+pub(super) fn refresh_magic(scene: &mut Scene, value: i32, panel: bool) {
     let controls = scene.data.autocast_controls().unwrap();
     let (varp, root) = (
         controls.magic_varp,
@@ -89,7 +90,7 @@ fn component(scene: &Scene, alias: &str) -> i32 {
     let index = magic::spell_index(&scene.tables, alias).unwrap();
     scene.data.spells()[usize::from(index)].component_id
 }
-fn spend(scene: &mut Scene, alias: &str) {
+pub(super) fn spend(scene: &mut Scene, alias: &str) {
     let index = magic::spell_index(&scene.tables, alias).unwrap();
     let spell = &scene.data.spells()[usize::from(index)];
     let rhand = scene
@@ -159,6 +160,7 @@ fn seed_autocast_widget_text(
                 width: 0,
                 height: 0,
                 scroll_height: 0,
+                inventory_ready: false,
                 scroll_position: 0,
                 hidden,
                 text: Some(text.into()),
@@ -206,6 +208,9 @@ fn is_arm_control(effect: Option<HostEffect>, choose: i32, toggle: i32, spell: i
 
 #[test]
 fn fresh_autocast_combat_adopts_visible_matching_armed_spell() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     let spell_component = scene.data.spell_button_com("Fire Bolt");
@@ -239,6 +244,9 @@ fn fresh_autocast_combat_adopts_visible_matching_armed_spell() {
 
 #[test]
 fn wrong_missing_hidden_stale_or_unarmed_autocast_state_starts_serial_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cases = [
         ("wrong spell", Some("Wind Strike"), 3, true, true, false),
         ("missing spell text", None, 3, true, true, false),
@@ -283,6 +291,9 @@ fn wrong_missing_hidden_stale_or_unarmed_autocast_state_starts_serial_arm() {
 
 #[test]
 fn inactive_or_wrong_staff_tree_cannot_adopt_autocast_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut inactive = magic_scene(Some("staff_of_fire"), 35);
     let controls = *inactive.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -324,6 +335,9 @@ fn inactive_or_wrong_staff_tree_cannot_adopt_autocast_state() {
 
 #[test]
 fn sibling_widget_with_matching_text_cannot_adopt_armed_autocast() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -344,6 +358,9 @@ fn sibling_widget_with_matching_text_cannot_adopt_armed_autocast() {
 
 #[test]
 fn autocast_state_is_not_adopted_after_initial_arm_decision() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -374,6 +391,9 @@ fn autocast_state_is_not_adopted_after_initial_arm_decision() {
 
 #[test]
 fn case17_autocast_initial_armed_spell_is_replaced_and_rune_out_rearms_strike() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, None, false));
     arm(&mut harness, &mut scene, 1, "Fire Bolt");
@@ -390,6 +410,9 @@ fn case17_autocast_initial_armed_spell_is_replaced_and_rune_out_rearms_strike() 
 
 #[test]
 fn mage_fight_enables_only_the_protect_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     scene.stat(5, 43, 43);
     scene.install();
@@ -443,6 +466,9 @@ fn mage_fight_enables_only_the_protect_prayer() {
 
 #[test]
 fn case24_manual_order_with_armed_staff_never_arms_or_attacks_and_casts_five_ticks_apart() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 60);
     let order = ["wind_blast", "water_blast", "earth_blast", "fire_blast"];
     let mut harness = Harness::new(&scene, request(&scene, Some(&order), false));
@@ -465,6 +491,9 @@ fn case24_manual_order_with_armed_staff_never_arms_or_attacks_and_casts_five_tic
 
 #[test]
 fn case25_manual_specific_rejection_is_permanent_but_not_no_runes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("ibanstaff"), 60);
     let order = ["ibans_blast", "fire_bolt"];
     let mut harness = Harness::new(&scene, request(&scene, Some(&order), false));
@@ -490,6 +519,9 @@ fn case25_manual_specific_rejection_is_permanent_but_not_no_runes() {
 
 #[test]
 fn case25_crumble_is_only_castable_against_undead_and_specific_refusal_is_not_runes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = magic_scene(None, 41);
     let frame = Frame::borrow(SnapshotView::new(
         Some(&scene.snapshot),
@@ -529,6 +561,9 @@ fn case25_crumble_is_only_castable_against_undead_and_specific_refusal_is_not_ru
 
 #[test]
 fn case32_iban_staff_defaults_to_selectable_fire_blast_but_explicit_iban_is_manual() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("ibanstaff"), 60);
     let mut automatic = Harness::new(&scene, request(&scene, None, false));
     arm(&mut automatic, &mut scene, 1, "Fire Blast");
@@ -550,6 +585,9 @@ fn case32_iban_staff_defaults_to_selectable_fire_blast_but_explicit_iban_is_manu
 
 #[test]
 fn manual_order_fallback_flag_is_required_at_rune_exhaustion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fallback in [false, true] {
         let mut scene = magic_scene(Some("staff_of_fire"), 35);
         set_count(&mut scene, "chaosrune", 1);
@@ -575,6 +613,9 @@ fn manual_order_fallback_flag_is_required_at_rune_exhaustion() {
 
 #[test]
 fn manual_cast_timeout_retries_once_then_reports_unresponsive() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "fire_bolt"));
@@ -599,6 +640,9 @@ fn manual_cast_timeout_retries_once_then_reports_unresponsive() {
 
 #[test]
 fn manual_classified_refusal_exhaustion_is_unresponsive_not_arm_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = magic_scene(Some("ibanstaff"), 60);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["ibans_blast"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "ibans_blast"));
@@ -614,6 +658,9 @@ fn manual_classified_refusal_exhaustion_is_unresponsive_not_arm_failure() {
 
 #[test]
 fn splash_resource_settle_counts_cast_once_without_damage_or_shorter_cadence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "fire_bolt"));
@@ -636,6 +683,9 @@ fn splash_resource_settle_counts_cast_once_without_damage_or_shorter_cadence() {
 
 #[test]
 fn arm_failure_is_prep_failed_and_native_side_tab_admission_is_serial() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     scene.snapshot.seed_side_tabs(
         vec![SideTabView {
@@ -667,6 +717,9 @@ fn arm_failure_is_prep_failed_and_native_side_tab_admission_is_serial() {
 
 #[test]
 fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut mage = PlayerView {
         index: 2,
@@ -806,6 +859,9 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
 
 #[test]
 fn mage_boosts_never_select_melee_attack_or_strength_potions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let first_free = scene.inventory.len();
     for (offset, alias) in ["4dose2attack", "4dose2strength", "4dose1magic"]
@@ -836,6 +892,9 @@ fn mage_boosts_never_select_melee_attack_or_strength_potions() {
 
 #[test]
 fn steady_autocast_observation_and_ranking_allocate_nothing_for_two_hundred_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     // Forty Fire Bolts consume 120 air runes; keep the chosen spell stable.
     set_count(&mut scene, "airrune", 150);
@@ -864,6 +923,9 @@ fn steady_autocast_observation_and_ranking_allocate_nothing_for_two_hundred_tick
 
 #[test]
 fn steady_manual_order_selection_allocates_nothing_between_casts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 60);
     let order = ["wind_blast", "water_blast"];
     refresh_magic(&mut scene, 3, false);
@@ -895,4 +957,283 @@ fn steady_manual_order_selection_allocates_nothing_between_casts() {
         }
     }
     assert_eq!(allocations, 0);
+}
+
+fn npc_cast_scene(with_runes: bool) -> Scene {
+    let mut scene = Scene::new("imp");
+    if with_runes {
+        for (slot, alias) in ["airrune", "mindrune"].into_iter().enumerate() {
+            let mut rune = scene.held(alias, slot as i32);
+            rune.count = 10;
+            scene.inventory.push(rune);
+        }
+    }
+    scene.refresh();
+    scene
+}
+
+fn npc_cast_request(scene: &Scene) -> CastNpcRequest {
+    CastNpcRequest {
+        component_id: component(scene, "wind_strike"),
+        index: 7,
+    }
+}
+
+fn npc_cast_runtime() -> Runtime {
+    Runtime {
+        retained: RetainedMemory::default(),
+        ledger: None,
+        budget: ledger::TickBudget::default(),
+        wall: Instant::now(),
+        evidence: None,
+        reach: None,
+        condition: None,
+        poison_unknown_pulse: u8::MAX,
+        cure_poison: crate::survival::CurePoison::WhenNeeded,
+        wilderness: None,
+    }
+}
+
+fn begin_npc_cast(scene: &Scene) -> (Runtime, ActionHandle<CastNpc>) {
+    let mut runtime = npc_cast_runtime();
+    let request = npc_cast_request(scene);
+    let selected = Arc::clone(&scene.data);
+    let handle = runtime.context(&scene.snapshot, 1, 1, |actions, cx| {
+        actions.begin::<CastNpc>((request, selected), cx).unwrap()
+    });
+    (runtime, handle)
+}
+
+fn poll_npc_cast(
+    runtime: &mut Runtime,
+    scene: &Scene,
+    handle: &ActionHandle<CastNpc>,
+    tick: u64,
+) -> Poll<Result<bool, crate::native::ActionError>> {
+    runtime.context(&scene.snapshot, tick, tick, |actions, cx| {
+        actions.poll(handle, cx)
+    })
+}
+
+fn settle_npc_cast(runtime: &mut Runtime, accepted: bool) {
+    let evidence = runtime.evidence.unwrap();
+    let ledger = runtime.ledger.as_mut().unwrap();
+    assert_eq!(ledger.outbox.len(), 1);
+    let action = ledger.outbox.remove(0);
+    let authority = action.authority();
+    ledger.complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence,
+            accepted,
+            chat_since: -1,
+        },
+    );
+}
+
+fn spend_npc_cast_runes(scene: &mut Scene) {
+    let component_id = component(scene, "wind_strike");
+    let spell = scene
+        .data
+        .spells()
+        .iter()
+        .find(|spell| spell.component_id == component_id)
+        .unwrap();
+    for rune in &spell.runes {
+        scene
+            .inventory
+            .iter_mut()
+            .find(|item| item.def.id == rune.id)
+            .unwrap()
+            .count -= rune.count;
+    }
+    scene.refresh();
+}
+
+#[test]
+fn npc_cast_requires_selected_spell_and_enough_runes_before_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let scene = npc_cast_scene(false);
+    let mut runtime = npc_cast_runtime();
+    let request = npc_cast_request(&scene);
+    let selected = Arc::clone(&scene.data);
+    let result = runtime.context(&scene.snapshot, 1, 1, |actions, cx| {
+        actions.begin::<CastNpc>((request, selected), cx)
+    });
+    assert!(matches!(
+        result,
+        Err(crate::native::ActionError::Unavailable(_))
+    ));
+    assert!(
+        runtime
+            .ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()),
+        "unavailable cast queued a host interaction"
+    );
+}
+
+#[test]
+fn npc_cast_dispatch_requires_later_rune_or_exact_target_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = npc_cast_scene(true);
+    let (mut runtime, handle) = begin_npc_cast(&scene);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 2),
+        Poll::Pending
+    ));
+    let npc = &scene.npcs[0];
+    let expected_component = component(&scene, "wind_strike");
+    let expected_type = i32::try_from(npc.r#type.unwrap()).unwrap();
+    match &runtime.ledger.as_ref().unwrap().outbox[0].effect {
+        HostEffect::Interaction(InteractReq::UseWidgetOn {
+            component_id,
+            kind,
+            target_name,
+            x,
+            z,
+            level,
+            index,
+            target_id,
+        }) => {
+            assert_eq!(*component_id, expected_component);
+            assert_eq!(kind, "npc");
+            assert_eq!(target_name, &npc.name);
+            assert_eq!(
+                (*x, *z, *level),
+                (npc.network.x, npc.network.z, npc.network.level)
+            );
+            assert_eq!(*index, Some(7));
+            assert_eq!(*target_id, Some(expected_type));
+        }
+        _ => panic!("unexpected NPC cast interaction"),
+    }
+    settle_npc_cast(&mut runtime, true);
+    assert!(
+        matches!(
+            poll_npc_cast(&mut runtime, &scene, &handle, 3),
+            Poll::Pending
+        ),
+        "dispatch acceptance is not cast completion"
+    );
+
+    spend_npc_cast_runes(&mut scene);
+    assert_eq!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 4),
+        Poll::Ready(Ok(true))
+    );
+}
+
+#[test]
+fn npc_cast_reports_consumed_runes_after_target_despawns() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = npc_cast_scene(true);
+    let (mut runtime, handle) = begin_npc_cast(&scene);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 2),
+        Poll::Pending
+    ));
+    settle_npc_cast(&mut runtime, true);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 3),
+        Poll::Pending
+    ));
+
+    scene.npcs.clear();
+    spend_npc_cast_runes(&mut scene);
+    assert_eq!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 4),
+        Poll::Ready(Ok(true))
+    );
+}
+
+#[test]
+fn npc_cast_uses_target_impact_or_splash_and_rejection_before_rune_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut impact_scene = npc_cast_scene(true);
+    let (mut impact_runtime, impact_handle) = begin_npc_cast(&impact_scene);
+    assert!(matches!(
+        poll_npc_cast(&mut impact_runtime, &impact_scene, &impact_handle, 2),
+        Poll::Pending
+    ));
+    settle_npc_cast(&mut impact_runtime, true);
+    let spell = impact_scene
+        .data
+        .spells()
+        .iter()
+        .find(|spell| spell.component_id == component(&impact_scene, "wind_strike"))
+        .unwrap();
+    assert!(spell.impact_spotanim >= 0);
+    impact_scene.npcs[0].spot_animation = spell.impact_spotanim;
+    impact_scene.npcs[0].spot_animation_stamp = 1;
+    impact_scene.refresh();
+    assert_eq!(
+        poll_npc_cast(&mut impact_runtime, &impact_scene, &impact_handle, 3),
+        Poll::Ready(Ok(true))
+    );
+
+    let mut failed_scene = npc_cast_scene(true);
+    let (mut failed_runtime, failed_handle) = begin_npc_cast(&failed_scene);
+    assert!(matches!(
+        poll_npc_cast(&mut failed_runtime, &failed_scene, &failed_handle, 2),
+        Poll::Pending
+    ));
+    settle_npc_cast(&mut failed_runtime, true);
+    let failed_impact = failed_scene.data.failed_spell_impact().unwrap();
+    failed_scene.npcs[0].spot_animation = failed_impact;
+    failed_scene.npcs[0].spot_animation_stamp = 1;
+    spend_npc_cast_runes(&mut failed_scene);
+    // A splash is a sent cast that missed: upstream `Game.castOnNpc` returns
+    // the dispatch result (`Game.ts:177-185`), so it is `true`.
+    assert_eq!(
+        poll_npc_cast(&mut failed_runtime, &failed_scene, &failed_handle, 3),
+        Poll::Ready(Ok(true))
+    );
+
+    let mut chat_scene = npc_cast_scene(true);
+    let (mut chat_runtime, chat_handle) = begin_npc_cast(&chat_scene);
+    assert!(matches!(
+        poll_npc_cast(&mut chat_runtime, &chat_scene, &chat_handle, 2),
+        Poll::Pending
+    ));
+    settle_npc_cast(&mut chat_runtime, true);
+    spend_npc_cast_runes(&mut chat_scene);
+    chat_scene
+        .snapshot
+        .seed_chat_lines(vec![api::snapshot::ChatLineView {
+            type_: 0,
+            username: None,
+            text: "You do not have enough Air Runes to cast this spell.".into(),
+            sequence: 1,
+        }]);
+    assert_eq!(
+        poll_npc_cast(&mut chat_runtime, &chat_scene, &chat_handle, 3),
+        Poll::Ready(Ok(false))
+    );
+}
+
+#[test]
+fn npc_cast_times_out_without_content_confirmation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let scene = npc_cast_scene(true);
+    let (mut runtime, handle) = begin_npc_cast(&scene);
+    assert!(matches!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 2),
+        Poll::Pending
+    ));
+    assert_eq!(
+        poll_npc_cast(&mut runtime, &scene, &handle, 7),
+        Poll::Ready(Ok(false))
+    );
 }

@@ -1221,6 +1221,9 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
 #[cfg(feature = "js")]
 #[test]
 fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     s.core
@@ -2550,6 +2553,9 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn marked_compiled_start_keeps_assignments_across_focus_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut s, _dir) = session_with_play(&["alice", "bob"]);
     s.core
         .play_mut_for_test()

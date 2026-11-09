@@ -1,7 +1,7 @@
 //! Compiled card `Quester`: Start snapshots the shared Path registry.
 #[cfg(test)]
 use super::compile::INDEX_JSON;
-use super::queue::{Queue, QueueSettings, ReleasePathStatus};
+use super::queue::{Queue, QueueConfigErrorKind, QueueSettings, ReleasePathStatus};
 use super::registry::{self, BUNDLED_INDEX};
 use super::runner::QueuedQuester;
 use crate::native::{
@@ -62,17 +62,33 @@ fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
     .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
 }
 
-pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
+pub(crate) fn requires_pairs(
+    bag: &SettingsBag,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<bool, ConfigError> {
     let settings = decode_settings(bag)?;
-    Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
-        super::pair::PairQuest::from_path(&entry.id).is_some()
-            && !settings.skip.contains(&entry.id)
-            && (settings.quests.contains(&entry.id)
-                || (settings.quests.is_empty()
-                    && (entry.status != Some(ReleasePathStatus::Draft)
-                        || settings.include_draft_guides
-                        || settings.order_override.contains(&entry.id))))
-    }))
+    let revision = if selected.revision() == 377 {
+        api::selected::ClientRevision::R377
+    } else {
+        api::selected::ClientRevision::R289
+    };
+    let allow_unqualified = cfg!(feature = "test-hooks");
+    Ok(registry::bundled_index_for(revision)
+        .paths
+        .iter()
+        .any(|entry| {
+            let qualified = entry.status == Some(ReleasePathStatus::Qualified);
+            let default_selected = settings.quests.is_empty()
+                && (qualified
+                    || (allow_unqualified
+                        && (settings.include_draft_guides
+                            || settings.order_override.contains(&entry.id))));
+            super::pair::PairQuest::from_path(&entry.id).is_some()
+                && entry.unavailable.is_none()
+                && (qualified || allow_unqualified)
+                && !settings.skip.contains(&entry.id)
+                && (settings.quests.contains(&entry.id) || default_selected)
+        }))
 }
 
 fn settings_schema() -> &'static [SettingDef] {
@@ -94,21 +110,13 @@ fn settings_schema() -> &'static [SettingDef] {
                 "quests",
                 "[]",
                 "Quests",
-                "Empty selects all released quests except drafts unless Include draft guides when no quests are picked is enabled.",
-            ),
-            setting(
-                "include_draft_guides",
-                "boolean",
-                "false",
-                "Include draft guides when no quests are picked",
-                "Include all draft Paths in the empty-selection queue. Drafts listed in Order override or explicitly selected in Quests run even when this is off.",
-                &[],
+                "Empty selects all live-qualified quests.",
             ),
             path_setting(
                 "order_override",
                 "[]",
                 "Order override",
-                "Prioritize selected quest ids; with an empty quest selection, listing a draft here includes it.",
+                "Prioritize selected quest ids; only qualified Paths run in release builds.",
             ),
             path_setting("skip", "[]", "Skip", "Do not run these released quest ids."),
             setting(
@@ -145,11 +153,6 @@ fn settings_schema() -> &'static [SettingDef] {
                 "allow_wilderness",
                 "Allow wilderness",
                 "Allow this script to route through wilderness when the global setting is off.",
-            ),
-            walk_permission_setting(
-                "allow_danger_zones",
-                "Allow danger zones",
-                "Allow this script to route through danger zones when the global setting is off.",
             ),
         ]
     });
@@ -229,6 +232,35 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
     definition
 }
 
+/// Plays a stage's `id:N` suffix back as an ordering ordinal; named stages
+/// (no numeric suffix) order after every numeric stage.
+fn stage_ordinal(stage: &str) -> u32 {
+    stage
+        .rsplit_once(':')
+        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+        .unwrap_or(u32::MAX)
+}
+
+/// Stage identities in play order: role by role in the guide's role order,
+/// and within a role its numeric `id:N` stages in ascending N before its
+/// named stages in authored sequence order.
+fn ordered_stages(roles: &[super::path::PathRoleDocument]) -> Vec<Arc<str>> {
+    roles
+        .iter()
+        .flat_map(|role| {
+            let mut stages = role
+                .sequences
+                .iter()
+                .map(|sequence| Arc::clone(&sequence.stage.0))
+                .collect::<Vec<_>>();
+            stages.sort_by_key(|stage| stage_ordinal(stage));
+            stages
+        })
+        .collect()
+}
+
+/// One row per bundled released Path: display name, journal availability,
+/// draft status, and its stages in play order.
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
         BUNDLED_INDEX
@@ -238,33 +270,6 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
             .map(|(entry, bytes)| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
-                let mut stages = document
-                    .roles
-                    .iter()
-                    .flat_map(|role| {
-                        let progress = role.progress.as_ref().expect("released Path progress");
-                        [
-                            &progress.colour.not_started,
-                            &progress.colour.in_progress,
-                            &progress.colour.complete,
-                        ]
-                        .into_iter()
-                        .chain(progress.rules.iter().map(|rule| &rule.stage))
-                        .map(|stage| Arc::clone(&stage.0))
-                    })
-                    .collect::<Vec<_>>();
-                let ordinal = |stage: &Arc<str>| {
-                    stage
-                        .rsplit_once(':')
-                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                        .unwrap_or(u32::MAX)
-                };
-                stages.sort_unstable_by(|left, right| {
-                    ordinal(left)
-                        .cmp(&ordinal(right))
-                        .then_with(|| left.cmp(right))
-                });
-                stages.dedup();
                 crate::api_progress::QuestPathRow {
                     id: Arc::clone(&document.id.0),
                     display: document.display_name.into(),
@@ -275,12 +280,103 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
                                 .is_some_and(|progress| !progress.rules.is_empty())
                         }),
                     draft: entry.status == Some(ReleasePathStatus::Draft),
-                    stages: stages.into(),
+                    stages: ordered_stages(&document.roles).into(),
                 }
             })
             .collect()
     });
     &ROWS
+}
+
+#[cfg(test)]
+mod released_path_stage_order_tests {
+    use super::*;
+
+    fn stages(id: &str) -> Vec<&str> {
+        released_paths()
+            .iter()
+            .find(|row| row.id.as_ref() == id)
+            .unwrap_or_else(|| panic!("{id} released row is missing"))
+            .stages
+            .iter()
+            .map(|stage| stage.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn released_path_stages_are_numeric_then_authored_within_each_role() {
+        // `itexam` authors its named stages in play order after the numeric
+        // start stage; an alphabetical sort emits done before find.
+        assert_eq!(
+            stages("itexam"),
+            [
+                "itexam:0",
+                "itexam:stamping",
+                "itexam:first",
+                "itexam:second",
+                "itexam:third",
+                "itexam:find",
+                "itexam:done",
+            ]
+        );
+        // `hero` keeps the guide's role order even though every blackarm
+        // stage key sorts before the phoenix ones.
+        assert_eq!(
+            stages("hero"),
+            [
+                "hero:p0",
+                "hero:p1",
+                "hero:p2",
+                "hero:p3",
+                "hero:p4",
+                "hero:p5",
+                "hero:p6",
+                "hero:pdone",
+                "hero:b0",
+                "hero:b1",
+                "hero:b7",
+                "hero:b8",
+                "hero:b9",
+                "hero:b10",
+                "hero:b11",
+                "hero:b12",
+                "hero:b13",
+                "hero:bdone",
+            ]
+        );
+    }
+
+    #[test]
+    fn out_of_order_numeric_stages_precede_named_stages_in_authored_order() {
+        use crate::quester::path::{PathRoleDocument, SequenceDocument};
+
+        let role = PathRoleDocument {
+            role: None,
+            progress_binding: api::selected::FactKey::new("q"),
+            progress: None,
+            progress_reader: None,
+            prelude: Vec::new(),
+            sequences: ["q:20", "q:10", "q:named_b", "q:named_a"]
+                .into_iter()
+                .map(|stage| SequenceDocument {
+                    stage: api::selected::FactKey::new(stage),
+                    required: Vec::new(),
+                    terminal: false,
+                    recovery_entry: None,
+                    order: Default::default(),
+                    cross: Vec::new(),
+                    steps: Vec::new(),
+                })
+                .collect(),
+        };
+        assert_eq!(
+            ordered_stages(&[role])
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<&str>>(),
+            ["q:10", "q:20", "q:named_b", "q:named_a"]
+        );
+    }
 }
 
 struct Prepared {
@@ -315,17 +411,18 @@ fn prepare(
         let quests = Arc::new(
             QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?,
         );
-        let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
-            .map_err(|error| {
-                StartError::Unavailable(
-                    format!(
-                        "{}: {}",
-                        error.code,
-                        error.detail.as_deref().unwrap_or("Path reload failed")
+        let registry =
+            registry::reload_with_catalog(&cx.selected, Some(&quests), cx.zones, cx.families)
+                .map_err(|error| {
+                    StartError::Unavailable(
+                        format!(
+                            "{}: {}",
+                            error.code,
+                            error.detail.as_deref().unwrap_or("Path reload failed")
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
-            })?;
+                })?;
         Ok(QuesterRegistryReady { registry, quests })
     })
 }
@@ -339,26 +436,54 @@ pub(crate) fn prepare_with_registry(
     prepare_from(cx, revision, bag, |_| Ok(ready))
 }
 
+/// Revision 377 uses its own selected identities, never the 289 name tables.
+/// Optional step families still fail at Path compilation when their facts are absent.
+fn admit_revision(selected: &api::game_data::SelectedGameData) -> Result<(), StartError> {
+    match selected.revision() {
+        289 => Ok(()),
+        377 => {
+            for (available, table) in [
+                (!selected.items().is_empty(), "item"),
+                (
+                    selected
+                        .quest_identity()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "quest identity/progress",
+                ),
+                (
+                    selected
+                        .npc_names()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "NPC identity",
+                ),
+                (
+                    selected
+                        .loc_names()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "loc identity",
+                ),
+            ] {
+                if !available {
+                    return Err(StartError::Unavailable(
+                        format!("Quester revision 377 requires selected {table} tables").into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        _ => Err(StartError::Unavailable(
+            "Quester S1 supports revision 289 only".into(),
+        )),
+    }
+}
+
 fn prepare_from(
     cx: &mut PrepareContext<'_>,
     revision: u64,
     bag: Arc<SettingsBag>,
     source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
-    if cx.pin.revision != api::selected::ClientRevision::R289 {
-        return Err(StartError::Unavailable(
-            "Quester S1 supports revision 289 only".into(),
-        ));
-    }
+    admit_revision(&cx.selected)?;
     let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
@@ -388,8 +513,9 @@ fn prepare_from(
         }),
         gang,
     };
-    for entry in &BUNDLED_INDEX.paths {
-        if entry.unavailable.is_none() && registry::bundled_path(&entry.id).is_none() {
+    let QuesterRegistryReady { registry, quests } = source(cx)?;
+    for entry in &registry.index().paths {
+        if entry.unavailable.is_none() && registry.bytes(&entry.id).is_none() {
             return Err(StartError::Unavailable(Arc::from(format!(
                 "release index Path is unavailable: {} ({})",
                 entry.id,
@@ -397,13 +523,12 @@ fn prepare_from(
             ))));
         }
     }
-    let QuesterRegistryReady { registry, quests } = source(cx)?;
     let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
-        StartError::Config(ConfigError::new(
-            error.field,
-            "invalid-queue",
-            error.message,
-        ))
+        let code = match error.kind {
+            QueueConfigErrorKind::InvalidSetting => "invalid-queue",
+            QueueConfigErrorKind::UnqualifiedPath => "unqualified-path",
+        };
+        StartError::Config(ConfigError::new(error.field, code, error.message))
     })?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
@@ -458,12 +583,15 @@ mod tests {
 
     #[test]
     fn prepare_on_274_reports_289_only_without_creating_a_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R274).unwrap();
         FamilyPreparation::run(move |families| {
-            let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
-                pin,
+                revision: ClientRevision::R274,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
                 families,
             };
@@ -472,6 +600,56 @@ mod tests {
                     assert_eq!(reason.as_ref(), "Quester S1 supports revision 289 only");
                 }
                 other => panic!("274 must be unavailable, got {other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_requires_its_selected_tables_before_creating_a_run() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let source = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../api/data/game-data/377.json"),
+        )
+        .expect("read local revision-377 game data");
+        let complete = api::game_data::for_revision(ClientRevision::R377).unwrap();
+        assert!(admit_revision(&complete).is_ok());
+        assert!(!requires_pairs(&SettingsBag::new(), &complete).unwrap());
+        FamilyPreparation::run(move |families| {
+            for (field, expected) in [
+                ("items", "item"),
+                ("quest_identity", "quest identity/progress"),
+                ("npc_names", "NPC identity"),
+                ("loc_names", "loc identity"),
+            ] {
+                let mut wire: serde_json::Value = serde_json::from_slice(&source).unwrap();
+                wire[field] = if field == "items" {
+                    serde_json::json!([])
+                } else {
+                    serde_json::Value::Null
+                };
+                let selected = Arc::new(
+                    serde_json::from_value::<api::game_data::SelectedGameData>(wire).unwrap(),
+                );
+                let mut cx = PrepareContext {
+                    selected,
+                    revision: ClientRevision::R377,
+                    zones: None,
+                    banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                    families,
+                };
+                let result = prepare_from(&mut cx, 1, Arc::new(SettingsBag::new()), |_| {
+                    panic!("377 without {field} must refuse before loading the registry");
+                });
+                let Err(StartError::Unavailable(reason)) = result else {
+                    panic!("377 without {field} must be unavailable");
+                };
+                assert_eq!(
+                    reason.as_ref(),
+                    format!("Quester revision 377 requires selected {expected} tables"),
+                );
             }
         })
         .unwrap()
@@ -516,7 +694,6 @@ mod tests {
             ids,
             [
                 "quests",
-                "include_draft_guides",
                 "order_override",
                 "skip",
                 "partner_account",
@@ -525,7 +702,6 @@ mod tests {
                 "max_deaths",
                 "allow_teleports",
                 "allow_wilderness",
-                "allow_danger_zones",
             ],
         );
         assert_eq!(
@@ -603,16 +779,12 @@ mod tests {
         );
     }
     #[test]
-    fn include_draft_guides_defaults_off_and_roundtrips_with_card_settings() {
-        let definition = settings_schema()
-            .iter()
-            .find(|setting| setting.id == "include_draft_guides")
-            .unwrap();
-        assert_eq!(definition.ty, "boolean");
-        assert_eq!(definition.default.as_deref(), Some("false"));
-        assert_eq!(
-            definition.label.as_deref(),
-            Some("Include draft guides when no quests are picked")
+    fn saved_draft_opt_in_is_preserved_but_not_exposed() {
+        assert!(
+            !settings_schema()
+                .iter()
+                .any(|setting| setting.id == "include_draft_guides"),
+            "release settings must not advertise draft opt-in"
         );
 
         let defaults = decode_settings(&SettingsBag::new()).unwrap();
@@ -702,6 +874,9 @@ mod tests {
 
     #[test]
     fn unavailable_rows_are_picker_rows_never_released_and_refuse_an_only_pick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let reason = unavailable_quest("hauntedmine").expect("Haunted Mine row");
         assert!(!reason.is_empty());
         assert!(registry::bundled_path("hauntedmine").is_none());
@@ -713,10 +888,10 @@ mod tests {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let expected = format!("Haunted Mine: {reason}");
         FamilyPreparation::run(move |families| {
-            let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
-                pin,
+                revision: ClientRevision::R289,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
                 families,
             };
@@ -740,9 +915,9 @@ mod walk_permission_settings_tests {
     use super::*;
 
     #[test]
-    fn walk_permission_settings_roundtrip_with_legacy_defaults_and_schema_v3() {
+    fn walk_permission_settings_keep_teleports_and_legacy_danger_data() {
         assert_eq!(CARD.schema_version, 3);
-        let ids = ["allow_teleports", "allow_wilderness", "allow_danger_zones"];
+        let ids = ["allow_teleports", "allow_wilderness"];
         for id in ids {
             let definition = settings_schema()
                 .iter()
@@ -752,6 +927,12 @@ mod walk_permission_settings_tests {
             assert_eq!(definition.default.as_deref(), Some("false"));
             assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
         }
+        assert!(
+            !settings_schema()
+                .iter()
+                .any(|setting| setting.id == "allow_danger_zones"),
+            "the Quester card must not expose the old danger-zone override"
+        );
 
         let mut bag = SettingsBag::new();
         bag.insert("allow_teleports".into(), serde_json::json!(true));

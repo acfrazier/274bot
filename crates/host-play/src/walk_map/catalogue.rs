@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::map_cache::ReadyCatalogue;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav_planner::map::formats::{ClientPois, Coverage, ServiceIdentity, ServicePois, MAX_POIS};
+use nav_planner::contract::PackId;
+use nav_planner::map::formats::{ClientPois, Coverage, ServicePois, MAX_POIS};
 use nav_planner::map::identity::{CatalogueIdentity, Digest};
 use nav_planner::map::poi::{
     CapabilityEvidence, Eligibility, EntityKind, PoiKind, PoiRecord, SourceSpace,
@@ -18,28 +19,6 @@ use nav_planner::world::NavWorld;
 pub const BANK_API_NOTE: &str = "Map-discovered bank. Frozen bank API roster is separate: nearestBank may omit map discoveries, including Canifis. Walking here does not change that roster or prove banking eligibility.";
 const MAX_ENTRIES: usize = 16384;
 const INDEX_BUDGET: usize = 1024 * 1024;
-
-/// Construction requires the nav owner's expected identity and whole-file digest;
-/// callers cannot promote an unchecked ServicePois to authenticated facts.
-pub struct AuthenticatedServices {
-    document: Arc<ServicePois>,
-    digest: Digest,
-}
-impl AuthenticatedServices {
-    pub fn decode(
-        bytes: &[u8],
-        expected: ServiceIdentity,
-        digest: Digest,
-    ) -> Result<Self, MapError> {
-        Ok(Self {
-            document: Arc::new(ServicePois::decode_navpois(bytes, expected, digest)?),
-            digest,
-        })
-    }
-    pub fn document(&self) -> &ServicePois {
-        &self.document
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceStatus {
@@ -102,10 +81,10 @@ impl std::ops::Deref for ClientInput {
 pub struct Catalogue {
     world: Arc<NavWorld>,
     identity: CatalogueIdentity,
-    nav: Digest,
+    nav: PackId,
     key: Digest,
     client: Option<ClientInput>,
-    services: Option<AuthenticatedServices>,
+    services: Option<Arc<ServicePois>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     entries: Vec<Indexed>,
     edges: Vec<u32>,
@@ -114,55 +93,34 @@ impl Catalogue {
     pub fn new(
         world: Arc<NavWorld>,
         identity: CatalogueIdentity,
-        nav: Digest,
         client: Option<Arc<ClientPois>>,
-        services: Option<AuthenticatedServices>,
+        services: Option<Arc<ServicePois>>,
     ) -> Result<Self, MapError> {
-        Self::build(
-            world,
-            identity,
-            nav,
-            client.map(ClientInput::Fixture),
-            services,
-        )
+        Self::build(world, identity, client.map(ClientInput::Fixture), services)
     }
 
     /// Retain D's ready owner rather than cloning its decoded POI payload.
     pub fn from_ready(
         world: Arc<NavWorld>,
         identity: CatalogueIdentity,
-        nav: Digest,
         client: Option<Arc<ReadyCatalogue>>,
-        services: Option<AuthenticatedServices>,
+        services: Option<Arc<ServicePois>>,
     ) -> Result<Self, MapError> {
-        Self::build(
-            world,
-            identity,
-            nav,
-            client.map(ClientInput::Ready),
-            services,
-        )
+        Self::build(world, identity, client.map(ClientInput::Ready), services)
     }
 
     fn build(
         world: Arc<NavWorld>,
         identity: CatalogueIdentity,
-        nav: Digest,
         client: Option<ClientInput>,
-        services: Option<AuthenticatedServices>,
+        services: Option<Arc<ServicePois>>,
     ) -> Result<Self, MapError> {
-        identity.key()?;
+        let catalogue_key = identity.key()?;
         if let Some(client) = &client {
             client.validate(identity)?;
         }
         if let Some(services) = &services {
-            let bound = services.document.identity;
-            if bound.revision != identity.revision
-                || bound.content != identity.content
-                || bound.nav_sha256 != nav
-            {
-                return Err(MapError::Identity);
-            }
+            services.validate()?;
         }
         let count = world
             .graph
@@ -173,12 +131,15 @@ impl Catalogue {
         if count > MAX_ENTRIES {
             return Err(MapError::Limit("nav overlay count"));
         }
-        let merged = identity.merged_key(nav, services.as_ref().map(|s| s.digest))?;
-        // Availability is a runtime generation too: a before-ready selection
-        // must not survive the later publication of client records.
-        let mut generation = [0u8; 33];
-        generation[..32].copy_from_slice(&merged.0);
+        let nav = nav_planner::producer::identity(&world)
+            .map_err(|_| MapError::Invalid("navigation world ownership"))?
+            .pack();
+        // Availability remains a runtime generation. World ownership is the
+        // separate PackId, not a file digest.
+        let mut generation = [0u8; 34];
+        generation[..32].copy_from_slice(&catalogue_key.0 .0);
         generation[32] = u8::from(client.is_some());
+        generation[33] = u8::from(services.is_some());
         let mut result = Self {
             world,
             identity,
@@ -206,12 +167,6 @@ impl Catalogue {
         mut self,
         data: Arc<api::game_data::SelectedGameData>,
     ) -> Result<Self, MapError> {
-        if data.revision() != i32::from(self.identity.revision)
-            || data.content_id().and_then(|id| Digest::from_hex(id).ok())
-                != Some(self.identity.content)
-        {
-            return Err(MapError::Identity);
-        }
         for indexed in &mut self.entries {
             let Origin::Edges {
                 start,
@@ -254,7 +209,7 @@ impl Catalogue {
     pub fn key(&self) -> Digest {
         self.key
     }
-    pub fn nav_identity(&self) -> Digest {
+    pub fn nav_pack_id(&self) -> PackId {
         self.nav
     }
     pub fn identity(&self) -> CatalogueIdentity {
@@ -281,7 +236,7 @@ impl Catalogue {
         self.client.as_ref().map(|p| &p.coverage)
     }
     pub fn service_coverage(&self) -> Option<&Coverage> {
-        self.services.as_ref().map(|p| &p.document.coverage)
+        self.services.as_ref().map(|p| &p.coverage)
     }
     pub fn coverage_messages(&self) -> impl Iterator<Item = &'static str> {
         [
@@ -317,9 +272,7 @@ impl Catalogue {
         match origin {
             Origin::Records { client, service } => [
                 client.map(|i| &self.client.as_ref().unwrap().records.as_slice()[i as usize]),
-                service.map(|i| {
-                    &self.services.as_ref().unwrap().document.records.as_slice()[i as usize]
-                }),
+                service.map(|i| &self.services.as_ref().unwrap().records.as_slice()[i as usize]),
             ],
             _ => [None, None],
         }
@@ -333,7 +286,7 @@ impl Catalogue {
         let services = self
             .services
             .as_ref()
-            .map_or(&[][..], |p| p.document.records.as_slice());
+            .map_or(&[][..], |p| p.records.as_slice());
         let mut rows: Vec<(bool, u16)> = (0..clients.len())
             .map(|i| (false, i as u16))
             .chain((0..services.len()).map(|i| (true, i as u16)))
@@ -376,10 +329,7 @@ impl Catalogue {
                     .flatten()
                     .find_map(|r| r.walk_target);
                 match supplied {
-                    Some(t)
-                        if t.nav_sha256 == self.nav
-                            && safe_standable(&self.world, t.tile.into()) =>
-                    {
+                    Some(t) if safe_standable(&self.world, t.tile.into()) => {
                         Some(tile(t.tile.into()))
                     }
                     Some(_) => return Err(MapError::Invalid("unwalkable POI stand")),

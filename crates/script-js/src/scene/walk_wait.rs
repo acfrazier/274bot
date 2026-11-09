@@ -26,7 +26,7 @@
 //! their tile or explicit-loc predicate in the native Walk adapter. Genuinely
 //! pending follow (`None`) keeps the caller timeout.
 
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use crate::wire::Snapshot;
 use api::snapshot::WorldTile;
 use script::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
@@ -65,6 +65,7 @@ thread_local! {
     /// The last queued walk discarded by a kept reconnect must be requested
     /// again by its live wait, not replayed from the old host queue.
     static REARM_DISCARDED: Cell<u64> = const { Cell::new(0) };
+    static FORCE_REPATH: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The host's last published outcome, or the empty one before any.
@@ -78,6 +79,7 @@ fn posted(scene: &Scene) -> HostOutcome {
             request_id: o.request_id,
             failed: o.failed,
             blocked: o.blocked,
+            no_path: o.no_path,
             key: WalkKey {
                 tile: WorldTile {
                     x: o.tile.x,
@@ -102,7 +104,7 @@ impl Observation for IsolateObservation {
     }
 
     fn cancelled(&self) -> bool {
-        crate::event_signal::pending()
+        crate::scene::event_signal::pending()
             || crate::machine::user_move_intent_seq() > self.intent_baseline
             || observed::with(|scene| {
                 let latest = scene.latest();
@@ -116,7 +118,7 @@ impl Observation for IsolateObservation {
 
     fn arrived(&self, key: WalkKey) -> bool {
         self.here.is_some_and(|here| {
-            crate::reach_query::with_view(|view| {
+            crate::materialize::reach_query::with_view(|view| {
                 api::query::is_arrived(here, key.tile, key.radius, || view)
             })
         })
@@ -143,6 +145,7 @@ pub(crate) fn on_reset() {
     SLOT.with(|slot| slot.borrow_mut().reset());
     INTENT_BASELINE.with(|baseline| baseline.set((0, 0)));
     REARM_DISCARDED.with(|token| token.set(0));
+    FORCE_REPATH.with(|pending| pending.set(false));
 }
 
 pub(crate) fn on_pause() {}
@@ -169,6 +172,34 @@ pub(crate) fn take_rearm(token: u64) -> bool {
 /// has replaced its wait.
 pub(crate) fn owns(token: u64) -> bool {
     SLOT.with(|slot| slot.borrow().owns(token))
+}
+/// The remaining route tiles for this isolate's active walk, never a retained
+/// count from a completed or replaced token.
+pub(crate) fn remaining() -> u64 {
+    let token = SLOT.with(|slot| {
+        let slot = slot.borrow();
+        slot.current_token().filter(|token| slot.pending(*token))
+    });
+    let Some(token) = token else {
+        return 0;
+    };
+    observed::with(|scene| {
+        scene
+            .latest()
+            .walk_outcome()
+            .filter(|outcome| outcome.remaining_request_id == token)
+            .map_or(0, |outcome| outcome.remaining)
+    })
+}
+
+/// Mark the active walk for a native re-plan on its next family step.
+pub(crate) fn request_repath() {
+    FORCE_REPATH.with(|pending| pending.set(true));
+}
+
+/// Consume one forced re-plan request.
+pub(crate) fn take_repath() -> bool {
+    FORCE_REPATH.with(|pending| pending.replace(false))
 }
 
 /// Refresh the outer baseline after an uncancelled operator pause resumes.
@@ -226,7 +257,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                 json!(slot.poll(
                     token,
                     &IsolateObservation {
-                        here: crate::reach_query::posted_here(),
+                        here: crate::materialize::reach_query::posted_here(),
                         token,
                         intent_baseline,
                     }
@@ -234,6 +265,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
             }
             "value" => json!(slot.value(json_u64(input.get("token")))),
             "blocked" => json!(slot.blocked(json_u64(input.get("token")))),
+            "no-path" => json!(slot.no_path(json_u64(input.get("token")))),
             _ => Value::Null,
         }
     })
@@ -260,22 +292,24 @@ fn json_u64(value: Option<&Value>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, NativeFactsInput, ReachViewInput,
-        SnapshotInput, TileInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+        },
     };
 
     /// `ResetSession` as the isolate runs it: the scene and the wait.
     fn on_reset() {
-        crate::observed::on_reset();
-        crate::reach_query::on_reset();
+        crate::scene::observed::on_reset();
+        crate::materialize::reach_query::on_reset();
         super::on_reset();
     }
 
     /// One decoded post, applied the way the isolate applies it.
     fn post(snap: &Snapshot<'_>) {
-        crate::observed::apply(snap);
-        crate::reach_query::apply(snap);
+        crate::scene::observed::apply(snap);
+        crate::materialize::reach_query::apply(snap);
         on_snapshot(snap);
     }
 
@@ -432,13 +466,13 @@ mod tests {
         on_reset();
         let token = begin(2998, 3916, 0, 1, false);
         assert!(!settled(token));
-        crate::observed::post(2, |p| {
-            p.walk_outcome(crate::observed::WalkOutcome {
+        crate::scene::observed::post(2, |p| {
+            p.walk_outcome(crate::scene::observed::WalkOutcome {
                 seq: 1,
                 generation: 1,
                 request_id: token,
                 failed: true,
-                tile: crate::observed::Tile {
+                tile: crate::scene::observed::Tile {
                     x: 2998,
                     z: 3916,
                     level: 0,
@@ -446,6 +480,8 @@ mod tests {
                 radius: 1,
                 allow_teleports: false,
                 blocked: false,
+                no_path: true,
+                ..crate::scene::observed::WalkOutcome::default()
             });
         });
         assert!(

@@ -47,6 +47,9 @@ mod tests {
 
     #[test]
     fn exact_id_never_resolves_by_a_same_named_item() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let duplicates: Vec<_> = selected
             .items()

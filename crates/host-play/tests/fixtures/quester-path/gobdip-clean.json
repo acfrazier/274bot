@@ -1,0 +1,17 @@
+{
+  "stage": "gobdip:0",
+  "stand": [
+    3045,
+    3257,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [
+    "givebank coins 100",
+    "givebank goblin_armour 3"
+  ],
+  "expect": [],
+  "mode": "clean"
+}
