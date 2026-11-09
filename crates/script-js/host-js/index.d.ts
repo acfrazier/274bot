@@ -1133,7 +1133,7 @@ export interface CombatSession {
   status: CombatStatus | null;
 }
 
-/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */
+/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'single-way-blocked' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */
 export interface CombatReport {
   end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';
   reason: string | null;

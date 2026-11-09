@@ -6752,7 +6752,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1592, 552, 264)
+        (4104, 1592, 560, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -6770,9 +6770,11 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1592, 552, 264)
+        (4104, 1592, 560, 264)
     );
-    // Linux Combat is 552 B at 7ab903712; Main retains 8 B of headroom.
+    // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
+    // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B
+    // with padding), which use Main's 8 B of headroom (the 560 B ceiling).
     // NavBot and SlotScript pins still need their composed measurements.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 560);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
