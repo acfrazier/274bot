@@ -14,7 +14,7 @@ use crate::wire::{Reach, Snapshot};
 const PENDING: &str = "__pending__";
 
 struct CachedReach {
-    stamp: Option<crate::observed::Stamp>,
+    stamp: Option<crate::scene::observed::Stamp>,
     view: ReachQueryView,
 }
 
@@ -25,10 +25,10 @@ thread_local! {
     });
 }
 
-/// Refresh the cached view when [`crate::observed::Lens::reach_stamp`] moves.
+/// Refresh the cached view when [`crate::scene::observed::Lens::reach_stamp`] moves.
 /// An omitted delta keeps the last stamp and the last view.
 pub(crate) fn apply(snap: &Snapshot<'_>) {
-    let stamp = crate::observed::with(|scene| scene.latest().reach_stamp());
+    let stamp = crate::scene::observed::with(|scene| scene.latest().reach_stamp());
     REACH.with(|slot| {
         let mut cached = slot.borrow_mut();
         if cached.stamp == stamp {
@@ -65,7 +65,7 @@ pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
 
 /// The last posted player tile (the tile walk arrival is measured from).
 pub(crate) fn posted_here() -> Option<WorldTile> {
-    crate::observed::with(|scene| {
+    crate::scene::observed::with(|scene| {
         scene.latest().here().map(|here| WorldTile {
             x: here.x,
             z: here.z,
@@ -174,7 +174,7 @@ fn view_from_reader(r: Reach<'_>) -> ReachQueryView {
     }
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -596,12 +596,15 @@ fn set_key<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{encode_snapshot, ReachViewInput, TileInput};
+    use {
+        crate::wire::encode_snapshot,
+        script::native::snapshot_source::{ReachViewInput, TileInput},
+    };
 
     /// Post the player at (10,10) with a 4x4 scene window from (8,8), or no
     /// scene at all.
     fn post(window: bool) {
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         on_reset();
         let mut input = crate::wire::tests::empty_input(1);
         input.here = Some(TileInput {
@@ -629,7 +632,7 @@ mod tests {
         }
         let bytes = encode_snapshot(&input);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
-        crate::observed::apply(&snap);
+        crate::scene::observed::apply(&snap);
         apply(&snap);
     }
 

@@ -12,6 +12,20 @@
 # tools/known-issues/known_issues.py.
 
 [[item]]
+id = "revision-377-host-qualification"
+kind = "not-in-release"
+area = "Host"
+text = """Revision 377 is an explicit local development target, selected with
+  `host-play --revision 377`. It requires revision-377 cache, navigation and
+  generated game data; revision-289 artifacts are not substitutes.
+  The bounded `client_377` scenario covers scene rendering, a direct courtyard
+  walk and a fresh Hans dialogue, not the broader gameplay families."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Fairy Ring downstream integration"
+
+[[item]]
 id = "bank-native-planned"
 kind = "not-in-release"
 area = "Scripts"
@@ -21,6 +35,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
+fixed = "0.2.9"
 target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
@@ -130,13 +145,83 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """The Quester has routes for 20 of the 68 quests. Routes for the other
-  quests are planned in waves."""
+text = """The following Quester guides are drafts. Release builds do not support them:
+  - Cook's Assistant
+  - Sheep Shearer
+  - Rune Mysteries
+  - Romeo & Juliet
+  - Imp Catcher
+  - Vampire Slayer
+  - Doric's Quest
+  - Goblin Diplomacy
+  - Witch's Potion
+  - Prince Ali Rescue
+  - Pirate's Treasure
+  - Demon Slayer
+  - The Knight's Sword
+  - Death Plateau
+  - The Tourist Trap
+  - Priest in Peril
+  - Clock Tower
+  - Monk's Friend
+  - Hazeel Cult
+  - Plague City
+  - Druidic Ritual
+  - Gertrude's Cat
+  - Jungle Potion
+  - Sea Slug Quest
+  - Tribal Totem
+  - Black Knight's Fortress
+  - Ernest the Chicken
+  - Fishing Contest
+  - Elemental Workshop
+  - Merlin's Crystal
+  - Lost City
+  - Tree Gnome Village
+  - Scorpion Catcher
+  - Observatory Quest
+  - Shield of Arrav
+  - Hero's Quest
+  - Temple of Ikov
+  - Holy Grail
+  - Watch Tower
+  - Digsite Quest
+  - Biohazard
+  - Murder Mystery
+  - Witch's House
+  - Big Chompy Bird Hunting
+  - Dwarf Cannon
+  - Family Crest
+  - Fight Arena
+  - The Grand Tree
+  - Dragon Slayer
+  - Horror from the Deep
+  - Shilo Village
+  - Tai Bwo Wannai Trio
+  - Nature Spirit
+  - In Search of the Myreque
+  - Troll Stronghold
+  - Eadgar's Ruse
+  - Troll Romance
+  - Throne of Miscellania
+  - Waterfall Quest
+  - Legends Quest
+  - Sheep Herder
+  - Underground Pass
+  - Regicide
+  - Shades of Mort'ton
+  - The Fremennik Trials
+  - Monkey Madness"""
 first = "0.2.0"
 listed = "0.2.5"
 target = "0.2.9"
 severity = "medium"
-owner = "Quester waves"
+owner = "Quest campaign qualification"
+
+[[item.earlier]]
+until = "0.2.8"
+text = """The Quester has routes for 20 of the 68 quests. Routes for the other
+  quests are planned in waves."""
 
 [[item]]
 id = "quester-walk-step-first-failure"
@@ -171,7 +256,8 @@ text = """`Bank.depositAllMatching` checks about one item per game tick, so larg
   deposits can be slow. A fix is planned for a later release."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "medium"
 owner = "event-driven runtime endpoint"
 
@@ -187,7 +273,8 @@ area = "Scripts"
 text = """When Grinch banks, it uses the shared bank trip, which still waits up to a
   fixed time for some bank steps. These waits are planned to become game-timed."""
 first = "0.2.5"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "low"
 owner = "shared bank trip (event-driven runtime endpoint)"
 
@@ -364,7 +451,8 @@ area = "Scripts"
 text = """Cure poison does not interrupt Gatherer or Quester steps to drink a held
   antipoison when poison makes a cure necessary. This behavior is not included."""
 first = "0.2.7"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "low"
 owner = "T2 survival"
 
@@ -375,7 +463,207 @@ area = "Panel and terminal app"
 text = """The panel and terminal app do not show a status row for a poison-related
   cure need. A poison-need status row is not included."""
 first = "0.2.7"
+fixed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-fetch-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Fetching a cure or food when the bot would otherwise die is planned for a
+  later release. In this release a native script that would die of poison with
+  no cure held pauses its work and names what it needs."""
+first = "0.2.9"
 target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-shop-cure-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Buying a cure from a shop is planned, not included here."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-spawn-or-made-cure-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Taking a cure from a ground spawn, or making one from held supplies, is
+  planned for a later release."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-green-hitsplat-reserve"
+kind = "known-issue"
+area = "Scripts"
+text = """A green poison hitsplat that the game shows without poison makes the bot
+  keep a poison reserve until the next poison message, poison tick or cure."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-strange-fruit-not-fetched"
+kind = "known-issue"
+area = "Scripts"
+text = """Strange fruit is recognized as a held cure and never fetched."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival phase 2"
+
+[[item]]
+id = "survival-unknown-poison-worst-case"
+kind = "known-issue"
+area = "Scripts"
+text = """When the game reports poison and the bot cannot see which creature
+  poisoned it, when the poison message and the creatures' update arrived
+  together so the bot cannot tell which game tick the message belongs to, or
+  when a poisoned bot takes any hit, the bot assumes the strongest poison in the
+  game (330 damage) until the next poison tick shows the real value. Each poison
+  tick then shows the true remaining value. A bot with a cure may drink it
+  earlier than it strictly needed to. A script with no cure held can pause on a
+  poison it would have survived. The pause ends within five poison ticks (about
+  150 game ticks) of the first poison tick at which the bot's hitpoints and food
+  would have carried it through, which can be later than the message when the
+  bot is eating as it waits, and then the script continues on its own."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-poison-line-waits-for-creatures"
+kind = "known-issue"
+area = "Scripts"
+text = """When the game reports poison in a frame before its creatures' update, the
+  bot waits for that update before it decides which creature poisoned it. A
+  cure that is needed only for the worst case is then drunk one game tick
+  later. A cure that is needed at once is drunk at once."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-pause-outlasts-poison"
+kind = "known-issue"
+area = "Scripts"
+text = """The game does not say when a poison has ended. A paused script whose
+  hitpoints plus food are at or below the last poison tick's worst case (4
+  after the weakest tick) stays paused after the poison ran out, until it heals
+  past that or gets a cure."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-pause-while-hit"
+kind = "known-issue"
+area = "Scripts"
+text = """A paused script that is being hit by any creature stays paused while the
+  hits continue, because any hit can be a fresh poisoning. It does not flee or
+  fight back for that reason in this release."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-cure-waits-for-bank-transfer"
+kind = "known-issue"
+area = "Scripts"
+text = """A native script that needs a cure while a bank deposit or withdrawal is in
+  flight lets that one transfer settle or time out first: eight observed game
+  ticks, without an elapsed-time minimum (twice that for a deposit the game did
+  not apply the first time). Then it closes
+  the bank and drinks. The Quester's own provisioning trips follow the same
+  rule."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-reconnect-forgets-poison"
+kind = "known-issue"
+area = "Scripts"
+text = """When the bot reconnects while it is poisoned, it does not know it is
+  poisoned until the next poison tick, up to 30 game ticks later: the game
+  keeps the poison but does not repeat the poison message. In that time the
+  bot does not drink a held cure for that poison and does not eat early for
+  it. A bot whose hitpoints are at or below one poison tick's damage can die in
+  that tick."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "T2 survival"
+
+[[item]]
+id = "combat-no-food-stop-before-cure"
+kind = "known-issue"
+area = "Combat"
+text = """In a fight with no food left, a poisoned bot that holds an antipoison can
+  retreat or end the fight when its hitpoints are near the poison-raised stop
+  line, even though it drinks the antipoison in the same game tick and would
+  then be safe."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "walk-guard-dialogue-and-door-tick"
+kind = "known-issue"
+area = "Navigation"
+text = """During a walk, a dialogue page that is open (for example a level-up page
+  or a gate's dialogue) can delay a drink or a bite until the walk moves on and
+  the page closes. An ordinary bite during a walk can go out in the same game
+  tick as a door or gate click."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "gatherer-power-keeps-empty-vial"
+kind = "known-issue"
+area = "Scripts"
+text = """In Power mode, a Gatherer that finishes its last dose of an antipoison
+  keeps the empty vial. The vial takes a pack slot until you drop it. Bank mode
+  deposits it on the next bank trip."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-status-during-walk-or-fight"
+kind = "known-issue"
+area = "Panel and terminal app"
+text = """During a walk or a fight, the status row shows that a cure or food is
+  needed while the walk or the fight drinks or eats; it does not show the drink
+  or the bite itself."""
+first = "0.2.9"
+target = "none"
 severity = "low"
 owner = "T2 survival"
 
@@ -469,6 +757,47 @@ severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
 
 [[item]]
+id = "quester-undeclared-step-damage"
+kind = "not-in-release"
+area = "Quester"
+text = """A quest step without a declared damage source uses only the fallback:
+  the bot eats at half its Hitpoints on the tick that the damage lands.
+  A first undeclared hit larger than its current Hitpoints is not prevented.
+  The Tourist Trap guide declares its cell climb and mine cart damage."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "QUEST-TERRA (next backlog review)"
+
+[[item]]
+id = "survival-area-timer-damage"
+kind = "not-in-release"
+area = "Survival"
+text = """Damage from a game area while the bot stands in it is not a step
+  hazard. This includes the Underground Pass spear and spring traps, desert
+  heat, and Trollweiss cold. Outside fights and walks the bot does not eat
+  for this damage. A bot holding for food on such a tile keeps taking damage.
+  The Underground Pass guide is not covered by this release."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "SURVIVAL-P2-DESIGN (next backlog review)"
+
+[[item]]
+id = "quester-hazard-food-recovery"
+kind = "known-issue"
+area = "Quester"
+text = """Without food, the Quester holds at a step that can hurt it until
+  its Hitpoints recover enough to clear that step's eat line, then tries again.
+  Hitpoints recover at one point per 100 game ticks. It does not fetch food.
+  If a game page stays open for 24 ticks while it holds, it stops with a clear
+  reason instead of waiting."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "SURVIVAL-P2-DESIGN"
+
+[[item]]
 id = "gnome-magic-chopper-full-pack-fruit"
 kind = "known-issue"
 area = "Scripts"
@@ -511,3 +840,172 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "COMPAT-FINISH ClientAdapter"
+
+[[item]]
+id = "compat-catalog-members-missing"
+kind = "known-issue"
+area = "Scripts"
+text = """Some rs2b0t catalog scripts call script API members that 274bot does
+  not implement yet: `SettingsStore.save` and `onChange`, `Bank.backpackReady`
+  and `normalBackpackSnapshot`, `Reachability.probeable`, `ScriptRunner.pause`,
+  `resume`, `state` and `ctx`, and `BotHost.addFrameListener`. Such a script
+  stops with "not implemented" when it reaches that call; for example, the
+  current AutoFighter cannot start fighting. Support is planned for 0.2.9."""
+first = "0.2.0"
+listed = "0.2.8"
+fixed = "0.2.9"
+target = "0.2.9"
+severity = "medium"
+owner = "compat (UPSTREAM-MEMBERS-1023 census)"
+
+[[item]]
+id = "background-work-stops-after-slow-disk"
+kind = "known-issue"
+area = "Host"
+text = """Background work can stop for the rest of the session after one disk
+  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
+  planned for 0.2.9."""
+first = "0.2.4"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "host background work (WorkAdmission)"
+
+[[item]]
+id = "music-first-song-font-read"
+kind = "known-issue"
+area = "Audio"
+text = """When music is on, a bot reads the music font once, at its first song.
+  Music is off in the default low-memory mode."""
+first = "0.1.0"
+listed = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1 shared audio resource admission"
+
+[[item]]
+id = "runtime-serialization-upgrade-held"
+kind = "not-in-release"
+area = "Source builds"
+text = """The serialization and date libraries retain compatibility versions
+  until the JavaScript runtime libraries can be updated together. The recorded
+  date-parser advisory is not reachable: the calendar dependency does not
+  enable date parsing or formatting."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde =1.0.219 hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the seed-calc serde_json =1.0.143 pin (tools/seed-calc/Cargo.toml) together, along with the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"
+
+[[item]]
+id = "risk-zone-reach-pruning"
+kind = "deferred"
+area = "nav/admission"
+text = """Reach-to-route pruning of risk zones stays deferred. The model sums
+  every exposed zone, including a monster that collision might prevent from
+  reaching the route. Revisit this only when the frozen-route and end-to-end
+  corpora show a realistic quest route at its seed policy's level that is
+  refused solely because of that sum, and that reach pruning would admit.
+  No reach data is stored in the pack. Any future section needs a hard byte
+  budget, bake-reported bytes, a sound collision check, and summed-count
+  fallback for zones that exceed the budget."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Main backlog review"
+
+[[item]]
+id = "tick-normal-trees"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The Knife tick technique is offered for oak and higher trees only.
+  Normal trees still use the ordinary gathering cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-karambwan"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Karambwan fishing uses a fixed delay rather than the skill delay.
+  No Knife arm applies; the Gatherer fishes it at the ordinary cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-flinch"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A sustained tick schedule based on auto-retaliate flinches is not
+  offered. An NPC hit can change the skill delay, but that schedule has not
+  been traced or designed."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-reclick"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The rs2b0t four-tick fly re-click and iron-cadence re-click methods
+  give no gain in revision 289 and are not offered."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-rune-pickaxe"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A rune pickaxe already mines every three ticks, which matches the
+  Knife cycle. Knife turns itself off with no-gain for that tool; ordinary
+  mining continues."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-eat-arm"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Eating uses the existing checked eat action and pauses the Knife
+  technique for one cycle. A food-based tick arm is not offered; it needs
+  per-food delay facts and a live probe before its design is complete."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+[[item]]
+id = "combat-prep-weapon-in-flight"
+kind = "known-issue"
+area = "Combat"
+text = """A combat step can end at its start with `prep-failed:weapon` even though
+  the weapon is in the pack. The server moves a worn weapon in one step, but
+  the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by then."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "none"
+severity = "low"
+owner = "combat (PvP slices)"
+
+[[item]]
+id = "tui-paired-duel-clean-logout"
+kind = "known-issue"
+area = "Terminal app"
+text = """Stopping the two bots after a paired Duel Arena fight can time out
+  before both clean logouts are acknowledged. The fight can work before this
+  stop failure. No verified workaround is recorded."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "M3 clean logout"

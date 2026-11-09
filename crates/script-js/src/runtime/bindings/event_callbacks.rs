@@ -7,8 +7,8 @@ use std::sync::Arc;
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 
-use crate::callback_v8;
-use crate::lineage_v8;
+use crate::materialize::callback_v8;
+use crate::materialize::lineage_v8;
 
 const INVOKE_LISTENER: &str = "__rs2b0t_invoke_native_event_listener";
 pub(crate) const BOT_TICK_EVENT: &str = "__rs2b0t_internal_tick__";
@@ -427,7 +427,7 @@ mod tests {
 
         use super::{clear_all, emit_no_args, install};
 
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let interest = Arc::new(AtomicUsize::new(0));
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         install(&mut runtime, Arc::clone(&interest)).unwrap();
@@ -474,7 +474,7 @@ globalThis.__frame_duplicate_id = globalThis.__rs2b0t_native_event_on('frame', c
 
         use super::{clear_all, install};
 
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         install(&mut runtime, Arc::new(AtomicUsize::new(0))).unwrap();
         runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
@@ -498,7 +498,7 @@ mod v8_tests {
     use serde_json::json;
 
     use super::{clear_all, install};
-    use crate::events::NativeEvent;
+    use crate::scene::events::NativeEvent;
     use crate::snapshot::dispatch_native_events;
 
     const FAST_CHILD: &str = "SCRIPT_EVENT_FAST_TEST_CHILD";
@@ -509,7 +509,7 @@ mod v8_tests {
         "bindings::event_callbacks::v8_tests::event_payload_heap_is_bounded_after_gc";
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         install(&mut runtime, Arc::new(AtomicUsize::new(0))).unwrap();
         runtime.eval::<()>(crate::shim::PRELUDE).unwrap();

@@ -1,4 +1,4 @@
-# 0.1.2 pin. Bump host + client + both CI workflows together.
+# Exact compiler pin. Bump host, client and both CI workflows together.
 [toolchain]
 channel = "1.98.1"
 components = ["rustfmt", "clippy"]

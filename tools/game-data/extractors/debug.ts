@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parsePack, sourceFile } from './common.ts';
+import { parsePack } from './common.ts';
 
-export type InputHash = { path: string; bytes: number; sha256: string };
 
 export type DebugArgument = {
     name: string;
@@ -31,7 +30,6 @@ export type DebugNameFamilies = Record<string, DebugName[]>;
 export type DebugCatalog = {
     commands: DebugCommand[];
     names: DebugNameFamilies;
-    inputs: InputHash[];
 };
 
 const DEBUG_KINDS = new Set([
@@ -177,7 +175,7 @@ export function parseDebugHelp(text: string): Map<string, HelpEntry> {
 }
 
 type SourceHeader = { kind: string; name: string; index: number; close: number };
-export type SourceBlock = { body: string; file: string };
+export type SourceBlock = { body: string };
 
 /**
  * Destructive content commands (operator 2026-10-02): red hover and the send
@@ -285,7 +283,6 @@ function followedSourceBody(
     body: string,
     blocks: ReadonlyMap<string, SourceBlock>,
     shared: ReadonlyMap<string, SourceBlock> = new Map(),
-    usedFiles?: Set<string>,
 ) {
     const followed = new Set<string>();
     const resolve = (name: string) => blocks.get(name) ?? shared.get(name);
@@ -297,7 +294,6 @@ function followedSourceBody(
             const target = resolve(name);
             if (!target) return;
             followed.add(name);
-            if (usedFiles && target.file) usedFiles.add(target.file);
             parts.push(collect(target.body));
         };
         for (const match of clean.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) follow(match[1].toLowerCase());
@@ -327,7 +323,7 @@ function parseArgument(raw: string, source: string): DebugArgument {
 export type ParsedDebugproc = DebugCommand & { source: string; line: number };
 
 /** Every `[label,…]` and `[proc,…]` block in one `.rs2` source, keyed by lowercase name. */
-export function labelProcBlocks(text: string, file: string): Map<string, SourceBlock> {
+export function labelProcBlocks(text: string): Map<string, SourceBlock> {
     const lines = text.split(/\r?\n/);
     const headers: SourceHeader[] = [];
     for (let index = 0; index < lines.length; index += 1) {
@@ -340,7 +336,7 @@ export function labelProcBlocks(text: string, file: string): Map<string, SourceB
         const header = headers[position];
         const nextHeader = headers[position + 1]?.index ?? lines.length;
         if (header.kind === 'label' || header.kind === 'proc') {
-            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file });
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader) });
         }
     }
     return blocks;
@@ -349,15 +345,13 @@ export function labelProcBlocks(text: string, file: string): Map<string, SourceB
 /**
  * Parse all debugproc headers from one selected `.rs2` source. `shared`
  * supplies the rest of the `_test` cheat tree for cross-file `@`/`~`
- * follows (the debugproc's own file always wins); every shared file a
- * follow actually reaches is recorded in `usedFiles` for provenance.
+ * follows (the debugproc's own file always wins).
  */
 export function parseDebugprocSource(
     text: string,
     relative: string,
     help = new Map<string, HelpEntry>(),
     shared: ReadonlyMap<string, SourceBlock> = new Map(),
-    usedFiles?: Set<string>,
 ): ParsedDebugproc[] {
     const lines = text.split(/\r?\n/);
     const headerByIndex = new Map<number, SourceHeader>();
@@ -375,7 +369,7 @@ export function parseDebugprocSource(
         nextHeaderByIndex.set(header.index, nextHeader);
         headerByIndex.set(header.index, header);
         if (header.kind === 'label' || header.kind === 'proc') {
-            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file: relative });
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader) });
         }
     }
     const rows: ParsedDebugproc[] = [];
@@ -389,9 +383,7 @@ export function parseDebugprocSource(
         const header = headerByIndex.get(index);
         if (!header) throw new Error(`${relative}:${index + 1}: malformed debugproc header`);
         const body = sourceBlockBody(lines, header, nextHeaderByIndex.get(index) ?? lines.length);
-        const reached = new Set<string>();
-        const effectBody = followedSourceBody(body, blocks, shared, reached);
-        for (const file of reached) if (file !== relative) usedFiles?.add(file);
+        const effectBody = followedSourceBody(body, blocks, shared);
         const trailing = match[3].trim();
         const hint = help.get(alias.toLowerCase());
         const inline = /\/\/\s*(.*)$/.exec(trailing)?.[1]?.trim();
@@ -421,9 +413,9 @@ function parseEngineCommands(text: string) {
         const index = match.index ?? 0;
         const lineEnd = text.indexOf('\n', index);
         const condition = text.slice(index, lineEnd < 0 ? text.length : lineEnd);
-        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.node\.production\b/.test(condition)
+        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
             ? 'non-production'
-            : /&&\s*Environment\.node\.production\b/.test(condition)
+            : /&&\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
               ? 'production'
               : 'none';
         found.set(match[2], { name: match[2], productionGate });
@@ -466,7 +458,7 @@ function walkFiles(directory: string, suffix: string) {
     return files.sort();
 }
 
-function sourcePacks(content: string, names: DebugNameFamilies, inputs: InputHash[]) {
+function sourcePacks(content: string, names: DebugNameFamilies) {
     const addPack = (kind: string, relative: string, fallbackNames?: Map<string, DebugName>) => {
         const file = path.join(content, relative);
         if (!fs.existsSync(file)) throw new Error(`debug names: required ${relative} is missing`);
@@ -474,10 +466,7 @@ function sourcePacks(content: string, names: DebugNameFamilies, inputs: InputHas
         const rows = [...pack.entries()].map(([alias, id]) => fallbackNames?.get(alias) ?? ({ alias, id, name: humanName(alias) }));
         rows.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id || a.alias.localeCompare(b.alias));
         names[kind] = rows;
-        inputs.push(sourceFile(content, relative));
     };
-    const addInput = (relative: string) => { const file = path.join(content, relative); if (!fs.existsSync(file)) throw new Error(`debug names: required ${relative} is missing`); inputs.push(sourceFile(content, relative)); };
-    addInput('pack/obj.pack');
     const npcFallback = new Map((names.npc ?? []).map((row) => [row.alias, row])); addPack('npc', 'pack/npc.pack', npcFallback);
     addPack('loc', 'pack/loc.pack');
     addPack('seq', 'pack/seq.pack');
@@ -488,7 +477,6 @@ function sourcePacks(content: string, names: DebugNameFamilies, inputs: InputHas
     if (!fs.existsSync(varbit)) throw new Error('debug names: required pack/varbit.pack is missing');
     names.varp.push(...[...parsePack(fs.readFileSync(varbit, 'utf8')).entries()].map(([alias, id]) => ({ alias, id, name: humanName(alias) })));
     names.varp.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id || a.alias.localeCompare(b.alias));
-    inputs.push(sourceFile(content, 'pack/varbit.pack'));
     addPack('inv', 'pack/inv.pack');
     addPack('idkit', 'pack/idk.pack');
 }
@@ -538,8 +526,7 @@ export function sharedTestBlocks(content: string): Map<string, SourceBlock> {
     const shared = new Map<string, SourceBlock>();
     for (const file of walkFiles(path.join(content, 'scripts/_test'), '.rs2')) {
         const text = fs.readFileSync(file, 'utf8');
-        const relative = path.relative(content, file).split(path.sep).join('/');
-        for (const [name, block] of labelProcBlocks(text, relative)) {
+        for (const [name, block] of labelProcBlocks(text)) {
             if (!shared.has(name)) shared.set(name, block);
         }
     }
@@ -557,23 +544,13 @@ export function extractDebugCatalog(
     const shared = sharedTestBlocks(content);
     const debugprocFiles = walkFiles(path.join(content, 'scripts'), '.rs2');
     const commands: ParsedDebugproc[] = [];
-    const inputs: InputHash[] = [];
-    const seenInputs = new Set<string>();
-    const reachedShared = new Set<string>();
     for (const file of debugprocFiles) {
         const text = fs.readFileSync(file, 'utf8');
         if (!text.includes('[debugproc,')) continue;
         const relative = path.relative(content, file).split(path.sep).join('/');
-        const rows = parseDebugprocSource(text, relative, help, shared, reachedShared);
+        const rows = parseDebugprocSource(text, relative, help, shared);
         if (!rows.length) continue;
         commands.push(...rows);
-        inputs.push(sourceFile(content, relative));
-        seenInputs.add(relative);
-    }
-    for (const relative of [...reachedShared].sort()) {
-        if (seenInputs.has(relative)) continue;
-        inputs.push(sourceFile(content, relative));
-        seenInputs.add(relative);
     }
     const seen = new Set<string>();
     for (const row of commands) {
@@ -586,7 +563,7 @@ export function extractDebugCatalog(
     commands.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
     const names: DebugNameFamilies = {};
     addDecodedNames(names, 'npc', npcs);
-    sourcePacks(content, names, inputs);
+    sourcePacks(content, names);
     names.stat = statNames(statText);
     names.varp = uniqueByAlias(names.varp ?? []);
     for (const [kind, rows] of Object.entries(names)) {
@@ -594,7 +571,7 @@ export function extractDebugCatalog(
         names[kind] = rows;
     }
     const catalogCommands = commands.map(({ source: _source, line: _line, ...row }) => row);
-    return { commands: catalogCommands, names, inputs };
+    return { commands: catalogCommands, names };
 }
 
 export function engineHandlerRelative() {

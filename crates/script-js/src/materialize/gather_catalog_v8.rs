@@ -9,10 +9,11 @@
 //! loops would reach them.
 
 use super::callback_v8::{self as cb, JsResult};
-use crate::cook_locations as cook_pairing;
+use crate::compat::cook_locations as cook_pairing;
 use api::cook_locations::{self as cook, CookRole, FishCookSurface};
 use api::fishing_gear::{self, FishingShop, FishingVendor};
 use api::gather_camps::{self, CampKey, GatherCamp};
+use api::selected::FactError;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use script::fishing_gear::{self as gear, BuyPlan, Count, GearHost, Item};
@@ -77,7 +78,7 @@ struct Catalog {
 
 type Shared = Rc<RefCell<Catalog>>;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     if !runtime
         .deno_runtime()
         .v8_isolate()
@@ -288,6 +289,11 @@ fn bait_vendor<'s>(
     object(scope, &["keeper", "stand", "price", "item"], &values)
 }
 
+/// A table the build lacks (no local game data) refuses as a `TypeError` naming the table.
+fn facts<'s, T>(scope: &mut v8::HandleScope<'s>, result: Result<T, FactError>) -> JsResult<'s, T> {
+    result.map_err(|error| cb::type_error(scope, &format!("gather catalog: {error:?}")))
+}
+
 /// One camp object. `banks` shares one `Tile` per distinct bank stand within a table, as the upstream `BANK`
 /// constants do.
 fn camp_row<'s>(
@@ -350,9 +356,19 @@ fn camp_row<'s>(
                 let object = surface_by_index(scope, index)?;
                 cb::get(scope, object, "stand")?
             }
-            CampKey::RangeName => optional(scope, row.range, |s, v| {
-                cb::string(s, cook::FISH_CAMP_COOK_SURFACES[v].loc_name)
-            }),
+            CampKey::RangeName => match row.range {
+                Some(index) => {
+                    let surfaces = facts(scope, cook::fish_camp_cook_surfaces())?;
+                    let Some(surface) = surfaces.get(index) else {
+                        return Err(cb::type_error(
+                            scope,
+                            "gather catalog: rangeName without a surface",
+                        ));
+                    };
+                    cb::string(scope, surface.loc_name)
+                }
+                None => undefined(scope),
+            },
         };
         values.push(value);
     }
@@ -386,19 +402,22 @@ fn plain_rows(camps: &'static [GatherCamp]) -> Vec<RowView<'static>> {
 
 fn woodcutting_table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_WOODCUTTING, |scope| {
-        camp_table(scope, &plain_rows(gather_camps::woodcutting_camps()))
+        let camps = facts(scope, gather_camps::woodcutting_camps())?;
+        camp_table(scope, &plain_rows(camps))
     })
 }
 
 fn mining_table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_MINING, |scope| {
-        camp_table(scope, &plain_rows(gather_camps::mining_camps()))
+        let camps = facts(scope, gather_camps::mining_camps())?;
+        camp_table(scope, &plain_rows(camps))
     })
 }
 
 fn fishing_table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_FISHING, |scope| {
-        let rows: Vec<RowView<'_>> = gather_camps::fishing_rows()
+        let fishing = facts(scope, gather_camps::fishing_rows())?;
+        let rows: Vec<RowView<'_>> = fishing
             .iter()
             .map(|row| RowView {
                 camp: row.camp,
@@ -414,8 +433,9 @@ fn fishing_table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>>
 
 fn surface_array<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_COOK_SURFACES, |scope| {
-        let mut out = Vec::with_capacity(cook::FISH_CAMP_COOK_SURFACES.len());
-        for surface in cook::FISH_CAMP_COOK_SURFACES {
+        let surfaces = facts(scope, cook::fish_camp_cook_surfaces())?;
+        let mut out = Vec::with_capacity(surfaces.len());
+        for surface in surfaces {
             out.push(surface_object(scope, surface)?);
         }
         Ok(array(scope, &out))
@@ -464,8 +484,9 @@ fn surface_by_index<'s>(scope: &mut v8::HandleScope<'s>, index: usize) -> JsResu
 
 fn methods_table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_METHODS, |scope| {
-        let mut out = Vec::with_capacity(fishing_gear::FISHING_METHODS.len());
-        for method in fishing_gear::FISHING_METHODS {
+        let methods = facts(scope, fishing_gear::fishing_methods())?;
+        let mut out = Vec::with_capacity(methods.len());
+        for method in methods {
             let mut pieces = Vec::with_capacity(method.gear.len());
             for piece in method.gear {
                 let values = [
@@ -496,7 +517,8 @@ fn vendor_object<'s>(
         FishingShop::Harry => SLOT_HARRY,
     };
     cached(scope, slot, |scope| {
-        let vendor: &FishingVendor = shop.vendor();
+        let tables = facts(scope, fishing_gear::fishing_tables())?;
+        let vendor: &FishingVendor = tables.vendor(shop);
         let values = [
             cb::string(scope, vendor.keeper),
             tile(scope, vendor.stand)?,
@@ -508,7 +530,7 @@ fn vendor_object<'s>(
 
 fn shilo_vendor<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
     cached(scope, SLOT_SHILO, |scope| {
-        let vendor = gather_camps::SHILO_WATER_VENDOR;
+        let vendor = facts(scope, gather_camps::shilo_water_vendor())?;
         let values = [
             cb::string(scope, vendor.keeper),
             tile(scope, vendor.stand)?,
@@ -519,7 +541,8 @@ fn shilo_vendor<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> 
 }
 
 fn mining_labels<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
-    let rows: Vec<(&'static str, String)> = gather_camps::mining_option_labels().collect();
+    let labels = facts(scope, gather_camps::mining_option_labels())?;
+    let rows: Vec<(&'static str, String)> = labels.collect();
     let names: Vec<&'static str> = rows.iter().map(|(name, _)| *name).collect();
     let values: Vec<Value<'s>> = rows
         .iter()
@@ -529,14 +552,9 @@ fn mining_labels<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>>
 }
 
 fn shop_costs<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
-    let names: Vec<&'static str> = fishing_gear::FISHING_SHOP_COSTS
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-    let values: Vec<Value<'s>> = fishing_gear::FISHING_SHOP_COSTS
-        .iter()
-        .map(|(_, cost)| int(scope, *cost))
-        .collect();
+    let costs = facts(scope, fishing_gear::fishing_shop_costs())?;
+    let names: Vec<&'static str> = costs.iter().map(|(name, _)| *name).collect();
+    let values: Vec<Value<'s>> = costs.iter().map(|(_, cost)| int(scope, *cost)).collect();
     object(scope, &names, &values)
 }
 
@@ -550,8 +568,8 @@ fn set_of<'s>(scope: &mut v8::HandleScope<'s>, items: &[Value<'s>]) -> JsResult<
 
 /// `WHIRLPOOL_IDS` from the selected content's NPC records; `undefined` (the shim then refuses) without them.
 fn whirlpool_ids<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>> {
-    let Some(ids) =
-        crate::supply_v2::selected_data().and_then(|data| fishing_gear::whirlpool_ids(&data))
+    let Some(ids) = crate::scene::supply_v2::selected_data()
+        .and_then(|data| fishing_gear::whirlpool_ids(&data))
     else {
         return Ok(undefined(scope));
     };
@@ -580,16 +598,20 @@ fn dispatch<'s>(
         GERRANT_VENDOR => vendor_object(scope, FishingShop::Gerrant),
         HARRY_VENDOR => vendor_object(scope, FishingShop::Harry),
         MINING_LABELS => mining_labels(scope),
-        METHOD_OPTIONS => Ok(strings(scope, fishing_gear::method_names())),
-        GEAR_NAMES => Ok(strings(scope, fishing_gear::all_gear_names())),
+        METHOD_OPTIONS => {
+            let names = facts(scope, fishing_gear::method_names())?;
+            Ok(strings(scope, names))
+        }
+        GEAR_NAMES => {
+            let names = facts(scope, fishing_gear::all_gear_names())?;
+            Ok(strings(scope, names))
+        }
         WHIRLPOOL_IDS => whirlpool_ids(scope),
         SHOP_COSTS => shop_costs(scope),
         COOK_SURFACES => surface_array(scope),
         GERRANT_ONLY => {
-            let items: Vec<Value<'s>> = fishing_gear::GERRANT_ONLY_FISHING
-                .iter()
-                .map(|name| cb::string(scope, name))
-                .collect();
+            let only = facts(scope, fishing_gear::gerrant_only_fishing())?;
+            let items: Vec<Value<'s>> = only.iter().map(|name| cb::string(scope, name)).collect();
             set_of(scope, &items)
         }
         MINING_LABEL => mining_label(scope, args.get(1)),
@@ -653,7 +675,7 @@ fn resolve_method<'s>(scope: &mut v8::HandleScope<'s>, name: Value<'s>) -> JsRes
     let index = match name.is_string() {
         true => {
             let wanted = cb::to_string(scope, name)?;
-            fishing_gear::FISHING_METHODS
+            facts(scope, fishing_gear::fishing_methods())?
                 .iter()
                 .position(|method| method.name == wanted)
                 .unwrap_or(0)
@@ -737,6 +759,10 @@ impl<'a, 's> V8Gear<'a, 's> {
 
 impl<'s> GearHost for V8Gear<'_, 's> {
     type Error = cb::Throw<'s>;
+
+    fn facts(&mut self, error: FactError) -> cb::Throw<'s> {
+        cb::type_error(self.scope, &format!("gather catalog: {error:?}"))
+    }
 
     fn pieces(&self) -> usize {
         self.pieces.len()
@@ -964,7 +990,8 @@ fn spot_matches<'s>(
 
 fn shop_cost<'s>(scope: &mut v8::HandleScope<'s>, name: Value<'s>) -> JsResult<'s, Value<'s>> {
     let lowered = lowercase(scope, name)?;
-    Ok(match fishing_gear::shop_cost(&lowered) {
+    let cost = facts(scope, fishing_gear::shop_cost(&lowered))?;
+    Ok(match cost {
         Some(cost) => int(scope, cost),
         None => v8::null(scope).into(),
     })
@@ -976,7 +1003,8 @@ fn vendor_for<'s>(
     near: Value<'s>,
 ) -> JsResult<'s, Value<'s>> {
     let lowered = lowercase(scope, name)?;
-    let shop = fishing_gear::vendor_for(&lowered, |harry, gerrant| {
+    let tables = facts(scope, fishing_gear::fishing_tables())?;
+    let shop = tables.vendor_for(&lowered, |harry, gerrant| {
         near_distances(scope, near, harry, gerrant)
     })?;
     vendor_object(scope, shop)
@@ -1210,7 +1238,11 @@ fn cook_surface_for_camp<'s>(
 ) -> JsResult<'s, Value<'s>> {
     let name = plan_key(scope, camp)?;
     let role = role_of(scope, role);
-    match name.and_then(|name| cook::fish_camp_cook_surface_index(&name, role)) {
+    let index = match name {
+        Some(name) => facts(scope, cook::fish_camp_cook_surface_index(&name, role))?,
+        None => None,
+    };
+    match index {
         Some(index) => surface_by_index(scope, index),
         None => Ok(v8::null(scope).into()),
     }
@@ -1250,10 +1282,11 @@ fn nearest_cooking_range<'s>(
         }
     };
     let max_cheb = cb::number(scope, max_cheb)?;
-    let Some(data) = crate::supply_v2::selected_data() else {
+    let Some(data) = crate::scene::supply_v2::selected_data() else {
         return Ok(v8::null(scope).into());
     };
-    let found = cook_pairing::nearest_range(data.cook_surfaces(), max_cheb, |surface| {
+    let cook_surfaces = facts(scope, data.cook_surfaces())?;
+    let found = cook_pairing::nearest_range(cook_surfaces, max_cheb, |surface| {
         let plane = int(scope, surface.level);
         if !level.strict_equals(plane) {
             return Ok(None);

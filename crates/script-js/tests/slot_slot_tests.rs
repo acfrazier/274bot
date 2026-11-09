@@ -11,6 +11,11 @@ use script_js::{resolve_api_family, LoadShape};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+
 fn js_slot(incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     if incarnation != 0 {
@@ -221,7 +226,7 @@ fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
 }
 
 fn drain_run_policy_update(slot: &mut SlotScript) -> Option<RunPolicyOverride> {
-    let (policy, requests, _) = slot.drain_host_interacts();
+    let (policy, requests, _) = slot.drain_host_interacts(None);
     assert!(
         requests
             .iter()
@@ -512,7 +517,7 @@ export default class T extends LoopingBot {
     run_policy_tick(&mut slot, 1);
 
     slot.reset_session_work();
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     slot.on_is_up(true);
     run_policy_tick(&mut slot, 2);
     assert_eq!(
@@ -848,6 +853,7 @@ fn start_sherlock(incarnation: u64, data: Arc<api::game_data::SelectedGameData>)
         Arc::new(script::native::SettingsBag::new()),
         Arc::clone(&data),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
+        None,
     )
     .expect("start registered Sherlock card");
     wait_state(&mut slot, RunState::Running);
@@ -856,6 +862,9 @@ fn start_sherlock(incarnation: u64, data: Arc<api::game_data::SelectedGameData>)
 
 #[test]
 fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R274).expect("selected data");
     let held_id = data
         .trails()
@@ -866,7 +875,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
         .expect("a selected clue row")
         .id;
     let mut slot = start_sherlock(102_419, Arc::clone(&data));
-    let begin = script_js::clue::dispatch(
+    let begin = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
     );
@@ -883,36 +892,36 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "callback.enabled"
     );
 
     slot.pause();
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "wait"
     );
     slot.resume();
     slot.sync_compiled_clue(false);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "callback.enabled",
         "a thaw resumes the same session"
     );
 
     slot.sync_compiled_clue(true);
     assert_eq!(
-        script_js::clue::dispatch(Some(&data), &next())["kind"],
+        script_js::compat::clue::dispatch(Some(&data), &next())["kind"],
         "wait"
     );
     slot.sync_compiled_clue(false);
 
     slot.stop();
     slot.sync_compiled_clue(false);
-    let after = script_js::clue::dispatch(Some(&data), &next());
+    let after = script_js::compat::clue::dispatch(Some(&data), &next());
     assert_eq!(after["kind"], "aborted", "{after}");
-    let again = script_js::clue::dispatch(
+    let again = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
     );
@@ -926,11 +935,14 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 
 #[test]
 fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R274).expect("selected data");
     const ENTRANA: i32 = 3579;
     const HELM: i32 = 1163;
     let mut slot = start_sherlock(102_420, Arc::clone(&data));
-    let begin = script_js::clue::dispatch(
+    let begin = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({ "op": "begin", "generation": 0, "held": [[ENTRANA, 1]] }),
     );
@@ -946,7 +958,7 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
         for (key, value) in extra.as_object().expect("extra") {
             call[key] = value.clone();
         }
-        script_js::clue::dispatch(Some(&data), &call)
+        script_js::compat::clue::dispatch(Some(&data), &call)
     };
     assert_eq!(next(serde_json::json!({}))["kind"], "callback.enabled");
     assert_eq!(
@@ -959,14 +971,15 @@ fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
     }));
     assert_eq!(strip["kind"], "unequip", "{strip}");
     let owns = |data: &Arc<api::game_data::SelectedGameData>| {
-        script_js::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))["owns"]
+        script_js::compat::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))
+            ["owns"]
             == true
     };
     assert!(owns(&data), "the strip listed the name");
 
     slot.reset_session_work();
     slot.sync_compiled_clue(false);
-    let dead = script_js::clue::dispatch(
+    let dead = script_js::compat::clue::dispatch(
         Some(&data),
         &serde_json::json!({
             "op": "next",
@@ -1013,7 +1026,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
     assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     slot_tick(slot, n, Some(here));
     slot.probe("true").unwrap();
-    let (_, game_rows, _) = slot.drain_host_interacts();
+    let (_, game_rows, _) = slot.drain_host_interacts(None);
     assert!(
         game_rows.iter().all(|row| !matches!(
             &row.req,
@@ -1035,6 +1048,9 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
 
 #[test]
 fn js_traversal_walk_remains_parked_across_reconnect() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
     let mut slot = js_slot(1204);
     start_js_running(
@@ -1134,6 +1150,9 @@ fn consume_surface_batches(
 
 #[test]
 fn js_traversal_emits_walk_batch_for_slot_custody() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
     let mut slot = js_slot(1207);
     start_js_running(
@@ -1171,6 +1190,9 @@ fn js_traversal_emits_walk_batch_for_slot_custody() {
 
 #[test]
 fn js_stop_ends_traversal_held_script_after_reconnect() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
     let mut slot = js_slot(1205);
     start_js_running(
@@ -1207,6 +1229,9 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = js_slot(1);
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
     start_js_running(
         &mut slot,
@@ -1224,7 +1249,7 @@ export default class T extends LoopingBot {
         slot_tick(&mut slot, tick, None);
         let _ = probe(&mut slot, "true");
         tick += 1;
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
         std::thread::yield_now();
     }
     assert_eq!(slot.ignored_randoms(), ["Maze", "Mime"]);

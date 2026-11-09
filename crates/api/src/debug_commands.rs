@@ -5,6 +5,25 @@ use serde::Deserialize;
 
 const MAX_COMMAND_BYTES: usize = 80;
 
+/// An error while loading or decoding the opt-in debug catalog.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DebugCatalogError {
+    /// This build embeds no local debug catalog.
+    #[error("Debug catalog local data is unavailable")]
+    LocalDataUnavailable,
+    /// The catalog bytes failed to decode as JSON.
+    #[error("{message}")]
+    Decode {
+        /// The revision whose catalog failed.
+        revision: ClientRevision,
+        /// The exact decoder message.
+        message: std::sync::Arc<str>,
+    },
+    /// The decoded catalog declares an unsupported schema version.
+    #[error("Debug catalog schema mismatch")]
+    SchemaMismatch,
+}
+
 const DEBUG_ARGUMENT_KINDS: &[&str] = &[
     "int",
     "string",
@@ -50,84 +69,85 @@ pub struct DebugName {
     pub name: String,
 }
 
-/// Separately pinned, opt-in catalog. The panel owns its lifetime; normal
-/// selected facts never decode or retain this data.
+/// Separately loaded catalog; the panel owns its lifetime.
 #[derive(Debug)]
 pub struct DebugCatalog {
     revision: ClientRevision,
-    provenance: DebugProvenance,
     debug_commands: Vec<DebugCommand>,
     debug_names: std::collections::HashMap<String, Vec<DebugName>>,
     items: Option<std::sync::Arc<crate::game_data::SelectedGameData>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct DebugProvenance {
-    inputs: Vec<crate::game_data::SourceInput>,
-    content_inputs: Vec<crate::game_data::SourceInput>,
-}
-
 impl DebugCatalog {
     /// Decode only on explicit Local Debug-tab demand.
-    #[cfg(feature = "debug-catalog")]
+    #[cfg(all(
+        feature = "debug-catalog",
+        feature = "embedded-game-data",
+        not(no_local_game_data)
+    ))]
     pub fn load(
         revision: ClientRevision,
         items: std::sync::Arc<crate::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DebugCatalogError> {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+            #[cfg(not(no_local_game_data_377))]
+            ClientRevision::R377 => include_bytes!("../data/game-data/377/debug.json"),
+            #[cfg(no_local_game_data_377)]
+            ClientRevision::R377 => return Err(DebugCatalogError::LocalDataUnavailable),
         };
         Self::decode(bytes, revision, items)
+    }
+
+    #[cfg(all(
+        feature = "debug-catalog",
+        not(all(feature = "embedded-game-data", not(no_local_game_data)))
+    ))]
+    pub fn load(
+        _revision: ClientRevision,
+        _items: std::sync::Arc<crate::game_data::SelectedGameData>,
+    ) -> Result<Self, DebugCatalogError> {
+        Err(DebugCatalogError::LocalDataUnavailable)
     }
 
     pub fn decode(
         bytes: &[u8],
         revision: ClientRevision,
         items: std::sync::Arc<crate::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DebugCatalogError> {
         #[derive(Deserialize)]
         struct WireCatalog {
             schema_version: u16,
-            revision: i32,
-            provenance: DebugProvenance,
+            #[serde(rename = "revision")]
+            _revision: i32,
             debug_commands: Vec<DebugCommand>,
             debug_names: std::collections::HashMap<String, Vec<DebugName>>,
         }
 
-        let catalog: WireCatalog = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        if catalog.schema_version != 1 || catalog.revision != revision.as_i32() {
-            return Err("Debug catalog schema or revision mismatch".into());
+        let catalog: WireCatalog =
+            serde_json::from_slice(bytes).map_err(|error| DebugCatalogError::Decode {
+                revision,
+                message: std::sync::Arc::from(error.to_string()),
+            })?;
+        if catalog.schema_version != 1 {
+            return Err(DebugCatalogError::SchemaMismatch);
         }
         Ok(Self {
             revision,
-            provenance: catalog.provenance,
             debug_commands: catalog.debug_commands,
             debug_names: catalog.debug_names,
             items: Some(items),
         })
     }
 
-    /// The revision authenticated when this catalog was decoded.
+    /// The caller-selected client revision used for this catalog.
     pub fn revision(&self) -> ClientRevision {
         self.revision
     }
 
     pub fn commands(&self) -> &[DebugCommand] {
         &self.debug_commands
-    }
-
-    pub fn source_inputs(&self) -> impl Iterator<Item = (bool, &crate::game_data::SourceInput)> {
-        self.provenance
-            .inputs
-            .iter()
-            .map(|input| (false, input))
-            .chain(
-                self.provenance
-                    .content_inputs
-                    .iter()
-                    .map(|input| (true, input)),
-            )
     }
 
     /// Exact identity first, then display names, prefixes and substrings.
@@ -302,24 +322,69 @@ mod tests {
     use super::{DebugArgument, DebugCommand};
 
     #[test]
-    fn decoded_catalog_retains_the_authenticated_revision() {
+    fn decoded_catalog_uses_the_caller_selected_revision() {
         use client::io::ClientRevision;
 
-        for revision in [ClientRevision::R274, ClientRevision::R289] {
-            let bytes = format!(
-                r#"{{"schema_version":1,"revision":{},"provenance":{{"inputs":[],"content_inputs":[]}},"debug_commands":[],"debug_names":{{}}}}"#,
-                revision.as_i32()
-            );
-            let items = crate::game_data::for_revision(revision).unwrap();
-            let catalog = super::DebugCatalog::decode(bytes.as_bytes(), revision, items.clone())
-                .expect("the catalog matches the selected revision");
+        let bytes = br#"{"schema_version":1,"revision":289,"debug_commands":[],"debug_names":{}}"#;
+        let items = std::sync::Arc::new(
+            serde_json::from_slice::<crate::game_data::SelectedGameData>(
+                br#"{"schema_version":5,"revision":274,"items":[],"consumption":[],"pickpocket":[]}"#,
+            )
+            .unwrap(),
+        );
+        for revision in [
+            ClientRevision::R274,
+            ClientRevision::R289,
+            ClientRevision::R377,
+        ] {
+            let catalog = super::DebugCatalog::decode(bytes, revision, items.clone())
+                .expect("debug facts decode under the caller-selected revision");
             assert_eq!(catalog.revision(), revision);
-            let other = match revision {
-                ClientRevision::R274 => ClientRevision::R289,
-                ClientRevision::R289 => ClientRevision::R274,
-            };
-            assert!(super::DebugCatalog::decode(bytes.as_bytes(), other, items).is_err());
         }
+    }
+
+    #[test]
+    fn selected_377_catalog_decodes_its_actual_asset() {
+        use client::io::ClientRevision;
+
+        let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+            return;
+        };
+        let Some(path) = crate::test_support::local_asset_path_377(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/377/debug.json"),
+            "revision 377 debug catalog",
+        ) else {
+            return;
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let catalog = super::DebugCatalog::decode(&bytes, ClientRevision::R377, data)
+            .expect("the 377 debug asset matches the selected revision");
+        assert_eq!(catalog.revision(), ClientRevision::R377);
+        assert_eq!(
+            super::DebugCatalog::decode(
+                &bytes,
+                ClientRevision::R289,
+                crate::game_data::for_revision(ClientRevision::R289).unwrap()
+            )
+            .unwrap()
+            .revision(),
+            ClientRevision::R289,
+            "ADR 0019 selects the caller's revision without input identity verification"
+        );
+    }
+
+    #[cfg(feature = "debug-catalog")]
+    #[test]
+    fn load_selects_the_377_debug_asset() {
+        use client::io::ClientRevision;
+
+        let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+            return;
+        };
+        let catalog =
+            super::DebugCatalog::load(ClientRevision::R377, data).expect("loaded 377 debug asset");
+        assert_eq!(catalog.revision(), ClientRevision::R377);
     }
 
     fn command(args: Vec<DebugArgument>) -> DebugCommand {
@@ -429,5 +494,28 @@ mod tests {
         assert!(debug.format_command(&[short]).is_ok());
         let multibyte = "é".repeat(40);
         assert!(debug.format_command(&[multibyte]).is_err());
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "debug-catalog",
+    not(all(feature = "embedded-game-data", not(no_local_game_data)))
+))]
+mod missing_data_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_build_reports_missing_local_catalog_data() {
+        let items = std::sync::Arc::new(
+            serde_json::from_slice::<crate::game_data::SelectedGameData>(
+                br#"{"schema_version":5,"revision":274,"items":[],"consumption":[],"pickpocket":[]}"#,
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            DebugCatalog::load(ClientRevision::R289, items),
+            Err(DebugCatalogError::LocalDataUnavailable)
+        ));
     }
 }

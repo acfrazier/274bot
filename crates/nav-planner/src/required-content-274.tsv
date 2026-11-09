@@ -1835,6 +1835,7 @@ loc	scripts/quests/quest_vampire/configs/quest_vampire_coffin.loc
 loc	scripts/quests/quest_viking/configs/viking.loc
 loc	scripts/quests/quest_waterfall/configs/waterfall.loc
 loc	scripts/quests/quest_zombiequeen/configs/quest_zombiequeen.loc
+file	maps/multiway.csv	survivable S3 multiway keys
 # the canonical map set (maps/*.jm2), read by the placement scan and the bake
 map	maps/m29_75.jm2
 map	maps/m30_75.jm2

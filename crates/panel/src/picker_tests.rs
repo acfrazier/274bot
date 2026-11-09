@@ -9,19 +9,18 @@ use std::sync::Arc;
 
 use super::{
     available_levels, cached_remaining_path, cached_remaining_path_view, click_to_tile,
-    decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count,
-    flags_load_count, flags_sidecar_for, flags_sidecar_state, flood_cache_occupied,
-    format_walkto_status, last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window,
-    picker_nested_in_game, reach_binding_occupied, reach_bitset, reset_flags_content_hash_count,
-    reset_flags_load_count, reset_route_cache, right_align_x, route_flatten_count,
-    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
+    decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar, flags_load_count,
+    flags_sidecar_for, flags_sidecar_state, flood_cache_occupied, format_walkto_status,
+    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
+    reach_binding_occupied, reach_bitset, reset_flags_load_count, reset_route_cache, right_align_x,
+    route_flatten_count, set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
     walkto_actions_enabled, walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption,
     walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
     ROUTE_THROUGH_ZONES_TOOLTIP,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
-use crate::test_support::TestDir;
+use crate::test_support::{map_fixture, TestDir};
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
@@ -84,11 +83,10 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let mut session = Session::new();
     session.set_focus_for_test("alice");
     let arms = host_play::WalkArms::default();
-    let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
-        route: Some(Arc::new(test_route())),
-        route_generation: 42,
-        ..Default::default()
-    }));
+    let mut arm = host_play::WalkArm::default();
+    arm.route = Some(Arc::new(test_route()));
+    arm.route_generation = 42;
+    let arm = Arc::new(std::sync::Mutex::new(arm));
     arms.lock()
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));
@@ -531,6 +529,249 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
     }
 }
 
+fn probability_picker_session(
+    world: &NavWorld,
+    origin: Tile,
+) -> (map_fixture::MapFixture, Session) {
+    use api::snapshot::{
+        ActorView, GameSnapshot, HitmarkView, HitmarksView, LocalPlayerView, PlayerView, StatView,
+        VarpView, WorldStateView,
+    };
+
+    let fixture = map_fixture::MapFixture::new(world, "local-289");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    session
+        .launcher
+        .install_template(frontend_core::launch::ProfileTemplate::from_host(
+            Arc::clone(&fixture.template),
+        ));
+    session.set_focus_for_test("alice");
+    session.core.set_play(Some(fixture.play(origin)));
+    session.statuses.refresh_from_play(&session.core);
+    let at = WorldTile {
+        x: origin.x,
+        z: origin.z,
+        level: origin.level,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(at);
+    snapshot.seed_local_player(LocalPlayerView {
+        player: PlayerView {
+            index: 0,
+            network: at,
+            actor: ActorView {
+                name: Some("alice".into()),
+                actions: Vec::new(),
+                tile: at,
+                distance: 0,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 1,
+                total_health: 1,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 1,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+        animation_update: None,
+    });
+    snapshot.seed_stats(
+        [1, 3, 5]
+            .into_iter()
+            .map(|index| StatView {
+                index,
+                name: api::snapshot::stat_name(index as usize).into(),
+                effective: 1,
+                base: 1,
+                xp: 0,
+                used: true,
+            })
+            .collect(),
+    );
+    snapshot.seed_varps(vec![VarpView {
+        index: 173,
+        value: 0,
+    }]);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_world(WorldStateView {
+        level: at.level,
+        player_count: 1,
+        ..WorldStateView::default()
+    });
+    snapshot.seed_hitmarks(HitmarksView {
+        marks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    let input = host_play::admission::capture(&snapshot, false, None, false, None);
+    assert_eq!(input.hp, 1);
+    assert!(!input.missing_facts(), "{input:?}");
+    let state = nav_planner::WorldState::from_snapshot(&snapshot);
+    session.core.publish_test_snapshot("alice", snapshot, state);
+    (fixture, session)
+}
+
+#[test]
+fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let _guard = crate::test_support::imgui_context_guard();
+    let _stores = IsolatedStores::enter("picker-probability-admission");
+    let mut ctx = crate::test_support::imgui_context();
+    let mut world = open_world(24, 3);
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let ice = selected.npc_by_config("icewarrior").unwrap();
+    world.graph.zones = Some(
+        nav_planner::zones::ZoneTable::from_parts(
+            vec![nav_planner::zones::Zone::npc(
+                WorldTile {
+                    x: 11,
+                    z: 1,
+                    level: 0,
+                },
+                1,
+                nav_planner::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav_planner::zones::ZoneKind::new(
+                "ice",
+                "Ice warrior",
+                ice.id,
+                57,
+                false,
+                false,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            world.collision.origin,
+            24,
+            3,
+            &world.graph.wilderness,
+        )
+        .unwrap(),
+    );
+    let outside = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 22,
+        z: 1,
+        level: 0,
+    };
+    let (_profile, mut session) = probability_picker_session(&world, outside);
+    let world = session.core.nav_world().expect("the checked fixture world");
+    super::note_closed();
+    session.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert!(!session.route_through_zones);
+    session.select_picker_tile(&world, destination);
+    assert!(!session.confirm_picker_walk(&world));
+    assert!(!session.core.walk_route_armed("alice"));
+
+    let rect = last_picker_layout().route_zones_rect;
+    assert_ne!(rect, [[0.0, 0.0], [0.0, 0.0]]);
+    let checkbox = [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ];
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+    picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+    assert!(session.route_through_zones);
+    session.select_picker_tile(&world, destination);
+    assert!(session.confirm_picker_walk(&world));
+    session
+        .core
+        .with_walk_arm("alice", |arm| {
+            let assessment = arm.assessment.as_ref().unwrap();
+            assert_eq!(format!("{:?}", assessment.verdict), "Unsurvivable");
+            assert!(assessment.bound > 0.0);
+            assert!(!assessment.plan.crossings.is_empty());
+            assert!(arm.admission.as_ref().unwrap().grants.is_all());
+            assert!(
+                arm.route.is_some(),
+                "explicit UI opt-in retains the honest bound"
+            );
+        })
+        .expect("confirmed picker walk retains its arm");
+
+    // The footer closes a successful WalkTo; a fresh open resets its choice.
+    session.walkto_open = false;
+    session.map_model.close();
+    super::note_closed();
+    session.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+    assert!(
+        !session.route_through_zones,
+        "a fresh picker cannot retain the previous WalkTo choice"
+    );
+    session.select_picker_tile(&world, destination);
+    assert!(
+        !session.confirm_picker_walk(&world),
+        "a later strict walk cannot reuse the previous grant"
+    );
+
+    let inside = Tile {
+        x: 11,
+        z: 1,
+        level: 0,
+    };
+    let (_escape_profile, mut escape) = probability_picker_session(&world, inside);
+    let world = escape.core.nav_world().expect("the checked fixture world");
+    super::note_closed();
+    escape.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut escape, &world, [0.0, 0.0], false);
+    assert!(!escape.route_through_zones);
+    escape.select_picker_tile(&world, outside);
+    assert!(escape.confirm_picker_walk(&world));
+    escape
+        .core
+        .with_walk_arm("alice", |arm| {
+            let assessment = arm.assessment.as_ref().unwrap();
+            assert!(assessment.plan.complete);
+            assert!(assessment.plan.crossings.is_empty());
+            assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
+            assert!(!format!("{:?}", assessment.verdict).starts_with("Unknown"));
+            assert_eq!(
+                arm.admission.as_ref().unwrap().grants,
+                nav_planner::zones::ZoneExempt::NONE
+            );
+            assert!(
+                arm.route.is_some(),
+                "default UI escape needs no checkbox grant"
+            );
+        })
+        .expect("default escape retains its walk arm");
+}
+
 /// A peer frontend sets the durable global danger-zone grant, through a
 /// second service on the session's files; the session sees it once its own
 /// preferences re-read.
@@ -554,7 +795,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     let _guard = crate::test_support::imgui_context_guard();
     assert_eq!(
         super::GLOBAL_DANGER_WARNING,
-        "Global danger-zone override is enabled."
+        frontend_core::walk_permissions::GLOBAL_DANGER_WARNING
     );
     let _isolated = IsolatedStores::enter("picker-durable-danger");
     let mut ctx = crate::test_support::imgui_context();
@@ -886,9 +1127,9 @@ fn picker_pack_uses_injected_arc_not_a_second_decode() {
 }
 
 #[test]
-fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
+fn flags_sidecar_preserves_geometry_and_drops_on_toggle_off() {
     let _guard = super::lock_nav_statics();
-    let dir = TestDir::new("flags-identity");
+    let dir = TestDir::new("flags-geometry");
     let path = dir.join("flags.navflags");
     let origin = WorldTile {
         x: 3200,
@@ -898,116 +1139,37 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
-    reset_flags_content_hash_count();
-    set_navflags_binding(path.clone(), None, false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags identity is unknown")
-    );
-    assert!(flags_sidecar_for(origin, 1, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 0);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags sidecar hash mismatch")
-    );
-    assert!(flags_sidecar_for(origin, 1, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 1);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some(digest), false);
+    set_navflags_binding(path);
     ensure_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-    assert_eq!(flags_content_hash_count(), 2);
+    let first = flags_sidecar_for(origin, 1, 1).unwrap();
+    assert_eq!(first.as_slice(), flags.as_slice());
+    ensure_flags_sidecar();
+    let second = flags_sidecar_for(origin, 1, 1).unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert!(flags_sidecar_for(origin, 2, 1).is_none());
     drop_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
     assert!(flags_sidecar_for(origin, 1, 1).is_none());
 }
 
 #[test]
-fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
+fn missing_and_malformed_flags_sidecars_remain_unavailable() {
     let _guard = super::lock_nav_statics();
-    let dir = TestDir::new("flags-bundled");
+    let dir = TestDir::new("flags-unavailable");
     let path = dir.join("flags.navflags");
-    let origin = WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    };
-    let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
-    std::fs::write(&path, &bytes).unwrap();
-    // Digest is still bound (identity names flags) but must not be rehashed.
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
-
-    reset_flags_content_hash_count();
-    set_navflags_binding(path.clone(), Some(digest.clone()), true);
+    set_navflags_binding(path.clone());
     ensure_flags_sidecar();
-    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-    assert_eq!(
-        flags_content_hash_count(),
-        0,
-        "trusted bundled flags must not content-hash on first paint"
-    );
+    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Missing);
 
-    // Per-session reuse: second ensure is a no-op and still does not hash.
-    ensure_flags_sidecar();
-    assert_eq!(flags_content_hash_count(), 0);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-
-    // Geometry mismatch still refuses paint application without a rehash.
-    assert!(flags_sidecar_for(origin, 2, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 0);
-
-    drop_flags_sidecar();
-    // Explicit same-path override remains external and must hash.
-    set_navflags_binding(path.clone(), Some(digest), false);
-    ensure_flags_sidecar();
-    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(flags_content_hash_count(), 1);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags sidecar hash mismatch")
-    );
-    assert_eq!(flags_content_hash_count(), 2);
-
-    // Malformed header refused after trusted bind without hashing.
-    drop_flags_sidecar();
     std::fs::write(&path, b"not-a-flags-sidecar").unwrap();
-    set_navflags_binding(path.clone(), Some("ab".repeat(32)), true);
+    set_navflags_binding(path);
     ensure_flags_sidecar();
     assert_eq!(
         flags_sidecar_state(),
         FlagsSidecarState::Refused("flags sidecar is unreadable")
     );
-    assert_eq!(flags_content_hash_count(), 2);
 }
 
 #[test]
@@ -1160,11 +1322,10 @@ fn flags_load_once_on_ensure_and_drop_releases() {
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     drop_flags_sidecar();
     reset_flags_load_count();
-    set_navflags_binding(path.clone(), Some(digest), true);
+    set_navflags_binding(path);
     assert_eq!(flags_load_count(), 0);
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
 

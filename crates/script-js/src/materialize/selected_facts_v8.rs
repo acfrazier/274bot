@@ -1,7 +1,7 @@
 //! Typed local V8 marshalling for selected compatibility facts.
 //! This is isolate-local calculation, not an isolate-to-host transport.
 
-use crate::supply_v2;
+use crate::scene::supply_v2;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::cell::RefCell;
@@ -41,7 +41,7 @@ enum SelectedFactsObjectShape {
     Alias,
 }
 
-pub(super) fn install(
+pub(crate) fn install(
     runtime: &mut Runtime,
     loc_projection_interest: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -219,7 +219,7 @@ fn worth_stocking<'s>(
     name: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let name = js_to_string(scope, name)?;
-    Ok(v8::Boolean::new(scope, crate::market_catalog::worth_stocking(&name)).into())
+    Ok(v8::Boolean::new(scope, crate::compat::market_catalog::worth_stocking(&name)).into())
 }
 
 fn item_db<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -353,8 +353,8 @@ fn cert_link<'s>(
         return Ok(v8::null(scope).into());
     };
     let linked = match direction.as_str() {
-        "noted" => crate::market_catalog::noted_id(&data, id),
-        "unnoted" => Some(crate::market_catalog::unnoted_id(&data, id)),
+        "noted" => crate::compat::market_catalog::noted_id(&data, id),
+        "unnoted" => Some(crate::compat::market_catalog::unnoted_id(&data, id)),
         _ => return Err("invalid selected facts op".into()),
     };
     match linked {
@@ -412,7 +412,7 @@ fn obj_record_row<'s>(
         scope,
         row,
         "equippable",
-        crate::market_catalog::equippable(item),
+        crate::compat::market_catalog::equippable(item),
     );
     set_i32(scope, row, "certlink", item.certificate_link);
     set_i32(scope, row, "certtemplate", item.certificate_template);
@@ -432,8 +432,8 @@ fn obj_resolve_by_name<'s>(
         return Ok(v8::Array::new(scope, 0).into());
     };
     let query = js_to_string(scope, query)?;
-    let index = crate::market_catalog::market_index(&data);
-    let ids = crate::market_catalog::resolve_by_name(&index, &query, exact_only.is_true());
+    let index = crate::compat::market_catalog::market_index(&data);
+    let ids = crate::compat::market_catalog::resolve_by_name(&index, &query, exact_only.is_true());
     let catalog = catalog
         .to_object(scope)
         .ok_or_else(|| "selected facts catalog object".to_string())?;
@@ -487,7 +487,7 @@ fn obj_record_rows<'s>(
     }
     // `new_with_elements` writes own elements, so a setter that a script put on
     // `Array.prototype` cannot drop a row from the rebuild.
-    let rows = crate::market_catalog::records(data.items())
+    let rows = crate::compat::market_catalog::records(data.items())
         .map(|(item, name)| obj_record_row(scope, item, name).map(Into::into))
         .collect::<Result<Vec<v8::Local<'s, v8::Value>>, String>>()?;
     let count = u32::try_from(rows.len()).unwrap_or(u32::MAX);
@@ -525,7 +525,7 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         set_key(scope, catalog, "aliases", aliases.into());
         return Ok(catalog.into());
     };
-    let market = crate::market_catalog::market_index(&data);
+    let market = crate::compat::market_catalog::market_index(&data);
     let rows = obj_record_rows(scope)?;
     for index in 0..rows.length() {
         let row = rows
@@ -579,7 +579,8 @@ fn item_tradeable<'s>(
     let Some(data) = supply_v2::selected_data() else {
         return Ok(v8::undefined(scope).into());
     };
-    let tradeable = js_i32(scope, id)?.is_none_or(|id| crate::market_catalog::tradeable(&data, id));
+    let tradeable =
+        js_i32(scope, id)?.is_none_or(|id| crate::compat::market_catalog::tradeable(&data, id));
     Ok(v8::Boolean::new(scope, tradeable).into())
 }
 
@@ -595,12 +596,15 @@ fn item_name<'s>(
         return Ok(v8::undefined(scope).into());
     };
     match (which.as_str(), js_i32(scope, id)?) {
-        ("client", Some(id)) => match crate::market_catalog::client_name(&data, id) {
+        ("client", Some(id)) => match crate::compat::market_catalog::client_name(&data, id) {
             Some(name) => v8_str(scope, name),
             None => Ok(v8::null(scope).into()),
         },
         ("client", None) => Ok(v8::null(scope).into()),
-        ("display", Some(id)) => v8_str(scope, &crate::market_catalog::display_name(&data, id)),
+        ("display", Some(id)) => v8_str(
+            scope,
+            &crate::compat::market_catalog::display_name(&data, id),
+        ),
         ("display", None) => {
             let raw = js_to_string(scope, id)?;
             v8_str(scope, &format!("item {raw}"))
@@ -853,7 +857,7 @@ fn cow_bank_tile_value<'s>(
     name: &str,
     fallback: WorldTile,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let tile = crate::bank_select::bank_tile(name).unwrap_or(fallback);
+    let tile = crate::scene::bank_select::bank_tile(name).unwrap_or(fallback);
     tile_instance(scope, tile_constructor, tile)
 }
 
@@ -975,7 +979,7 @@ fn thieving_ready<'s>(
         return Ok(v8::Boolean::new(scope, true).into());
     };
     let required = data.required_thieving_npc(npc_id).unwrap_or(1);
-    let effective = crate::observed::with(|scene| {
+    let effective = crate::scene::observed::with(|scene| {
         scene
             .latest()
             .stats()

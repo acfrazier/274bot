@@ -1,0 +1,1376 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "troll_love",
+  "display_name": "Troll Romance",
+  "required": [
+    "death",
+    "troll",
+    "agility"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "death",
+        "kind": {
+          "Quest": "death"
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_troll_love/scripts/troll_love_journal.rs2:11-15"
+      },
+      {
+        "id": "troll",
+        "kind": {
+          "Quest": "troll"
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_troll_love/scripts/troll_love_journal.rs2:16-19; content/scripts/quests/quest_troll_love/scripts/ug.rs2:29-33"
+      },
+      {
+        "id": "agility",
+        "kind": {
+          "Skill": {
+            "skill": "agility",
+            "level": 28
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:1-4"
+      }
+    ],
+    "items": [],
+    "acquire": {"STOP-iron-smelting-20-failures":[{"id":"mine-one-iron-ore","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"iron","until":{"obj":"iron_ore","qty":1},"anchor":{"tile":[2968,3239,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m46_50.jm2:5666; /Users/acfrazier/experiments/lostcity-289/content/pack/loc.pack:2093; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60"},"radius":3,"settle_ms":300000},"comment":"Mining 15 yields iron ore: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}},{"id":"smelt-one-iron-ore","kind":"use_on","version":1,"advances":false,"args":{"item":"iron_ore","target":{"loc":"furnace1"},"anchor":{"tile":[2974,3369,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m46_52.jm2:7888; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"},"radius":3,"settle_ms":15000},"comment":"One ore is consumed per attempt. Without a forging ring, each attempt fails with probability 1/2. /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}}]}}]},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "brimhaven-food-route": {
+        "boxes": [[2752,3136,2815,3263,0],[2752,3136,2815,3263,1]],
+        "source": "/Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; /Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202; /Users/acfrazier/experiments/lostcity-289/content/maps/m43_50.jm2:4911-4913"
+      },
+      "snow-cave": {
+        "boxes": [
+          [
+            2752,
+            10176,
+            2815,
+            10239,
+            0
+          ]
+        ],
+        "source": "content/maps/m43_159.jm2:5867,6544; content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:21-28"
+      },
+      "snow-upper": {
+        "boxes": [
+          [
+            2752,
+            3840,
+            2815,
+            3903,
+            0
+          ]
+        ],
+        "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:27-28; content/maps/m43_59.jm2:4292-4300"
+      },
+      "snow-plateau": {
+        "boxes": [
+          [
+            2752,
+            3760,
+            2815,
+            3820,
+            0
+          ]
+        ],
+        "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:166-171,217-220; content/maps/m43_59.jm2:4312-4390; content/maps/m43_58.jm2:4408-4423"
+      },
+      "snow-bottom": {
+        "boxes": [
+          [
+            2752,
+            3712,
+            2815,
+            3759,
+            0
+          ]
+        ],
+        "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:225-294; content/maps/m43_58.jm2:4557"
+      },
+      "exit-cave": {
+        "boxes": [
+          [
+            2752,
+            10112,
+            2815,
+            10175,
+            0
+          ]
+        ],
+        "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:34-42; content/maps/m43_158.jm2:3617,4835"
+      }
+    },
+    "tools": [
+      "obj:death_climbingboots",
+      "obj:maple_logs",
+      "obj:iron_bar",
+      "obj:tbwt_cooked_karambwan",
+      "obj:lobster",
+      "obj:swordfish",
+      "obj:rope",
+      "obj:bucket_wax",
+      "obj:swamp_tar",
+      "obj:cake_tin",
+      "obj:trollromance_toboggon",
+      "obj:trollromance_toboggon_waxed",
+      "obj:trollromance_wax",
+      "obj:trollromance_rare_flower"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:troll_love",
+      "progress": {
+        "colour": {
+          "not_started": "troll_love:0",
+          "in_progress": "troll_love:5",
+          "complete": "troll_love:45"
+        },
+        "rules": [
+          {
+            "stage": "troll_love:40",
+            "all": [
+              "i should talk to",
+              "get my reward"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 40
+          },
+          {
+            "stage": "troll_love:35",
+            "all": [
+              "i have to defeat",
+              "arrg"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 35
+          },
+          {
+            "stage": "troll_love:30",
+            "all": [
+              "i should give the",
+              "to"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 30
+          },
+          {
+            "stage": "troll_love:25",
+            "all": [
+              "i need to get the",
+              "from the"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 25
+          },
+          {
+            "stage": "troll_love:22",
+            "all": [
+              "i need to get",
+              "sled wax"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 22
+          },
+          {
+            "stage": "troll_love:20",
+            "all": [
+              "i need some",
+              "for the"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 20
+          },
+          {
+            "stage": "troll_love:15",
+            "all": [
+              "i should talk to",
+              "about the sled"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 15
+          },
+          {
+            "stage": "troll_love:10",
+            "all": [
+              "i should ask someone about",
+              "who knows a lot"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 10
+          },
+          {
+            "stage": "troll_love:5",
+            "all": [
+              "i should speak to",
+              "aga"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          }
+        ],
+        "flags": [],
+        "monotonic": true
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "troll_love:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trollromance_ug",
+                "anchor": {
+                  "tile": [
+                    2827,
+                    10064,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Awww, you poor troll.",
+                  "Don't worry now, I'll see what I can do."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:5"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-aga",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trollromance_aga",
+                "anchor": {
+                  "tile": [
+                    2828,
+                    10104,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/aga.rs2:1-7,20-48; content/maps/m44_157.jm2:15970; content/pack/npc.pack:1555"
+                },
+                "leash": 8,
+                "prefer": [
+                  "love life?",
+                  "Errr... I've got to go."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/aga.rs2:1-7,20-48; content/maps/m44_157.jm2:15970; content/pack/npc.pack:1555",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:10"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "buy-climbing-boots", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true, "answer_once": true},
+              "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:1-24 charges 12 coins.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "wear-climbing-boots", "kind": "equip", "version": 1, "advances": false,
+              "args": {"obj": "death_climbingboots"},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn climbing boots at the rocks.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "ask-tenzing",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "death_sherpa",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3556,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:43-72; content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Do you know where I can find Trollweiss?",
+                  "What would I need to make such a sled?"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:43-72; content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:15"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:15",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "request-sled",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "death_smithy",
+                "anchor": {
+                  "tile": [
+                    2919,
+                    3574,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_death/scripts/death_smithy.rs2:90-98,213-258; content/maps/m45_55.jm2:8233; content/pack/npc.pack:1083"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I need a sled!!",
+                  "Yes."
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_death/scripts/death_smithy.rs2:90-98,213-258; content/maps/m45_55.jm2:8233; content/pack/npc.pack:1083",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:20"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:20",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "chop-maple", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "maple", "until": {"obj": "maple_logs", "qty": 1}, "anchor": {"tile": [2720,3475,0], "source": "content/maps/m42_54.jm2:7721; content/pack/loc.pack:1308; content/scripts/skill_woodcutting/configs/trees.dbrow:115-122"}, "radius": 4, "settle_ms": 300000},
+              "comment": "Dunstan accepts maple logs: content/scripts/quests/quest_death/scripts/death_smithy.rs2:228-257. Woodcutting 45 produces maple logs: content/scripts/skill_woodcutting/configs/trees.dbrow:115-122.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yew_logs"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}
+            },
+            {"id":"acquire-iron-bar","kind":"acquire","version":1,"advances":false,"args":{"recipe":"STOP-iron-smelting-20-failures","max_restarts":19},"comment":"At most 20 smelts. All 20 fail with probability 1/1048576 without a forging ring: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}}},
+            {
+              "id": "sail-for-arrg-food", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "captain_barnaby", "anchor": {"tile": [2679,3275,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m41_51.jm2:11011; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2"}, "leash": 8, "prefer": ["Yes please."], "strict": true, "gap_ticks": 8},
+              "comment": "The voyage to Brimhaven costs 30 coins: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_port_sarim/scripts/sailors.rs2:12-31.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}, {"All": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}}]}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}
+            },
+            {
+              "id": "buy-arrg-karambwan", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "tbwt_cooked_karambwan", "qty": 3, "est_gp": 997},
+              "comment": "Three cost 997 coins at base stock and heal 18 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/_unpack/274/all.obj:1-13; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:207-211.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}}
+            },
+            {
+              "id": "buy-arrg-lobster", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "lobster", "qty": 3, "est_gp": 598},
+              "comment": "Three cost 598 coins at base stock and heal 12 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_fishing/configs/fishing.obj:724-734; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:172-180.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}}
+            },
+            {
+              "id": "buy-arrg-swordfish", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "swordfish", "qty": 2, "est_gp": 526},
+              "comment": "Two cost 526 coins at base stock and heal 14 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_fishing/configs/fishing.obj:675-688; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:188-196.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}}
+            },
+            {
+              "id": "return-from-arrg-food", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "customs_officer", "anchor": {"tile": [2772,3225,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_50.jm2:4911-4913"}, "leash": 8, "prefer": ["Can I journey on this ship?", "Search away, I have nothing to hide.", "Ok."], "strict": true, "gap_ticks": 8},
+              "comment": "The return trip costs 30 coins: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-61,63-82.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}},
+              "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}}
+            },
+            {
+              "id": "collect-sled",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "death_smithy",
+                "anchor": {
+                  "tile": [
+                    2919,
+                    3574,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_death/scripts/death_smithy.rs2:90-98,213-258; content/maps/m45_55.jm2:8233; content/pack/npc.pack:1083"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Where can I get wax from?",
+                  "See you!"
+                ],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_death/scripts/death_smithy.rs2:90-98,213-258; content/maps/m45_55.jm2:8233; content/pack/npc.pack:1083",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:22"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:22",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "take-swamp-tar", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "swamp_tar"}, "op": "Take", "anchor": {"tile": [3164,3169,0], "source": "content/maps/m49_49.jm2:4870-4871; content/pack/obj.pack:1940"}, "radius": 2, "wait_if_missing": true},
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:67-82 consumes swamp tar with bucket wax.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "swamp_tar"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "swamp_tar"}}}
+            },
+            {
+              "id": "walk-to-repellent", "kind": "walk", "version": 1, "advances": false,
+              "args": {"tile": [2807,3450,0], "radius": 2, "source": "content/maps/m43_53.jm2:7283-7285; content/pack/obj.pack:29"},
+              "comment": "The Catherby ground spawn supplies the insect repellent.",
+              "skip_if": {"Any": [{"Fact": {"kind": "near", "version": 1, "args": {"tile": [2807,3450,0], "radius": 2}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2807,3450,0], "radius": 2}}}
+            },
+            {
+              "id": "wait-for-repellent", "kind": "wait", "version": 1, "advances": false,
+              "args": {"until": {"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}, "max_ticks": 200, "park_on_timeout": true},
+              "comment": "Allow twice the default respawn interval. content/scripts/areas/area_seers/configs/bees.obj:1-11 has no respawn override.",
+              "skip_if": {"Any": [{"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}
+            },
+            {
+              "id": "take-repellent", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "insect_repellent"}, "op": "Take", "anchor": {"tile": [2807,3450,0], "source": "content/maps/m43_53.jm2:7283-7285; content/pack/obj.pack:29"}, "radius": 2},
+              "comment": "content/maps/m43_53.jm2:7283-7285 places the repellent.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}
+            },
+            {
+              "id": "repel-bees", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "insect_repellent", "target": {"loc": "merlin_beehive"}, "anchor": {"tile": [2758,3440,0], "source": "content/maps/m43_53.jm2:4930; content/pack/loc.pack:69"}, "radius": 8},
+              "comment": "content/scripts/areas/area_seers/scripts/bees.rs2:8-22 sets the hive repelled state.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}},
+              "settle": {"All": []}
+            },
+            {
+              "id": "collect-beeswax", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "bucket_empty", "target": {"loc": "merlin_beehive"}, "anchor": {"tile": [2758,3440,0], "source": "content/maps/m43_53.jm2:4930; content/pack/loc.pack:69"}, "radius": 8, "product": "bucket_wax"},
+              "comment": "content/scripts/areas/area_seers/scripts/bees.rs2:24-36 replaces the empty bucket with wax.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}
+            },
+            {
+              "id": "mix-sled-wax",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "bucket_wax",
+                "target": {
+                  "item": "swamp_tar"
+                },
+                "product": "trollromance_wax"
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:67-82",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "trollromance_wax"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "trollromance_toboggon_waxed"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "trollromance_wax"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "wax-sled",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "trollromance_wax",
+                "target": {
+                  "item": "trollromance_toboggon"
+                },
+                "product": "trollromance_toboggon_waxed"
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:84-97",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:25"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:25",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "enter-snow-cave",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_caveentrance"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2820,
+                    3743,
+                    0
+                  ],
+                  "source": "content/maps/m44_58.jm2:4105; content/pack/loc.pack:5008"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:21-22",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-cave"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-upper"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-plateau"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-bottom"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "snow-cave"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "enter-crevasse",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_snow_cavewall_crevis"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2772,
+                    10233,
+                    0
+                  ],
+                  "source": "content/maps/m43_159.jm2:5867; content/pack/loc.pack:5026"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:27-28",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-upper"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-plateau"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-bottom"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "snow-upper"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "equip-sled-upper",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "held": "trollromance_toboggon_waxed" },
+                "op": "Ride"
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:112-129; content/scripts/quests/quest_troll_love/configs/quest_troll_love.constant:14-15",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "trollromance_toboggon_waxed"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-plateau"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-bottom"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "trollromance_toboggon_waxed"
+                  }
+                }
+              }
+            },
+            {
+              "id": "first-slope",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_piste_walk_barrier_down"
+                },
+                "op": "Slide",
+                "anchor": {
+                  "tile": [
+                    2772,
+                    3835,
+                    0
+                  ],
+                  "source": "content/maps/m43_59.jm2:4292-4300; content/pack/loc.pack:5016"
+                },
+                "radius": 5,
+                "settle_ms": 90000
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:1-16,131-223; content/maps/m43_59.jm2:4292-4300",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-plateau"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "snow-bottom"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2790,
+                          3794,
+                          0
+                        ],
+                        "radius": 4
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2799,
+                          3794,
+                          0
+                        ],
+                        "radius": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              "advances": false
+            },
+            {
+              "id": "recover-crash-sled",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "trollromance_toboggon_waxed"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2799,
+                    3795,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:164-171"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:144-178",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "trollromance_toboggon_waxed"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "trollromance_toboggon_waxed"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "trollromance_toboggon_waxed"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "equip-recovered-sled",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "held": "trollromance_toboggon_waxed" },
+                "op": "Ride"
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:112-129,164-171",
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "trollromance_toboggon_waxed"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "trollromance_toboggon_waxed"
+                  }
+                }
+              }
+            },
+            {
+              "id": "pick-trollweiss",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_rareflowers"
+                },
+                "op": "Pick",
+                "anchor": {
+                  "tile": [
+                    2775,
+                    3782,
+                    0
+                  ],
+                  "source": "content/maps/m43_59.jm2:4312; content/pack/loc.pack:5007"
+                },
+                "radius": 8
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:47-57",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:30"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:30",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "second-slope",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_piste_walk_barrier_down"
+                },
+                "op": "Slide",
+                "anchor": {
+                  "tile": [
+                    2785,
+                    3771,
+                    0
+                  ],
+                  "source": "content/maps/m43_58.jm2:4408-4423; content/pack/loc.pack:5016"
+                },
+                "radius": 5,
+                "settle_ms": 90000
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:1-16,225-294",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "snow-plateau"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "snow-bottom"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "enter-exit-tunnel",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_piste_exit_tunnel_exit"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2795,
+                    3717,
+                    0
+                  ],
+                  "source": "content/maps/m43_58.jm2:4557; content/pack/loc.pack:5013"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:34-36",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "snow-bottom"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "exit-cave"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "leave-exit-tunnel",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "trollromance_piste_exit_tunnel_bottom"
+                },
+                "op": "Enter",
+                "anchor": {
+                  "tile": [
+                    2771,
+                    10161,
+                    0
+                  ],
+                  "source": "content/maps/m43_158.jm2:3617; content/pack/loc.pack:5015"
+                },
+                "radius": 5
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:41-42",
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "exit-cave"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "exit-cave"
+                    }
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "give-flower",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trollromance_ug",
+                "anchor": {
+                  "tile": [
+                    2827,
+                    10064,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554; content/scripts/quests/quest_troll_love/scripts/ug.rs2:90-102"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554; content/scripts/quests/quest_troll_love/scripts/ug.rs2:90-102",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:35"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:35",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "wield-arrg-weapon", "kind": "equip", "version": 1, "advances": false,
+              "args": {"obj": "rune_scimitar"},
+              "comment": "The sled occupies both hands and is removed on exit: content/scripts/_unpack/289/all.obj:766-781; content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:34-36,100-107. Arrg's fight is required: content/scripts/quests/quest_troll_love/scripts/arrg.rs2:48-52,65-96,128-129.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+            },
+            {
+              "id": "challenge-arrg",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trollromance_arrg",
+                "anchor": {
+                  "tile": [
+                    2828,
+                    10095,
+                    1
+                  ],
+                  "source": "content/maps/m44_157.jm2:15969; content/pack/npc.pack:1556"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I am here to kill you!"
+                ],
+                "strict": true,
+                "expect_combat": {
+                  "npc": "trollromance_arrg_attackable"
+                }
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/arrg.rs2:22-31,48-52,65-73",
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "trollromance_arrg_attackable"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "trollromance_arrg_attackable"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "fight-arrg",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "trollromance_arrg_attackable",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2914,
+                    3611,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/arrg.rs2:65-69"
+                },
+                "lost_radius": 20,
+                "kill_budget_ticks": 900,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 10,
+                  "auto_retaliate": true
+                }
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/arrg.rs2:74-96,128-129",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:40"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:40",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "finish",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trollromance_ug",
+                "anchor": {
+                  "tile": [
+                    2827,
+                    10064,
+                    1
+                  ],
+                  "source": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554; content/scripts/quests/quest_troll_love/scripts/ug.rs2:108-116; content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:296-306"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "comment": "content/scripts/quests/quest_troll_love/scripts/ug.rs2:1-60; content/maps/m44_157.jm2:15967; content/pack/npc.pack:1554; content/scripts/quests/quest_troll_love/scripts/ug.rs2:108-116; content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:296-306",
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "troll_love",
+                    "any": [
+                      "troll_love:45"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "troll_love:45",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

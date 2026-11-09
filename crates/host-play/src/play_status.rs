@@ -109,11 +109,13 @@ pub struct SlotStatus {
     pub random: RandomStatus,
     /// Complete observed account condition, or a boundary-marked last fact.
     pub condition: api::condition::BotCondition,
+    /// Latest native runner's typed survival report.
+    pub survival: script::survival::SurvivalReport,
     /// The slot script's latest recorded paint frame (the Load isolate
     /// forwards it after every tick that painted). Disconnect and Pause retain
     /// this shared frame; Stop or slot unload clears it from the lifecycle
     /// owner even when no online observe runs. `None` means no current paint.
-    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    pub script_paint: Option<std::sync::Arc<script::paint::ScriptPaint>>,
 }
 
 impl Clone for SlotStatus {
@@ -157,6 +159,7 @@ impl Clone for SlotStatus {
             tutorial_pending: self.tutorial_pending,
             random: self.random.clone(),
             condition: self.condition,
+            survival: self.survival,
             script_paint: self.script_paint.clone(),
         }
     }
@@ -204,6 +207,7 @@ impl Clone for SlotStatus {
         self.tutorial_pending = source.tutorial_pending;
         self.script_paint.clone_from(&source.script_paint);
         self.condition = source.condition;
+        self.survival = source.survival;
         let (random, from) = (&mut self.random, &source.random);
         random.kind.clone_from(&from.kind);
         random.name.clone_from(&from.name);
@@ -410,6 +414,7 @@ impl Default for SlotStatus {
             tutorial_pending: false,
             random: RandomStatus::default(),
             condition: api::condition::BotCondition::default(),
+            survival: script::survival::SurvivalReport::default(),
             script_paint: None,
         }
     }

@@ -2,14 +2,14 @@ use super::*;
 use crate::combat::{CastNpc, CastNpcRequest};
 use crate::native::request::NativeKind;
 use crate::native::{ActionError, ActionHandle, NativeActions};
-use api::selected::{RunKey, SelectedPin};
+use api::selected::{ClientRevision, RunKey};
 use std::task::Poll;
 
 struct CastNpcRun {
     id: RequestId,
     run: RunKey,
     selected: Arc<api::game_data::SelectedGameData>,
-    pin: Arc<SelectedPin>,
+    revision: ClientRevision,
     request: CastNpcRequest,
     handle: Option<ActionHandle<CastNpc>>,
     needs_resume: bool,
@@ -124,7 +124,7 @@ impl SlotScript {
             self.finish_api_cast_npc(id, false);
             return;
         };
-        let Ok(pin) = selected.selected_pin() else {
+        let Ok(revision) = compiled::selected_revision(&selected) else {
             self.finish_api_cast_npc(id, false);
             return;
         };
@@ -165,7 +165,7 @@ impl SlotScript {
                 id,
                 run,
                 selected,
-                pin,
+                revision,
                 request,
                 handle: None,
                 needs_resume: false,
@@ -204,7 +204,7 @@ impl SlotScript {
             let mut cx = compiled::frame_context(
                 ctx,
                 run.run,
-                &run.pin,
+                run.revision,
                 &mut retained,
                 &mut self.native_runtime,
             );

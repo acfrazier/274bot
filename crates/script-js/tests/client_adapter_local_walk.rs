@@ -3,8 +3,8 @@
 // admission is not arrival. Traveller (`walk` / `walk-near`) is a different
 // host op.
 
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     ClientAdapterFactsInput, MainModalTextsInput, NativeFactsInput, ReachViewInput, SnapshotInput,
     TileInput,
 };

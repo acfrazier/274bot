@@ -1,16 +1,10 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
 import fs from 'node:fs';
-import { integer, parsePack, requireGatherText } from './common.ts';
-import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
-import { parseBody, walkStatements } from './gathering-rs2.ts';
-export const questIdentityContentFiles = [
-    'scripts/general/scripts/quests.rs2',
-    'scripts/general/configs/quest.constant',
-    'scripts/player/interfaces/questlist.if',
-    'scripts/quests/quest_cook/scripts/quest_cook.rs2',
-    'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2',
-    'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2',
-];
+import path from 'node:path';
+import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
+import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
+import { parseBody, walkStatements, type Node, type Stmt } from './gathering-rs2.ts';
+import { postCompletionProgressWriters } from './prereq-preservation.ts';
 const QUEST_IDENTITY_SEEDS = [
     { id: 'cook', component: 'cook' },
     { id: 'runemysteries', component: 'runemysteries' },
@@ -20,6 +14,14 @@ const QUEST_IDENTITY_SEEDS = [
     { id: 'zanaris', component: 'zanaris' },
 ] as const;
 
+/** Source files scanned when quest progress domains are derived. */
+export function questIdentityAnalysisFiles(content: string) {
+    return walkContent(content, 'scripts', ['.rs2', '.constant', '.varp']).filter(productionScriptPath);
+}
+function productionScriptPath(file: string) {
+    return !file.split(/[\\/]/).some((segment) => segment === '_test' || segment === 'debug');
+}
+
 type QuestItemAlias = { alias: string; quantity: number | null; kind: 'inv' | 'use-site' };
 type QuestSkillGate = { skill: string; level: number };
 type QuestRequirements = {
@@ -28,6 +30,22 @@ type QuestRequirements = {
     items: QuestItemAlias[];
     empty_must_have: boolean;
     unknown_as_satisfied: false;
+};
+
+type QuestIdentityOutputRow = {
+    id: string;
+    component: string;
+    display: string;
+    varp: string;
+    varp_id: number;
+    complete: number;
+    quest_points: number;
+    unknown_sides: string[];
+    requirements: QuestRequirements;
+    members: boolean;
+    kind: 'quest' | 'stub' | 'miniquest';
+    journal_title: string | null;
+    journal_script: string | null;
 };
 
 function parseQuestColourCalls(text: string) {
@@ -42,19 +60,42 @@ function parseQuestColourCalls(text: string) {
     return calls;
 }
 
-function parseQuestConstants(text: string) {
+function parseQuestConstants(text: string, label = 'quest.constant', allowEmpty = false) {
     const out = new Map<string, number>();
     for (const raw of text.split(/\r?\n/)) {
         const line = raw.trim();
         if (!line || line.startsWith('//')) continue;
         const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(line);
         if (!match) continue;
-        if (out.has(match[1])) throw new Error(`quest.constant: duplicate ^${match[1]}`);
+        if (out.has(match[1])) throw new Error(`${label}: duplicate ^${match[1]}`);
         out.set(match[1], integer(match[2], `^${match[1]}`));
     }
-    if (out.size === 0) throw new Error('quest.constant: no constants');
+    if (out.size === 0 && !allowEmpty) throw new Error(`${label}: no constants`);
     return out;
 }
+function questConstantsFor377(content: string, base: ReadonlyMap<string, number>) {
+    const values = new Map(base);
+    const ambiguous = new Set<string>();
+    const root = path.join(content, 'scripts/quests');
+    const files = walkContentFiles(root, '.constant')
+        .filter((file) => !file.includes('/_test/') && !file.includes('/_unpack/'));
+    for (const file of files) {
+        const label = path.relative(content, file).split(path.sep).join('/');
+        const local = parseQuestConstants(fs.readFileSync(file, 'utf8'), label, true);
+        for (const [name, value] of local) {
+            if (ambiguous.has(name)) continue;
+            const previous = values.get(name);
+            if (previous !== undefined && previous !== value) {
+                values.delete(name);
+                ambiguous.add(name);
+            } else {
+                values.set(name, value);
+            }
+        }
+    }
+    return { values, ambiguous };
+}
+
 
 function parseQuestListText(text: string) {
     const out = new Map<string, string>();
@@ -272,18 +313,579 @@ function firstVarpCall(calls: { component: string; progress: string; complete: s
     const found = calls.filter((call) => call.component === component);
     return found.find((call) => call.progress.startsWith('%')) ?? found[0] ?? null;
 }
+function questProgressFor377(calls: { progress: string }[], varpPack: ReadonlyMap<string, number>) {
+    const expressions = [...new Set(calls.map((call) => call.progress))];
+    const varps = [...new Set(expressions.flatMap((expression) => {
+        const match = /^%([A-Za-z0-9_]+)$/.exec(expression);
+        return match ? [match[1]] : [];
+    }))];
+    if (varps.length !== 1 || expressions.some((expression) => expression !== `%${varps[0]}` && expression !== '1')) {
+        return {
+            varp: expressions.length === 1 ? expressions[0] : expressions.join(' | '),
+            varpId: -1,
+            unknownSides: ['progress_operand'],
+        };
+    }
+    const varp = varps[0];
+    const varpId = varpPack.get(varp);
+    if (varpId === undefined) return { varp, varpId: -1, unknownSides: ['varp_pack_id'] };
+    return { varp, varpId, unknownSides: [] as string[] };
+}
+
+function questCompletionThreshold377(
+    operand: string,
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+): number | null {
+    const constant = /^\^([A-Za-z0-9_]+)$/.exec(operand);
+    if (constant) return ambiguous.has(constant[1]) ? null : constants.get(constant[1]) ?? null;
+    if (/^-?\d+$/.test(operand)) return integer(operand, `quest completion ${operand}`);
+    const bitMask = /^sub\(\s*pow\(\s*2\s*,\s*\^([A-Za-z0-9_]+)\s*\)\s*,\s*1\s*\)$/.exec(operand);
+    if (!bitMask || ambiguous.has(bitMask[1])) return null;
+    const bits = constants.get(bitMask[1]);
+    if (bits === undefined) return null;
+    const value = 2 ** bits - 1;
+    return Number.isSafeInteger(value) ? value : null;
+}
+
+function questCompletionFor377(
+    component: string,
+    calls: { complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+) {
+    if (calls.length === 0) {
+        const name = `${component}_complete`;
+        const complete = ambiguous.has(name) ? undefined : constants.get(name);
+        return complete === undefined
+            ? { complete: -1, unknownSides: ['completion_operand'] }
+            : { complete, unknownSides: [] as string[] };
+    }
+    const values = calls.map((call) => questCompletionThreshold377(call.complete, constants, ambiguous));
+    if (values.length === 0 || values.some((value) => value === null)) {
+        return { complete: -1, unknownSides: ['completion_operand'] };
+    }
+    const unique = new Set(values);
+    if (unique.size !== 1) return { complete: -1, unknownSides: ['completion_operand'] };
+    return { complete: values[0]!, unknownSides: [] as string[] };
+}
+
+function questPointsFor377(
+    component: string,
+    calls: { complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+) {
+    const directName = `${component}_questpoints`;
+    const direct = ambiguous.has(directName) ? undefined : constants.get(directName);
+    if (direct !== undefined) return direct;
+    const candidates = new Set(calls.flatMap((call) => {
+        const stage = /^\^([A-Za-z0-9_]+)_complete$/.exec(call.complete);
+        const name = stage && `${stage[1]}_questpoints`;
+        const value = name && !ambiguous.has(name) ? constants.get(name) : undefined;
+        return value === undefined ? [] : [value];
+    }));
+    return candidates.size === 1 ? [...candidates][0] : null;
+}
+
+function questIdentityRowsFor377(
+    content: string,
+    entries: { component: string; display: string; members: boolean; stub: boolean }[],
+    calls: { component: string; progress: string; complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+    varpPack: ReadonlyMap<string, number>,
+    journals: Map<string, { title: string; script: string }>,
+): QuestIdentityOutputRow[] {
+    return entries.map((entry): QuestIdentityOutputRow => {
+        const componentCalls = calls.filter((call) => call.component === entry.component);
+        const progress = questProgressFor377(componentCalls, varpPack);
+        const completion = questCompletionFor377(entry.component, componentCalls, constants, ambiguous);
+        const questPoints = questPointsFor377(entry.component, componentCalls, constants, ambiguous);
+        const requirements = requirementsFor(entry.component, content);
+        const unknownSides = new Set([...progress.unknownSides, ...completion.unknownSides, 'requirements']);
+        if (questPoints === null) unknownSides.add('quest_points');
+        const journal = journals.get(entry.component);
+        const incompleteIdentity = progress.unknownSides.length > 0 || completion.unknownSides.length > 0;
+        return {
+            id: entry.component,
+            component: entry.component,
+            display: entry.display,
+            varp: progress.varp,
+            varp_id: progress.varpId,
+            complete: completion.complete,
+            quest_points: questPoints ?? -1,
+            unknown_sides: [...unknownSides].sort(),
+            requirements,
+            members: entry.members,
+            kind: entry.stub || incompleteIdentity ? 'stub' : 'quest',
+            journal_title: journal?.title ?? null,
+            journal_script: journal?.script ?? null,
+        };
+    });
+}
+
+function questVarpConfigName(text: string): string {
+    const names = [...text.matchAll(/^\s*\[([A-Za-z0-9_]+)\]\s*$/gm)].map((match) => match[1]);
+    if (names.length !== 1) throw new Error(`quest_barcrawl.varp: expected one varp section, got ${names.length}`);
+    return names[0]!;
+}
+
+function barcrawlDisplay(text: string): string {
+    const names = new Set([...text.matchAll(/"[^"\r\n]*\bdoing\s+([^"\r\n]+)"/g)]
+        .map((match) => match[1].replace(/[.!?]+$/, '').trim())
+        .filter((name) => /barcrawl/i.test(name)));
+    if (names.size !== 1) throw new Error(`barcrawl: expected one source dialogue name, got ${names.size}`);
+    return [...names][0]!;
+}
+
+function barcrawlIdentityFor377(content: string, varpPack: ReadonlyMap<string, number>): QuestIdentityOutputRow {
+    const label = 'quest_barcrawl.constant';
+    const constants = parseQuestConstants(requireGatherText(content, `scripts/quests/quest_barcrawl/configs/${label}`), label);
+    const varp = questVarpConfigName(requireGatherText(content, 'scripts/quests/quest_barcrawl/configs/quest_barcrawl.varp'));
+    const complete = constants.get(`${varp}_complete`);
+    if (complete === undefined) throw new Error(`${label}: missing ^${varp}_complete`);
+    if (constants.get(`${varp}_not_started`) === undefined) throw new Error(`${label}: missing ^${varp}_not_started`);
+    const varpId = varpPack.get(varp);
+    if (varpId === undefined) throw new Error(`quest_barcrawl.varp: %${varp} missing from varp.pack`);
+    const questScript = requireGatherText(content, 'scripts/quests/quest_barcrawl/scripts/quest_barcrawl.rs2');
+    scriptHas(questScript, new RegExp(`%${varp}\\b`), 'quest_barcrawl.rs2: missing barcrawl varp reference');
+    const outpost = requireGatherText(content, 'scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2');
+    scriptHas(outpost, new RegExp(`%${varp}\\s*=\\s*\\^${varp}_complete\\b`), 'barbarian_outpost_guard.rs2: missing completion write');
+    const bartender = requireGatherText(content, 'scripts/areas/area_ardougne_east/scripts/bartender.rs2');
+    const display = barcrawlDisplay(bartender);
+    return {
+        id: varp,
+        component: varp,
+        display,
+        varp,
+        varp_id: varpId,
+        complete,
+        quest_points: -1,
+        unknown_sides: ['quest_points', 'requirements'],
+        requirements: emptyMustHave(),
+        members: true,
+        kind: 'miniquest',
+        journal_title: null,
+        journal_script: null,
+    };
+}
+
+
+/** Every `[proc,<name>]` block in the selected scripts, keyed by name. Ambiguous names keep every definition. */
+function procDefinitions(content: string) {
+    const procs = new Map<string, Rs2Block[]>();
+    for (const file of walkContentFiles(`${content}/scripts`, '.rs2')) {
+        const relative = file.slice(content.length + 1);
+        for (const block of parseRs2Blocks(relative, fs.readFileSync(file, 'utf8'))) {
+            if (block.kind !== 'proc') continue;
+            const known = procs.get(block.name);
+            if (known) known.push(block);
+            else procs.set(block.name, [block]);
+        }
+    }
+    return procs;
+}
+
+/**
+ * The one varp a progress proc returns when its single `return` is exactly a
+ * bare `%varp` or `getbit_range(%varp, ...)`. Any other expression (a computed
+ * value, two returns, or two varps) stays unresolved: a proc call is progress,
+ * never a varp itself.
+ */
+function procProgressVarp(block: Rs2Block): string | null {
+    const returns: string[] = [];
+    walkStatements(parseBody(block.body), (stmt) => {
+        if (/^return(?![A-Za-z0-9_$])/.test(stmt.text)) returns.push(stmt.text);
+    });
+    if (returns.length !== 1) return null;
+    const value = /^return\s*\((.*)\)$/.exec(returns[0])?.[1] ?? /^return\s+(%[A-Za-z0-9_]+)$/.exec(returns[0])?.[1];
+    if (value === undefined) return null;
+    const names = new Set([...value.replace(/"[^"]*"/g, '""').matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]));
+    if (names.size !== 1) return null;
+    const [varp] = [...names];
+    if (value === `%${varp}`) return varp;
+    // The call must be the whole value: its arguments (varp, start, end) hold no
+    // parentheses, so `getbit_range(%foo, 0, 3) + (1)` cannot match.
+    return new RegExp(`^getbit_range\\s*\\(\\s*%${varp}\\s*,[^()]*\\)$`).test(value) ? varp : null;
+}
+
+/** Resolve `~proc` to its backing varp; a missing, duplicated or ambiguous proc stays unresolved. */
+function resolveProgressProc(procs: Map<string, Rs2Block[]>, operand: string) {
+    const name = /^~([A-Za-z0-9_]+)/.exec(operand)?.[1];
+    if (!name) return null;
+    const blocks = procs.get(name);
+    return blocks?.length === 1 ? procProgressVarp(blocks[0]) : null;
+}
+
+/** `^name = value` in the quest's own `scripts/quests/quest_<component>` constants; null when absent or contradictory. */
+function questLocalConstant(content: string, component: string, name: string) {
+    const root = `${content}/scripts/quests/quest_${component}`;
+    if (!fs.existsSync(root)) return null;
+    const values = new Set<number>();
+    for (const file of walkContentFiles(root, '.constant')) {
+        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw.trim());
+            if (match && match[1] === name) values.add(integer(match[2], `^${name}`));
+        }
+    }
+    return values.size === 1 ? [...values][0] : null;
+}
+
+type ProgressMetadata = {
+    colour_authoritative: boolean;
+    stage_domain: { min: number; max: number } | null;
+    transmission: 'posted_by_content' | 'not_transmitted' | 'unknown';
+};
+
+function progressConstants(content: string, sourceFiles: readonly string[]) {
+    const values = new Map<string, number | null>();
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.constant')) continue;
+        const text = fs.readFileSync(`${content}/${file}`, 'utf8');
+        for (const raw of text.split(/\r?\n/)) {
+            const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw.trim());
+            if (!match) continue;
+            const value = integer(match[2], `^${match[1]}`);
+            if (!values.has(match[1])) values.set(match[1], value);
+            else if (values.get(match[1]) !== value) values.set(match[1], null);
+        }
+    }
+    return values;
+}
+
+type ProgressWriter = { block: Rs2Block; line: number; right: string; nodes: Node[] | null };
+
+export function questProgressWriters(content: string, sourceFiles: readonly string[]) {
+    const byVariable = new Map<string, ProgressWriter[]>();
+    const blocks: Rs2Block[] = [];
+    const add = (variable: string, block: Rs2Block, line: number, right: string, nodes: Node[] | null) => {
+        const writers = byVariable.get(variable) ?? [];
+        if (!writers.some((writer) => writer.block === block && writer.line === line && writer.right === right)) {
+            writers.push({ block, line, right, nodes });
+            byVariable.set(variable, writers);
+        }
+    };
+    const addAssignment = (block: Rs2Block, line: number, text: string, nodes: Node[] | null) => {
+        const code = text.trim().replace(/;$/, '').trim();
+        const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(code);
+        if (!assignment) return;
+        // Multiple outputs do not prove which RHS value reaches this varp.
+        const right = assignment[1].includes(',') ? code : assignment[2].trim();
+        for (const target of assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)) {
+            add(target[1], block, line, right, nodes);
+        }
+    };
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.rs2') || !productionScriptPath(file)) continue;
+        const text = fs.readFileSync(`${content}/${file}`, 'utf8');
+        for (const block of parseRs2Blocks(file, text)) {
+            blocks.push(block);
+            let nodes: Node[] | null = null;
+            try {
+                nodes = parseBody(block.body);
+                walkStatements(nodes, (stmt) => addAssignment(block, stmt.line, stmt.text, nodes));
+            } catch {
+                // Physical assignment lines below still cover unparsed switch bodies.
+            }
+            for (const { line, text: raw } of block.body) {
+                const code = stripComment(raw).trim().replace(/^case\s+[^:]+:\s*/, '');
+                addAssignment(block, line, code, nodes);
+            }
+        }
+    }
+    return { byVariable, blocks };
+}
+
+function varpTransmission(content: string, varp: string, sourceFiles: readonly string[]): ProgressMetadata['transmission'] {
+    let sawSection = false;
+    let sawYes = false;
+    let sawNo = false;
+    for (const file of sourceFiles) {
+        if (!file.endsWith('.varp')) continue;
+        let section: string | null = null;
+        for (const raw of fs.readFileSync(`${content}/${file}`, 'utf8').split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith('//')) continue;
+            if (line.startsWith('[') && line.endsWith(']')) {
+                section = line.slice(1, -1);
+                if (section === varp) sawSection = true;
+                continue;
+            }
+            if (section !== varp || !line.startsWith('transmit=')) continue;
+            const value = line.slice('transmit='.length).trim();
+            if (value === 'yes') sawYes = true;
+            else if (value === 'no') sawNo = true;
+            else return 'unknown';
+        }
+    }
+    if (!sawSection || (sawYes && sawNo)) return 'unknown';
+    if (sawYes) return 'posted_by_content';
+    return 'not_transmitted';
+}
+
+function lastLine(node: Node): number {
+    if (node.kind === 'stmt') return node.line;
+    const children = node.kind === 'if' ? [...node.then, ...node.els] : node.body;
+    return children.reduce((last, child) => Math.max(last, lastLine(child)), node.line);
+}
+
+function hasDirectReturn(nodes: Node[]) {
+    return nodes.some((node) => node.kind === 'stmt' && /^return\b/.test(node.text));
+}
+
+function guardedIncrementBound(
+    nodes: Node[] | null,
+    variable: string,
+    writerLine: number,
+    constants: Map<string, number | null>,
+): number | null {
+    if (!nodes) return null;
+    let bound: number | null = null;
+    const visit = (items: Node[]) => {
+        for (const node of items) {
+            if (node.kind === 'if') {
+                if (
+                    node.line < writerLine
+                    && lastLine(node) < writerLine
+                    && hasDirectReturn(node.then)
+                    && !/[&]/.test(node.cond)
+                ) {
+                    const match = new RegExp(`%${variable}\\s*>=\\s*(?:\\^([A-Za-z0-9_]+)|(-?\\d+))`).exec(node.cond);
+                    if (match) {
+                        const value = match[1] ? constants.get(match[1]) : integer(match[2], `${variable} upper guard`);
+                        if (typeof value === 'number') bound = bound === null ? value : Math.min(bound, value);
+                    }
+                }
+                visit(node.then);
+                visit(node.els);
+            } else if (node.kind === 'while') {
+                visit(node.body);
+            }
+        }
+    };
+    visit(nodes);
+    return bound;
+}
+
+function stageDomain(
+    variable: string,
+    complete: number,
+    constants: Map<string, number | null>,
+    writersByVariable: Map<string, ProgressWriter[]>,
+): ProgressMetadata['stage_domain'] {
+    if (!variable) return null;
+    let maximum = complete;
+    let sawWriter = false;
+    let safe = Number.isInteger(complete) && complete >= 0;
+    // Quest-prefixed constants can be bit indices for a different varp.
+    // Only this progress varp's actual writers may extend its completion bound.
+    for (const writer of writersByVariable.get(variable) ?? []) {
+        sawWriter = true;
+        const literal = /^(-?\d+)$/.exec(writer.right);
+        const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+        if (literal || constant) {
+            const value = literal
+                ? integer(literal[1], `${writer.block.span.file}:${writer.line}`)
+                : constants.get(constant![1]);
+            if (typeof value !== 'number' || value < 0) safe = false;
+            else maximum = Math.max(maximum, value);
+            continue;
+        }
+        const increment = new RegExp(`^add\\(\\s*%${variable}\\s*,\\s*1\\s*\\)$`).test(writer.right);
+        if (!increment) {
+            safe = false;
+            continue;
+        }
+        const bound = guardedIncrementBound(writer.nodes, variable, writer.line, constants);
+        if (bound === null || bound < 0) safe = false;
+        else maximum = Math.max(maximum, bound);
+    }
+    if (!sawWriter || !safe) return null;
+    return { min: 0, max: maximum };
+}
+
+export type ProgressWriterDomains = (variable: string) => { min: number; max: number } | null;
+
+function counterIncrementBound(nodes: Node[], variable: string, line: number, constants: ReadonlyMap<string, number | null>): number | null {
+    const compact = (text: string) => text.replace(/\s+/g, '');
+    const increment = `%${variable}=add(%${variable},1)`;
+    const occurrences: Stmt[] = [];
+    walkStatements(nodes, (statement) => {
+        if (statement.line === line && compact(statement.text) === increment) occurrences.push(statement);
+    });
+    const boundFor = (items: Node[], wanted: Stmt): number | null => {
+        for (let index = 0; index < items.length; index += 1) {
+            const node = items[index];
+            if (node.kind === 'while' && node.body.includes(wanted)) {
+                if (index < 3) return null;
+                const needed = items[index - 3], available = items[index - 2], counter = items[index - 1];
+                if (needed.kind !== 'stmt' || available.kind !== 'stmt' || counter.kind !== 'stmt') return null;
+                const need = /^def_int(\$[A-Za-z0-9_]+)=calc\((\^[A-Za-z0-9_]+|-?\d+)-%([A-Za-z0-9_]+)\)$/.exec(compact(needed.text));
+                const have = /^def_int(\$[A-Za-z0-9_]+)=inv_total\(inv,([A-Za-z0-9_]+)\)$/.exec(compact(available.text));
+                const count = /^def_int(\$[A-Za-z0-9_]+)=min\((\$[A-Za-z0-9_]+),(\$[A-Za-z0-9_]+)\)$/.exec(compact(counter.text));
+                if (!need || !have || !count || need[3] !== variable
+                    || count[2] !== need[1] || count[3] !== have[1]
+                    || new Set([count[1], need[1], have[1]]).size !== 3
+                    || compact(node.cond) !== `${count[1]}>0`) return null;
+                const bound = need[2].startsWith('^') ? constants.get(need[2].slice(1)) : Number(need[2]);
+                if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
+                const first = node.body[0];
+                const inventory = first?.kind === 'stmt' && compact(first.text) === `inv_del(inv,${have[2]},1)`;
+                const offset = inventory ? 1 : 0;
+                const decrement = node.body[offset + 1];
+                if (node.body.length !== offset + 2 || node.body[offset] !== wanted
+                    || decrement?.kind !== 'stmt'
+                    || compact(decrement.text) !== `${count[1]}=sub(${count[1]},1)`) return null;
+                return bound;
+            }
+            const children = node.kind === 'if' ? [node.then, node.els] : node.kind === 'while' ? [node.body] : [];
+            for (const child of children) {
+                const bound = boundFor(child, wanted);
+                if (bound !== null) return bound;
+            }
+        }
+        return null;
+    };
+    let maximum = 0;
+    if (occurrences.length === 0) return null;
+    for (const occurrence of occurrences) {
+        const bound = boundFor(nodes, occurrence);
+        if (bound === null) return null;
+        maximum = Math.max(maximum, bound);
+    }
+    return maximum;
+}
+
+/** Capture every production writer once; an opaque or unbounded write leaves its domain unknown. */
+export function captureProgressWriterDomains(content: string): ProgressWriterDomains {
+    const files = questIdentityAnalysisFiles(content);
+    const constants = progressConstants(content, files);
+    const census = questProgressWriters(content, files);
+    const unaccounted = new Set<string>();
+    const possibleWrites = (text: string) =>
+        [...text.matchAll(/%([A-Za-z0-9_]+)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/g)].map((match) => match[1]);
+    for (const block of census.blocks) {
+        const possible = possibleWrites(block.body.map((line) => stripComment(line.text)).join('\n'));
+        if (possible.length === 0) continue;
+        let nodes: Node[];
+        try {
+            nodes = parseBody(block.body);
+        } catch {
+            for (const variable of possible) unaccounted.add(variable);
+            continue;
+        }
+        walkStatements(nodes, (statement) => {
+            const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(statement.text);
+            const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
+            for (const variable of possibleWrites(statement.text)) {
+                if (!targets.has(variable)) unaccounted.add(variable);
+            }
+        });
+    }
+    return (variable: string) => {
+        const writers = census.byVariable.get(variable) ?? [];
+        if (writers.length === 0 || unaccounted.has(variable) || writers.some((writer) => writer.nodes === null)) return null;
+        let maximum = 0;
+        for (const writer of writers) {
+            const literal = /^-?\d+$/.test(writer.right);
+            const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+            let bound: number | null | undefined = literal ? Number(writer.right) : constant ? constants.get(constant[1]) : null;
+            if (!literal && !constant && writer.right.replace(/\s+/g, '') === `add(%${variable},1)`) {
+                // A one-time entry guard cannot bound repeated increments.
+                // Require the counter to start at min(limit-current, held)
+                // and to decrease once for each increment, without a yield.
+                bound = counterIncrementBound(writer.nodes!, variable, writer.line, constants);
+            }
+            if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
+            maximum = Math.max(maximum, bound);
+        }
+        return { min: 0, max: maximum };
+    };
+}
+
+function exactColourHelper(questsText: string) {
+    const blocks = parseRs2Blocks('scripts/general/scripts/quests.rs2', questsText)
+        .filter((block) => block.kind === 'proc' && block.name === 'send_quest_progress_colour');
+    if (blocks.length !== 1) return false;
+    const block = blocks[0];
+    const lines = block.body.map(({ text }) => stripComment(text).trim()).filter(Boolean);
+    return block.params.replace(/\s+/g, ' ').trim() === '(component $component, int $progress, int $complete_progress)'
+        && JSON.stringify(lines) === JSON.stringify([
+            'if ($progress = 0) {',
+            'if_setcolour($component, ^red_rgb);',
+            '} else if ($progress >= $complete_progress) {',
+            'if_setcolour($component, ^green_rgb);',
+            '} else {',
+            'if_setcolour($component, ^yellow_rgb);',
+            '}',
+        ]);
+}
+
+function progressMetadata(
+    content: string,
+    quest: string,
+    component: string,
+    variable: string,
+    complete: number,
+    calls: { component: string; progress: string; complete: string }[],
+    helperIsExact: boolean,
+    sourceFiles: readonly string[],
+    constants: Map<string, number | null>,
+    writersByVariable: Map<string, ProgressWriter[]>,
+): ProgressMetadata {
+    const transmission = varpTransmission(content, variable, sourceFiles);
+    const domain = stageDomain(variable, complete, constants, writersByVariable);
+    const rows = calls.filter((call) => call.component === component);
+    const direct = rows.length === 1
+        && rows[0].progress === `%${variable}`
+        && rows[0].complete === `^${quest}_complete`;
+    return {
+        colour_authoritative: direct
+            && helperIsExact
+            && transmission === 'not_transmitted'
+            && domain !== null,
+        stage_domain: domain,
+        transmission,
+    };
+}
 
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
-    const questlistText = requireGatherText(content, 'scripts/player/interfaces/questlist.if');
-    const displays = parseQuestListText(questlistText);
+    const questlistPath = revision === 377 ? 'scripts/interfaces/questlist.if' : 'scripts/player/interfaces/questlist.if';
+    const questlistText = requireGatherText(content, questlistPath);
     const listEntries = parseQuestListEntries(questlistText);
     const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
-    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
+    const helperIsExact = exactColourHelper(quests);
     const journals = journalIndex(content);
+    if (revision === 377) {
+        const questConstants = questConstantsFor377(content, constants);
+        const rows = questIdentityRowsFor377(
+            content,
+            listEntries,
+            calls,
+            questConstants.values,
+            questConstants.ambiguous,
+            varpPack,
+            journals,
+        );
+        const barcrawl = barcrawlIdentityFor377(content, varpPack);
+        if (!rows.some((row) => row.id === barcrawl.id)) rows.push(barcrawl);
+        if (rows.length === 0) throw new Error('quest_identity: no extracted rows');
+        if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
+            throw new Error('quest_identity: requirements must stay partial');
+        }
+        return { rows, coverage: [] };
+    }
+    const sourceFiles = questIdentityAnalysisFiles(content);
+    const progressConstantMap = progressConstants(content, sourceFiles);
+    const progressSources = questProgressWriters(content, sourceFiles);
+    const progressWriterIndex = progressSources.byVariable;
+    const displays = parseQuestListText(questlistText);
+    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
         const found = calls.filter((call) => call.component === seed.component);
@@ -307,6 +909,18 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         const questPoints = constants.get(`${seed.id}_questpoints`);
         if (complete === undefined) throw new Error(`quest.constant: missing ^${seed.id}_complete`);
         if (questPoints === undefined) throw new Error(`quest.constant: missing ^${seed.id}_questpoints`);
+        const metadata = progressMetadata(
+            content,
+            seed.id,
+            seed.component,
+            varp,
+            complete,
+            calls,
+            helperIsExact,
+            sourceFiles,
+            progressConstantMap,
+            progressWriterIndex,
+        );
         const display = displays.get(seed.component);
         if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
         if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
@@ -320,6 +934,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpId,
             complete,
             quest_points: questPoints,
+            colour_authoritative: metadata.colour_authoritative,
+            stage_domain: metadata.stage_domain,
+            transmission: metadata.transmission,
             unknown_sides: [] as string[],
             requirements: requirementsFor(seed.id, content),
             members: list?.members ?? false,
@@ -328,6 +945,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             journal_script: journal?.script ?? null,
         };
     });
+    let procIndex: Map<string, Rs2Block[]> | null = null;
     for (const entry of listEntries) {
         if (seedIds.has(entry.component)) continue;
         if (revision === 274 && entry.component === 'routequest') continue;
@@ -335,22 +953,57 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         let varp = '';
         let varpId = -1;
         let complete = 0;
+        const unresolved: string[] = [];
         if (call) {
             const progress = /^%([A-Za-z0-9_]+)$/.exec(call.progress);
             if (progress) {
                 varp = progress[1];
                 varpId = varpPack.get(varp) ?? -1;
+            } else if (call.progress.startsWith('~')) {
+                const resolved = resolveProgressProc((procIndex ??= procDefinitions(content)), call.progress);
+                const resolvedId = resolved === null ? undefined : varpPack.get(resolved);
+                if (resolved !== null && resolvedId !== undefined) {
+                    varp = resolved;
+                    varpId = resolvedId;
+                } else {
+                    varp = call.progress;
+                    unresolved.push(`progress operand ${call.progress} does not resolve to one varp in pack/varp.pack`);
+                }
             } else {
                 varp = call.progress;
+                unresolved.push(`progress operand ${call.progress} is not a %varp or a proc`);
             }
             if (call.complete.startsWith('^')) {
                 const name = call.complete.slice(1);
-                complete = constants.get(name) ?? 0;
+                const known = constants.get(name);
+                const local = known === undefined ? questLocalConstant(content, entry.component, name) : null;
+                if (known !== undefined) complete = known;
+                else if (local !== null) complete = local;
+                else unresolved.push(`complete constant ${call.complete} is not in quest.constant or the quest's own .constant`);
+            } else {
+                unresolved.push(`complete operand ${call.complete} is not a constant`);
             }
+        } else {
+            unresolved.push('no colour call; the varp stays empty');
+        }
+        if (unresolved.length > 0) {
+            console.warn(`quest_identity: ${entry.component} unresolved: ${unresolved.join('; ')}; kept today's row values`);
         }
         const questPoints = entry.component === 'fortress'
             ? (constants.get('blackknight_questpoints') ?? 0)
             : (constants.get(`${entry.component}_questpoints`) ?? 0);
+        const metadata = progressMetadata(
+            content,
+            entry.component,
+            entry.component,
+            varp,
+            complete,
+            calls,
+            helperIsExact,
+            sourceFiles,
+            progressConstantMap,
+            progressWriterIndex,
+        );
         const journal = journals.get(entry.component);
         rows.push({
             id: entry.component,
@@ -360,6 +1013,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpId,
             complete,
             quest_points: questPoints,
+            colour_authoritative: metadata.colour_authoritative,
+            stage_domain: metadata.stage_domain,
+            transmission: metadata.transmission,
             unknown_sides: [],
             requirements: emptyMustHave(),
             members: entry.members,
@@ -377,6 +1033,9 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             varp_id: varpPack.get('barcrawl') ?? 77,
             complete: 2,
             quest_points: 0,
+            colour_authoritative: false,
+            stage_domain: null,
+            transmission: 'unknown',
             unknown_sides: [],
             requirements: emptyMustHave(),
             members: true,
@@ -386,6 +1045,29 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         });
     }
     if (rows.length === 0) throw new Error('quest_identity: no extracted rows');
+    const postWriterConstants = new Map<string, number>();
+    for (const [name, value] of progressConstantMap) {
+        if (value !== null) postWriterConstants.set(name, value);
+    }
+    const checked = new Set<string>();
+    const postCompletionVariables = new Set<string>();
+    for (const row of rows) {
+        if (row.varp_id < 0 || row.complete <= 0 || postCompletionVariables.has(row.varp)) continue;
+        const key = `${row.varp}:${row.complete}`;
+        if (checked.has(key)) continue;
+        checked.add(key);
+        const writers = progressWriterIndex.get(row.varp) ?? [];
+        if (writers.length > 0 && postCompletionProgressWriters(
+            progressSources.blocks,
+            row.varp,
+            { min: row.complete, max: row.stage_domain?.max ?? 2147483647 },
+            postWriterConstants,
+            writers,
+        ).length > 0) postCompletionVariables.add(row.varp);
+    }
+    for (const row of rows) {
+        if (postCompletionVariables.has(row.varp)) row.colour_authoritative = false;
+    }
     if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
         throw new Error('quest_identity: requirements must stay partial');
     }

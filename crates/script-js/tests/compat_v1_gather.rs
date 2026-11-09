@@ -142,7 +142,7 @@ fn routes_of(case: &Value, oracle: &Value, declared: &BTreeSet<String>) -> Vec<R
 /// Every case of `selector` on each route it can take; an encoded result differing from upstream fails.
 fn contract(selector: &str) {
     let oracle = oracle();
-    let declared: BTreeSet<String> = script_js::declared_abi::load_fixture()
+    let declared: BTreeSet<String> = script_js::tooling::declared_abi::load_fixture()
         .expect("declared ABI fixture")
         .into_iter()
         .map(|export| export.name)

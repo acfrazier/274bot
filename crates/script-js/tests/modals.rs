@@ -2,10 +2,13 @@
 //! close-modal is not a settled close. Identity change settles; a newer
 //! root is never closed.
 
-use script::shim::InteractReq;
-use script_js::wire::{encode_snapshot, ReachViewInput, SnapshotInput};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{ReachViewInput, SnapshotInput},
+    script_js::wire::encode_snapshot,
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()

@@ -5,7 +5,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::selected::{FactKey, QuestGate};
@@ -14,7 +13,7 @@ use api::work::{InputRevision, Track, WorkFamily, WorkFamilySpec, WorkPhase};
 use client::dash3d::CollisionFlag;
 
 use crate::collision::{pack_walk, WorldCollision};
-use crate::quest_gates::{QuestFamilyId, QuestGates};
+use crate::quest_gates::QuestGates;
 use crate::router::{FindOptions, Leg, Route, RouteError, TargetError};
 use crate::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
@@ -58,19 +57,12 @@ fn grid(origin: WorldTile, width: usize, height: usize, level0: Vec<u32>) -> Wor
     }
 }
 
-fn digest(tag: &[u8]) -> PackDigest {
-    PackDigest::of(tag)
-}
-
 fn lease_from(collision: WorldCollision) -> NavLease {
-    NavLease::wrap(
-        Arc::new(NavWorld::from_parts(
-            collision,
-            TransportGraph::default(),
-            Vec::new(),
-        )),
-        digest(b"fixture"),
-    )
+    NavLease::wrap(Arc::new(NavWorld::from_parts(
+        collision,
+        TransportGraph::default(),
+        Vec::new(),
+    )))
     .unwrap()
 }
 
@@ -198,17 +190,15 @@ fn collision_view_is_a_borrow_not_a_world_copy() {
 }
 
 #[test]
-fn two_leases_of_the_same_content_are_distinct_leases() {
+fn two_leases_of_the_same_world_share_identity() {
     let world = Arc::new(NavWorld::from_parts(
         grid(tile(3200, 3200, 0), 1, 1, vec![0]),
         TransportGraph::default(),
         Vec::new(),
     ));
-    let content = digest(b"same-bytes");
-    let a = NavLease::wrap(Arc::clone(&world), content).unwrap();
-    let b = NavLease::wrap(world, content).unwrap();
-    assert_ne!(a.identity().pack(), b.identity().pack());
-    assert_eq!(a.identity().content(), b.identity().content());
+    let a = NavLease::wrap(Arc::clone(&world)).unwrap();
+    let b = NavLease::wrap(world).unwrap();
+    assert_eq!(a.identity().pack(), b.identity().pack());
     assert_eq!(a.identity().format(), FORMAT_ID);
     assert_eq!(a.identity().version(), VERSION);
 }
@@ -521,13 +511,8 @@ fn route_view_keeps_exact_half_tick_cost_and_borrowed_legs() {
     let to = tile(3201, 3200, 0);
     let mut edge = door_edge(to, from);
     edge.takeoff = Some(tile(3201, 3201, 0));
-    edge.quest_gates = Some(
-        QuestGates::new(
-            QuestFamilyId::new([1; 32], NonZeroU16::MIN),
-            [QuestGate::Complete(FactKey::new("cooks-assistant"))],
-        )
-        .unwrap(),
-    );
+    edge.quest_gates =
+        Some(QuestGates::new([QuestGate::Complete(FactKey::new("cooks-assistant"))]).unwrap());
     let route = Route {
         legs: vec![
             Leg::Walk {
@@ -614,8 +599,8 @@ fn zone_world() -> (NavLease, NavLease) {
         Vec::new(),
     );
     world_b.graph.zones = Some(table);
-    let a = NavLease::wrap(Arc::new(world_a), digest(b"zones-a")).unwrap();
-    let b = NavLease::wrap(Arc::new(world_b), digest(b"zones-b")).unwrap();
+    let a = NavLease::wrap(Arc::new(world_a)).unwrap();
+    let b = NavLease::wrap(Arc::new(world_b)).unwrap();
     (a, b)
 }
 
@@ -827,14 +812,11 @@ fn wilderness_view_has_no_grid_and_reports_membership() {
         },
         ..TransportGraph::default()
     };
-    let lease = NavLease::wrap(
-        Arc::new(NavWorld::from_parts(
-            grid(tile(3200, 3200, 0), 1, 1, vec![0]),
-            graph,
-            Vec::new(),
-        )),
-        digest(b"wild"),
-    )
+    let lease = NavLease::wrap(Arc::new(NavWorld::from_parts(
+        grid(tile(3200, 3200, 0), 1, 1, vec![0]),
+        graph,
+        Vec::new(),
+    )))
     .unwrap();
     let wild = lease.wilderness();
     let rules = &lease.world.graph.wilderness;
@@ -894,14 +876,11 @@ fn wilderness_view_rules_accessor_matches_pack_values() {
         },
         ..TransportGraph::default()
     };
-    let lease = NavLease::wrap(
-        Arc::new(NavWorld::from_parts(
-            grid(tile(3200, 3200, 0), 1, 1, vec![0]),
-            graph,
-            Vec::new(),
-        )),
-        digest(b"wild"),
-    )
+    let lease = NavLease::wrap(Arc::new(NavWorld::from_parts(
+        grid(tile(3200, 3200, 0), 1, 1, vec![0]),
+        graph,
+        Vec::new(),
+    )))
     .unwrap();
     let wild = lease.wilderness();
     let rules = wild.rules();
@@ -1002,7 +981,7 @@ fn real_pack_views_borrow_the_lease_and_keep_catalog_ids() {
     let origin = world.collision.origin;
     let width = world.collision.width;
     let height = world.collision.height;
-    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     assert_eq!(lease.identity().format(), FORMAT_ID);
     assert_eq!(lease.identity().version(), VERSION);
     let view = lease.collision();
@@ -1059,7 +1038,7 @@ fn real_pack_reach_area_and_step_match_production() {
     let Some(world) = NavWorld::load_default_pack_or_skip() else {
         return;
     };
-    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     let view = lease.collision();
     let collision = &lease.world.collision;
     assert!(
@@ -1170,7 +1149,7 @@ fn real_pack_exemptions_match_the_router_mask_for_catalog_groups() {
     let Some(world) = NavWorld::load_default_pack_or_skip() else {
         return;
     };
-    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     let zones = lease.zones().expect("v16 packs carry a zone table");
     let table = lease.world.graph.zones.as_ref().unwrap();
     let mountain = zones.resolve("white-wolf-mountain").unwrap();
@@ -1576,7 +1555,7 @@ fn real_pack_transport_legs_match_the_router_and_admission_facts() {
     let Some(world) = NavWorld::load_default_pack_or_skip() else {
         return;
     };
-    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     let collision = &lease.world.collision;
     let graph = &lease.world.graph;
 
@@ -1888,7 +1867,7 @@ fn zone_shape_carve_class_and_hazard_facts_match_the_table() {
         Vec::new(),
     );
     world.graph.zones = Some(table);
-    let lease = NavLease::wrap(Arc::new(world), digest(b"shaped")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     let zones = lease.zones().unwrap();
     let table = lease.world.graph.zones.as_ref().unwrap();
 
@@ -2004,7 +1983,7 @@ fn real_pack_shape_carve_hazard_and_class_facts_match_the_table() {
     let Some(world) = NavWorld::load_default_pack_or_skip() else {
         return;
     };
-    let lease = NavLease::wrap(Arc::new(world), digest(b"real-pack")).unwrap();
+    let lease = NavLease::wrap(Arc::new(world)).unwrap();
     let zones = lease.zones().expect("v16 packs carry a zone table");
     let table = lease.world.graph.zones.as_ref().unwrap();
 

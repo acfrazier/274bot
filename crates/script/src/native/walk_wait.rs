@@ -97,6 +97,11 @@ impl WalkSlot {
             .is_some_and(|wait| wait.token == token && wait.no_path)
     }
 
+    /// Borrow the active correlation identity instead of retaining a second copy.
+    pub fn request(&self) -> Option<(u64, WalkKey)> {
+        self.wait.as_ref().map(|wait| (wait.token, wait.key))
+    }
+
     pub fn observe_outcome(&mut self, outcome: HostOutcome) {
         if let Some(wait) = self.wait.as_mut() {
             if Self::outcome_matches(outcome, wait) {

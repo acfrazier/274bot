@@ -211,8 +211,8 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         approaches: vec![None; 2],
         teleports: vec![],
         wilderness: crate::transport::WildernessRules::default(),
-        quest_family: None,
         zones: None,
+        multiway: Box::from([]),
     };
     let from = WorldTile {
         x: 2 * at.x - toll.to.x,
@@ -317,6 +317,7 @@ fn allows_requires_every_req_kind() {
         quests: HashSet::from(["Rune Mysteries".to_string()]),
         map_members: false,
         quest_evidence: None,
+        establishable: None,
         combat_level: None,
     };
     assert!(s.allows(&e), "all facts present");
@@ -352,11 +353,10 @@ fn allows_requires_every_req_kind() {
 #[test]
 fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     use crate::quest_gates::QuestGates;
-    use crate::test_support::{family, range, tbwt_evidence, window};
+    use crate::test_support::{range, tbwt_evidence, window};
 
     let mut e = gated_edge();
-    e.quest_gates =
-        Some(QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());
+    e.quest_gates = Some(QuestGates::new([window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());
     let snapshot_only = WorldState {
         inv: HashMap::from([(995, 10)]),
         worn: HashSet::from([1712]),
@@ -375,6 +375,53 @@ fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     let mut unpaid = proven;
     unpaid.inv.clear();
     assert!(!unpaid.allows(&e), "evidence waives no other requirement");
+}
+
+/// Prerequisite stage windows authorize diagnosis only when the API
+/// implication proves the exact quest and signal interval. They never
+/// override current `True` evidence or make the strict edge pass.
+#[test]
+fn establishable_windows_only_make_unproven_implied_gates_actionable() {
+    use crate::test_support::{range, tbwt_evidence, window};
+    use api::selected::{FactKey, StageWindow, Truth};
+
+    let gate = window("tbwt", "tbwt_main", Some(3), Some(3));
+    let established = StageWindow {
+        quest: FactKey::new("tbwt"),
+        signal: FactKey::new("tbwt_main"),
+        values: range(Some(3), Some(3)),
+    };
+    let windows: Arc<[StageWindow]> = Arc::from([established]);
+
+    let unknown = WorldState::empty().with_establishable(windows.clone());
+    assert!(unknown.quest_evidence.is_none());
+    assert!(unknown.gate_actionable(&gate));
+
+    let false_gate = WorldState::empty()
+        .with_quest_evidence(tbwt_evidence(range(Some(2), Some(2))))
+        .with_establishable(windows.clone());
+    assert_eq!(
+        false_gate.quest_evidence.as_ref().unwrap().test(&gate),
+        Truth::False
+    );
+    assert!(false_gate.gate_actionable(&gate));
+
+    let true_gate = WorldState::empty()
+        .with_quest_evidence(tbwt_evidence(range(Some(3), Some(3))))
+        .with_establishable(windows);
+    assert_eq!(
+        true_gate.quest_evidence.as_ref().unwrap().test(&gate),
+        Truth::True
+    );
+    assert!(!true_gate.gate_actionable(&gate));
+
+    let unrelated = StageWindow {
+        quest: FactKey::new("tbwt"),
+        signal: FactKey::new("tbwt_druid"),
+        values: range(Some(3), Some(3)),
+    };
+    let unrelated = WorldState::empty().with_establishable(Arc::from([unrelated]));
+    assert!(!unrelated.gate_actionable(&gate));
 }
 
 /// `worn_req` is any-of: a slash-weapon web hop lists every blade
@@ -447,7 +494,7 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
     let mut state = WorldState::empty();
     assert!(state.allows(&edge), "an ungated edge needs no observation");
 
-    edge.forbidden_held = vec![1842];
+    edge.forbidden_held = vec![42, 1842, 9999];
     assert_eq!(
         state.exclusion_failure(&edge),
         Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
@@ -474,7 +521,7 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
     );
     state.inv.clear();
 
-    edge.forbidden_worn = vec![1277];
+    edge.forbidden_worn = vec![1101, 1277, 2000];
     assert_eq!(
         state.exclusion_failure(&edge),
         Some(EntranceRequirement::EquipmentNotObserved { at: edge.at })
@@ -979,4 +1026,59 @@ fn world_state_shared_retained_bytes_counts_one_arc_and_owned_buffers() {
     .unwrap();
 
     assert_eq!(state.try_shared_retained_bytes(), Some(expected));
+}
+
+fn bare_edge() -> TransportEdge {
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        loc_id: 1,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
+}
+
+#[test]
+fn admission_keeps_unknown_inventory_distinct_from_denied() {
+    let mut edge = bare_edge();
+    edge.item_req = vec![(995, 1)];
+    let unknown = WorldState::default();
+    assert_eq!(
+        unknown.admission(&edge),
+        EdgeAdmission::Unknown(MissingRequirement::InventoryObservation)
+    );
+    assert!(!unknown.allows(&edge));
+    let mut observed = WorldState {
+        inventory_ready: true,
+        ..WorldState::default()
+    };
+    assert_eq!(observed.admission(&edge), EdgeAdmission::Denied);
+    observed.inv.insert(995, 1);
+    assert_eq!(observed.admission(&edge), EdgeAdmission::Allowed);
 }

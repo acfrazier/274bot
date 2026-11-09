@@ -1,0 +1,11 @@
+[advisories]
+# RUSTSEC-2026-0009 (time) is not reachable here. ratatui-widgets 0.3.0, the
+# only crate that depends on `time`, enables the `time` features alloc, std and
+# local-offset; the lock also records time's optional `serde` edge. The
+# advisory covers the parsers that the `time` features `parsing` and
+# `formatting` compile, and the resolved graph selects neither.
+# `crates/tui/tests/audit_exception.rs` fails if any workspace resolution
+# selects either one, so a later reachable use cannot hide behind this ignore.
+# Lift it with the runtime track (docs/known-issues.toml,
+# runtime-serialization-upgrade-held).
+ignore = ["RUSTSEC-2026-0009"]

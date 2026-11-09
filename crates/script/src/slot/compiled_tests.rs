@@ -7,6 +7,29 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
 }
 
 #[test]
+fn compiled_runs_select_each_supported_game_data_revision() {
+    use api::selected::ClientRevision;
+
+    let has_local_legacy_data = api::test_support::game_data_available();
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        if revision == ClientRevision::R377
+            && !crate::native::has_local_game_data_for_test(revision)
+        {
+            continue;
+        }
+        if revision != ClientRevision::R377 && !has_local_legacy_data {
+            continue;
+        }
+        let selected = api::game_data::for_revision(revision).expect("selected revision game data");
+        assert_eq!(compiled::selected_revision(&selected).unwrap(), revision);
+    }
+}
+
+#[test]
 fn work_scope_requires_the_bound_slot_lifetime() {
     let mut slot = SlotScript::new();
     assert_eq!(slot.work_scope(), None);
@@ -25,6 +48,7 @@ fn start(slot: &mut SlotScript, bag: SettingsBag) {
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
 }
@@ -58,7 +82,620 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_421);
+    let here = api::snapshot::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let route_run = api::selected::RunKey {
+        slot: 102_421,
+        run: 7,
+        session: 0,
+    };
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 9 },
+            target: here,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow::default(),
+        },
+        entry: crate::native::HandoverEntry::NeedsStep(Arc::from([])),
+        here,
+    };
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+    assert_eq!(slot.manual_route_bank_fetch(), Some(false));
+
+    slot.on_is_up(false);
+    assert_eq!(slot.manual_route_bank_fetch(), None);
+    slot.on_is_up(true);
+    slot.align_seat_session(Some(api::identity::SessionKey::new(
+        api::identity::SlotKey::from_incarnation(route_run.slot).unwrap(),
+        55,
+    )));
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+    assert_eq!(slot.manual_route_bank_fetch(), Some(false));
+
+    let walk_run = slot.native_run().expect("internal WalkTo run is active");
+    let mut retained = slot
+        .retained
+        .as_ref()
+        .expect("manual WalkTo retained memory")
+        .lock()
+        .unwrap();
+    assert!(retained.take_walk_handover(walk_run).is_none());
+    drop(retained);
+
+    // An empty gate diagnosis cannot prove arrival, even at the requested tile.
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.state),
+        Some(crate::ScriptTerminalState::Failed),
+    );
+}
+#[test]
+fn card_refusal_entry_with_denied_global_returns_not_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
+        LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
+    };
+    use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+    use api::prereq_steps::{ActionableGate, ConsentSwitch};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{ClientRevision, FamilyPreparation, QuestGate, RunKey, Truth};
+
+    struct NoStore;
+    impl LocalStatePort for NoStore {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+    impl crate::local_state::StatePort for NoStore {
+        fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
+
+    let selected_for_catalog = selected();
+    let catalog = FamilyPreparation::run(move |worker| {
+        selected_for_catalog.prepare_prereq_steps(worker).unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let (row_index, row) = catalog
+        .iter()
+        .find(|(_, row)| row.consent == ConsentSwitch::PrereqDialogue)
+        .expect("selected catalog has a dialogue prerequisite");
+    let crossing = &row.crossings[0];
+    let incarnation = 102_423;
+    let route_run = RunKey {
+        slot: incarnation,
+        run: 7,
+        session: 0,
+    };
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.runtime_generation = route_run.run;
+    let state = Arc::new(crate::local_state::SlotState::new(
+        Arc::new(NoStore),
+        AccountKey::try_new("local-289", "manual_card").unwrap(),
+        ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
+    ));
+    slot.bind_local_state(Arc::clone(&state));
+
+    let gate = ActionableGate {
+        gate: QuestGate::Window(row.establishes.clone()),
+        truth: Truth::False,
+        leg: 0,
+        crossing: crossing.crossing,
+    };
+    let refusal = row.probe.refuse.first().expect("refusal probe");
+    let observation = Arc::new(RefusalObservation {
+        crossing: crossing.crossing,
+        leg: 0,
+        gates: vec![gate].into(),
+        matched: CatalogRef {
+            row: row_index,
+            entry: 0,
+        },
+        fact: Fact {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            possible: refusal.proves,
+            after: row.after_for(refusal.proves).unwrap(),
+            refused: Some(row.establishes.values),
+            source: FactSource::Refusal {
+                row: row_index,
+                entry: 0,
+            },
+            observed: EvidenceStamp {
+                run: route_run,
+                tick: 1,
+                sequence: 1,
+            },
+        },
+    });
+    assert!(slot.record_gate_refusal(route_run, &observation));
+    let before = state.prereq_snapshot();
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 10 },
+            target: crossing.crossing.to,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow {
+                dialogue: false,
+                quest_start: true,
+            },
+        },
+        entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+        here: crossing.crossing.at,
+    };
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    tick(&mut slot);
+
+    let terminal = slot.lifecycle_receipt().expect("denial is terminal");
+    assert_eq!(terminal.state, crate::ScriptTerminalState::Failed);
+    assert!(
+        terminal.reason.contains("NotAllowed"),
+        "the card preserves the typed consent refusal: {}",
+        terminal.reason,
+    );
+    assert_eq!(state.prereq_snapshot(), before);
+    assert!(
+        !slot.live_native_owner(),
+        "consent precedes every native handle"
+    );
+}
+
+#[test]
+fn manual_walk_memory_alias_follows_the_fact_writer_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
+        LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
+    };
+    use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+    use api::prereq_steps::{ActionableGate, CrossingId, CrossingKind};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{
+        ClientRevision, FactKey, InclusiveRange, QuestGate, RunKey, StageWindow, Truth,
+    };
+
+    struct NoStore;
+    impl LocalStatePort for NoStore {
+        fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+        fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+            SubmitReceipt::Refused(ErrorCode::Busy {
+                domain: edit.identity().domain(),
+            })
+        }
+        fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+            None
+        }
+    }
+    impl crate::local_state::StatePort for NoStore {
+        fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+            Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            })
+        }
+    }
+
+    let incarnation = 102_422;
+    let route_run = RunKey {
+        slot: incarnation,
+        run: 7,
+        session: 0,
+    };
+    let here = api::snapshot::WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let to = api::snapshot::WorldTile {
+        x: 3201,
+        z: 3200,
+        level: 0,
+    };
+    let crossing = CrossingId {
+        loc_id: 1,
+        option: 0,
+        at: here,
+        takeoff: here,
+        to,
+        kind: CrossingKind::Door,
+    };
+    let quest = FactKey::new("manual-route-quest");
+    let signal = FactKey::new("stage");
+    let value = InclusiveRange {
+        min: Some(1),
+        max: Some(1),
+    };
+    let gate = ActionableGate {
+        gate: QuestGate::Window(StageWindow {
+            quest: quest.clone(),
+            signal: signal.clone(),
+            values: value,
+        }),
+        truth: Truth::False,
+        leg: 0,
+        crossing,
+    };
+    let observation = Arc::new(RefusalObservation {
+        crossing,
+        leg: 0,
+        gates: vec![gate.clone()].into(),
+        matched: CatalogRef { row: 0, entry: 0 },
+        fact: Fact {
+            quest: quest.clone(),
+            signal: signal.clone(),
+            possible: value,
+            after: value,
+            refused: Some(value),
+            source: FactSource::Refusal { row: 0, entry: 0 },
+            observed: EvidenceStamp {
+                run: route_run,
+                tick: 1,
+                sequence: 1,
+            },
+        },
+    });
+    let handover = crate::native::WalkHandover {
+        outer: crate::native::OuterWalk {
+            identity: crate::native::OuterIdentity::Manual { intent_seq: 10 },
+            target: to,
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: crate::native::WalkOptions::default(),
+            allow_bank_fetch: false,
+            prereq_allow: crate::native::PrereqAllow {
+                dialogue: true,
+                quest_start: true,
+            },
+        },
+        entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+        here,
+    };
+
+    let state = Arc::new(crate::local_state::SlotState::new(
+        Arc::new(NoStore),
+        AccountKey::try_new("local-289", "manual_route").unwrap(),
+        ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
+    ));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    slot.bind_local_state(Arc::clone(&state));
+    slot.start_manual_walk_handover(
+        "account",
+        handover,
+        Some(route_run),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let walk_run = slot.native_run().expect("hidden WalkTo run");
+    assert_ne!(walk_run, route_run);
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+
+    assert!(slot.record_gate_refusal(route_run, &observation));
+    let refused = state.prereq_snapshot();
+    assert_eq!(refused.facts()[0].observed.run, route_run);
+    assert_eq!(
+        refused
+            .observe(
+                &gate.gate,
+                EvidenceStamp {
+                    run: route_run,
+                    tick: 2,
+                    sequence: 2,
+                },
+            )
+            .unwrap()
+            .truth,
+        Truth::False,
+        "denied repair retains the original manual refusal run",
+    );
+
+    assert!(state.record_prereq_fact(Fact {
+        quest,
+        signal,
+        possible: value,
+        after: value,
+        refused: None,
+        source: FactSource::Crossing {
+            loc_id: crossing.loc_id,
+            option: crossing.option,
+            passed: true,
+        },
+        observed: EvidenceStamp {
+            run: walk_run,
+            tick: 3,
+            sequence: 3,
+        },
+    }));
+    slot.update_manual_route_run_from_fact_writer();
+    let later_manual_run = slot.manual_route_run().expect("manual context run");
+    assert_eq!(later_manual_run, walk_run);
+    let learned = state.prereq_snapshot();
+    let observed = learned
+        .observe(
+            &gate.gate,
+            EvidenceStamp {
+                run: later_manual_run,
+                tick: 4,
+                sequence: 4,
+            },
+        )
+        .expect("later manual route selects the learned fact");
+    assert_eq!(observed.truth, Truth::True);
+    assert_eq!(observed.observed.unwrap().run, walk_run);
+}
+
+#[test]
+fn slot_keeps_parked_native_run_and_resumes_after_dose() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::native::{HostEffect, InteractionReceipt, NativePhase};
+    use crate::survival::CurePoison;
+    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
+
+    fn fact(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
+        BotCondition {
+            tick: u32::try_from(tick).unwrap(),
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            poison_window: None,
+            food: FoodSummary::default(),
+            cures: CureDoses {
+                antipoison,
+                ..CureDoses::default()
+            },
+        }
+    }
+    fn dispatch(
+        slot: &mut SlotScript,
+        selected: &api::game_data::SelectedGameData,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        condition: BotCondition,
+    ) {
+        let mut driver = NullDriver::default();
+        let mut context = ScriptCtx {
+            driver: &mut driver,
+            tick,
+            here: Some((3200, 3200, 0)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                selected: Some(selected),
+                condition: Some(condition),
+                poison_unknown_pulse: Some(11),
+                cure_poison: CurePoison::WhenNeeded,
+                ..crate::CompiledTick::default()
+            },
+        };
+        slot.on_game_tick(&mut context);
+    }
+
+    let selected = selected();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_999);
+    start(&mut slot, SettingsBag::new());
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+    let run = slot.native_run().expect("compiled Gatherer run");
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(
+        api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    ));
+    snapshot.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3200,
+        ..Default::default()
+    });
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_stats(vec![StatView {
+        index: 3,
+        name: "hitpoints".into(),
+        base: 99,
+        effective: 60,
+        xp: 0,
+        used: true,
+    }]);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [api::snapshot::HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    snapshot.seed_varps(Vec::new());
+    let onset = PoisonState::Onset {
+        since: 1,
+        q: Some(11),
+        hit_since_line: false,
+    };
+
+    for tick in 1..=40 {
+        snapshot.seed_tick(u32::try_from(tick).unwrap());
+        dispatch(
+            &mut slot,
+            &selected,
+            &snapshot,
+            tick,
+            fact(tick, onset, 5, 0),
+        );
+        let status = slot.native_status().expect("parked native status");
+        assert_eq!(slot.state(), RunState::Running);
+        assert!(slot.dispatch_open());
+        assert_eq!(slot.native_run(), Some(run));
+        assert_eq!(status.run, run);
+        assert_eq!(status.phase, NativePhase::Waiting);
+        assert!(status.failure.is_none());
+        assert!(slot.lifecycle_receipt().is_none());
+        assert!(slot.terminal_native_status.is_none());
+    }
+
+    let dose_id = crate::combat::guard::shared_tables()
+        .unwrap()
+        .potion(crate::combat::tables::PotionKind::Antipoison)
+        .unwrap()
+        .doses[0]
+        .unwrap()
+        .id;
+    snapshot.seed_tick(41);
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: api::ItemDefView {
+                id: dose_id,
+                name: Some("Antipoison".into()),
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        }],
+        28,
+    );
+    dispatch(&mut slot, &selected, &snapshot, 41, fact(41, onset, 5, 1));
+    let action = slot.take_native_action().expect("survival drink action");
+    assert_eq!(action.run(), run);
+    assert!(matches!(
+        &action.effect,
+        HostEffect::Interaction(crate::interact::InteractReq::Held { action, .. })
+            if action == "Drink"
+    ));
+    let authority = action.authority();
+    slot.complete_native_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 41,
+                sequence: 41,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    // The drink sent at tick 41 delays the player through ticks 42 and 43
+    // (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`). The runner
+    // holds its work through the drink lock and resumes at tick 44.
+    snapshot.seed_inventory(Vec::new(), 28);
+    for tick in 42..=44 {
+        snapshot.seed_tick(u32::try_from(tick).unwrap());
+        dispatch(
+            &mut slot,
+            &selected,
+            &snapshot,
+            tick,
+            fact(tick, PoisonState::Immune { until_lower: 80 }, 60, 0),
+        );
+        let status = slot.native_status().expect("resumed native status");
+        assert_eq!(slot.state(), RunState::Running);
+        assert!(slot.dispatch_open());
+        assert_eq!(slot.native_run(), Some(run));
+        assert_eq!(status.run, run);
+        assert!(status.failure.is_none());
+        assert!(slot.lifecycle_receipt().is_none());
+        assert!(slot.terminal_native_status.is_none());
+        if tick == 44 {
+            assert_eq!(status.phase, NativePhase::Working);
+        }
+    }
+}
+
+#[test]
 fn resume_consumes_the_takeover_for_a_step_that_continues() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct InPlaceOwner;
 
     impl crate::native::NativeMachine for InPlaceOwner {
@@ -158,6 +795,9 @@ fn resume_consumes_the_takeover_for_a_step_that_continues() {
 
 #[test]
 fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_419);
     slot.start_compiled(
@@ -166,6 +806,7 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
         Arc::new(SettingsBag::new()),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -182,6 +823,9 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
 
 #[test]
 fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_ground_items(Vec::new());
     assert_eq!(snapshot.inventory().len(), 28);
@@ -197,6 +841,7 @@ fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
         )])),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -223,6 +868,9 @@ fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
 
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::preparation::{self, PreparationInput, PreparationKind};
     use api::identity::Scope;
 
@@ -256,6 +904,9 @@ fn large_catalogue_job_and_operator_start_both_complete() {
 
 #[test]
 fn oversized_native_settings_have_a_typed_visible_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_411);
     let bag = SettingsBag::from_iter([(
@@ -269,6 +920,7 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
             Arc::new(bag),
             selected(),
             Arc::default(),
+            None,
         )
         .expect_err("oversized settings must not enter the work ledger");
     assert_eq!(
@@ -281,6 +933,9 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
 
 #[test]
 fn native_card_policy_timing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _selected = selected();
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_410);
@@ -304,6 +959,9 @@ fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
 
 #[test]
 fn invalid_gatherer_settings_leave_no_runnable_instance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(10);
     slot.attach_source_identity("file:previous.ts");
@@ -337,6 +995,9 @@ fn invalid_gatherer_settings_leave_no_runnable_instance() {
 
 #[test]
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(11);
     start(&mut slot, SettingsBag::new());
@@ -361,6 +1022,9 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
 
 #[test]
 fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(12);
     let retained = Arc::new(Mutex::new(RetainedMemory::default()));
@@ -391,6 +1055,7 @@ impl Script for Receiver {
             active_settings: 1,
             pending_settings: None,
             fields: Arc::from([]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: None,
         });
         cx.output
@@ -432,6 +1097,9 @@ fn config(revision: u64, value: u64) -> Arc<PreparedConfig> {
 
 #[test]
 fn boundary_acknowledgement_never_applies_an_obsolete_or_restart_required_edit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, acknowledge) = receiver(12, SettingsApply::PendingBoundary);
     let run = slot.native_run().unwrap();
     assert_eq!(
@@ -486,6 +1154,9 @@ fn boundary_acknowledgement_never_applies_an_obsolete_or_restart_required_edit()
 
 #[test]
 fn configuration_fences_account_incarnation_revision_and_type_without_load_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut alice, _) = receiver(20, SettingsApply::Applied);
     let (mut bob, _) = receiver(21, SettingsApply::Applied);
     let alice_run = alice.native_run().unwrap();
@@ -561,6 +1232,9 @@ fn stale_factory_cleanup_contains_panics_and_runs_stop_once() {
 
 #[test]
 fn discarded_preparation_contains_configuration_destructor_panics() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct PanickingConfig(std::sync::mpsc::Sender<()>);
     impl Drop for PanickingConfig {
         fn drop(&mut self) {
@@ -605,6 +1279,9 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
 
 #[test]
 fn removal_notifies_the_native_script_once_with_removed_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Removed(std::sync::mpsc::Sender<StopReason>);
     impl Script for Removed {
         fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
@@ -644,6 +1321,19 @@ fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+#[test]
+fn prepared_settings_revision_is_independent_of_client_revision() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    assert_eq!(selected().revision(), 289);
+    for revision in [1, 37, 290] {
+        let prepared = gatherer_config(revision);
+        assert_eq!(prepared.revision(), revision);
+        assert_eq!(prepared.card(), crate::CompiledId("Gatherer"));
+    }
+}
+
 const PERMISSION_TEST_ID: crate::CompiledId = crate::CompiledId("SlotPermissionsTest");
 
 struct PermissionReceiver;
@@ -667,6 +1357,7 @@ fn start_permission_slot(slot: &mut SlotScript, bag: SettingsBag) {
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
 }
@@ -698,6 +1389,9 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
 
 #[test]
 fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const TEST_NAME: &str =
         "slot::compiled::tests::walk_permissions_capture_start_apply_restart_and_account_isolation";
     const CHILD_ENV: &str = "SCRIPT_SLOT_PERMISSION_TEST_CHILD";
@@ -787,6 +1481,9 @@ fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
 
 #[test]
 fn walk_permissions_do_not_apply_before_matching_boundary_acknowledgement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, acknowledge) = receiver(83, SettingsApply::PendingBoundary);
     let run = slot.native_run().unwrap();
     let bag = Arc::new(
@@ -827,6 +1524,9 @@ fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
 
 #[test]
 fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(40);
     start(&mut slot, SettingsBag::new());
@@ -852,6 +1552,9 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
 
 #[test]
 fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(43);
     start(&mut slot, SettingsBag::new());
@@ -873,6 +1576,9 @@ fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance()
 
 #[test]
 fn blocked_native_work_never_automatically_restarts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, _) = receiver(41, SettingsApply::Applied);
     Arc::make_mut(
         slot.compiled
@@ -911,6 +1617,9 @@ fn blocked_native_work_never_automatically_restarts() {
 
 #[test]
 fn a_watchdog_recovery_hold_freezes_the_active_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, _) = receiver(44, SettingsApply::Applied);
     let start = Instant::now();
     slot.watchdog.arm_fresh(start);
@@ -932,6 +1641,9 @@ fn a_watchdog_recovery_hold_freezes_the_active_clock() {
 
 #[test]
 fn operator_pause_and_guardian_hold_freeze_the_native_waiter_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for held in [false, true] {
         let (mut slot, _) = receiver(45 + u64::from(held), SettingsApply::Applied);
         slot.sync_compiled_clue(false);
@@ -1016,8 +1728,10 @@ impl Script for Relog {
                     required_after: first,
                     evidence: None,
                     cross: Vec::new().into_boxed_slice(),
+                    avoid: Vec::new().into_boxed_slice(),
                     protect: false,
                     food_guard: false,
+                    cure_guard: false,
                     allow: Default::default(),
                 };
                 frame.stale_walk = Some(
@@ -1035,6 +1749,9 @@ impl Script for Relog {
 
 #[test]
 fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (frames, received) = std::sync::mpsc::channel();
     let mut slot = SlotScript::new();
     slot.bind_incarnation(45);
@@ -1084,15 +1801,25 @@ fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
 }
 
 fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
-    FamilyPreparation::run(|families| {
+    gatherer_snapshot_for_resource("normal", 1)
+}
+
+fn gatherer_snapshot_for_resource(
+    resource: &'static str,
+    level: i32,
+) -> api::snapshot::GameSnapshot {
+    FamilyPreparation::run(move |families| {
         let selected = selected();
         let mut cx = PrepareContext {
-            pin: selected.selected_pin().unwrap(),
+            zones: None,
+            revision: api::selected::ClientRevision::R289,
             selected,
             banks: Arc::default(),
             families,
         };
-        crate::gatherer::test_full_pack_fixture(&mut cx).unwrap().1
+        crate::gatherer::test_full_pack_fixture(&mut cx, resource, level)
+            .unwrap()
+            .1
     })
     .unwrap()
     .join()
@@ -1114,21 +1841,57 @@ fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, 
 }
 
 fn gatherer_slot(incarnation: u64) -> SlotScript {
+    gatherer_slot_with_knife(incarnation, false)
+}
+
+fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
     let mut bag = SettingsBag::new();
     bag.insert("disposition".into(), serde_json::json!("Power"));
     bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+    if knife {
+        bag.insert("tickMethod".into(), serde_json::json!("Knife"));
+        bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
+    }
     slot.start_compiled(
         "gatherer-lifecycle",
         crate::CompiledId("Gatherer"),
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     slot
+}
+
+#[test]
+fn builtin_gatherer_knife_permission_requires_the_live_compiled_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut gatherer = gatherer_slot(0x544d_5801);
+    let first = gatherer.native_run().unwrap();
+    let (other, _) = receiver(0x544d_5802, SettingsApply::Applied);
+    let foreign = other.native_run().unwrap();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    assert!(!gatherer.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(first));
+
+    gatherer.pause();
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    gatherer.resume();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    restart_and_settle(&mut gatherer, Instant::now());
+    let restarted = gatherer.native_run().unwrap();
+    assert_ne!(first, restarted);
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    assert!(gatherer.is_builtin_gatherer_run(restarted));
+    gatherer.stop();
+    assert!(!gatherer.is_builtin_gatherer_run(restarted));
 }
 
 fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
@@ -1137,7 +1900,7 @@ fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostA
         assert!(
             matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
                     action,
                     slot: Some(_),
                     ..
@@ -1172,6 +1935,9 @@ fn queue_gatherer_drop(
 
 #[test]
 fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut stats = snapshot.stats().to_vec();
     stats.push(api::snapshot::StatView {
@@ -1194,7 +1960,7 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
     for tick in 1..17 {
         gatherer_tick(&mut slot, &snapshot, tick);
         if let Some(action) = slot.take_native_action() {
-            let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            let crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
                 name,
                 action: operation,
                 ..
@@ -1231,7 +1997,7 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
                     action.effect,
                     crate::native::HostEffect::Walk(_)
                         | crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::Loc { .. }
+                            crate::interact::InteractReq::Loc { .. }
                         )
                 ),
                 "observed equipment must advance to a resource, not repeat equip"
@@ -1245,6 +2011,9 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
 
 #[test]
 fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     for boundary in 0..3 {
         let mut slot = gatherer_slot(80 + boundary);
@@ -1280,6 +2049,9 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
 
 #[test]
 fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(84);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1301,6 +2073,9 @@ fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
 
 #[test]
 fn gatherer_stop_policy_death_cancels_undrained_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(85);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1327,19 +2102,52 @@ fn gatherer_stop_policy_death_cancels_undrained_drop() {
 
 #[test]
 fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
-    let mut snapshot = gatherer_snapshot();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    assert_gatherer_unchanged_poll_allocations(false);
+    assert_gatherer_unchanged_poll_allocations(true);
+}
+
+fn assert_gatherer_unchanged_poll_allocations(knife: bool) {
+    let mut snapshot = if knife {
+        gatherer_snapshot_for_resource("oak", 15)
+    } else {
+        gatherer_snapshot()
+    };
     snapshot.seed_inventory(Vec::new(), 28);
+    if knife {
+        snapshot.seed_inventory(
+            [946, 1511]
+                .into_iter()
+                .enumerate()
+                .map(|(slot, id)| api::snapshot::ItemView {
+                    def: crate::quester::families::tests::def(
+                        id,
+                        if id == 946 { "Knife" } else { "Logs" },
+                    ),
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                })
+                .collect(),
+            28,
+        );
+    }
     let mut player = snapshot.local_player().unwrap().clone();
     player.player.actor.animation = 879;
     snapshot.seed_local_player(player);
-    let mut slot = gatherer_slot(86);
+    let mut slot = gatherer_slot_with_knife(if knife { 87 } else { 86 }, knife);
     let mut clicked_at = None;
     for tick in 1..17 {
         gatherer_tick(&mut slot, &snapshot, tick);
         if let Some(action) = slot.take_native_action() {
             assert!(matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { .. })
             ));
             let authority = action.authority();
             slot.complete_native_interaction(
@@ -1382,6 +2190,9 @@ fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
 
 #[test]
 fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(87);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1397,7 +2208,7 @@ fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
     gatherer_tick(&mut slot, &snapshot, tick + 2);
     let mut resent_slots = Vec::new();
     while let Some(action) = slot.take_native_action() {
-        if let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+        if let crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
             slot: Some(index),
             ..
         }) = action.effect
@@ -1420,7 +2231,7 @@ fn complete_gatherer_drop(
     refused_slot: Option<i32>,
 ) -> i32 {
     let index = match &action.effect {
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
             slot: Some(index),
             ..
         }) => *index,
@@ -1466,6 +2277,9 @@ fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<
 
 #[test]
 fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(88);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1493,6 +2307,9 @@ fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() 
 
 #[test]
 fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(89);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1521,6 +2338,9 @@ fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress()
 
 #[test]
 fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_chat_modal(123, vec!["Your inventory is too full.".into()]);
     let mut slot = gatherer_slot(90);
@@ -1533,7 +2353,7 @@ fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
         assert!(
             matches!(
                 first.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
             ),
             "mining mesbox must close before disposal"
         );
@@ -1546,6 +2366,9 @@ fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
 
 #[test]
 fn gatherer_rejected_click_observes_missing_target_before_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_inventory(Vec::new(), 28);
     let mut slot = gatherer_slot(91);
@@ -1555,7 +2378,7 @@ fn gatherer_rejected_click_observes_missing_target_before_retry() {
         if let Some(action) = slot.take_native_action() {
             assert!(matches!(
                 action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { .. })
             ));
             let authority = action.authority();
             slot.complete_native_interaction(
@@ -1599,6 +2422,9 @@ fn gatherer_rejected_click_observes_missing_target_before_retry() {
 
 #[test]
 fn gatherer_counts_yield_observed_after_target_depletion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let product = snapshot.inventory()[0].clone();
     snapshot.seed_inventory(Vec::new(), 28);
@@ -1654,150 +2480,219 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 }
 
 #[test]
-fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
-    fn measure_prepared(
-        incarnation: u64,
-    ) -> (
-        CompiledRun,
-        Arc<Mutex<RetainedMemory>>,
-        allocation_counter::AllocationInfo,
-    ) {
-        FamilyPreparation::run(move |families| {
-            let selected = selected();
-            let pin = selected.selected_pin().unwrap();
-            let mut cx = PrepareContext {
-                pin: Arc::clone(&pin),
-                selected: Arc::clone(&selected),
-                banks: Arc::default(),
-                families,
-            };
-            let mut prepared = None;
-            let mut retained = None;
-            let info = allocation_counter::measure(|| {
-                let mut bag = SettingsBag::new();
-                bag.insert("disposition".into(), serde_json::json!("Power"));
-                bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
-                let config = (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(bag)).unwrap();
-                let run = RunKey {
-                    slot: incarnation,
+fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    fn measure_mode(oak: bool, knife: bool) -> i64 {
+        fn measure_prepared(
+            incarnation: u64,
+            oak: bool,
+            knife: bool,
+        ) -> (
+            CompiledRun,
+            Arc<Mutex<RetainedMemory>>,
+            allocation_counter::AllocationInfo,
+        ) {
+            FamilyPreparation::run(move |families| {
+                let selected = selected();
+                let mut cx = PrepareContext {
+                    zones: None,
+                    revision: api::selected::ClientRevision::R289,
+                    selected: Arc::clone(&selected),
+                    banks: Arc::default(),
+                    families,
+                };
+                let mut prepared = None;
+                let mut retained = None;
+                let info = allocation_counter::measure(|| {
+                    let mut bag = SettingsBag::new();
+                    bag.insert("disposition".into(), serde_json::json!("Power"));
+                    bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+                    if oak {
+                        bag.insert(
+                            "tickMethod".into(),
+                            serde_json::json!(if knife { "Knife" } else { "Off" }),
+                        );
+                        bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
+                    }
+                    let config =
+                        (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(bag)).unwrap();
+                    let run = RunKey {
+                        slot: incarnation,
+                        run: 1,
+                        session: 0,
+                    };
+                    let mut memory = RetainedMemory::default();
+                    let script =
+                        (crate::gatherer::CARD.create)(run, Arc::clone(&config), &mut memory)
+                            .unwrap();
+                    retained = Some(Arc::new(Mutex::new(memory)));
+                    prepared = Some(CompiledRun {
+                        script: ScriptOwner(Some(script)),
+                        config,
+                        pending: None,
+                        run,
+                        selected,
+                        revision: api::selected::ClientRevision::R289,
+                        output: Output {
+                            account: Some("gatherer-lifecycle".into()),
+                            ..Default::default()
+                        },
+                        actions: NativeActions { _private: () },
+                        pending_registry: None,
+                    });
+                });
+                (prepared.unwrap(), retained.unwrap(), info)
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+        }
+        fn seat_delivery_bytes(slot: &SlotScript) -> usize {
+            slot.seat_delivery.capacity() * std::mem::size_of::<SeatEffect>()
+                + slot.seat_native_delivery.capacity()
+                    * std::mem::size_of::<crate::native::HostAction>()
+        }
+        let snapshot = if oak {
+            let mut snapshot = gatherer_snapshot_for_resource("oak", 15);
+            let mut inventory = snapshot.inventory().to_vec();
+            for (item, id) in inventory.iter_mut().skip(24).zip([946, 1511, 1511, 1511]) {
+                item.def = crate::quester::families::tests::def(
+                    id,
+                    if id == 946 { "Knife" } else { "Logs" },
+                );
+            }
+            snapshot.seed_inventory(inventory, 28);
+            snapshot
+        } else {
+            gatherer_snapshot()
+        };
+        let (cold_prepared, cold_retained, cold) = measure_prepared(91, oak, knife);
+        let mut warm = gatherer_slot_with_knife(92, knife);
+        // The first park can grow parking_lot's process-global table.
+        // Warm this thread before charging only the Gatherer and its seat.
+        let warm_lock = parking_lot::Mutex::new(());
+        parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
+        let mut shared_slot = None;
+        let shared_seat = allocation_counter::measure(|| {
+            let mut slot = SlotScript::new();
+            slot.bind_incarnation(94);
+            slot.arm_compiled_seat(
+                RunKey {
+                    slot: 94,
                     run: 1,
                     session: 0,
-                };
-                let mut memory = RetainedMemory::default();
-                let script =
-                    (crate::gatherer::CARD.create)(run, Arc::clone(&config), &mut memory).unwrap();
-                retained = Some(Arc::new(Mutex::new(memory)));
-                prepared = Some(CompiledRun {
-                    script: ScriptOwner(Some(script)),
-                    config,
-                    pending: None,
-                    run,
-                    selected,
-                    pin,
-                    output: Output {
-                        account: Some("gatherer-lifecycle".into()),
-                        ..Default::default()
-                    },
-                    actions: NativeActions { _private: () },
-                    pending_registry: None,
-                });
-            });
-            (prepared.unwrap(), retained.unwrap(), info)
-        })
-        .unwrap()
-        .join()
-        .unwrap()
-    }
-    fn seat_delivery_bytes(slot: &SlotScript) -> usize {
-        slot.seat_delivery.capacity() * std::mem::size_of::<SeatEffect>()
-            + slot.seat_native_delivery.capacity()
-                * std::mem::size_of::<crate::native::HostAction>()
-    }
-    let snapshot = gatherer_snapshot();
-    let (cold_prepared, cold_retained, cold) = measure_prepared(91);
-    let mut warm = gatherer_slot(92);
-    // The first park can grow parking_lot's process-global table.
-    // Warm this thread before charging only the Gatherer and its seat.
-    let warm_lock = parking_lot::Mutex::new(());
-    parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
-    let mut shared_slot = None;
-    let shared_seat = allocation_counter::measure(|| {
-        let mut slot = SlotScript::new();
-        slot.bind_incarnation(94);
-        slot.arm_compiled_seat(
-            RunKey {
-                slot: 94,
-                run: 1,
-                session: 0,
-            },
-            crate::CompiledId("Gatherer"),
+                },
+                crate::CompiledId("Gatherer"),
+            );
+            shared_slot = Some(slot);
+        });
+        let (prepared, retained, preparation) = measure_prepared(93, oak, knife);
+        let prepare_bytes = preparation.bytes_current;
+        let mut measured = None;
+        // Charge preparation on its owning worker and installation on this thread.
+        // Polling the preparation broker inside this measurement can free worker-
+        // allocated handoff values here, making its thread-local net timing-dependent.
+        let previous_status_log_suppression =
+            compiled::set_heap_test_status_logging_suppressed(true);
+        let main = allocation_counter::measure(|| {
+            let mut slot = SlotScript::new();
+            slot.bind_incarnation(93);
+            slot.control_generation = prepared.run.run;
+            slot.retained = Some(retained);
+            slot.want_run = true;
+            slot.install_compiled(prepared);
+            let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+            accept_gatherer_drop_actions(&mut slot, actions, tick, None);
+            measured = Some(slot);
+        });
+        compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
+        // Keep the historical pre-seat family bound: exclude the measured
+        // SlotScript/I-seat baseline and the shared seat delivery buffers that
+        // grow only when this five-action native batch is dispatched.
+        assert!(
+            shared_seat.bytes_current > 0,
+            "shared slot seat baseline is measured"
         );
-        shared_slot = Some(slot);
+        let delivery_bytes = i64::try_from(
+            seat_delivery_bytes(measured.as_ref().unwrap())
+                .checked_sub(seat_delivery_bytes(shared_slot.as_ref().unwrap()))
+                .expect("the active seat includes its shared delivery buffers"),
+        )
+        .expect("bounded seat delivery capacity fits the signed allocation counter");
+        let slot_family_bytes = main
+            .bytes_current
+            .checked_sub(shared_seat.bytes_current)
+            .and_then(|remaining| remaining.checked_sub(delivery_bytes))
+            .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
+        let exclusive = prepare_bytes + slot_family_bytes;
+        println!(
+            "Gatherer exclusive heap: oak={oak}, knife={knife}, shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
+            shared_seat.bytes_current
+        );
+        println!(
+            "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
+            cold.bytes_current - prepare_bytes,
+            i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
+        );
+        measured.as_mut().unwrap().stop();
+        warm.stop();
+        drop(cold_prepared);
+        drop(cold_retained);
+        drop(shared_slot);
+        exclusive
+    }
+    // The combat index belongs to the process, not the first measured runner.
+    // Warm and report it exactly as the API-seat fixture does, before every
+    // per-bot sample, so isolated execution cannot charge its 5,408 B once.
+    let shared_tables = allocation_counter::measure(|| {
+        assert!(crate::combat::guard::shared_tables_ref().is_some());
     });
-    let (prepared, retained, preparation) = measure_prepared(93);
-    let prepare_bytes = preparation.bytes_current;
-    let mut measured = None;
-    // Charge preparation on its owning worker and installation on this thread.
-    // Polling the preparation broker inside this measurement can free worker-
-    // allocated handoff values here, making its thread-local net timing-dependent.
-    let main = allocation_counter::measure(|| {
-        let mut slot = SlotScript::new();
-        slot.bind_incarnation(93);
-        slot.control_generation = prepared.run.run;
-        slot.retained = Some(retained);
-        slot.want_run = true;
-        slot.install_compiled(prepared);
-        let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
-        accept_gatherer_drop_actions(&mut slot, actions, tick, None);
-        measured = Some(slot);
-    });
-    // Keep the historical pre-seat family bound: exclude the measured
-    // SlotScript/I-seat baseline and the shared seat delivery buffers that
-    // grow only when this five-action native batch is dispatched.
-    assert!(
-        shared_seat.bytes_current > 0,
-        "shared slot seat baseline is measured"
-    );
-    let delivery_bytes = i64::try_from(
-        seat_delivery_bytes(measured.as_ref().unwrap())
-            .checked_sub(seat_delivery_bytes(shared_slot.as_ref().unwrap()))
-            .expect("the active seat includes its shared delivery buffers"),
-    )
-    .expect("bounded seat delivery capacity fits the signed allocation counter");
-    let slot_family_bytes = main
-        .bytes_current
-        .checked_sub(shared_seat.bytes_current)
-        .and_then(|remaining| remaining.checked_sub(delivery_bytes))
-        .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
-    let exclusive = prepare_bytes + slot_family_bytes;
-    println!(
-        "Gatherer exclusive heap: shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
-        shared_seat.bytes_current
-    );
-    println!(
-        "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
-        cold.bytes_current - prepare_bytes,
-        i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
-    );
-    assert!(
-        (0..=8192).contains(&exclusive),
-        "exclusive Gatherer heap exceeds 8 KiB"
-    );
-    measured.as_mut().unwrap().stop();
-    warm.stop();
-    drop(cold_prepared);
-    drop(cold_retained);
-    drop(shared_slot);
+    println!("Gatherer once-per-process combat tables={shared_tables:?}");
+    // Preserve the original ordinary sample. The two oak samples have identical
+    // bag keys and resource/stock, differing only in Off versus Knife. Bag
+    // construction remains inside the same measured scope.
+    // Capture all samples before the unchanged cap assertions.
+    let measurements = [(false, false), (true, false), (true, true)]
+        .map(|(oak, knife)| (oak, knife, measure_mode(oak, knife)));
+    // Main's item/source reconciliation (all bytes exclusive per bot):
+    // 8226 + bank journal c7edef762's typed Ledger outcome 8 = 8234.
+    // Tick merge 846b2d4ab adds 1123: boxed runner 408 + Prepared fields 72
+    // + canonical Off 3 + eleven status rows 616 + Off status Arc 24 = 9357.
+    // Explicit oak/Off control 81300f726 adds 557 B of fixture input scope,
+    // not production state: bag entries 416 + index 36 + keys 30 + bag Off 3
+    // + resource Value vector 72 + oak 3 - prepared resource 3.
+    // Thus oak Off is 9914. Knife adds two item-name Arcs 48 and two retained
+    // Off-to-Knife string deltas 4 = 9966. The bank relog fix adds 24 B to the
+    // boxed GatherScratch (session restarts, access recovery, avoided bank,
+    // last reason): 9990. 9998 leaves 8 B headroom.
+    // macOS measures 9509 / 10066 / 10118 for the three samples (merlot, aarch64;
+    // the same allocations count more bytes there): 10118 + 8 B headroom = 10126.
+    // Linux stays 9998.
+    // The new private owner probe reproduces all three preparation totals
+    // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
+    // Inline TickKit storage is already in Prepared; shared tables stay out.
+    #[cfg(target_os = "macos")]
+    let exclusive_cap = 10126;
+    #[cfg(not(target_os = "macos"))]
+    let exclusive_cap = 9998;
+    for (oak, knife, exclusive) in measurements {
+        assert!(
+            (0..=exclusive_cap).contains(&exclusive),
+            "exclusive Gatherer heap exceeds the attributed {exclusive_cap} B cap: oak={oak}, knife={knife}, measured={exclusive}"
+        );
+    }
 }
 
 mod api_gather_seat {
     use super::*;
     use crate::api_gather::{GatherEnd, GatherPhase};
+    use crate::interact::InteractReq;
     use crate::native::request::NativeKind;
     use crate::native::seat_rows::{
         DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
     };
-    use crate::shim::InteractReq;
     use api::identity::RequestId;
 
     fn stub_surface_slot(incarnation: u64, data: bool) -> SlotScript {
@@ -1847,6 +2742,7 @@ mod api_gather_seat {
             },
             0,
             &[],
+            None,
         );
     }
 
@@ -1866,6 +2762,223 @@ mod api_gather_seat {
 
     fn run_in_seat(slot: &mut SlotScript, token: u64) {
         run_in_seat_with_settings(slot, token, gather_settings());
+    }
+    #[test]
+    fn seat_refusal_entry_with_denied_script_setting_returns_not_allowed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        assert_compat_refusal_after_scene_observation(false);
+    }
+
+    #[test]
+    fn compat_refusal_keeps_actual_session_after_scene_only_down_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        assert_compat_refusal_after_scene_observation(true);
+    }
+
+    fn assert_compat_refusal_after_scene_observation(scene_only_down: bool) {
+        use api::local_state::{
+            DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort, StoreVersion,
+            SubmitReceipt, WriteSettlement,
+        };
+        use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+        use api::prereq_steps::{ActionableGate, ConsentSwitch};
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::{FamilyPreparation, QuestGate, RunKey, Truth};
+
+        struct NoStore;
+        impl LocalStatePort for NoStore {
+            fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+                Err(ErrorCode::NotReady {
+                    domain: identity.domain(),
+                })
+            }
+            fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+                SubmitReceipt::Refused(ErrorCode::Busy {
+                    domain: edit.identity().domain(),
+                })
+            }
+            fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+                None
+            }
+        }
+        impl crate::local_state::StatePort for NoStore {
+            fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+                Err(ErrorCode::NotReady {
+                    domain: identity.domain(),
+                })
+            }
+        }
+
+        let selected = selected();
+        let catalog =
+            FamilyPreparation::run(move |worker| selected.prepare_prereq_steps(worker).unwrap())
+                .unwrap()
+                .join()
+                .unwrap();
+        let (row_index, row) = catalog
+            .iter()
+            .find(|(_, row)| row.consent == ConsentSwitch::QuestStart)
+            .expect("selected catalog has a quest-start prerequisite");
+        let crossing = &row.crossings[0];
+        let incarnation = 83_441;
+        let token = 83_442;
+        let mut slot = stub_surface_slot(incarnation, true);
+        let run = slot.native_run().unwrap_or(RunKey {
+            slot: incarnation,
+            run: slot.runtime_generation,
+            session: slot.work_epoch,
+        });
+        let outer_request = request_id(token);
+        let request = InteractReq::WalkNear {
+            x: crossing.crossing.to.x,
+            z: crossing.crossing.to.z,
+            level: crossing.crossing.to.level,
+            radius: 2,
+            compat_tile_intent: true,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: Some(false),
+            request_id: token,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        };
+        slot.consume_seat_batch(
+            DecodedSeatBatch {
+                consumed_terminal_seq: 0,
+                starts: Vec::new(),
+                decisions: Vec::new(),
+                cancels: Vec::new(),
+                mirror_revokes: Vec::new(),
+                reqs: vec![SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: request.clone(),
+                }],
+            },
+            0,
+            &[],
+            None,
+        );
+        let (_, rows, _) = slot.drain_host_interacts(None);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].req, request);
+        let seat = slot.seat.as_ref().expect("compat physical seat");
+        assert!(seat.live().is_empty(), "legacy WalkTo has no native start");
+        assert_eq!(
+            seat.lookup(outer_request),
+            api::script_contract::AuthorityStatus::Pending
+        );
+        assert_eq!(seat.reserved_releases(), 1);
+
+        let state = Arc::new(crate::local_state::SlotState::new(
+            Arc::new(NoStore),
+            api::local_state::AccountKey::try_new("local-289", "compat_seat").unwrap(),
+            api::local_state::ContentScope::try_new(
+                api::selected::ClientRevision::R289,
+                "test-content",
+            )
+            .unwrap(),
+        ));
+        slot.bind_local_state(Arc::clone(&state));
+        let gate = ActionableGate {
+            gate: QuestGate::Window(row.establishes.clone()),
+            truth: Truth::False,
+            leg: 0,
+            crossing: crossing.crossing,
+        };
+        let refusal = row.probe.refuse.first().expect("refusal probe");
+        let observation = Arc::new(RefusalObservation {
+            crossing: crossing.crossing,
+            leg: 0,
+            gates: vec![gate].into(),
+            matched: CatalogRef {
+                row: row_index,
+                entry: 0,
+            },
+            fact: Fact {
+                quest: row.establishes.quest.clone(),
+                signal: row.establishes.signal.clone(),
+                possible: refusal.proves,
+                after: row.after_for(refusal.proves).unwrap(),
+                refused: Some(row.establishes.values),
+                source: FactSource::Refusal {
+                    row: row_index,
+                    entry: 0,
+                },
+                observed: EvidenceStamp {
+                    run,
+                    tick: 1,
+                    sequence: 1,
+                },
+            },
+        });
+        assert!(slot.record_gate_refusal(run, &observation));
+        let before = state.prereq_snapshot();
+        let handover = crate::native::WalkHandover {
+            outer: crate::native::OuterWalk {
+                identity: crate::native::OuterIdentity::Compat { request_id: token },
+                target: crossing.crossing.to,
+                radius: 0,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
+                avoid: Box::default(),
+                cross: Box::default(),
+                options: crate::native::WalkOptions::default(),
+                allow_bank_fetch: false,
+                prereq_allow: crate::native::PrereqAllow {
+                    dialogue: true,
+                    quest_start: false,
+                },
+            },
+            entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
+            here: crossing.crossing.at,
+        };
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        slot.accept_compat_walk_handover(run, handover)
+            .expect("live compat request accepts its refusal owner");
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
+        if scene_only_down {
+            slot.on_is_up(false);
+            slot.on_is_up(true);
+            assert_ne!(slot.work_epoch, run.session);
+            assert_eq!(slot.seat.as_ref().unwrap().run(), run);
+        }
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
+
+        tick(&mut slot);
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        let (terminal_run, terminal_request, result) = slot
+            .take_compat_walk_terminal()
+            .expect("denial publishes one outer terminal");
+        assert_eq!(terminal_run, run);
+        assert_eq!(terminal_request, outer_request);
+        let receipt = result.expect("permission refusal is a typed receipt");
+        assert_eq!(receipt.end, crate::native::WalkEnd::Refused);
+        assert!(matches!(
+            receipt.refusal,
+            Some(crate::native::WalkRefusal::Prerequisite(refusal))
+                if matches!(
+                    refusal.as_ref(),
+                    crate::native::PrereqRefusal::NotAllowed {
+                        switch: crate::native::PrereqSwitch::QuestStart,
+                        ..
+                    }
+                )
+        ));
+        assert_eq!(state.prereq_snapshot(), before);
+        assert!(
+            !slot.live_native_owner(),
+            "consent precedes every native handle"
+        );
+        assert!(slot.finish_compat_walk(token));
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
+        assert!(slot.take_compat_walk_terminal().is_none());
+        assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
     }
 
     fn stop(slot: &mut SlotScript, token: u64) {
@@ -1888,12 +3001,13 @@ mod api_gather_seat {
             },
             0,
             &[],
+            None,
         );
     }
 
     fn stop_in_seat(slot: &mut SlotScript, token: u64) {
         queue_stop_in_seat(slot, token);
-        let (_, rows, _) = slot.drain_host_interacts();
+        let (_, rows, _) = slot.drain_host_interacts(None);
         assert!(
             rows.is_empty(),
             "typed GatherStop is consumed as a reserved control"
@@ -1982,6 +3096,9 @@ mod api_gather_seat {
 
     #[test]
     fn load_api_gather_walk_permissions_follow_its_live_card_settings() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(206, true);
         assert_eq!(slot.native_walk_permissions(), None);
@@ -2006,6 +3123,8 @@ mod api_gather_seat {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_danger_zones: true,
+                allow_prereq_dialogue: false,
+                allow_quest_start: false,
             })
         );
 
@@ -2017,6 +3136,9 @@ mod api_gather_seat {
 
     #[test]
     fn load_api_gather_defaults_keep_walk_permissions_refused() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(207, true);
         run(&mut slot, 207);
@@ -2036,6 +3158,9 @@ mod api_gather_seat {
 
     #[test]
     fn stop_during_preparation_is_prompt_clears_retention_and_never_installs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(201, true);
         run(&mut slot, 201);
@@ -2066,6 +3191,9 @@ mod api_gather_seat {
 
     #[test]
     fn api_stop_revokes_five_undrained_native_drops_and_preserves_last_published_counts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(202, true);
         run_in_seat(&mut slot, 202);
@@ -2103,7 +3231,7 @@ mod api_gather_seat {
             },
             InteractReq::SetCameraYaw { yaw: 777 },
         ]);
-        let (policy, rows, owned) = slot.drain_host_interacts();
+        let (policy, rows, owned) = slot.drain_host_interacts(None);
         assert_eq!(policy, Some(Some(policy_override)));
         assert!(
             !owned,
@@ -2143,6 +3271,9 @@ mod api_gather_seat {
 
     #[test]
     fn reconnect_rekeys_actual_card_revokes_old_action_and_reposts_terminal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(203, true);
         run_in_seat(&mut slot, 203);
@@ -2189,6 +3320,9 @@ mod api_gather_seat {
 
     #[test]
     fn hold_pause_reset_and_watchdog_keep_only_the_authorized_retention() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(204, true);
         run(&mut slot, 204);
@@ -2256,6 +3390,9 @@ mod api_gather_seat {
 
     #[test]
     fn actual_blocked_terminal_wins_stop_race_and_next_run_keeps_retention() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(212, true);
         run(&mut slot, 212);
@@ -2297,6 +3434,20 @@ mod api_gather_seat {
 
     #[test]
     fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        // Keep libtest's own test-thread allocations out of the thread-local
+        // counter. The product-status log is suppressed separately below.
+        std::thread::Builder::new()
+            .name("api-seat-heap-probe".into())
+            .spawn(warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread)
+            .expect("start isolated API-seat heap measurement")
+            .join()
+            .expect("API-seat heap measurement thread");
+    }
+
+    fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread() {
         let mut snapshot = gatherer_snapshot();
         let mut warm = gatherer_slot(208);
         let mut slot = stub_surface_slot(209, true);
@@ -2308,50 +3459,66 @@ mod api_gather_seat {
         // Warm this thread before charging only this seat.
         let warm_lock = parking_lot::Mutex::new(());
         parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
-        let (prepared, instance, worker) = FamilyPreparation::run(|families| {
-            let selected = selected();
-            let cx = PrepareContext {
-                pin: selected.selected_pin().unwrap(),
-                selected,
-                banks: Arc::default(),
-                families,
-            };
-            let bag = Arc::new(SettingsBag::new());
-            let mut retained = RetainedMemory::default();
+        // Status is still stored in the seat; only host-log output is outside
+        // the per-bot product-state measurement.
+        let previous_status_log_suppression =
+            compiled::set_heap_test_status_logging_suppressed(true);
+        let selected = selected();
+        let shared_tables = allocation_counter::measure(|| {
+            assert!(crate::combat::guard::shared_tables_ref().is_some());
+        });
+        println!("API gather once-per-process combat tables={shared_tables:?}");
+        let banks = Arc::default();
+        let run_key = api::selected::RunKey {
+            slot: 209,
+            run: 1,
+            session: 1,
+        };
+        // Keep a real Gatherer run and retention, but bypass WorkService: its
+        // shared terminal can be freed on either thread and is not seat state.
+        let (prepared, retained, worker) = FamilyPreparation::run(move |families| {
             let mut prepared = None;
-            let mut instance = None;
+            let mut retained = None;
             let measured = allocation_counter::measure(|| {
+                let retained_memory = Arc::new(Mutex::new(RetainedMemory::default()));
                 let config = prepare_config(
-                    cx.families,
+                    families,
                     crate::gatherer::CARD.id,
                     1,
-                    bag,
-                    Arc::clone(&cx.selected),
-                    Arc::clone(&cx.banks),
+                    Arc::new(gather_settings()),
+                    Arc::clone(&selected),
+                    Arc::clone(&banks),
                     None,
                 )
                 .unwrap();
-                instance = Some(
-                    (crate::gatherer::CARD.create)(
-                        api::selected::RunKey {
-                            slot: 210,
-                            run: 1,
-                            session: 1,
-                        },
-                        Arc::clone(&config),
-                        &mut retained,
-                    )
-                    .unwrap(),
-                );
-                prepared = Some(config);
+                let script = (crate::gatherer::CARD.create)(
+                    run_key,
+                    Arc::clone(&config),
+                    &mut retained_memory
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                )
+                .unwrap();
+                prepared = Some(compiled::CompiledRun::for_heap_test(
+                    run_key,
+                    config,
+                    script,
+                    Arc::clone(&selected),
+                    api::selected::ClientRevision::R289,
+                ));
+                retained = Some(retained_memory);
             });
-            (prepared.unwrap(), instance.unwrap(), measured)
+            (prepared.unwrap(), retained.unwrap(), measured)
         })
         .unwrap()
         .join()
         .unwrap();
-        let dispatched = allocation_counter::measure(|| run_in_seat(&mut slot, 209));
-        let installed_heap = allocation_counter::measure(|| installed(&mut slot, &snapshot));
+        slot.retained = Some(retained);
+        let installed_heap = allocation_counter::measure(|| {
+            let mut api = Box::new(crate::slot::api_seat::ApiSeat::default());
+            api.install_running_gather_for_heap_test(209, prepared);
+            slot.api = Some(api);
+        });
         let polled = allocation_counter::measure(|| {
             for tick in 2..18 {
                 poll_native_api_seat(&mut slot, &snapshot, tick, false);
@@ -2361,28 +3528,74 @@ mod api_gather_seat {
             }
         });
         assert!(slot.has_native_actions(), "actual native batch measured");
-        let exclusive = worker.bytes_current
-            + dispatched.bytes_current
-            + installed_heap.bytes_current
-            + polled.bytes_current;
+        let exclusive = worker.bytes_current + installed_heap.bytes_current + polled.bytes_current;
         println!(
-            "ApiSeat={} ScriptSlot={}",
+            "ApiSeat={} ScriptSlot={} Gatherer={} SurvivalStep={}",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>(),
-            std::mem::size_of::<SlotScript>()
+            std::mem::size_of::<SlotScript>(),
+            std::mem::size_of::<crate::gatherer::Gatherer>(),
+            std::mem::size_of::<crate::survival::SurvivalStep>()
         );
         println!(
-            "API gather warmed native baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
+            "API gather warmed native baseline: idle option={}B; prepared+instance={worker:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
+        );
+        let survival_text = slot
+            .api
+            .as_ref()
+            .and_then(|seat| seat.page.as_ref())
+            .and_then(|page| page.status.as_ref())
+            .and_then(|status| status.fields.iter().find(|field| field.key == "survival"))
+            .and_then(|field| match &field.value {
+                crate::native::StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .expect("actual Gatherer survival status");
+        let survival_text_heap = allocation_counter::measure(|| {
+            std::hint::black_box(Arc::<str>::from(survival_text));
+        });
+        println!(
+            "API gather survival status contribution: field={}B; text={}B",
+            std::mem::size_of::<crate::native::StatusField>(),
+            survival_text_heap.bytes_total
         );
         assert_eq!(
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // Inline seat layout, separate from the owned-heap cap below: 656 B
+        // measured on the 64-bit CI targets. The inventory's rule allows +8%,
+        // rounded to an 8-byte boundary: 656 * 1.08 = 708.5 -> 712 B.
+        assert!(
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>() <= 712,
+            "ApiSeat inline layout grew to {} B (measured 656 B; limit 712 B)",
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>()
+        );
+        // The source-532 baseline is 8,848 B Linux / 8,912 B macOS, including
+        // Cure, QuietRead and the typed bank receipt. Shared tables stay excluded.
+        // Tick preparation +483 B = boxed Gatherer +408 + Prepared fields +72
+        // + retained "Off" +3. Polls +640 B = 11 StatusField rows * 56 + a 24 B
+        // Arc<str> for "Off". Installation is unchanged. Linux measures 9,971 B
+        // and macOS independently measures 10,035 B (BATCH-029-INT/
+        // r2-pvp-v2-mac-api-seat-1). Main permits 8 B headroom on each platform.
+        // The bank relog fix adds 24 B to the boxed GatherScratch (Linux 9,995 B
+        // measured; macOS +24 B by the same allocation size, not measured).
+        // Non-blocking follow-up: "Off" could use &'static str or a shared
+        // static Arc instead of a separate allocation per bot.
+        #[cfg(target_os = "macos")]
+        let exclusive_limit = 10067;
+        #[cfg(target_os = "linux")]
+        let exclusive_limit = 10003;
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let exclusive_limit = 8848;
+        assert!(
+            exclusive <= exclusive_limit,
+            "exclusive API seat exceeds {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
+        );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());
+        compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
         // A second session uses the retained ledger and an animated observation
         // to exercise the actual card's unchanged path without world copies.
         snapshot.seed_inventory(Vec::new(), 28);
@@ -2439,15 +3652,16 @@ mod api_gather_seat {
         );
         slot.stop();
         warm.stop();
-        drop(instance);
-        drop(prepared);
     }
 }
 
 #[cfg(feature = "test-hooks")]
 #[test]
 fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_restore() {
-    use crate::shim::InteractReq;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::interact::InteractReq;
 
     struct WalkingRows(i32);
     impl Script for WalkingRows {
@@ -2470,12 +3684,12 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
     tick(&mut slot);
     slot.observe_walk_outcome(11, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
-    let (_, older, _) = slot.drain_host_interacts();
+    let (_, older, _) = slot.drain_host_interacts(None);
 
     slot.observe_walk_outcome(12, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     slot.restore_host_interacts(older);
-    let (_, rows, _) = slot.drain_host_interacts();
+    let (_, rows, _) = slot.drain_host_interacts(None);
     let decisions: Vec<_> = rows
         .into_iter()
         .map(|queued| {
@@ -2505,14 +3719,14 @@ impl crate::native::NativeMachine for StopWork {
         cancels: Self::Args,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, crate::native::ActionError> {
-        cx.emit(crate::shim::InteractReq::Held {
+        cx.emit(crate::interact::InteractReq::Held {
             name: "Logs".into(),
             action: "Drop".into(),
             slot: Some(0),
             target_item_id: None,
         })?;
         Ok(Self {
-            _quiet: cx.begin_quiet_read(41)?,
+            _quiet: cx.begin_quiet_read(41, crate::native::WaitDeadline::AwaitingDispatch)?,
             cancels,
         })
     }
@@ -2562,6 +3776,7 @@ impl Script for TerminalReporter {
                 label: "Destination",
                 value: crate::native::StatusValue::Text("bank".into()),
             }]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: (self.phase == NativePhase::Blocked).then(|| failure.clone()),
         });
         Ok(if self.flow_blocked {
@@ -2585,10 +3800,21 @@ pub(crate) struct CapturedStatusLine {
 }
 
 #[derive(Default)]
-struct StatusLineSink(std::sync::Mutex<Vec<CapturedStatusLine>>);
+struct StatusLineSink(
+    std::sync::Mutex<Vec<CapturedStatusLine>>,
+    // Every line the combat machine logs for a refused fight with a player
+    // (PVP-DESIGN-1026 §2.7), whatever its slot.
+    std::sync::Mutex<Vec<(api::hostlog::Level, String)>>,
+);
 
 impl api::hostlog::Sink for StatusLineSink {
     fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.message.contains("fight with a player refused") {
+            self.1
+                .lock()
+                .unwrap()
+                .push((record.level, record.message.to_owned()));
+        }
         let Some(slot) = record.slot.filter(|slot| slot.starts_with("status-")) else {
             return;
         };
@@ -2601,7 +3827,15 @@ impl api::hostlog::Sink for StatusLineSink {
     }
 }
 
-static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(std::sync::Mutex::new(Vec::new()));
+static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(
+    std::sync::Mutex::new(Vec::new()),
+    std::sync::Mutex::new(Vec::new()),
+);
+
+/// Every refused-fight-with-a-player line the combat machine has logged.
+pub(crate) fn pvp_refusal_lines() -> Vec<(api::hostlog::Level, String)> {
+    STATUS_LINE_SINK.1.lock().unwrap().clone()
+}
 
 pub(crate) fn install_status_line_sink() {
     let _ = api::hostlog::install_sink(&STATUS_LINE_SINK);
@@ -2630,6 +3864,7 @@ fn status_line_test_status(phase: NativePhase, failure: Option<ScriptFailure>) -
         active_settings: 1,
         pending_settings: None,
         fields: Arc::from([]),
+        survival: crate::survival::SurvivalReport::default(),
         failure,
     }
 }
@@ -2864,7 +4099,90 @@ fn native_status_logs_gatherer_last_event_at_info() {
 }
 
 #[test]
+fn completed_native_status_survives_teardown_without_copying() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    struct CompletingReporter(bool);
+
+    impl Script for CompletingReporter {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.0 {
+                return Ok(ScriptFlow::Complete);
+            }
+            self.0 = true;
+            tick.output.status(ScriptStatus {
+                run: tick.cx.run(),
+                card: crate::CompiledId("test"),
+                phase: NativePhase::Complete,
+                active_settings: 1,
+                pending_settings: None,
+                survival: crate::survival::SurvivalReport::default(),
+                fields: Arc::from([
+                    crate::native::StatusField {
+                        key: "ground_waited_ticks",
+                        label: "Ground pickup observed ticks",
+                        value: crate::native::StatusValue::Integer(2),
+                    },
+                    crate::native::StatusField {
+                        key: "ground_held",
+                        label: "Ground pickup held",
+                        value: crate::native::StatusValue::Integer(1),
+                    },
+                ]),
+                failure: None,
+            });
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let mut slot = SlotScript::new();
+    slot.start_test_script(Box::new(CompletingReporter(false)), Some(selected()))
+        .unwrap();
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    let completed = slot
+        .native_status()
+        .expect("the card published its final status");
+    assert_eq!(completed.phase, NativePhase::Complete);
+
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(slot.native_run().is_none());
+    assert_eq!(
+        slot.lifecycle_receipt.as_ref().unwrap().state,
+        ScriptTerminalState::Completed
+    );
+    let retained = slot
+        .native_status()
+        .expect("completed status must remain reachable after teardown");
+    assert!(
+        Arc::ptr_eq(&completed, &retained),
+        "retain the existing status Arc"
+    );
+    for (key, expected) in [("ground_waited_ticks", 2), ("ground_held", 1)] {
+        assert!(retained.fields.iter().any(|field| {
+            field.key == key
+                && matches!(field.value, crate::native::StatusValue::Integer(value) if value == expected)
+        }));
+    }
+    tick(&mut slot);
+    assert!(Arc::ptr_eq(&completed, &slot.native_status().unwrap()));
+
+    slot.start_test_script(Box::new(CompletingReporter(false)), Some(selected()))
+        .unwrap();
+    assert!(
+        slot.native_status().is_none(),
+        "a new run clears the old terminal status"
+    );
+    slot.stop();
+}
+
+#[test]
 fn terminal_native_blocked_stop_logs_once_through_output_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     install_status_line_sink();
     for (slot_name, phase, flow_blocked) in [
         ("status-blocked-flow-stop", NativePhase::Working, true),
@@ -2906,6 +4224,9 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
 
 #[test]
 fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (phase, flow_blocked) in [(NativePhase::Working, true), (NativePhase::Blocked, false)] {
         let stops = Arc::new(AtomicU64::new(0));
         let cancels = Arc::new(AtomicU64::new(0));
@@ -3005,8 +4326,80 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
     }
 }
 
+/// A machine that waits for the page of its own interaction until dropped.
+struct ModalWaitWork {
+    _wait: crate::native::ModalWaitLease,
+}
+
+impl crate::native::NativeMachine for ModalWaitWork {
+    type Args = ();
+    type Output = ();
+
+    fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, crate::native::ActionError> {
+        Ok(Self {
+            _wait: cx.begin_modal_wait(crate::native::WaitDeadline::AwaitingDispatch)?,
+        })
+    }
+
+    fn poll(
+        &mut self,
+        _: &mut ActionContext<'_>,
+    ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+        std::task::Poll::Pending
+    }
+}
+
+struct HoldsModalWait {
+    work: Option<crate::native::ActionHandle<ModalWaitWork>>,
+}
+
+impl Script for HoldsModalWait {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.work.is_none() {
+            self.work = Some(
+                tick.actions
+                    .begin::<ModalWaitWork>((), &mut tick.cx)
+                    .expect("the machine takes its wait"),
+            );
+        }
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+/// The host holds auto-run only while a script wait has an owner: Stop and a
+/// session boundary revoke the native owner, so the next read is `None`.
+#[test]
+fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for session_boundary in [false, true] {
+        let mut slot = SlotScript::new();
+        slot.start_test_script(Box::new(HoldsModalWait { work: None }), Some(selected()))
+            .unwrap();
+        tick(&mut slot);
+        assert!(
+            slot.script_interaction_wait(Instant::now(), 1).is_some(),
+            "the machine's wait is the host's hold"
+        );
+        if session_boundary {
+            slot.reconnect_session_work();
+        } else {
+            slot.stop();
+        }
+        assert_eq!(
+            slot.script_interaction_wait(Instant::now(), 1),
+            None,
+            "a dropped owner releases the hold at once (session boundary: {session_boundary})"
+        );
+    }
+}
+
 #[test]
 fn native_waiting_keeps_running_until_its_own_terminal_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stops = Arc::new(AtomicU64::new(0));
     let cancels = Arc::new(AtomicU64::new(0));
     let mut slot = SlotScript::new();
@@ -3036,6 +4429,9 @@ fn native_waiting_keeps_running_until_its_own_terminal_bound() {
 
 #[test]
 fn host_world_members_reaches_the_native_snapshot_view() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::Truth;
     struct Reads(Arc<std::sync::Mutex<Vec<Truth>>>);
     impl Script for Reads {
@@ -3078,6 +4474,9 @@ fn host_world_members_reaches_the_native_snapshot_view() {
 }
 #[test]
 fn compiled_evidence_wait_consumes_native_progress_but_not_watchdog_hard_stall() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct WaitingProgress {
         waits: Arc<AtomicU64>,
     }
@@ -3182,6 +4581,9 @@ fn compiled_evidence_wait_consumes_native_progress_but_not_watchdog_hard_stall()
 
 #[test]
 fn compiled_evidence_wait_requires_a_ready_live_observation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Waiter(Arc<AtomicU64>);
     impl Script for Waiter {
         fn tick(&mut self, _tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
@@ -3238,7 +4640,10 @@ fn compiled_evidence_wait_requires_a_ready_live_observation() {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn native_interact_note_progress_remains_rejected() {
-    use crate::shim::InteractReq;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::interact::InteractReq;
 
     struct EmitsNote;
     impl Script for EmitsNote {
@@ -3282,6 +4687,9 @@ fn poll_ready_evidence_wait_card(
 
 #[test]
 fn compiled_live_child_blocks_evidence_wait_and_still_requests_wedge_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct WaitingChild {
         release: Arc<AtomicU64>,
         anchor_requests: Arc<AtomicU64>,
@@ -3420,6 +4828,9 @@ fn pending_native_evidence_wait_slot() -> SlotScript {
 
 #[test]
 fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[derive(Debug, Clone, Copy)]
     enum Boundary {
         Pause,
@@ -3494,7 +4905,10 @@ fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
 
 #[test]
 fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
-    use crate::shim::InteractReq;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::interact::InteractReq;
     use api::script_contract::EmissionClass;
 
     struct Waiting;
@@ -3580,7 +4994,7 @@ fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
         slot.watchdog.abort_owned_recovery(),
         WatchdogAction::AbortWalk
     );
-    let (_, rows, _) = slot.drain_host_interacts();
+    let (_, rows, _) = slot.drain_host_interacts(None);
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].req,

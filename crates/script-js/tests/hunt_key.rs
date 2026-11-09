@@ -4,15 +4,18 @@
 //! Chebyshev, index-not-name, one corridor approach, and walk-flag falses.
 //! They do not mirror phases.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::Tile;
-use script_js::hunt_key::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::Tile;
+use script_js::compat::hunt_key::{
     self, key_deadline_remaining_ms, key_force_bound_reached, key_token_alive, set_observation,
     KeyGround, KeyInv, KeyNpc, KeyObservation,
 };
-use script_js::wire::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 fn reset() {
     hunt_key::on_reset();
@@ -730,8 +733,8 @@ fn key_pause_freezes_the_clock_and_fight_pause_does_not() {
     let p = site(json!({}));
     assert_eq!(kind(&call(token, p.clone(), None)), "npc");
     let before = key_deadline_remaining_ms(token).unwrap_or(0);
-    script_js::hunt_fight::on_pause();
-    script_js::hunt_leave::on_pause();
+    script_js::compat::hunt_fight::on_pause();
+    script_js::compat::hunt_leave::on_pause();
     std::thread::sleep(std::time::Duration::from_millis(220));
     let stepped = call(token, p.clone(), Some(json!({ "queued": true })));
     assert_ne!(
@@ -754,8 +757,8 @@ fn key_pause_freezes_the_clock_and_fight_pause_does_not() {
         (mid - after).abs() < 80,
         "window elapsed during key pause: {mid} -> {after}"
     );
-    script_js::hunt_fight::on_resume();
-    script_js::hunt_leave::on_resume();
+    script_js::compat::hunt_fight::on_resume();
+    script_js::compat::hunt_leave::on_resume();
 }
 
 #[test]
@@ -817,7 +820,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert, dusty], &[jail], &[jail]));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);
     assert_ne!(
@@ -828,7 +831,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
     reset();
     let bytes = encode_snapshot(&snap_rows(outside(), &[jail], &[], &[]));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);
     assert_eq!(kind(&step), "yield", "{step}");
@@ -936,6 +939,8 @@ export async function tick(api) {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -1032,7 +1037,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

@@ -14,7 +14,7 @@ use std::task::{Context, Poll, Waker};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use nav_planner::collision::{pack_walk, WorldCollision};
-use nav_planner::contract::{ArrivalSpec, NavLease, PackDigest};
+use nav_planner::contract::{ArrivalSpec, NavLease};
 use nav_planner::transport::TransportGraph;
 use nav_planner::world::NavWorld;
 
@@ -127,7 +127,7 @@ fn asymmetric_world() -> Arc<NavWorld> {
 #[test]
 fn approach_tiles_reach_candidates_match_the_facade_on_the_asymmetric_fixture() {
     let world = asymmetric_world();
-    let lease = NavLease::wrap(Arc::clone(&world), PackDigest::of(b"asymmetric")).unwrap();
+    let lease = NavLease::wrap(Arc::clone(&world)).unwrap();
     let here = tile(3204, 3202, 0);
     let mut compared = 0usize;
     for radius in 0..=3 {
@@ -187,12 +187,19 @@ fn approach_tiles_reach_candidates_match_the_facade_on_the_asymmetric_fixture() 
 
 #[test]
 fn approach_tiles_reach_candidates_match_the_facade_on_the_real_pack() {
-    let Some(path) = std::env::var_os("NAV_PACK") else {
+    if std::env::var_os("NAV_PACK").is_none() {
         eprintln!("SKIP: NAV_PACK is not set");
         return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real nav pack for approach-tile facade parity",
+    ) else {
+        return;
     };
-    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&path)).expect("real nav pack"));
-    let lease = NavLease::wrap(Arc::clone(&world), PackDigest::of(b"real-pack")).unwrap();
+    let world = Arc::new(NavWorld::load_pack(&path).expect("real nav pack"));
+    let lease = NavLease::wrap(Arc::clone(&world)).unwrap();
     let view = lease.collision();
     // Lumbridge castle courtyard, plus a walkable tile beside a solid and a
     // face-flag tile found near it.
@@ -299,6 +306,7 @@ fn router_goal_tiles(
             1,
             crate::WalkGlobals::default(),
         ),
+        prereq_catalog: None,
         bank_origin: super::Origin::Unknown,
         bank: Vec::new(),
         live_geometry,
@@ -612,7 +620,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
 
 #[test]
 fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
-    let Some(path) = script::ctx::test_support::local_asset_path(
+    let Some(path) = api::test_support::local_asset_path(
         "NAV_PACK",
         "",
         "real 289 nav pack for router/selector parity",

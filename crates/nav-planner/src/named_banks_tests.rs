@@ -103,6 +103,9 @@ fn unsupported_access_is_air_fallback_not_an_invented_route_target() {
 
 #[test]
 fn a_bank_stand_can_have_a_wall_face_without_being_a_blocked_footprint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::{
         collision::{pack_walk, WorldCollision},
         transport::TransportGraph,

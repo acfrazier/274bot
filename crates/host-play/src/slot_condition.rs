@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use api::condition::{
-    BotCondition, ConditionError, Exposure, PoisonEvent, PoisonMemory, PoisonState, SessionMark,
+    BotCondition, ConditionError, Exposure, PoisonEvent, PoisonMemory, PoisonState, PoisonWindow,
+    SessionMark, WindowReset,
 };
 use api::host_log;
 use api::hostlog::{Category, Level};
@@ -23,10 +24,8 @@ use script::combat::threats::ThreatSet;
 const POISON_LINE: &str = "You have been poisoned!";
 const DRINK_LINE: &str = "You drink some of your antipoison potion.";
 const FRUIT_LINE: &str = "You eat the fruit.";
-// poison.rs2:29,72-75: after the last dispatched interaction, retain 30
-// ticks to the fire, one queued-damage tick (World.ts:701-704;
-// Player.ts:903-911), and the existing observation margin.
-const CLEAN_TICKS: u8 = (30 + 1 + script::combat::risk::consts::LAG) as u8;
+pub(crate) const CLEAN_TICKS: u8 = 31;
+const _: () = assert!(CLEAN_TICKS == 31);
 
 // Content operations, uses and interface actions can run or resume a script.
 // MoveClickHandler.ts:11-56 only rejects a delay or changes the path.
@@ -79,10 +78,34 @@ const INTERACTIONS: &[ClientProt] = &[
     ClientProt::TUT_CLICKSIDE,
 ];
 
-#[derive(Default)]
 struct SettleWindow {
     clean: u8,
     accepted: bool,
+    last_reset: WindowReset,
+}
+
+impl Default for SettleWindow {
+    fn default() -> Self {
+        Self {
+            clean: 0,
+            accepted: false,
+            last_reset: WindowReset::NotReset,
+        }
+    }
+}
+
+impl SettleWindow {
+    fn reset(&mut self, cause: WindowReset) {
+        self.clean = 0;
+        self.accepted = false;
+        self.last_reset = cause;
+    }
+
+    fn remaining(&self) -> u8 {
+        CLEAN_TICKS
+            .saturating_sub(self.clean)
+            .max(u8::from(!self.accepted))
+    }
 }
 
 /// Evidence retained from the edge, not from a later consumer's threat set.
@@ -119,8 +142,8 @@ pub(crate) struct SlotCondition {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<SlotCondition>() == 104);
     assert!(std::mem::size_of::<SlotCondition>() <= 160);
+    assert!(std::mem::size_of::<SlotCondition>() == 104);
 };
 
 impl Default for SlotCondition {
@@ -195,9 +218,13 @@ impl SlotCondition {
     /// Restart only the post-login window, never an established poison fact.
     fn accepted_click(&mut self) {
         if matches!(self.memory.state, PoisonState::Unknown { .. }) {
-            self.window.clean = 0;
+            self.reset_window(WindowReset::Interaction);
             self.window.accepted = true;
         }
+    }
+
+    fn reset_window(&mut self, cause: WindowReset) {
+        self.window.reset(cause);
     }
 
     pub(crate) fn dispatch_checkpoint(&self, client: &Client) -> Option<PacketCheckpoint> {
@@ -225,7 +252,7 @@ impl SlotCondition {
         });
         if !complete {
             // An incomplete trace cannot prove that the run stayed clean.
-            self.window = SettleWindow::default();
+            self.reset_window(WindowReset::IncompleteTrace);
         } else if interaction {
             self.accepted_click();
         } else if movement {
@@ -289,6 +316,7 @@ impl SlotCondition {
 
     fn incomplete(&mut self, error: ConditionError) {
         self.complete = false;
+        self.reset_window(WindowReset::IncompleteFact);
         let bit = match error {
             ConditionError::NoLocalPlayer => 1,
             ConditionError::StatsUnavailable => 2,
@@ -314,10 +342,17 @@ impl SlotCondition {
             self.session_ended();
             return;
         }
+        let modal_open = snapshot.modals().main != -1 || snapshot.modals().chat != -1;
+        if modal_open {
+            self.reset_window(WindowReset::Modal);
+        } else if guardian_hold {
+            self.reset_window(WindowReset::GuardianHold);
+        }
         if self.tables.is_none() {
             // Without selected content, zero food/cures would falsely mean
             // "none held". An unpublished fact keeps both summaries unknown.
             self.complete = false;
+            self.reset_window(WindowReset::IncompleteFact);
             return;
         }
         if snapshot.local_player().is_none() {
@@ -477,28 +512,28 @@ impl SlotCondition {
                 self.transition(PoisonEvent::LatchComplete { q });
             }
         }
-        if snapshot.modals().main != -1 || snapshot.modals().chat != -1 || guardian_hold {
-            self.window = SettleWindow::default();
-        }
         if matches!(self.memory.state, PoisonState::Unknown { .. }) && drain.player_info {
-            if k == 1
-                && prev_complete
-                && snapshot.modals().main == -1
-                && snapshot.modals().chat == -1
-                && !guardian_hold
-                && !poison_signal
-            {
+            let reset = if modal_open {
+                Some(WindowReset::Modal)
+            } else if guardian_hold {
+                Some(WindowReset::GuardianHold)
+            } else if k != 1 {
+                Some(WindowReset::FrameGap)
+            } else if !prev_complete || poison_signal {
+                Some(WindowReset::IncompleteFact)
+            } else {
+                None
+            };
+            if let Some(cause) = reset {
+                self.reset_window(cause);
+            } else {
                 self.window.clean = self.window.clean.saturating_add(1);
-                // The final possible mark tick stays Unknown. Clear only on
-                // the following edge, after the inclusive observation bound.
-                if self.window.clean > CLEAN_TICKS
+                if self.window.clean >= CLEAN_TICKS
                     && self.window.accepted
                     && !self.memory.session_invalid
                 {
                     self.memory.state = PoisonState::Clear;
                 }
-            } else {
-                self.window = SettleWindow::default();
             }
         } else if !matches!(self.memory.state, PoisonState::Unknown { .. }) {
             self.window = SettleWindow::default();
@@ -519,6 +554,14 @@ impl SlotCondition {
             self.inv_gen = Some(inv_gen);
         }
         self.fact.poison = self.memory.state;
+        self.fact.poison_window = match self.memory.state {
+            PoisonState::Unknown { .. } => Some(PoisonWindow {
+                remaining: self.window.remaining(),
+                accepted: self.window.accepted,
+                last_reset: self.window.last_reset,
+            }),
+            _ => None,
+        };
         self.fact.tick = tick;
         self.complete = true;
         self.chat_visible = snapshot

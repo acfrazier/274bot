@@ -23,7 +23,7 @@ globalThis.__repeat = (count) => {
 "#;
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();

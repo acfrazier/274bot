@@ -104,7 +104,12 @@ impl PendingCatalogStart {
 
     fn waiting(&mut self, reason: String) {
         if self.waiting_reason.as_ref() != Some(&reason) {
-            eprintln!("[live] Start held: {reason}");
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                slot = self.slot.as_str(),
+                "Start held: {reason}"
+            );
             self.waiting_reason = Some(reason);
         }
     }
@@ -116,9 +121,11 @@ impl PendingCatalogStart {
             return false;
         };
         let began = *self.delay_started.get_or_insert_with(|| {
-            eprintln!(
-                "[live] delaying fleet Start for {} by {}s",
-                self.slot,
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                slot = self.slot.as_str(),
+                "Start held: waiting {}s after fleet peers",
                 delay.as_secs()
             );
             now
@@ -126,7 +133,12 @@ impl PendingCatalogStart {
         if now.duration_since(began) < delay {
             return true;
         }
-        eprintln!("[live] releasing delayed fleet Start for {}", self.slot);
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            slot = self.slot.as_str(),
+            "releasing delayed fleet Start"
+        );
         self.delay_after_peers = None;
         false
     }
@@ -446,20 +458,29 @@ fn settle_started_catalog_cards(
                 settle_pump = Some(StartScriptPump::Failed("start cancelled".into()));
                 None
             }
-            script::StartPoll::NotOwed => {
-                if compiled {
-                    settle_pump = Some(match handle.run_state(&card.slot) {
-                        script::RunState::Running | script::RunState::Paused => {
-                            StartScriptPump::CompiledRunning
-                        }
-                        _ => StartScriptPump::Failed(handle.last_error(&card.slot).map_or_else(
-                            || "start did not reach running".into(),
-                            |error| format!("start rejected: {error}"),
-                        )),
-                    });
+            // The frontend can consume the one-shot Start settlement before
+            // this pump. Check the live state for JS as well as compiled cards.
+            script::StartPoll::NotOwed => match handle.run_state(&card.slot) {
+                script::RunState::Running | script::RunState::Paused => {
+                    if compiled {
+                        settle_pump = Some(StartScriptPump::CompiledRunning);
+                    }
+                    None
                 }
-                None
-            }
+                _ => {
+                    let error = handle
+                        .last_error(&card.slot)
+                        .unwrap_or_else(|| "start did not reach running".into());
+                    api::host_log!(
+                        api::hostlog::Category::ScriptLifecycle,
+                        api::hostlog::Level::Info,
+                        slot = card.slot.as_str(),
+                        "catalog Start failed: {error}"
+                    );
+                    settle_pump = Some(StartScriptPump::Failed(format!("start failed: {error}")));
+                    Some(error)
+                }
+            },
         };
         card.settled = true;
         if let Some(error) = error {

@@ -33,8 +33,14 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
     let revision = required("WORLD_REVISION");
     assert!(matches!(revision.as_str(), "274" | "289"));
     let nav_pack = PathBuf::from(required("WORLD_NAV_PACK"));
-    let port = if revision == "289" { 44594 } else { 43594 };
-    let http_port = if revision == "289" { 1080 } else { 80 };
+    let port = host_play::live_ports::env_port(
+        "WORLD_GAME_PORT",
+        if revision == "289" { 44594 } else { 43594 },
+    );
+    let http_port = host_play::live_ports::env_port(
+        "WORLD_HTTP_PORT",
+        if revision == "289" { 1080 } else { 80 },
+    );
     let options = ProfileOptions {
         profile: Some(format!("local-{revision}")),
         revision: Some(revision),

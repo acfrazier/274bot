@@ -15,6 +15,47 @@ impl Play {
         script_slot(&self.scripts, name)
             .and_then(|cell| cell.lock().ok().and_then(|slot| slot.seat_probe()))
     }
+    /// The logical outer compat walk, or its ordinary live follow before handover.
+    #[doc(hidden)]
+    pub fn script_live_walk_request_id(&self, name: &str) -> Option<u64> {
+        if let Some(request_id) = script_slot(&self.scripts, name).and_then(|cell| {
+            cell.lock()
+                .ok()
+                .and_then(|slot| slot.api_live_compat_walk_request_id())
+        }) {
+            return Some(request_id);
+        }
+        self.script_live_follow_request_id(name)
+    }
+
+    /// The physical follow id, which can differ from its logical outer walk.
+    #[doc(hidden)]
+    pub fn script_live_follow_request_id(&self, name: &str) -> Option<u64> {
+        self.navs.lock().ok()?.get(name).and_then(|bot| {
+            (bot.walk_request_id != 0 && bot.walk_work_live()).then_some(bot.walk_request_id)
+        })
+    }
+
+    /// Dispatch the existing compat `AbortWalk` row for one exact logical walk.
+    #[doc(hidden)]
+    pub fn script_api_live_abort_walk(&self, name: &str, request_id: u64) -> Result<(), String> {
+        if self.script_live_walk_request_id(name) != Some(request_id) {
+            return Err("walk request id is not the current logical compat walk".into());
+        }
+        let cell = script_slot(&self.scripts, name).ok_or("script slot missing")?;
+        let slot = cell.lock().map_err(|_| "script slot lock poisoned")?;
+        let expression = format!(
+            "__rs2b0t_seat_host().interact.push({{op:'abort-walk',request_id:{request_id}}}); true"
+        );
+        match slot
+            .probe(&expression)
+            .map_err(|error| error.to_string())?
+            .as_bool()
+        {
+            Some(true) => Ok(()),
+            _ => Err("compat AbortWalk did not enqueue".into()),
+        }
+    }
 
     /// Signal the fixture consumer after the host observes the real stage-40 cheat
     /// acknowledgment. This does not modify snapshots or perform a game action.

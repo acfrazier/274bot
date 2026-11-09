@@ -21,7 +21,7 @@ struct Catalog {
     values: Option<v8::Global<v8::Array>>,
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     if !runtime
         .deno_runtime()
         .v8_isolate()

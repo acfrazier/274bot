@@ -4,8 +4,10 @@
 
 mod common;
 
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, MakeButtonInput, MakeProductInput, SnapshotInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, MakeButtonInput, MakeProductInput, SnapshotInput,
+};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 use std::time::Duration;

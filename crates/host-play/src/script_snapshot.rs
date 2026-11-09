@@ -1618,6 +1618,9 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         }),
         side_modal_id: Some(modals.map_or(-1, |m| m.side)),
         taking_damage: snapshot.map(GameSnapshot::taking_damage),
+        local_attack_marks: snapshot
+            .and_then(GameSnapshot::local_attack_marks)
+            .map_or(0, api::snapshot::AttackMarks::to_wire),
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
             .and_then(GameSnapshot::hint_tile)

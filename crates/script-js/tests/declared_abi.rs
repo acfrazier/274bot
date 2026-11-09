@@ -1,5 +1,5 @@
 // Declared JS catalog ABI (rs2b0t-api index.d.ts names). Not the Rust host ABI.
-use script_js::declared_abi::{
+use script_js::tooling::declared_abi::{
     declared_surface_path, fixture_path, load_fixture, parse_index_dts, render_declared_surface,
     write_declared_surface, write_fixture, DeclaredKind,
 };
@@ -47,10 +47,10 @@ fn parse_index_dts_names_only_skips_types_and_internal() {
     assert_eq!(fun.kind, DeclaredKind::Function);
 }
 fn abstract_declared_members() -> std::collections::HashSet<(String, String)> {
-    use script_js::compat_dts::CompatExport;
+    use script_js::tooling::compat_dts::CompatExport;
 
     let authored =
-        script_js::compat_dts::load_authored_dts().expect("generated compat declarations");
+        script_js::tooling::compat_dts::load_authored_dts().expect("generated compat declarations");
     let mut abstract_members = std::collections::HashSet::new();
     for module in authored.modules {
         for export in module.exports {
@@ -249,7 +249,7 @@ fn regen_js_declared_abi() {
         "wrote {} exports to {} and {}",
         exports.len(),
         fixture_path().display(),
-        script_js::declared_abi::declared_surface_path().display()
+        script_js::tooling::declared_abi::declared_surface_path().display()
     );
 }
 
@@ -642,7 +642,7 @@ fn declared_surface_matches_generator() {
     let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
     assert!(
         actual == expected,
-        "{} is stale; run: cargo test -p script --test declared_abi \
+        "{} is stale; run: cargo test -p script-js --test declared_abi \
          regen_declared_surface_from_fixture -- --ignored",
         path.display()
     );

@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use api::snapshot::WorldTile;
 use nav_planner::bank_fetch::BankRows;
 use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::contract::PackId;
 use nav_planner::map::formats::{
-    ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois,
+    ClientPois, Coverage, CoverageLevel, ServicePois, NAVPOIS_VERSION,
 };
 use nav_planner::map::identity::{CatalogueIdentity, Digest};
 use nav_planner::map::poi::*;
@@ -27,15 +28,7 @@ use map_fixture::MapFixture;
 fn bound_context(play: &crate::Play) -> MapContext {
     MapContext {
         focus: play.map_focus("alice"),
-        nav: Digest::from_hex(
-            &play
-                .server_profile()
-                .unwrap()
-                .nav_identity()
-                .unwrap()
-                .nav_sha256,
-        )
-        .unwrap(),
+        nav: play.server_profile().unwrap().nav_pack_id().unwrap(),
         overlay: None,
         generation: 1,
     }
@@ -164,28 +157,25 @@ fn record(
         walk_target: None,
     }
 }
-fn services(mut records: Vec<PoiRecord>, nav: Digest) -> AuthenticatedServices {
+fn services(mut records: Vec<PoiRecord>) -> Arc<ServicePois> {
     records.sort_by_key(|r| r.key);
     let doc = ServicePois {
-        schema: 1,
-        identity: ServiceIdentity {
-            revision: 289,
-            content: digest(1),
-            nav_sha256: nav,
-            source_sha256: digest(3),
-            generator_sha256: digest(4),
-            policy: digest(5),
-        },
+        schema: NAVPOIS_VERSION,
         coverage: coverage(),
         records: Rows::new(records).unwrap(),
     };
     let bytes = doc.encode_navpois().unwrap();
-    AuthenticatedServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap()
+    Arc::new(ServicePois::decode_navpois(&bytes).unwrap())
 }
-fn context() -> MapContext {
+fn pack_id(world: &NavWorld) -> PackId {
+    nav_planner::producer::identity(world)
+        .expect("fixture world has an ownership token")
+        .pack()
+}
+fn context(world: &NavWorld) -> MapContext {
     MapContext {
         focus: Some(FocusToken::capture(&crate::SlotArm::new(1, false))),
-        nav: digest(8),
+        nav: pack_id(world),
         overlay: None,
         generation: 1,
     }
@@ -293,7 +283,6 @@ fn merged_bridge_access_annotation_and_label_remain_distinct() {
         },
         eligibility: Eligibility::Conditional,
         reference: Text::new("scripts/bank:oploc2").unwrap(),
-        source_sha256: digest(3),
     }])
     .unwrap();
     let mut npc = record(
@@ -322,9 +311,8 @@ fn merged_bridge_access_annotation_and_label_remain_distinct() {
     let catalogue = Catalogue::new(
         world,
         identity(),
-        digest(8),
         Some(client),
-        Some(services(vec![supplement, npc, label], digest(8))),
+        Some(services(vec![supplement, npc, label])),
     )
     .unwrap();
     let access = catalogue
@@ -357,7 +345,7 @@ fn merged_bridge_access_annotation_and_label_remain_distinct() {
     assert_eq!(result.name(), "Canifis/Bank");
     assert_eq!(result.display_name().to_string(), "Canifis Bank");
     let mut model = MapModel::default();
-    let mut ctx = context();
+    let mut ctx = context(catalogue.world());
     ctx.overlay = Some(catalogue.key());
     model.bind(ctx);
     model.select_poi(&catalogue, result.index()).unwrap();
@@ -379,14 +367,7 @@ fn slash_place_labels_display_as_spaces_and_remain_searchable() {
         PoiKind::Label { priority: 2 },
         "Port/Sarim",
     );
-    let catalogue = Catalogue::new(
-        world,
-        identity(),
-        digest(8),
-        None,
-        Some(services(vec![label], digest(8))),
-    )
-    .unwrap();
+    let catalogue = Catalogue::new(world, identity(), None, Some(services(vec![label]))).unwrap();
     let entry = catalogue
         .entries()
         .find(|e| e.name() == "Port/Sarim")
@@ -420,17 +401,17 @@ fn slash_place_labels_display_as_spaces_and_remain_searchable() {
 }
 
 #[test]
-fn wrong_service_binding_rejects_and_missing_sources_do_not_invent_banks() {
+fn missing_sources_do_not_invent_banks() {
     let world = Arc::new(world(t(0, 0, 0), 5, &[]));
-    assert!(Catalogue::new(
-        Arc::clone(&world),
-        identity(),
-        digest(8),
-        None,
-        Some(services(vec![], digest(9)))
-    )
-    .is_err());
-    let catalogue = Catalogue::new(world, identity(), digest(8), None, None).unwrap();
+    let with_services =
+        Catalogue::new(Arc::clone(&world), identity(), None, Some(services(vec![]))).unwrap();
+    assert_eq!(with_services.service_status(), SourceStatus::Available);
+    assert_eq!(with_services.client_status(), SourceStatus::Unavailable);
+    assert!(with_services
+        .entries()
+        .all(|e| !matches!(e.kind(), PoiKind::Bank)));
+
+    let catalogue = Catalogue::new(world, identity(), None, None).unwrap();
     assert_eq!(catalogue.service_status(), SourceStatus::Unavailable);
     assert_eq!(catalogue.client_status(), SourceStatus::Unavailable);
     assert!(catalogue
@@ -449,7 +430,7 @@ fn teleport_pins_use_landings_and_transport_directions_share_access_pin() {
         edge(TransportKind::Teleport, wt(0, 0, 0), wt(8, 9, 0)),
         edge(TransportKind::Teleport, wt(0, 0, 0), wt(8, 9, 0)),
     ];
-    let catalogue = Catalogue::new(Arc::new(world), identity(), digest(8), None, None).unwrap();
+    let catalogue = Catalogue::new(Arc::new(world), identity(), None, None).unwrap();
     let transport = catalogue
         .entries()
         .find(|e| e.meaning() == Meaning::Transport)
@@ -469,7 +450,7 @@ fn teleport_pins_use_landings_and_transport_directions_share_access_pin() {
 fn radius_snap_miss_extremes_and_plane_changes_cannot_arm() {
     let world = world(t(0, 0, 0), 4, &[(1, 1, 0)]);
     let mut model = MapModel::default();
-    let ctx = context();
+    let ctx = context(&world);
     model.bind(ctx);
     assert_eq!(model.select_tile(&world, t(1, 1, 0)), Some(t(0, 1, 0)));
     assert_eq!(model.select_tile(&world, t(20, 0, 0)), None);
@@ -492,9 +473,9 @@ fn radius_snap_miss_extremes_and_plane_changes_cannot_arm() {
 }
 
 #[test]
-fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
+fn confirmations_capture_once_and_expire_on_destination_binding_or_origin_loss() {
     let world = world(t(0, 0, 0), 5, &[]);
-    let ctx = context();
+    let ctx = context(&world);
     let mut model = MapModel::default();
     model.bind(ctx);
     model.select_tile(&world, t(2, 2, 0));
@@ -530,7 +511,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
     }
     model.select_tile(&world, t(2, 2, 0));
     let other_focus = MapContext {
-        focus: context().focus,
+        focus: context(&world).focus,
         ..ctx
     };
     let switched = model
@@ -603,7 +584,7 @@ fn confirmations_capture_once_and_expire_on_dest_identity_or_origin_loss() {
 #[test]
 fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
     let world = world(t(3218, 3218, 0), 5, &[(2, 2, 0)]);
-    let ctx = context();
+    let ctx = context(&world);
     let mut model = MapModel::default();
     model.bind(ctx);
     let dest = t(3222, 3222, 0);
@@ -689,8 +670,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
     });
     graph.at.insert(from, vec![0]);
     let nav = NavWorld::from_parts(base.collision, graph, vec![]);
-    let mut context = context();
-    context.nav = digest(1);
+    let context = context(&nav);
     let mut model = MapModel::default();
     model.bind(context);
     assert_eq!(model.select_tile(&nav, t(0, 0, 1)), Some(t(0, 0, 1)));
@@ -749,6 +729,9 @@ fn debug_authority_requires_local_profile_and_loopback_host() {
 
 #[test]
 fn play_map_teleport_authorized_follows_bound_target_and_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = world(t(3200, 3200, 0), 8, &[]);
     let local = MapFixture::new(&world, "local-289");
     assert!(local.play(t(3200, 3200, 0)).map_teleport_authorized());
@@ -777,7 +760,7 @@ fn host_rejects_remote_teleport_before_queueing() {
     });
     let ctx = MapContext {
         focus: play.map_focus("alice"),
-        ..context()
+        ..context(play.world.as_deref().unwrap())
     };
     let mut model = MapModel::default();
     model.bind(ctx);
@@ -913,7 +896,7 @@ fn blocked_tile_teleports_to_requested_and_refuses_walk_on_the_same_selection() 
 #[test]
 fn teleport_uses_requested_tile_when_walk_snaps() {
     let world = world(t(0, 0, 0), 4, &[(1, 1, 0)]);
-    let ctx = context();
+    let ctx = context(&world);
     let origin = t(0, 0, 0);
     let requested = t(1, 1, 0);
     let mut model = MapModel::default();
@@ -949,30 +932,35 @@ fn teleport_uses_requested_tile_when_walk_snaps() {
 }
 
 #[test]
-fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() {
+fn bound_host_walk_arms_and_rejects_a_foreign_world_pack_without_replacing_the_route() {
     let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
     let origin = t(3201, 3201, 0);
     let destination = t(3205, 3206, 0);
     let play = fixture.play(origin);
     let ctx = bound_context(&play);
-    let world = play.world().unwrap();
+    let loaded_world = play.world().unwrap();
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let mut model = MapModel::default();
     model.bind(ctx);
-    model.select_tile(&world, destination);
+    model.select_tile(&loaded_world, destination);
     let command = model
         .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
         .unwrap();
-    let route = play
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let WalkActionOutcome::Walking(route) = play
         .map_walk(
             command,
             &ctx,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
             &arms,
         )
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("manual route should be armed directly");
+    };
     assert_eq!(route.route.dest, wt(3205, 3206, 0));
     let generation = {
         let arms = arms.lock().unwrap();
@@ -981,14 +969,17 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         arm.route_generation
     };
 
-    // Both caller-supplied contexts agree, so only the host's actual bound
-    // identity can reject this command.
+    // The context and selected tile both come from a distinct world with
+    // identical geometry. The host must reject this genuine foreign-pack
+    // command without replacing the existing route.
+    let foreign_world = world(t(3200, 3200, 0), 8, &[]);
     let foreign = MapContext {
-        nav: digest(99),
+        nav: pack_id(&foreign_world),
         ..ctx
     };
+    assert_ne!(foreign.nav, ctx.nav);
     model.bind(foreign);
-    model.select_tile(&world, t(3202, 3202, 0));
+    model.select_tile(&foreign_world, t(3202, 3202, 0));
     let command = model
         .confirm(
             ActionKind::Walk,
@@ -1001,6 +992,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         play.map_walk(
             command,
             &foreign,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
@@ -1016,7 +1008,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
 }
 
 #[test]
-fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_identity() {
+fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_catalogue_identity() {
     use crate::map_cache::{
         fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
         MapProfileDescriptor,
@@ -1104,7 +1096,6 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
                 content: digest(99),
                 ..identity
             },
-            digest(8),
             Some(Arc::clone(&ready_map.catalogue)),
             None,
         ),
@@ -1113,7 +1104,6 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
     let catalogue = Catalogue::from_ready(
         Arc::clone(&world),
         identity,
-        digest(8),
         Some(Arc::clone(&ready_map.catalogue)),
         None,
     )
@@ -1227,16 +1217,9 @@ fn validated_stand_is_never_shifted_twice() {
             z: 3,
             plane: 0,
         },
-        nav_sha256: digest(8),
     });
-    let catalogue = Catalogue::new(
-        Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)])),
-        identity(),
-        digest(8),
-        None,
-        Some(services(vec![r], digest(8))),
-    )
-    .unwrap();
+    let world = Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)]));
+    let catalogue = Catalogue::new(world, identity(), None, Some(services(vec![r]))).unwrap();
     let e = catalogue.entries().next().unwrap();
     assert_eq!(e.walk_target(), Some(t(2, 3, 0)));
     assert!(e.approach_known());
@@ -1299,7 +1282,8 @@ fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot(
     client.gens.session = 1;
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
-    let ctx = context();
+    let world = world(t(3200, 3200, 0), 8, &[]);
+    let ctx = context(&world);
     let observed = observed_services(&snapshot, ctx, ctx).unwrap();
     assert_eq!(observed.len(), MAX_OBSERVED_SERVICES);
     assert_eq!(observed.first().unwrap().npc_index, 7);
@@ -1321,7 +1305,7 @@ fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot(
             )
         );
     }
-    let replaced = context();
+    let replaced = context(&world);
     assert!(matches!(
         observed_services(&snapshot, ctx, replaced),
         Err(ActionError::Stale)
@@ -1342,36 +1326,31 @@ fn selected_spell_names_match_only_bound_spell_landings() {
         spell,
         edge(TransportKind::Teleport, wt(0, 0, 0), wt(9, 9, 0)),
     ];
-    let data =
-        |content: Digest| -> Arc<api::game_data::SelectedGameData> {
-            Arc::new(serde_json::from_value(serde_json::json!({
-            "schema_version": 5, "revision": 289,
-            "provenance": {
-                "cache_identity": { "cache_id": "fixture", "content_id": content.to_string() },
-                "inputs": [], "content_inputs": [], "decoder_sources": []
-            },
-            "items": [], "consumption": [], "pickpocket": [],
-            "teleports": [{
-                "name": "Harbour teleport", "source_row": "harbour", "spell": "harbour",
-                "component_id": 42, "members": false, "level": 1, "runes": [],
-                "experience": 1, "tele_coord": "0_0_0_8_9", "x": 8, "z": 9, "plane": 0
-            }, {
-                "name": "Unrelated spell", "source_row": "elsewhere", "spell": "elsewhere",
-                "component_id": 43, "members": false, "level": 1, "runes": [],
-                "experience": 1, "tele_coord": "0_0_0_9_9", "x": 9, "z": 9, "plane": 0
-            }]
-        })).unwrap())
-        };
+    let data = || -> Arc<api::game_data::SelectedGameData> {
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "schema_version": 5,
+                "revision": 289,
+                "items": [],
+                "consumption": [],
+                "pickpocket": [],
+                "teleports": [{
+                    "name": "Harbour teleport", "source_row": "harbour", "spell": "harbour",
+                    "component_id": 42, "members": false, "level": 1, "runes": [],
+                    "experience": 1, "tele_coord": "0_0_0_8_9", "x": 8, "z": 9, "plane": 0
+                }, {
+                    "name": "Unrelated spell", "source_row": "elsewhere", "spell": "elsewhere",
+                    "component_id": 43, "members": false, "level": 1, "runes": [],
+                    "experience": 1, "tele_coord": "0_0_0_9_9", "x": 9, "z": 9, "plane": 0
+                }]
+            }))
+            .unwrap(),
+        )
+    };
     let world = Arc::new(world);
-    assert!(matches!(
-        Catalogue::new(Arc::clone(&world), identity(), digest(8), None, None)
-            .unwrap()
-            .with_game_data(data(digest(9))),
-        Err(nav_planner::map::MapError::Identity)
-    ));
-    let catalogue = Catalogue::new(world, identity(), digest(8), None, None)
+    let catalogue = Catalogue::new(world, identity(), None, None)
         .unwrap()
-        .with_game_data(data(identity().content))
+        .with_game_data(data())
         .unwrap();
     let mut search = Search::default();
     search.update(&catalogue, "HARBOUR").unwrap();
@@ -1457,10 +1436,12 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
             FindOptions::default(),
         )
         .unwrap();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let arms = Arc::new(Mutex::new(HashMap::new()));
     play.map_walk(
         command,
         &bob_ctx,
+        &snapshot,
         &WorldState::empty(),
         &BankRows::default(),
         Default::default(),
@@ -1491,6 +1472,9 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
 
 #[test]
 fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let log_mark = crate::walk_map::test_log::mark();
     let nav = world(t(3200, 3200, 0), 8, &[]);
     let fixture = MapFixture::new(&nav, "local-289");
@@ -1517,6 +1501,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(model.select_tile(&baked, dest), Some(dest));
 
     let empty = WorldState::empty();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let bank = BankRows::default();
     let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
     let reqs: Vec<WalkSlotRequest<'_>> = names
@@ -1524,6 +1509,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
         .map(|name| WalkSlotRequest {
             name,
             state: &empty,
+            snapshot: Some(&snapshot),
             bank: &bank,
             risk_input: Default::default(),
         })
@@ -1679,9 +1665,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 
     let state = WorldState::empty();
     let bank = BankRows::default();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let request = [WalkSlotRequest {
         name: "alice",
         state: &state,
+        snapshot: Some(&snapshot),
         bank: &bank,
         risk_input: Default::default(),
     }];
@@ -1705,7 +1693,7 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
     assert!(detail.contains("test-barrier@3203,"), "{detail}");
     assert_eq!(error.to_string(), detail.as_str());
 }
-/// Each failure keeps its own group-walk reason: a nav-identity mismatch reads
+/// Each failure keeps its own group-walk reason: a world-pack mismatch reads
 /// "stale" and a membership refusal "members-only path", never a generic label.
 #[test]
 fn group_walk_reasons_label_stale_and_members_only_separately() {
@@ -1724,7 +1712,131 @@ fn group_walk_reasons_label_stale_and_members_only_separately() {
 }
 
 #[test]
+fn incomplete_search_group_reason_is_not_a_risk_refusal() {
+    let detail = "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)";
+    let error = ActionError::SearchIncomplete {
+        detail: detail.to_owned(),
+    };
+    assert_eq!(error.short(), "route search incomplete");
+    assert_eq!(
+        WalkSlotOutcomeKind::Failed(error.clone()).reason(),
+        Some("route search incomplete"),
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("Route search incomplete: {detail}"),
+    );
+}
+
+#[test]
+fn incomplete_search_does_not_clear_existing_walk_arm() {
+    const WIDTH: usize = 4003;
+    const HEIGHT: usize = 2001;
+    const SPLIT_X: usize = 2001;
+    let cells = WIDTH * HEIGHT * 4;
+    let mut blocked = vec![0u64; cells.div_ceil(64)];
+    for level in 0..4 {
+        for z in 0..HEIGHT {
+            let index = level * WIDTH * HEIGHT + z * WIDTH + SPLIT_X;
+            blocked[index >> 6] |= 1 << (index & 63);
+        }
+    }
+    let world = NavWorld::from_parts(
+        WorldCollision {
+            origin: wt(0, 0, 0),
+            width: WIDTH,
+            height: HEIGHT,
+            walk: vec![0; cells],
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    let from = wt(0, 1000, 0);
+    let nearby = wt(1, 1000, 0);
+    let destination = wt((WIDTH - 1) as i32, 1000, 0);
+    let state = WorldState::empty();
+    let route = Arc::new(
+        nav_planner::router::find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            nearby,
+            FindOptions::default(),
+            &state,
+        )
+        .unwrap(),
+    );
+    let arm = crate::walk_arm::WalkArm {
+        route: Some(Arc::clone(&route)),
+        route_generation: 17,
+        refusal: Some(script::native::WalkRefusal::EscapeInProgress),
+        refusal_detail: Some(Arc::from("previous risk refusal")),
+        admission_pending: true,
+        ..Default::default()
+    };
+    let arms: crate::walk_arm::WalkArms = Arc::new(Mutex::new(HashMap::from([(
+        "alice".to_owned(),
+        Arc::new(Mutex::new(arm)),
+    )])));
+    let options = FindOptions {
+        zones: nav_planner::zones::ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let admission = crate::admission::Admission::manual(
+        options,
+        Default::default(),
+        23,
+        crate::WalkGlobals::default(),
+    );
+    let failure = crate::arm_walk_on(
+        &world,
+        t(from.x, from.z, from.level),
+        t(destination.x, destination.z, destination.level),
+        options,
+        &state,
+        &BankRows::default(),
+        admission,
+        &arms,
+        Some("alice"),
+    )
+    .unwrap_err();
+    assert!(failure.incomplete_search);
+    assert!(matches!(
+        failure.refusal,
+        Some(script::native::WalkRefusal::SearchIncomplete { .. })
+    ));
+
+    let arms_guard = arms.lock().unwrap();
+    let arm = arms_guard["alice"].lock().unwrap();
+    assert!(arm
+        .route
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, &route)));
+    assert_eq!(arm.route_generation, 17);
+    assert_eq!(
+        arm.refusal,
+        Some(script::native::WalkRefusal::EscapeInProgress)
+    );
+    assert_eq!(arm.refusal_detail.as_deref(), Some("previous risk refusal"));
+    assert!(arm.admission_pending);
+}
+
+#[test]
 fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data for manual walk shortfall test",
+    )
+    .is_none()
+    {
+        return;
+    }
     let mut nav = world(t(0, 0, 0), 1, &[]);
     for level in 0..2 {
         let mut boat = edge(TransportKind::Boat, wt(0, 0, level), wt(0, 0, level + 1));
@@ -1769,7 +1881,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         &api::game_data::for_revision(client::io::ClientRevision::R289).unwrap(),
     )
     .unwrap();
-    let ctx = context();
+    let ctx = context(&nav);
     let arms = crate::WalkArms::default();
     let state = WorldState {
         inv: HashMap::from([(995, 30)]),
@@ -1821,4 +1933,202 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
     assert!(message.contains("need 60, carrying 30"), "{message}");
     // A held default refusal is the pre-S2b bare NoPath: no arm is created.
     assert!(arms.lock().unwrap().get("alice").is_none());
+}
+
+#[test]
+fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() {
+    let origin = t(3201, 3201, 0);
+    let destination = t(3205, 3206, 0);
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let play = fixture.play(origin);
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    assert_eq!(model.select_tile(&baked, destination), Some(destination));
+    let plan = model
+        .confirm_walk_plan(&dest_ctx, FindOptions::default())
+        .unwrap();
+    let state = WorldState::empty();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+
+    let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
+    assert_eq!(report.outcomes[0].kind, WalkSlotOutcomeKind::Walking);
+    assert_eq!(
+        arms.lock().unwrap()["alice"].lock().unwrap().queued_tile(),
+        Some(destination)
+    );
+}
+
+#[test]
+fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
+    use nav_planner::quest_gates::{QuestEvidence, QuestGates};
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data for catalog-gated group walk test",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    struct ClosedGate;
+    impl api::quest_progress::EvidenceProvider for ClosedGate {
+        fn observe_gate(
+            &self,
+            _: &api::selected::QuestGate,
+            required_after: api::quest_progress::EvidenceStamp,
+        ) -> Option<api::prereq_knowledge::Observation> {
+            Some(api::prereq_knowledge::Observation {
+                truth: api::selected::Truth::False,
+                observed: Some(required_after),
+            })
+        }
+    }
+
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        selected.prepare_quests(worker).unwrap();
+        selected.prepare_prereq_steps(worker).unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let (row, entry) = catalog
+        .iter()
+        .flat_map(|(_, row)| row.crossings.iter().map(move |entry| (row, entry)))
+        .find(|(_, entry)| {
+            let crossing = &entry.crossing;
+            crossing.takeoff != crossing.to
+                && crossing.takeoff.level == crossing.to.level
+                && crossing.takeoff.x.abs_diff(crossing.to.x) <= 4
+                && crossing.takeoff.z.abs_diff(crossing.to.z) <= 4
+        })
+        .expect("selected catalog has a local gated crossing");
+    let crossing = &entry.crossing;
+    let origin = t(
+        crossing.takeoff.x,
+        crossing.takeoff.z,
+        crossing.takeoff.level,
+    );
+    let destination = t(
+        crossing.to.x + (crossing.to.x - crossing.takeoff.x).signum(),
+        crossing.to.z + (crossing.to.z - crossing.takeoff.z).signum(),
+        crossing.to.level,
+    );
+    let size = crossing
+        .takeoff
+        .x
+        .abs_diff(crossing.to.x)
+        .max(crossing.takeoff.z.abs_diff(crossing.to.z)) as usize
+        + 3;
+    let grid_origin = wt(
+        crossing.takeoff.x.min(crossing.at.x).min(crossing.to.x) - 1,
+        crossing.takeoff.z.min(crossing.at.z).min(crossing.to.z) - 1,
+        0,
+    );
+    // Both endpoints are valid stands; wall bits forbid walking between them.
+    let mut flags = vec![client::dash3d::CollisionFlag::SQ_BLOCKED as u32; 4 * size * size];
+    for stand in [crossing.takeoff, crossing.to] {
+        let x = (stand.x - grid_origin.x) as usize;
+        let z = (stand.z - grid_origin.z) as usize;
+        flags[stand.level as usize * size * size + z * size + x] =
+            (client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS
+                & !client::dash3d::CollisionFlag::SQ_BLOCKED) as u32;
+    }
+    // Map clicks require a face-free destination, beyond the transport landing.
+    let x = (destination.x - grid_origin.x) as usize;
+    let z = (destination.z - grid_origin.z) as usize;
+    flags[destination.level as usize * size * size + z * size + x] = 0;
+    let (walk, blocked) = pack_walk(&flags);
+    let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
+    gate_edge.loc_id = crossing.loc_id;
+    gate_edge.option = i32::from(crossing.option);
+    gate_edge.takeoff = Some(crossing.takeoff);
+    gate_edge.quest_gates =
+        Some(QuestGates::new([api::selected::QuestGate::Window(row.establishes.clone())]).unwrap());
+    let mut graph = TransportGraph::default();
+    graph.at.insert(crossing.takeoff, vec![0]);
+    graph.edges.push(gate_edge);
+    let nav = NavWorld::from_parts(
+        WorldCollision {
+            origin: grid_origin,
+            width: size,
+            height: size,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        vec![],
+    );
+    let mut state = WorldState::empty();
+    state.establishable = Some(catalog.establishable_windows());
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ClosedGate),
+        api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 0,
+        },
+    ));
+    assert!(
+        nav_planner::router::find_actionable_quest_gates(
+            &nav.collision,
+            &nav.graph,
+            crossing.takeoff,
+            &[wt(destination.x, destination.z, destination.level)],
+            FindOptions::default(),
+            &state,
+            &[],
+        )
+        .is_some(),
+        "the route must need a real catalog-backed prerequisite"
+    );
+
+    let fixture = MapFixture::new(&nav, "local-289");
+    let play = fixture.play(origin);
+    let context = bound_context(&play);
+    let mut model = MapModel::default();
+    model.bind(context);
+    model.select_tile(&play.world().unwrap(), destination);
+    let plan = model
+        .confirm_walk_plan(&context, FindOptions::default())
+        .unwrap();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let report = play.map_walk_group(plan, &context, &request, &arms);
+    assert_eq!(
+        report.outcomes[0].kind,
+        WalkSlotOutcomeKind::Failed(ActionError::NoPath)
+    );
+    assert!(arms.lock().unwrap()["alice"]
+        .lock()
+        .unwrap()
+        .route
+        .is_none());
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
 }

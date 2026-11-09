@@ -625,6 +625,9 @@ mod tests {
 
     #[test]
     fn selected_289_answers_the_frozen_catalog_questions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         // Dragonhides differ only by their debugname colour.
         assert_eq!(display_name(&data, 1753), "Green dragonhide");

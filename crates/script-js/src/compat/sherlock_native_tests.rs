@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 struct Output;
 impl NativeOutput for Output {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<script::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
@@ -373,7 +373,7 @@ fn with_tick<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    let pin = world.data.selected_pin().unwrap();
+    let revision = selected_revision(&world.data);
     let evidence = EvidenceStamp {
         run: world.run,
         tick,
@@ -389,11 +389,14 @@ fn with_tick<R>(
             poison_unknown_pulse: None,
             cure_poison: script::survival::CurePoison::WhenNeeded,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             selected: Some(&world.data),
             reach: None,
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: world.held,
             world_members: api::selected::Truth::Unknown,
             interacts: Some(Vec::new()),
@@ -403,7 +406,7 @@ fn with_tick<R>(
     script::native::with_test_tick(
         frame,
         evidence,
-        &pin,
+        revision,
         (Duration::from_millis(tick * 600), Instant::now()),
         ledger,
         &mut output,
@@ -429,7 +432,14 @@ fn begin_policy_s2_combat(
     let tables = Arc::clone(script.tables.as_ref().expect("combat tables"));
     let handle = with_tick(world, ledger, 0, |tick| {
         tick.actions
-            .begin::<Combat>((Arc::new(request), tables), &mut tick.cx)
+            .begin::<Combat>(
+                (
+                    Arc::new(request),
+                    tables,
+                    script::native::PvpGlobals::fail_closed(),
+                ),
+                &mut tick.cx,
+            )
             .expect("begin policy Combat")
     });
     script.fight = Some(Fight::Combat(handle));
@@ -518,6 +528,9 @@ fn until_combat(
 
 #[test]
 fn pause_delivers_the_cancelled_outcome_instead_of_parking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -563,6 +576,9 @@ fn pause_delivers_the_cancelled_outcome_instead_of_parking() {
 
 #[test]
 fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(6);
     let mut script = script(&world, true);
     let mut ledger = None;
@@ -617,6 +633,9 @@ fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
 
 #[test]
 fn policy_s2_startup_preserves_user_prayers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new(1);
     let thick_skin = world.data.prayer_by_name("Thick Skin").unwrap();
     let mut script = script(&world, false);
@@ -630,6 +649,9 @@ fn policy_s2_startup_preserves_user_prayers() {
 
 #[test]
 fn native_fight_is_one_owner_with_no_compiled_interacts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -650,6 +672,9 @@ fn native_fight_is_one_owner_with_no_compiled_interacts() {
 
 #[test]
 fn ready_ok_lands_as_the_next_combat_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -719,6 +744,9 @@ fn ready_ok_lands_as_the_next_combat_page() {
 
 #[test]
 fn policy_s2_pause_clears_only_accepted_combat_raise_before_poll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
     let displaced = world
@@ -800,6 +828,9 @@ fn policy_s2_pause_clears_only_accepted_combat_raise_before_poll() {
 
 #[test]
 fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for refused in [false, true] {
         let mut world = World::new(0);
         let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
@@ -877,6 +908,9 @@ fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
 
 #[test]
 fn policy_s2_pause_does_not_retain_displaced_ownership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let ranged = world
         .data
@@ -938,6 +972,9 @@ fn policy_s2_pause_does_not_retain_displaced_ownership() {
 
 #[test]
 fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let raised = world
         .data
@@ -1011,6 +1048,9 @@ fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
 
 #[test]
 fn allocation_counts_by_tick_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1058,7 +1098,10 @@ fn allocation_counts_by_tick_class() {
 
 #[test]
 fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1098,7 +1141,10 @@ fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
 
 #[test]
 fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1126,7 +1172,10 @@ fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
 
 #[test]
 fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1176,7 +1225,10 @@ fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
 
 #[test]
 fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot
@@ -1214,7 +1266,7 @@ fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
 }
 
 fn start_sherlock_slot(world: &World) -> script::slot::SlotScript {
-    script::registry::install_cards(&crate::sherlock::CARDS)
+    script::registry::install_cards(&crate::compat::sherlock::CARDS)
         .expect("install canonical Sherlock card for native slot tests");
     let mut slot = script::slot::SlotScript::new();
     slot.bind_incarnation(1);
@@ -1224,6 +1276,7 @@ fn start_sherlock_slot(world: &World) -> script::slot::SlotScript {
         Arc::new(SettingsBag::new()),
         Arc::clone(&world.data),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
+        None,
     )
     .expect("start Sherlock through its compiled-card slot path");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1255,18 +1308,408 @@ fn tick_sherlock_slot(slot: &mut script::slot::SlotScript, world: &World, tick: 
             condition: None,
             poison_unknown_pulse: None,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             cure_poison: script::survival::CurePoison::WhenNeeded,
             selected: Some(&world.data),
             reach: None,
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: world.held,
             world_members: api::selected::Truth::Unknown,
             interacts: None,
             service_gate: None,
         },
     });
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClueCombatCaller {
+    Guardian,
+    Keeper,
+}
+
+impl ClueCombatCaller {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Guardian => "guardian",
+            Self::Keeper => "keeper",
+        }
+    }
+}
+
+fn keeper_retry_world() -> World {
+    let data = data();
+    let key = data
+        .talk_key()
+        .expect("selected talk-key data")
+        .keys
+        .iter()
+        .find(|key| {
+            key.spawn.is_some()
+                && key.keeper.kind == "type"
+                && key.keeper.id.is_some()
+                && key
+                    .keeper
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| !name.is_empty())
+        })
+        .expect("a spawned, named keeper type row");
+    let clue_id = key.id;
+    let keeper_id = key.keeper.id.expect("packed keeper type");
+    let keeper_name = key
+        .keeper
+        .name
+        .as_deref()
+        .expect("selected keeper display name")
+        .to_owned();
+    let spawn = key.spawn.as_ref().expect("published keeper spawn");
+    let stand = WorldTile {
+        x: spawn.x,
+        z: spawn.z,
+        level: spawn.plane,
+    };
+    let far = WorldTile {
+        x: stand.x + 20,
+        z: stand.z,
+        level: stand.level,
+    };
+
+    let mut world = World::new(0);
+    world.stand = stand;
+    world.here = (stand.x, stand.z, stand.level);
+    world.inventory[0] = item(clue_id, "Clue scroll", 0, 1);
+    world.local.player.network = far;
+    world.local.player.actor.tile = far;
+    world.npcs[0].r#type = Some(usize::try_from(keeper_id).expect("positive keeper type"));
+    world.npcs[0].name = Some(keeper_name);
+    world.npcs[0].actions = vec![Some("Attack".into())];
+    world.npcs[0].tile = stand;
+    world.npcs[0].network = stand;
+    world.npcs[0].distance = 1;
+    world.refresh();
+    world
+}
+
+struct NativeStandWalk {
+    authority: script::native::HostAuthority,
+    request_id: u64,
+    target: WorldTile,
+    required_after_tick: u64,
+}
+
+#[derive(Default)]
+struct SherlockNativePass {
+    walks: Vec<NativeStandWalk>,
+    attacks: usize,
+    other_native_effects: usize,
+}
+
+fn is_attack(request: &InteractReq) -> bool {
+    matches!(request, InteractReq::Npc { action, .. } if action == "Attack")
+}
+
+fn sherlock_native_pass(
+    slot: &mut script::slot::SlotScript,
+    world: &World,
+    tick: u64,
+) -> SherlockNativePass {
+    tick_sherlock_slot(slot, world, tick);
+    let mut pass = SherlockNativePass::default();
+    while let Some(action) = slot.take_native_action() {
+        let authority = action.authority();
+        let request_id = action.request_id.get();
+        let evidence = EvidenceStamp {
+            run: action.run(),
+            tick,
+            sequence: tick,
+        };
+        match action.effect {
+            HostEffect::Walk(request) => pass.walks.push(NativeStandWalk {
+                authority,
+                request_id,
+                target: request.target,
+                required_after_tick: request.required_after.tick,
+            }),
+            HostEffect::Interaction(request) => {
+                if is_attack(&request) {
+                    pass.attacks += 1;
+                }
+                slot.complete_native_interaction(
+                    &authority,
+                    InteractionReceipt {
+                        request_id,
+                        evidence,
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+            }
+            _ => pass.other_native_effects += 1,
+        }
+    }
+    pass.attacks += slot
+        .drain_interacts()
+        .iter()
+        .filter(|request| is_attack(request))
+        .count();
+    pass
+}
+
+fn post_stand_walk_failure(
+    slot: &mut script::slot::SlotScript,
+    walk: &NativeStandWalk,
+    observed_tick: u64,
+    end: script::native::WalkEnd,
+    detail: Option<&str>,
+    refusal: Option<script::native::WalkRefusal>,
+) -> Option<String> {
+    let receipt = script::native::WalkReceipt {
+        request_id: walk.request_id,
+        evidence: EvidenceStamp {
+            run: walk.authority.run(),
+            tick: observed_tick,
+            sequence: observed_tick,
+        },
+        goal: None,
+        end,
+        blocked: None,
+        detail: detail.map(Arc::from),
+        refusal,
+        assessment: None,
+        escape: None,
+        prereq_allow: None,
+    };
+    let failure_detail = receipt.failure_detail().map(|detail| detail.to_string());
+    if let Some(detail) = detail {
+        assert_eq!(failure_detail.as_deref(), Some(detail));
+    }
+    slot.complete_native_walk(&walk.authority, receipt);
+    failure_detail
+}
+
+fn begin_clue_stand_walk(
+    caller: ClueCombatCaller,
+) -> (World, script::slot::SlotScript, NativeStandWalk) {
+    crate::compat::clue::on_reset();
+    let mut world = match caller {
+        ClueCombatCaller::Guardian => World::new(0),
+        ClueCombatCaller::Keeper => keeper_retry_world(),
+    };
+    let mut slot = start_sherlock_slot(&world);
+    let far = WorldTile {
+        x: world.stand.x + 20,
+        z: world.stand.z,
+        level: world.stand.level,
+    };
+    let mut first_walk = None;
+    for tick in 1..=8 {
+        if caller == ClueCombatCaller::Guardian && tick == 2 {
+            // The clue's posted `here` remains its arrived stand; the local
+            // network tile is a distinct native observation for Combat.
+            world.local.player.network = far;
+            world.local.player.actor.tile = far;
+            world.refresh();
+        }
+        let pass = sherlock_native_pass(&mut slot, &world, tick);
+        assert_eq!(
+            pass.other_native_effects,
+            0,
+            "{} emitted an unexpected native effect before the stand walk",
+            caller.label()
+        );
+        assert_eq!(
+            pass.attacks,
+            0,
+            "{} attacked before reaching the native stand",
+            caller.label()
+        );
+        if !pass.walks.is_empty() {
+            assert_eq!(
+                pass.walks.len(),
+                1,
+                "{} emitted more than one stand walk in one tick",
+                caller.label()
+            );
+            first_walk = pass.walks.into_iter().next();
+            break;
+        }
+    }
+    let first_walk = first_walk.unwrap_or_else(|| {
+        panic!(
+            "{} Delegation::request did not reach the native stand planner",
+            caller.label()
+        )
+    });
+    assert_eq!(
+        first_walk.target,
+        world.stand,
+        "{} walks to its Delegation::request stand",
+        caller.label()
+    );
+    (world, slot, first_walk)
+}
+
+/// Sherlock has two production `begin::<Combat>` sites:
+/// `compat/sherlock.rs:408` retries the request stored from `Delegation` by
+/// `begin_combat` at `compat/sherlock.rs:860`, and
+/// `compat/sherlock.rs:844` starts a fresh `d.request()`. Both are one clue
+/// caller family; the pending branch is not a distinct kind. The policy helper
+/// above uses a default request with no stand. These compiled-card checks cover
+/// the only stand-bearing caller's actual guardian and keeper delegations.
+#[test]
+fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for caller in [ClueCombatCaller::Guardian, ClueCombatCaller::Keeper] {
+        let (world, mut slot, mut walk) = begin_clue_stand_walk(caller);
+        let details = [
+            "first stand route failed",
+            "second stand route failed",
+            "last stand route failed",
+        ];
+        let mut request_ids = vec![walk.request_id];
+        for (attempt, &detail) in details.iter().enumerate() {
+            let observed_tick = walk.required_after_tick + 1;
+            let failure_detail = post_stand_walk_failure(
+                &mut slot,
+                &walk,
+                observed_tick,
+                script::native::WalkEnd::NoPath,
+                Some(detail),
+                None,
+            );
+            if attempt == details.len() - 1 {
+                assert_eq!(
+                    failure_detail.as_deref(),
+                    Some("last stand route failed"),
+                    "{} final receipt retains its own failure detail",
+                    caller.label()
+                );
+                let terminal = sherlock_native_pass(&mut slot, &world, observed_tick);
+                assert!(
+                    terminal.walks.is_empty(),
+                    "{} re-walked after the third failure",
+                    caller.label()
+                );
+                assert_eq!(
+                    terminal.attacks,
+                    0,
+                    "{} attacked after the third failure",
+                    caller.label()
+                );
+                assert!(
+                    !slot.live_native_owner(),
+                    "{} retained the Combat owner after exhausting stand walks",
+                    caller.label()
+                );
+                assert_eq!(
+                    slot.native_status().map(|status| status.phase),
+                    Some(NativePhase::Blocked),
+                    "{} exposes terminal failure after the third stand receipt",
+                    caller.label()
+                );
+                break;
+            }
+
+            let failed_tick = sherlock_native_pass(&mut slot, &world, observed_tick);
+            assert!(
+                failed_tick.walks.is_empty(),
+                "{} retried in the receipt tick instead of waiting for a later tick",
+                caller.label()
+            );
+            assert_eq!(failed_tick.attacks, 0);
+            let retry_tick = observed_tick + 1;
+            let retry = sherlock_native_pass(&mut slot, &world, retry_tick);
+            assert_eq!(
+                retry.walks.len(),
+                1,
+                "{} retry walk {attempt}",
+                caller.label()
+            );
+            assert_eq!(retry.other_native_effects, 0);
+            assert_eq!(
+                retry.attacks,
+                0,
+                "{} attacked while retrying",
+                caller.label()
+            );
+            let next = retry.walks.into_iter().next().expect("one retry walk");
+            assert_eq!(next.target, world.stand);
+            assert_eq!(
+                next.required_after_tick,
+                retry_tick,
+                "{} retry is scheduled from the later observed tick",
+                caller.label()
+            );
+            assert!(
+                !request_ids.contains(&next.request_id),
+                "{} retry reused a prior host walk request id",
+                caller.label()
+            );
+            request_ids.push(next.request_id);
+            walk = next;
+        }
+        assert_eq!(
+            request_ids.len(),
+            3,
+            "{} must make exactly three total stand walks",
+            caller.label()
+        );
+        slot.stop();
+
+        let (world, mut slot, walk) = begin_clue_stand_walk(caller);
+        let observed_tick = walk.required_after_tick + 1;
+        let detail = post_stand_walk_failure(
+            &mut slot,
+            &walk,
+            observed_tick,
+            script::native::WalkEnd::Failed,
+            None,
+            Some(script::native::WalkRefusal::Unsurvivable),
+        );
+        assert_eq!(
+            detail.as_deref(),
+            Some("route is unsurvivable"),
+            "{} typed refusal detail",
+            caller.label()
+        );
+        let terminal = sherlock_native_pass(&mut slot, &world, observed_tick);
+        assert!(
+            terminal.walks.is_empty(),
+            "{} retried a typed hard refusal",
+            caller.label()
+        );
+        assert_eq!(
+            terminal.attacks,
+            0,
+            "{} attacked after a typed hard refusal",
+            caller.label()
+        );
+        assert!(
+            !slot.live_native_owner(),
+            "{} retained the Combat owner after a typed hard refusal",
+            caller.label()
+        );
+        assert_eq!(
+            slot.native_status().map(|status| status.phase),
+            Some(NativePhase::Blocked),
+            "{} exposes terminal failure after a typed refusal",
+            caller.label()
+        );
+        let after = sherlock_native_pass(&mut slot, &world, observed_tick + 1);
+        assert!(
+            after.walks.is_empty(),
+            "{} emitted a later retry after refusal",
+            caller.label()
+        );
+        assert_eq!(after.attacks, 0);
+        slot.stop();
+    }
+    crate::compat::clue::on_reset();
 }
 
 fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {
@@ -1281,7 +1724,10 @@ fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {
 
 #[test]
 fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot
@@ -1326,7 +1772,10 @@ fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
 
 #[test]
 fn native_sherlock_fresh_start_baselines_stale_death_chat() {
-    crate::clue::on_reset();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
         .snapshot

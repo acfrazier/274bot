@@ -362,7 +362,7 @@ fn seed_item_icon() -> Arc<Cache> {
 
 fn setup() -> (Runtime, Arc<Cache>) {
     v8::V8::set_flags_from_string("--allow-natives-syntax");
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     super::super::install(
         &mut runtime,

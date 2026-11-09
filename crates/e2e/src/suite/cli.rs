@@ -315,7 +315,6 @@ const BOUND_PROFILE_ENV: &[&str] = &[
     "CLIENT_UNPACK_DIR",
     "NAV_PACK",
     "NAV_FLAGS",
-    "BOT_CACHE_MANIFEST",
     "RS2B0T",
 ];
 
@@ -374,8 +373,6 @@ fn bind_profile_with_env(
              the child resolves, so it cannot substitute a different selection"
         )
     })?;
-    let revision = selection.revision().as_i32() as u16;
-    let unpack_overridden = options.unpack_dir.is_some() || env.unpack_dir.is_some();
     let engine_dir = selection.engine_dir();
     let catalog_path = selection
         .catalog_root()
@@ -442,22 +439,11 @@ fn bind_profile_with_env(
         },
         host_play::WorldMembersFact::Known {
             members,
-            source:
-                host_play::WorldMembersSource::LocalWorldJson {
-                    path,
-                    sha256,
-                    bytes,
-                },
+            source: host_play::WorldMembersSource::LocalWorldJson { path },
         } => identity::EffectiveWorldMembersIdentity {
             value: Some(*members),
             source: identity::WorldMembersIdentitySource::LocalWorldJson,
-            declaration: Some(identity::InputDigest {
-                target: path.display().to_string(),
-                sha256: Some(sha256.clone()),
-                bytes: Some(*bytes),
-                files: 1,
-                note: None,
-            }),
+            declaration: Some(path.display().to_string()),
         },
     };
     Ok(ProfileIdentity {
@@ -468,13 +454,8 @@ fn bind_profile_with_env(
         selection: resolved.selection.clone(),
         resolved: resolved.clone(),
         engine: Some(identity::bind_engine_pem(engine_dir)),
-        cache: identity::bind_cache(Path::new(&resolved.cache), revision),
         catalog: identity::InputDigest::catalog(&catalog_path),
         vault: identity::bind_input(Path::new(&resolved.vault)),
-        nav_pack: identity::bind_input(Path::new(&resolved.nav_pack)),
-        nav_flags: identity::bind_input(Path::new(&resolved.nav_flags)),
-        content: identity::bind_content(Path::new(&resolved.content)),
-        unpack: identity::bind_unpack(Path::new(&resolved.unpack), revision, unpack_overridden),
         world_members: options.world_members.or(config.world_members),
         effective_world_members,
         lowmem: config.lowmem,

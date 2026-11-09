@@ -6,8 +6,8 @@
 //! session outcomes remain covered by the real LoadIsolate tests in
 //! `api_gather_runtime.rs`.
 
-use script::shim::InteractReq;
-use script_js::wire::{ChatLineInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ChatLineInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

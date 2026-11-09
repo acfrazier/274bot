@@ -3,7 +3,7 @@
 //! checks for the removed private exports and compat-only Bank members
 //! (plan-r3 section 3, "Removal tests and proxy traps").
 
-use script_js::wire::{ItemRowInput, NativeFactsInput, SnapshotInput};
+use script::native::snapshot_source::{ItemRowInput, NativeFactsInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape, Ready};
 use std::time::{Duration, Instant};
 

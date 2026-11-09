@@ -1,12 +1,12 @@
 //! Typed V8 marshalling for v1 `PartnerTrade.js`: one native call per export
-//! (`__rs2b0t_partner_trade(name, …args)`), deciding in `crate::partner_trade`.
+//! (`__rs2b0t_partner_trade(name, …args)`), deciding in `crate::compat::partner_trade`.
 
-use crate::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
+use crate::compat::partner_trade::{self as pt, MuleMode, OfferSlot, ReceiverOfferDecision};
 use rustyscript::Runtime;
 use script::trade_screen::{ScreenKind, StableClosedPoll};
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -124,7 +124,7 @@ fn run<'s>(
 }
 
 fn observed_trade_screen_and_tick() -> (ScreenKind, u64) {
-    crate::observed::with(|scene| {
+    crate::scene::observed::with(|scene| {
         let session = scene.since_login();
         (
             ScreenKind::observed(

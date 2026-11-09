@@ -500,8 +500,10 @@ impl SelectedTarget {
                 required_after,
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             }
         }))
@@ -680,6 +682,9 @@ fn classify_fishing_placement(
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return classify_placement(spot, method, scene, avoided, now);
+    }
     let PlacementScene {
         world,
         npcs,
@@ -839,6 +844,38 @@ fn select_with_access(
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
+                if matches!(spot.entity, EntityId::Loc(_)) {
+                    if classify_placement(
+                        spot,
+                        method,
+                        PlacementScene {
+                            world,
+                            locs,
+                            npcs,
+                            hazard_npcs: catalog.hazard_npcs(),
+                        },
+                        avoided,
+                        now,
+                    ) == PlacementClass::Live
+                        && danger.allows_live(spot.origin, spot.entity, snapshot)
+                    {
+                        consider_candidate(
+                            &mut best_live,
+                            preference,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                PlacementClass::Live,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
+                            skill_stat,
+                        );
+                    }
+                    continue;
+                }
                 let Some(bounds) = movement_bounds(spot) else {
                     continue;
                 };
@@ -975,9 +1012,17 @@ fn select_with_access(
                     avoided,
                     now,
                 );
-                let bounds = movement_bounds(spot).expect("eligible fishing movement");
                 let mut stand = spot.origin;
-                if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
+                if matches!(spot.entity, EntityId::Loc(_))
+                    && !matches!(class, PlacementClass::Live | PlacementClass::Absent)
+                    && !danger.allows_live(spot.origin, spot.entity, snapshot)
+                {
+                    continue;
+                }
+                if matches!(spot.entity, EntityId::Npc(_))
+                    && matches!(class, PlacementClass::Unloaded | PlacementClass::Absent)
+                {
+                    let bounds = movement_bounds(spot).expect("eligible fishing movement");
                     // Quest gather keeps only Live targets and discards any
                     // computed observation stand. Do not scan collision for a
                     // stand that will not be chosen.
@@ -1133,7 +1178,7 @@ fn select_with_access(
             skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let survey = fishing.placement(method_index, spot.id.0);
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(survey.unobserved_cells(bounds), collision, Some(tile)) {
@@ -1317,7 +1362,7 @@ pub fn resource_return_target(
             observation.skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(observation_cells(bounds), observation.collision, Some(tile)) {
                 Ok(candidates) => goals = Some(candidates),
@@ -1365,6 +1410,15 @@ fn fishing_return_stand(
     let until = avoid_until(spot, method.skill, observation.avoided);
     if until > observation.now {
         return ReturnStand::Excluded(until);
+    }
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return if has_area_arrival(observation.collision, spot.origin)
+            && danger.allows(spot.origin, None, nav_planner::contract::ArrivalKind::Area)
+        {
+            ReturnStand::Ready(spot.origin)
+        } else {
+            ReturnStand::Collision
+        };
     }
     // Observe the resource from the resource, never from `here`. Clamping
     // toward the player is how a Draynor bank trip lands a stand inside the
@@ -1790,11 +1844,8 @@ pub(crate) mod tests {
         collision: nav_planner::collision::WorldCollision,
         configure: impl FnOnce(&mut nav_planner::world::NavWorld),
     ) -> nav_planner::contract::NavLease {
-        nav_planner::contract::NavLease::wrap(
-            test_nav_world_over(collision, configure),
-            nav_planner::contract::PackDigest::of(b"script test fixture"),
-        )
-        .expect("lease ids are not exhausted in tests")
+        nav_planner::contract::NavLease::wrap(test_nav_world_over(collision, configure))
+            .expect("lease ids are not exhausted in tests")
     }
 
     /// A lease over a small synthetic collision the test keeps for its raw
@@ -1821,11 +1872,8 @@ pub(crate) mod tests {
 
     /// A lease over the shared real 289 pack world, without copying it.
     pub(crate) fn test_real_nav_lease() -> nav_planner::contract::NavLease {
-        nav_planner::contract::NavLease::wrap(
-            std::sync::Arc::clone(super::test_real_nav_world()),
-            nav_planner::contract::PackDigest::of(b"real 289 pack"),
-        )
-        .expect("lease ids are not exhausted in tests")
+        nav_planner::contract::NavLease::wrap(std::sync::Arc::clone(super::test_real_nav_world()))
+            .expect("lease ids are not exhausted in tests")
     }
 
     #[test]
@@ -1840,6 +1888,9 @@ pub(crate) mod tests {
 
     #[test]
     fn loc_arrival_consumers_use_server_position_while_rendering_trails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
         use api::snapshot::{GameSnapshot, SnapshotView};
@@ -2081,6 +2132,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_denied_tree_is_not_ranked_as_a_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(Some(&DenyDanger), false);
         assert!(
             result.target.is_none(),
@@ -2096,6 +2150,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_data_refuses_a_tree_that_needs_a_walk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(None, false);
         assert!(
             result.target.is_none(),
@@ -2113,6 +2170,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_data_keeps_a_tree_already_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(None, true);
         assert!(
             result.target.is_some(),
@@ -2122,6 +2182,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_depleted_tree_in_gatherer_and_quester() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for quest in [false, true] {
             let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, quest);
             let allowed = danger_tree_selection_case(
@@ -2143,6 +2206,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_depleted_tree_in_quester() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, true);
         assert_eq!(
             result.outcome,
@@ -2155,6 +2221,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_avoided_tree_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection_case(None, true, PlacementClass::Avoided, false);
         assert_eq!(
             result.outcome,
@@ -2167,6 +2236,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_non_live_tree_still_requires_permission_when_not_arrived_or_denied() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for quest in [false, true] {
             let distant = danger_tree_selection_case(None, false, PlacementClass::Depleted, quest);
             assert_eq!(
@@ -2188,6 +2260,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_denied_tree_is_ineligible_even_when_already_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(Some(&DenyDanger), true);
         assert!(
             result.target.is_none(),
@@ -2541,6 +2616,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_filter_runs_before_live_unloaded_and_return_ranking() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.normal").unwrap();
         let index = method_index(&catalog, method);
@@ -2695,6 +2773,21 @@ pub(crate) mod tests {
             products: Knowledge::Known(Arc::from([])),
             tools: Knowledge::Known(Arc::from([])),
             consumes: Knowledge::Known(Arc::from([])),
+            tick_arm: api::gather_methods::TickArm {
+                kind: api::gather_methods::TickArmKind::None,
+                roll_signal: api::gather_methods::TickRollSignal::Never,
+                delay_drop: false,
+                depletes: false,
+                native_arm: None,
+                act_min_d: 0,
+                act_silent: false,
+                no_gain: None,
+                skill_anim: None,
+                roll_anim: None,
+                cast_anim: None,
+                fletch_anim: Some(1),
+                tool_facts: Arc::from([]),
+            },
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
         }
@@ -2800,6 +2893,128 @@ pub(crate) mod tests {
             level: tile.level,
             ..WorldStateView::default()
         }
+    }
+
+    fn static_fishing_loc_fixture() -> (Arc<GatherCatalog>, usize, WorkArea) {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.loc_2027.op1").unwrap();
+        let origin = WorldTile {
+            x: 2501,
+            z: 3506,
+            level: 0,
+        };
+        assert!(complete_spots(method).unwrap().iter().any(|spot| {
+            spot.entity == EntityId::Loc(2027)
+                && spot.origin == origin
+                && known_resource_target(method, spot.entity)
+        }));
+        let index = method_index(&catalog, method);
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: origin,
+            radius: 1,
+        };
+        (catalog, index, area)
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_live() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(area.anchor),
+                locs: &[loc(2027, area.anchor)],
+                npcs: &[],
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("the authored fishing loc is live");
+        assert_eq!(target.class, PlacementClass::Live);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_unloaded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let here = WorldTile {
+            x: 2000,
+            z: 3000,
+            level: 0,
+        };
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(here),
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("return to the authored fishing loc");
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_has_a_return_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let returned = resource_return_target(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            ReturnObservation {
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let ResourceReturn::Ready(target) = returned else {
+            panic!("the authored fishing loc must remain a return target");
+        };
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
     }
 
     fn radius_one_tiles(centre: WorldTile) -> impl Iterator<Item = WorldTile> {
@@ -3054,6 +3269,9 @@ pub(crate) mod tests {
 
     #[test]
     fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let mut spot = complete_spots(method)
@@ -3478,6 +3696,9 @@ pub(crate) mod tests {
 
     #[test]
     fn selected_fishing_target_uses_npc_type_index_and_live_tile() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog
             .method("fishing.saltfish.op1")
@@ -3660,6 +3881,9 @@ pub(crate) mod tests {
 
     #[test]
     fn bank_return_stand_observes_real_harpoon_placements_for_all_area_modes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -3757,6 +3981,9 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_edgeville_return_skips_the_all_water_harpoon_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -3857,6 +4084,9 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_bank_return_stand_is_at_the_saltfish_spots_not_the_booth() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -3992,13 +4222,15 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_real_router_returns_to_the_spots_not_the_bank_booth() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
         let world = real_nav_world();
         let lease = test_real_nav_lease();
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.saltfish.op3").unwrap();
         let bank = WorldTile {
@@ -4062,6 +4294,9 @@ pub(crate) mod tests {
 
     #[test]
     fn loc_bank_return_uses_the_resource_origin_not_an_observation_clamp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.willow").unwrap();
         let index = method_index(&catalog, method);
@@ -4125,6 +4360,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_bank_return_approaches_unobserved_spots_before_reacquiring_the_actor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4212,6 +4450,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_empty_arrival_decides_and_moved_east_edge_is_reacquired() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4317,6 +4558,9 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_moved_spot_is_surveyed_while_old_tile_is_avoided() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.saltfish.op1").unwrap();
         let index = method_index(&catalog, method);
@@ -4412,6 +4656,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_wide_freshfish_envelope_is_fully_observed_then_absent() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.freshfish.op1").unwrap();
         let index = method_index(&catalog, method);
@@ -4482,6 +4729,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_reapproach_is_capped_even_without_view_or_arrival_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4549,6 +4799,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_content_envelopes_have_radius_one_safe_stands() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         for id in [310, 317, 320, 325, 1191] {
             let mut checked = 0;
@@ -4601,11 +4854,13 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -4695,11 +4950,13 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -4757,6 +5014,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_fails_when_observation_rectangle_has_no_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog
             .method("fishing.saltfish.op3")
@@ -4849,8 +5109,7 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -4861,6 +5120,9 @@ pub(crate) mod tests {
             GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView, StatView,
         };
 
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, _spot) = fishing_guild_spot(&catalog);
         let lease = test_real_nav_lease();
@@ -5027,11 +5289,13 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let world = real_nav_world();
         let lease = test_real_nav_lease();
@@ -5176,6 +5440,9 @@ pub(crate) mod tests {
 
     #[test]
     fn a_live_lower_tier_beats_an_unloaded_higher_tier_and_tier_falls_back() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let low = catalog.method("woodcutting.normal").expect("normal trees");
         let high = catalog.method("woodcutting.oak").expect("oak trees");
@@ -5293,6 +5560,9 @@ pub(crate) mod tests {
 
     #[test]
     fn depleted_placements_wait_for_the_content_respawn_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.oak").expect("oak method");
         let method_index = method_index(&catalog, method);
@@ -5356,6 +5626,9 @@ pub(crate) mod tests {
 
     #[test]
     fn target_yield_contains_content_derived_incidental_mining_gems() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("mining.coal").expect("coal method");
         let index = method_index(&catalog, method);
@@ -5386,6 +5659,9 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_small_net_return_waits_out_a_shared_placement_exclusion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -5527,6 +5803,9 @@ pub(crate) mod tests {
 
     #[test]
     fn generated_fishing_movement_candidates_fit_the_reviewed_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [
             client::io::ClientRevision::R274,
             client::io::ClientRevision::R289,
@@ -5566,13 +5845,15 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_candidates_route_from_the_guild_and_keep_the_island_start() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
         let world = real_nav_world();
         let lease = test_real_nav_lease();
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -6235,7 +6516,7 @@ pub(crate) mod tests {
                 .bank_placements()
                 .expect("selected bank placement facts");
             let facts = nav_planner::named_banks::resolve(
-                api::named_banks::BANK_CATALOG,
+                api::named_banks::bank_catalog().expect("selected bank catalogue"),
                 &placements.rows,
                 |tile| world.collision.standable(tile),
             );
@@ -6848,15 +7129,6 @@ pub(crate) mod tests {
             markdown
         }
 
-        fn hex(bytes: &[u8]) -> String {
-            use std::fmt::Write as _;
-            let mut value = String::with_capacity(bytes.len() * 2);
-            for byte in bytes {
-                let _ = write!(value, "{byte:02x}");
-            }
-            value
-        }
-
         fn write_artifacts(output: &Path, report: &CensusReport<'_>) -> PathBuf {
             let markdown_path = output.with_extension("md");
             for path in [output, markdown_path.as_path()] {
@@ -7291,16 +7563,8 @@ pub(crate) mod tests {
                     "preferred_proof": route.preferred_proof,
                 })),
             });
-            let pin = catalog.pin();
             let metadata = serde_json::json!({
-                "client_revision": format!("{:?}", pin.revision),
-                "engine_commit": pin.engine_commit.as_ref(),
-                "content_commit": pin.content_commit.as_ref(),
-                "cache_id": pin.cache_id.as_ref(),
-                "content_id": pin.content_id.as_ref(),
-                "nav_sha256": hex(&pin.nav_sha256),
-                "flags_sha256": hex(&pin.flags_sha256),
-                "manifest_sha256": hex(&pin.manifest_sha256),
+                "client_revision": selected.revision(),
                 "nav_pack_path": std::env::var_os("NAV_PACK").map(|path| path.to_string_lossy().into_owned()),
                 "evidence_json_path": output.display().to_string(),
             });

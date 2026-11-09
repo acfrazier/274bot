@@ -17,7 +17,7 @@ globalThis.__catalog = () => __rs2b0t_walk_catalog(__Tile);
 "#;
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();
@@ -157,7 +157,7 @@ fn loaded_declared_surface_materializes_walk_catalog() {
     const TEST_NAME: &str =
         "walk_destinations_v8::tests::loaded_declared_surface_materializes_walk_catalog";
     if std::env::var_os(CHILD_ENV).is_some() {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         CALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         let isolate = crate::LoadIsolate::spawn(
             "import './declared_surface.js'; export default class T extends LoopingBot { loop() {} }"

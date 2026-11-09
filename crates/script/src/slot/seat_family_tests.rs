@@ -152,6 +152,9 @@ fn frame(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) 
 /// A second Session root is Busy in either order.
 #[test]
 fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (family_index, family) in [
         NativeKind::Gather,
         NativeKind::Combat,
@@ -198,6 +201,7 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
                 ),
                 1,
                 &[],
+                None,
             );
 
             let foreground = (family != NativeKind::Hunt).then_some(family_id);
@@ -278,9 +282,12 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
 /// foreground, refuses Gather and Combat, and settles CastNpc false.
 #[test]
 fn fixture_26_progress_first_rejects_competing_api_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(720);
     let progress = start_input(&slot, 720, NativeKind::QuestProgress);
-    slot.consume_seat_batch(decoded(vec![progress], Vec::new()), 1, &[]);
+    slot.consume_seat_batch(decoded(vec![progress], Vec::new()), 1, &[], None);
     assert!(matches!(
         &slot.api.as_ref().unwrap().progress_page,
         Some(ProgressPage::Reading { token: 720 })
@@ -293,7 +300,7 @@ fn fixture_26_progress_first_rejects_competing_api_work() {
         (723, NativeKind::CastNpc),
     ] {
         let competing = start_input(&slot, raw, kind);
-        slot.consume_seat_batch(decoded(vec![competing], Vec::new()), 1, &[]);
+        slot.consume_seat_batch(decoded(vec![competing], Vec::new()), 1, &[], None);
         let result = slot
             .seat
             .as_ref()
@@ -350,13 +357,16 @@ fn fixture_26_progress_first_rejects_competing_api_work() {
 /// boundary; the same id is admitted only when carried as a typed seat start.
 #[test]
 fn fixture_28_legacy_gather_control_drops_but_typed_start_is_admitted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(728);
     let token = 728;
     slot.restore_interacts(vec![InteractReq::GatherRun {
         request_id: token,
         settings: Arc::new(gather_settings()),
     }]);
-    let (_, rows, foreground) = slot.drain_host_interacts();
+    let (_, rows, foreground) = slot.drain_host_interacts(None);
     assert!(rows.is_empty());
     assert!(!foreground);
     assert!(slot.seat.as_ref().unwrap().live().is_empty());
@@ -370,6 +380,7 @@ fn fixture_28_legacy_gather_control_drops_but_typed_start_is_admitted() {
         ),
         1,
         &[],
+        None,
     );
     assert!(slot
         .seat
@@ -390,6 +401,9 @@ fn fixture_28_legacy_gather_control_drops_but_typed_start_is_admitted() {
 /// before it has a walk in flight; its real terminal releases foreground.
 #[test]
 fn fixture_03_manual_walk_interrupts_gather_without_an_active_bot_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(730);
     let token = 730;
     slot.consume_seat_batch(
@@ -399,6 +413,7 @@ fn fixture_03_manual_walk_interrupts_gather_without_an_active_bot_walk() {
         ),
         1,
         &[],
+        None,
     );
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
@@ -449,6 +464,9 @@ fn fixture_03_manual_walk_interrupts_gather_without_an_active_bot_walk() {
 /// carrier retry; the native guardian fixture owns that separate proof.
 #[test]
 fn fixture_10_guardian_hold_keeps_gather_stop_reserved_until_resume() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(740);
     let token = 740;
     slot.consume_seat_batch(
@@ -458,6 +476,7 @@ fn fixture_10_guardian_hold_keeps_gather_stop_reserved_until_resume() {
         ),
         1,
         &[],
+        None,
     );
     assert!(slot.api_owns_foreground());
 
@@ -469,6 +488,7 @@ fn fixture_10_guardian_hold_keeps_gather_stop_reserved_until_resume() {
         ),
         1,
         &[],
+        None,
     );
     assert_eq!(slot.seat.as_ref().unwrap().live().len(), 1);
     assert!(!slot
@@ -492,16 +512,17 @@ fn fixture_10_guardian_hold_keeps_gather_stop_reserved_until_resume() {
         ),
         1,
         &[],
+        None,
     );
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 1);
-    let (_, held_rows, held_foreground) = slot.drain_host_interacts();
+    let (_, held_rows, held_foreground) = slot.drain_host_interacts(None);
     assert!(held_rows.is_empty());
     assert!(held_foreground);
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 1);
     assert!(slot.api.as_ref().unwrap().terminal.is_none());
 
     slot.seat_guardian_hold(false);
-    let (_, rows, foreground) = slot.drain_host_interacts();
+    let (_, rows, foreground) = slot.drain_host_interacts(None);
     assert!(
         rows.is_empty(),
         "GatherStop is consumed as a reserved control"
@@ -604,6 +625,9 @@ fn until_combat_raises(
 /// family, and hands the bot-raised prayer to host cleanup.
 #[test]
 fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = crate::combat_session::tests::World::new("imp");
     let user_prayer = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -614,7 +638,7 @@ fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
     let token = 750;
     let mut start = start_input(&slot, token, NativeKind::Combat);
     start.args = SeatStartArgs::Combat(combat_request());
-    slot.consume_seat_batch(decoded(vec![start], Vec::new()), 1, &[]);
+    slot.consume_seat_batch(decoded(vec![start], Vec::new()), 1, &[], None);
     wait_combat_running(&mut slot, &world.snapshot);
     until_combat_raises(&mut slot, &mut world, raised.button_com, raised.varp);
     assert!(slot.api_owns_foreground());
@@ -642,6 +666,7 @@ fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
         ),
         1,
         &[],
+        None,
     );
     assert!(matches!(
         slot.seat_interact_delivery.as_slice(),
@@ -650,7 +675,7 @@ fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
     assert!(slot.seat.as_ref().unwrap().dropped() >= 1);
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
 
-    let (_, rows, foreground) = slot.drain_host_interacts();
+    let (_, rows, foreground) = slot.drain_host_interacts(None);
     assert!(rows.is_empty());
     assert!(!foreground);
     assert!(slot.seat_interact_delivery.is_empty());
@@ -681,6 +706,9 @@ fn fixture_29_combat_stop_release_survives_foreground_and_hands_off_cleanup() {
 /// rebased to root after ordinary Hunt completion.
 #[test]
 fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(760);
     let hunt_id = id(760);
     let mirror_id = id(761);
@@ -689,6 +717,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         decoded(vec![start_input(&slot, 760, NativeKind::Hunt)], Vec::new()),
         0,
         &[],
+        None,
     );
     assert_eq!(slot.seat.as_ref().unwrap().session(), Some(hunt_id));
     assert!(
@@ -707,6 +736,8 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
         request_id: mirror_id.get(),
         avoid: Vec::new(),
         cross: Vec::new(),
@@ -722,6 +753,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         ),
         0,
         &[],
+        None,
     );
     assert_eq!(
         slot.seat
@@ -733,7 +765,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
             .and_then(|entry| entry.parent),
         Some(hunt_id)
     );
-    let (_, dispatched, foreground) = slot.drain_host_interacts();
+    let (_, dispatched, foreground) = slot.drain_host_interacts(None);
     assert!(!foreground);
     assert_eq!(dispatched.len(), 1);
     assert_eq!(dispatched[0].req, walk);
@@ -752,8 +784,9 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         ),
         0,
         &[],
+        None,
     );
-    let (_, dispatched, _) = slot.drain_host_interacts();
+    let (_, dispatched, _) = slot.drain_host_interacts(None);
     assert_eq!(dispatched.len(), 1);
     assert_eq!(dispatched[0].req, release);
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
@@ -779,6 +812,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         ),
         0,
         &[],
+        None,
     );
     assert_eq!(
         slot.seat
@@ -791,7 +825,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         None,
         "ordinary Hunt completion promotes the surviving bank child"
     );
-    let (_, dispatched, _) = slot.drain_host_interacts();
+    let (_, dispatched, _) = slot.drain_host_interacts(None);
     assert_eq!(dispatched.len(), 1);
     assert_eq!(dispatched[0].req, rebased);
     let mut cancellation = decoded(Vec::new(), Vec::new());
@@ -799,7 +833,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         of: bank_id,
         reason: api::script_contract::CallbackCancelReason::ParentAborted,
     });
-    slot.consume_seat_batch(cancellation, 0, &[]);
+    slot.consume_seat_batch(cancellation, 0, &[], None);
     assert!(matches!(
         slot.seat
             .as_ref()
@@ -819,13 +853,16 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
 /// their actual AbortWalk interactions pass the host drain after takeover.
 #[test]
 fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(804);
     let owners = [804, 805, 806, 807];
     let starts = owners
         .iter()
         .map(|&raw| start_input(&slot, raw, NativeKind::Walk))
         .collect();
-    slot.consume_seat_batch(decoded(starts, Vec::new()), 0, &[]);
+    slot.consume_seat_batch(decoded(starts, Vec::new()), 0, &[], None);
     assert_eq!(slot.seat.as_ref().unwrap().live().len(), owners.len());
 
     let walks = owners
@@ -842,14 +879,16 @@ fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: raw,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },
         })
         .collect();
-    slot.consume_seat_batch(decoded(Vec::new(), walks), 0, &[]);
-    let (_, armed, _) = slot.drain_host_interacts();
+    slot.consume_seat_batch(decoded(Vec::new(), walks), 0, &[], None);
+    let (_, armed, _) = slot.drain_host_interacts(None);
     assert_eq!(armed.len(), owners.len());
     assert_eq!(
         slot.seat.as_ref().unwrap().reserved_releases(),
@@ -867,8 +906,8 @@ fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
             request: InteractReq::AbortWalk { request_id: raw },
         })
         .collect();
-    slot.consume_seat_batch(decoded(Vec::new(), releases), 0, &[]);
-    let (_, dispatched, _) = slot.drain_host_interacts();
+    slot.consume_seat_batch(decoded(Vec::new(), releases), 0, &[], None);
+    let (_, dispatched, _) = slot.drain_host_interacts(None);
     assert_eq!(
         dispatched
             .into_iter()
@@ -887,6 +926,9 @@ fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
 /// but not yet drained by the host.
 #[test]
 fn guardian_hold_discards_undrained_seat_delivery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(819);
     let gameplay = InteractReq::Held {
         name: "Logs".into(),
@@ -905,6 +947,7 @@ fn guardian_hold_discards_undrained_seat_delivery() {
         ),
         0,
         &[],
+        None,
     );
     assert_eq!(slot.seat_interact_delivery.len(), 1);
     let before = slot.slot_metrics().dropped;
@@ -912,7 +955,7 @@ fn guardian_hold_discards_undrained_seat_delivery() {
     assert!(slot.seat_interact_delivery.is_empty());
     assert_eq!(slot.slot_metrics().dropped, before + 1);
     slot.seat_guardian_hold(false);
-    assert!(slot.drain_host_interacts().1.is_empty());
+    assert!(slot.drain_host_interacts(None).1.is_empty());
     slot.stop();
 }
 
@@ -920,6 +963,9 @@ fn guardian_hold_discards_undrained_seat_delivery() {
 /// consumer; a later non-walk gameplay row must still reach the host.
 #[test]
 fn sequential_native_walk_terminals_leave_room_for_gameplay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(820);
     for raw in 1..=(api::script_contract::MAX_WALK_RELEASES as u64 + 1) {
         let terminal = [SeatMachineEvent {
@@ -931,6 +977,7 @@ fn sequential_native_walk_terminals_leave_room_for_gameplay() {
             decoded(vec![start_input(&slot, raw, NativeKind::Walk)], Vec::new()),
             0,
             &terminal,
+            None,
         );
 
         let seat = slot.seat.as_ref().unwrap();
@@ -960,8 +1007,9 @@ fn sequential_native_walk_terminals_leave_room_for_gameplay() {
         ),
         0,
         &[],
+        None,
     );
-    let (_, dispatched, _) = slot.drain_host_interacts();
+    let (_, dispatched, _) = slot.drain_host_interacts(None);
     assert_eq!(
         dispatched
             .into_iter()
@@ -976,6 +1024,9 @@ fn sequential_native_walk_terminals_leave_room_for_gameplay() {
 /// different handles. Each physical terminal frees only its own handle.
 #[test]
 fn physical_walk_terminals_resolve_the_producer_namespace() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(821);
     let effect = || {
         SeatEffect::Interact(crate::interact::QueuedInteract {
@@ -1014,6 +1065,9 @@ fn physical_walk_terminals_resolve_the_producer_namespace() {
 
 #[test]
 fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(821);
     let release = InteractReq::AbortWalk { request_id: 821 };
     let stop = InteractReq::GatherStop { request_id: 822 };
@@ -1085,6 +1139,9 @@ fn review_lifecycle_batch(slot: &SlotScript) -> QueuedSeatBatch {
 
 #[test]
 fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(833);
     let row = |request| SeatInteractDecoded {
         lineage: None,
@@ -1133,6 +1190,9 @@ fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
 
 #[test]
 fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(834);
     let row = |request| SeatInteractDecoded {
         lineage: None,
@@ -1161,7 +1221,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![first]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let mut held_rows = Vec::with_capacity(201);
     for frame in 0..=200 {
         // The new page arrives behind the held batch, as the isolate queues it.
@@ -1177,7 +1237,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
             vec![InteractReq::WaitEnqueued, InteractReq::LoopSettled],
         ));
         slot.surface.as_ref().unwrap().restore_seat_batches(queue);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     assert!(
         held_rows.iter().all(|&rows| rows <= 2),
@@ -1217,7 +1277,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         .unwrap()
         .restore_seat_batches(vec![batch]);
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let lifecycle = std::mem::take(&mut slot.seat_lifecycle);
     let enqueued = lifecycle
         .iter()
@@ -1245,13 +1305,16 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
 
 #[test]
 fn guardian_hold_keeps_lifecycle_rows_until_resume() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(831);
     let control = review_lifecycle_batch(&slot);
     slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![control]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     assert_eq!(
         std::mem::take(&mut slot.seat_lifecycle),
         vec![InteractReq::WaitEnqueued, InteractReq::WaitSettled],
@@ -1263,10 +1326,10 @@ fn guardian_hold_keeps_lifecycle_rows_until_resume() {
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![batch]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     assert!(slot.seat_lifecycle.is_empty());
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     assert_eq!(
         std::mem::take(&mut slot.seat_lifecycle),
         vec![InteractReq::WaitEnqueued, InteractReq::WaitSettled],
@@ -1277,6 +1340,9 @@ fn guardian_hold_keeps_lifecycle_rows_until_resume() {
 
 #[test]
 fn three_walk_terminals_during_guardian_hold_free_all_slots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(832);
     let effect = || {
         SeatEffect::Interact(crate::interact::QueuedInteract {

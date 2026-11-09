@@ -1,15 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractQuestJunk, questJunkRust } from './quest-junk.ts';
-import { bool, header, int, list, LiteralMapped, LiteralSet, onlyKeys, pinnedLiterals, record, str, text, type Literal } from './rs2b0t-literals.ts';
+import { extractQuestJunk, type QuestJunk } from './quest-junk.ts';
+import { bool, int, list, LiteralMapped, LiteralSet, onlyKeys, pinnedLiterals, record, str, type Literal } from './rs2b0t-literals.ts';
 
 /**
  * Generated gather catalogs: the curated camp tables (woodcutting, mining and
  * fishing camps), the fishing methods and the fishing facts of
  * `ToolAcquire.ts`, the fish-camp cook plans, and the bank quest-junk table.
- * Every table is read from the pinned rs2b0t AST (`pinnedLiterals`, which
- * evaluates nothing) and emitted as an immutable Rust table in
- * `crates/api/data/game-data/`. Fields upstream computes with code
+ * Every table is read from the rs2b0t AST (`pinnedLiterals`, which evaluates
+ * nothing) and emitted as one JSON catalog, `crates/api/data/game-data/gather-catalog.json`;
+ * the tracked API build code turns it into immutable Rust tables in `OUT_DIR`. Fields upstream computes with code
  * (`withCampCook`, `rangeStandFromLoc`) are computed in Rust from these inputs.
  */
 
@@ -180,56 +180,56 @@ export async function extractCookPlans(engine: string, source: string): Promise<
     return { surfaces, plans: rows };
 }
 
-const worldTile = (value: Tile) => `WorldTile { x: ${value.x}, z: ${value.z}, level: ${value.level} }`;
-const option = <T>(value: T | undefined, emit: (value: T) => string) => (value === undefined ? 'None' : `Some(${emit(value)})`);
-const slice = <T>(values: readonly T[], emit: (value: T) => string) => `&[${values.map(emit).join(', ')}]`;
+const nullable = <T, U>(value: T | undefined, emit: (value: T) => U): U | null => (value === undefined ? null : emit(value));
 const pascal = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 
-function campRust(row: Camp) {
-    return `    GatherCamp { name: ${text(row.name)}, spot: ${worldTile(row.spot)}, bank_stand: ${worldTile(row.bankStand)}, `
-        + `booth_name: ${option(row.boothName, text)}, booth_op: ${option(row.boothOp, text)}, verified: ${row.verified}, `
-        + `obstacles: ${option(row.obstacles, (value) => slice(value, text))}, camp_radius: ${option(row.campRadius, String)}, chase_radius: ${option(row.chaseRadius, String)}, `
-        + `resources: ${option(row.resources, (value) => slice(value, text))}, avoid_spots: ${option(row.avoidSpots, (value) => slice(value, worldTile))}, `
-        + `sweep: ${option(row.sweep, (value) => slice(value, worldTile))}, `
-        + `bait_vendor: ${option(row.baitVendor, (value) => `BaitVendor { keeper: ${text(value.keeper)}, stand: ${worldTile(value.stand)}, price: ${value.price}, item: ${text(value.item)} }`)}, `
-        + `notes: ${option(row.notes, text)}, recommended_combat: ${option(row.recommendedCombat, String)}, `
-        + `keys: ${slice(row.keys, (key) => `CampKey::${pascal(key)}`)} },\n`;
+function campJson(row: Camp) {
+    return {
+        name: row.name, spot: row.spot, bank_stand: row.bankStand,
+        booth_name: row.boothName ?? null, booth_op: row.boothOp ?? null, verified: row.verified,
+        obstacles: row.obstacles ?? null, camp_radius: row.campRadius ?? null, chase_radius: row.chaseRadius ?? null,
+        resources: row.resources ?? null, avoid_spots: row.avoidSpots ?? null, sweep: row.sweep ?? null,
+        bait_vendor: nullable(row.baitVendor, (vendor) => ({ keeper: vendor.keeper, stand: vendor.stand, price: vendor.price, item: vendor.item })),
+        notes: row.notes ?? null, recommended_combat: row.recommendedCombat ?? null,
+        keys: row.keys.map(pascal),
+    };
 }
 
-export function campsRust(constName: string, source: string, rows: Camp[], extra = '') {
-    return header(source) + extra + `pub const ${constName}: &[GatherCamp] = &[\n${rows.map(campRust).join('')}];\n`;
+/** The whole gather catalog as the JSON the API build code compiles (schema 1; every optional field is an explicit `null`). */
+export function gatherCatalogJson(camps: CampTables, fishing: FishingFacts, cook: CookPlans, junk: QuestJunk[]) {
+    const vendor = (value: Vendor) => ({ keeper: value.keeper, stand: value.stand, bank_stand: value.bankStand });
+    const catalog = {
+        schema: 1,
+        facts: {
+            woodcutting_camps: camps.woodcutting.map(campJson),
+            mining_camps: camps.mining.map(campJson),
+            fishing_camps: camps.fishing.map(campJson),
+            shilo_water_vendor: camps.shiloWaterVendor,
+            fishing: {
+                methods: fishing.methods.map((method) => ({ name: method.name, op: method.op, pair: method.pair, gear: method.gear })),
+                whirlpool_ids: fishing.whirlpoolIds,
+                shop_costs: fishing.shopCosts,
+                gerrant_only: fishing.gerrantOnly,
+                gerrant: vendor(fishing.gerrant),
+                harry: vendor(fishing.harry),
+            },
+            cook: {
+                surfaces: cook.surfaces.map((surface) => ({
+                    approach_first: surface.approachFirst, approach: surface.approach ?? null, stand: surface.stand, loc: surface.loc ?? null,
+                    loc_name: surface.locName, kind: surface.kind, label: surface.label ?? null, notes: surface.notes ?? null,
+                })),
+                plans: cook.plans.map((plan) => ({ camp: plan.camp, pier: plan.pier ?? null, bank: plan.bank ?? null })),
+            },
+            quest_junk: junk,
+        },
+    };
+    return `${JSON.stringify(catalog, null, 2)}\n`;
 }
 
-export function shiloVendorRust(vendor: CampTables['shiloWaterVendor']) {
-    return `pub const SHILO_WATER_VENDOR: WaterVendor = WaterVendor { keeper: ${text(vendor.keeper)}, stand: ${worldTile(vendor.stand)}, item: ${text(vendor.item)} };\n`;
-}
+/** The gather catalog file name under `crates/api/data/game-data/`. */
+export const GATHER_CATALOG_FILE = 'gather-catalog.json';
 
-export function fishingFactsRust(facts: FishingFacts) {
-    const vendor = (value: Vendor) => `FishingVendor { keeper: ${text(value.keeper)}, stand: ${worldTile(value.stand)}, bank_stand: ${worldTile(value.bankStand)} }`;
-    return header('data/fishingMethods.ts and api/acquisition/ToolAcquire.ts')
-        + `pub const WHIRLPOOL_IDS: &[i32] = &[${facts.whirlpoolIds.join(', ')}];\n`
-        + 'pub const FISHING_METHODS: &[FishingMethod] = &[\n'
-        + facts.methods.map((method) => `    FishingMethod { name: ${text(method.name)}, op: ${text(method.op)}, pair: ${text(method.pair)}, gear: ${slice(method.gear, (piece) => `GearPiece { name: ${text(piece.name)}, min: ${piece.min}, restock: ${piece.restock} }`)} },\n`).join('')
-        + '];\n'
-        + `pub const FISHING_SHOP_COSTS: &[(&str, i32)] = ${slice(facts.shopCosts, ([name, cost]) => `(${text(name)}, ${cost})`)};\n`
-        + `pub const GERRANT_ONLY_FISHING: &[&str] = ${slice(facts.gerrantOnly, text)};\n`
-        + `pub const GERRANT_VENDOR: FishingVendor = ${vendor(facts.gerrant)};\n`
-        + `pub const HARRY_VENDOR: FishingVendor = ${vendor(facts.harry)};\n`;
-}
-
-export function cookPlansRust(plans: CookPlans) {
-    const kind = (value: CookKind) => `FishCookKind::${pascal(value)}`;
-    return header('data/cookingRanges.ts')
-        + 'pub const FISH_CAMP_COOK_SURFACES: &[FishCookSurface] = &[\n'
-        + plans.surfaces.map((surface) => `    FishCookSurface { approach_first: ${surface.approachFirst}, approach: ${option(surface.approach, worldTile)}, stand: ${worldTile(surface.stand)}, `
-            + `loc: ${option(surface.loc, worldTile)}, loc_name: ${text(surface.locName)}, kind: ${kind(surface.kind)}, label: ${option(surface.label, text)}, notes: ${option(surface.notes, text)} },\n`).join('')
-        + '];\n'
-        + 'pub const FISH_CAMP_COOK_PLANS: &[FishCampCookPlan] = &[\n'
-        + plans.plans.map((plan) => `    FishCampCookPlan { camp: ${text(plan.camp)}, pier: ${option(plan.pier, String)}, bank: ${option(plan.bank, String)} },\n`).join('')
-        + '];\n';
-}
-
-/** Every generated gather file and its bytes, keyed by file name under `crates/api/data/game-data/`. */
+/** The gather catalog JSON, read from an rs2b0t checkout root. */
 export async function gatherCatalogFiles(engine: string, rs2b0tRoot: string): Promise<Record<string, string>> {
     const read = (relative: string) => fs.readFileSync(path.join(rs2b0tRoot, relative), 'utf8');
     const camps = await extractCampTables(engine, {
@@ -238,12 +238,5 @@ export async function gatherCatalogFiles(engine: string, rs2b0tRoot: string): Pr
     const fishing = await extractFishingFacts(engine, { fishingMethods: read('src/bot/data/fishingMethods.ts'), toolAcquire: read('src/bot/api/acquisition/ToolAcquire.ts') });
     const cook = await extractCookPlans(engine, read('src/bot/data/cookingRanges.ts'));
     const junk = await extractQuestJunk(engine, read('src/bot/api/bank/bankQuestJunk.ts'));
-    return {
-        'woodcutting-camps.rs': campsRust('WOODCUTTING_CAMPS', 'data/woodcuttingLocations.ts', camps.woodcutting),
-        'mining-camps.rs': campsRust('MINING_CAMPS', 'data/miningLocations.ts (en-US localeCompare name order)', camps.mining),
-        'fishing-camps.rs': campsRust('FISHING_CAMPS', 'data/fishingLocations.ts (before withCampCook)', camps.fishing, shiloVendorRust(camps.shiloWaterVendor)),
-        'fishing-methods.rs': fishingFactsRust(fishing),
-        'fish-camp-cook-plans.rs': cookPlansRust(cook),
-        'quest-junk-catalog.rs': questJunkRust(junk),
-    };
+    return { [GATHER_CATALOG_FILE]: gatherCatalogJson(camps, fishing, cook, junk) };
 }

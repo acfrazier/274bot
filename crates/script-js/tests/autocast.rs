@@ -1,11 +1,17 @@
-use script::shim::InteractReq;
-use script_js::wire::{
-    IsolateBuf, ReachViewInput, SideTabIfaceInput, SnapshotFingerprint, SnapshotInput, TileInput,
-    VarpInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput,
+    },
+    script_js::wire::{IsolateBuf, SnapshotFingerprint},
+};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use common::post_snapshot_input;
 
 fn post_snapshot_delta(
@@ -154,6 +160,9 @@ fn missing_controls_throw_and_do_not_send() {
 
 #[test]
 fn unknown_spell_refuses_without_send() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { Autocast } from '../../api/magic/Autocast.js';
 export default class T extends LoopingBot {
@@ -180,6 +189,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn staff_not_attached_refuses_without_send() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let tabs = [SideTabIfaceInput { index: 0, id: 192 }];
     let mut snap = base_snapshot();
@@ -193,6 +205,11 @@ fn staff_not_attached_refuses_without_send() {
 
 #[test]
 fn initially_armed_reads_posted_varp_on_both_selected_caches() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 import { Autocast } from '../../api/magic/Autocast.js';
 export default class T extends LoopingBot {
@@ -228,6 +245,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let idle = [VarpInput {
@@ -258,6 +278,9 @@ fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
 
 #[test]
 fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let mut encoder = IsolateBuf::new();
     let mut last = None;
@@ -312,6 +335,9 @@ fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
 
 #[test]
 fn stale_chooser_times_out_after_choose() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();
@@ -334,6 +360,9 @@ fn stale_chooser_times_out_after_choose() {
 
 #[test]
 fn pause_and_hold_freeze_mid_arm_without_late_press() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();
@@ -384,6 +413,9 @@ fn pause_and_hold_freeze_mid_arm_without_late_press() {
 // settled `message` and is what the caller's `log` receives.
 #[test]
 fn a_timed_out_press_logs_the_frozen_line_from_rust() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();
@@ -422,7 +454,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     // The resolution reads the decoded scene, so the rows arrive the way the
     // host sends them (one FlatBuffer post), not as a JS object literal.
-    let styles = [script_js::wire::CombatStyleInput {
+    let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
         label: "Aggressive",
         component_id: 77,

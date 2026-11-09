@@ -12,19 +12,19 @@ canvas-raster = ["dep:tiny-skia", "dep:ab_glyph"]
 path-schema = ["dep:schemars", "api/path-schema"]
 
 [dependencies]
-ab_glyph = { version = "=0.2.32", optional = true }
+ab_glyph = { version = "0.2.32", optional = true }
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
-schemars = { version = "=1.2.2", optional = true }
-parking_lot = "=0.12.5"
-rand = "=0.8.5"
-serde = { version = "=1.0.219", features = ["derive"] }
-serde_json = "=1.0.140"
-sha2 = "=0.10.9"
-thiserror = "=2.0.20"
+schemars = { version = "1.2.2", optional = true }
+parking_lot = "0.12.5"
+rand = "0.8.5"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+thiserror = "2.0.20"
 # Direct raster dependency for path/clip/linear-gradient. 0.11.4 `simd`
 # is an empty feature (no `wide` crate); `png-format` is not selected.
-tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"], optional = true }
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"], optional = true }
 vault = { path = "../vault" }
 
 [target.'cfg(unix)'.dependencies]
@@ -32,7 +32,7 @@ libc = "0.2"
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
-allocation-counter = "=0.8.1"
+allocation-counter = "0.8.1"
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 # F0 §28 conformance oracle: dev-only, never a native product service.
 seat-model = { path = "../../tools/seat-model" }

@@ -533,7 +533,7 @@ mod tests {
     "#;
 
     fn runtime() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn raw_scope_allocation_controls_use_an_independent_runtime() {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         cb::install(&mut runtime, "__raw_scope_control", raw_scope_control).unwrap();

@@ -1,7 +1,7 @@
 //! Native ScriptActivity callbacks over the slot-owned run context.
 
-use crate::callback_v8::{self as cb, JsResult, Throw};
-use crate::lineage_v8::{self, ActivityId};
+use crate::materialize::callback_v8::{self as cb, JsResult, Throw};
+use crate::materialize::lineage_v8::{self, ActivityId};
 use rustyscript::{deno_core::v8, Runtime};
 use script::surface::ScriptRuntimeContext;
 use std::cell::{Cell, RefCell};
@@ -1348,7 +1348,7 @@ fn interrupt_impl<'s>(
     let reason_text = cb::to_string(scope, reason)?;
     context.interrupt_activity(Some(child_id), reason_text);
     if in_flight {
-        crate::lifecycle_v8::abort_activity_waiters(scope, generation, child_id)?;
+        crate::runtime::lifecycle_v8::abort_activity_waiters(scope, generation, child_id)?;
     } else {
         cb::call_method(scope, owner.into(), "stop", &[], "this.stop")?;
     }
@@ -1608,7 +1608,7 @@ globalThis.__activityTestOverrides = { food: 'Shark' };
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         cb::install(

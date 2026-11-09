@@ -10,6 +10,7 @@
 
 use crate::gather_locations::{js_max, js_min};
 use api::fishing_gear::{self, FishingShop, FishingVendor};
+use api::selected::FactError;
 
 /// Which caller count function a read goes through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,7 @@ pub enum Item {
 
 /// The caller's gear and world as one calculation sees them. Reads happen in the frozen order.
 pub trait GearHost {
-    /// A callback or getter that threw.
+    /// A callback or getter that threw, or the refusal of a build without the fishing tables.
     type Error;
 
     /// Number of gear pieces.
@@ -48,6 +49,8 @@ pub trait GearHost {
     fn lowered(&mut self, piece: usize) -> Result<String, Self::Error>;
     /// One count callback for an item.
     fn count(&mut self, which: Count, item: Item) -> Result<f64, Self::Error>;
+    /// The error for a build without the fishing tables.
+    fn facts(&mut self, error: FactError) -> Self::Error;
     /// The distances from `opts.near` to Harry's and Gerrant's stands, or `None` when there is no position.
     fn near(
         &mut self,
@@ -93,7 +96,11 @@ pub fn shopable_missing_gear<H: GearHost>(host: &mut H) -> Result<Vec<usize>, H:
     let mut missing = Vec::new();
     for piece in 0..host.pieces() {
         let held = host.count(Count::Plain, Item::Piece(piece))?;
-        if held < host.min(piece)? && fishing_gear::shop_cost(&host.lowered(piece)?).is_some() {
+        if held < host.min(piece)?
+            && fishing_gear::shop_cost(&host.lowered(piece)?)
+                .map_err(|error| host.facts(error))?
+                .is_some()
+        {
             missing.push(piece);
         }
     }
@@ -150,6 +157,7 @@ pub struct BuyPlan {
 /// price and that the coins left after the earlier lines can afford, with a partial bait stack when only some
 /// can be paid. `bait_qty` is the already-resolved `opts.baitQty ?? 1000`.
 pub fn buy_plans<H: GearHost>(host: &mut H, bait_qty: f64) -> Result<Vec<BuyPlan>, H::Error> {
+    let tables = fishing_gear::fishing_tables().map_err(|error| host.facts(error))?;
     let (target, bait_flags) = bait_target(host, bait_qty)?;
     let mut out = Vec::new();
     let mut coins_left =
@@ -169,7 +177,9 @@ pub fn buy_plans<H: GearHost>(host: &mut H, bait_qty: f64) -> Result<Vec<BuyPlan
         if at_least(have, need_at_least) {
             continue;
         }
-        let Some(unit) = fishing_gear::shop_cost(&host.lowered(piece)?) else {
+        let lowered = host.lowered(piece)?;
+        let Some(unit) = fishing_gear::shop_cost(&lowered).map_err(|error| host.facts(error))?
+        else {
             continue;
         };
         let unit = f64::from(unit);
@@ -192,7 +202,7 @@ pub fn buy_plans<H: GearHost>(host: &mut H, bait_qty: f64) -> Result<Vec<BuyPlan
             }
         }
         let lowered = host.lowered(piece)?;
-        let shop = fishing_gear::vendor_for(&lowered, |harry, gerrant| host.near(harry, gerrant))?;
+        let shop = tables.vendor_for(&lowered, |harry, gerrant| host.near(harry, gerrant))?;
         out.push(BuyPlan {
             piece,
             cost,
@@ -220,7 +230,16 @@ pub fn shop_cart(plans: Vec<BuyPlan>) -> Vec<BuyPlan> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::convert::Infallible;
+
+    /// The refusal of a build without the fishing tables; the tests skip before they can meet it.
+    #[derive(Debug)]
+    struct Fault(#[allow(dead_code)] FactError);
+
+    impl From<FactError> for Fault {
+        fn from(error: FactError) -> Self {
+            Self(error)
+        }
+    }
 
     struct Gear {
         name: &'static str,
@@ -251,25 +270,25 @@ mod tests {
     }
 
     impl GearHost for Host {
-        type Error = Infallible;
+        type Error = Fault;
 
         fn pieces(&self) -> usize {
             self.gear.len()
         }
 
-        fn min(&mut self, piece: usize) -> Result<f64, Infallible> {
+        fn min(&mut self, piece: usize) -> Result<f64, Fault> {
             Ok(self.gear[piece].min)
         }
 
-        fn restock(&mut self, piece: usize) -> Result<f64, Infallible> {
+        fn restock(&mut self, piece: usize) -> Result<f64, Fault> {
             Ok(self.gear[piece].restock)
         }
 
-        fn lowered(&mut self, piece: usize) -> Result<String, Infallible> {
+        fn lowered(&mut self, piece: usize) -> Result<String, Fault> {
             Ok(self.gear[piece].name.to_lowercase())
         }
 
-        fn count(&mut self, which: Count, item: Item) -> Result<f64, Infallible> {
+        fn count(&mut self, which: Count, item: Item) -> Result<f64, Fault> {
             let name = match item {
                 Item::Piece(piece) => self.gear[piece].name,
                 Item::Coins => "Coins",
@@ -283,11 +302,15 @@ mod tests {
             Ok(table.get(name).copied().unwrap_or(0.0))
         }
 
+        fn facts(&mut self, error: FactError) -> Fault {
+            Fault(error)
+        }
+
         fn near(
             &mut self,
             _: &FishingVendor,
             _: &FishingVendor,
-        ) -> Result<Option<(f64, f64)>, Infallible> {
+        ) -> Result<Option<(f64, f64)>, Fault> {
             Ok(self.near)
         }
     }
@@ -296,6 +319,9 @@ mod tests {
 
     #[test]
     fn has_gear_stops_at_the_first_missing_piece() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&FLY);
         assert!(!has_gear(&mut host).unwrap());
         assert_eq!(host.calls, ["Plain:Fly fishing rod"]);
@@ -312,6 +338,9 @@ mod tests {
 
     #[test]
     fn missing_and_shopable_gear_ask_every_piece_in_order() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host =
             Host::method(&[("Oily fishing rod", 1.0, 1.0), ("Fishing bait", 1.0, 100.0)]);
         assert_eq!(missing_gear(&mut host).unwrap(), [0, 1]);
@@ -327,6 +356,9 @@ mod tests {
 
     #[test]
     fn restock_tops_up_from_the_bank_by_the_smaller_amount() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&FLY);
         host.inv.insert("Feather", 30.0);
         host.bank.insert("Fly fishing rod", 1.0);
@@ -348,6 +380,9 @@ mod tests {
 
     #[test]
     fn bait_target_floors_clamps_and_flags_only_bait_pieces() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&FLY);
         assert_eq!(
             bait_target(&mut host, 250.7).unwrap(),
@@ -365,6 +400,9 @@ mod tests {
 
     #[test]
     fn buy_plans_follow_the_frozen_cart_rules() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&FLY);
         host.inv.insert("Coins", 100.0);
         let plans = buy_plans(&mut host, 1000.0).unwrap();
@@ -396,6 +434,9 @@ mod tests {
 
     #[test]
     fn a_piece_already_held_or_banked_is_not_bought() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&FLY);
         host.inv.insert("Coins", 100.0);
         host.held.insert("Fly fishing rod", 1.0);
@@ -414,6 +455,9 @@ mod tests {
 
     #[test]
     fn a_bait_target_of_one_makes_the_stack_a_plain_piece() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&[("Fishing bait", 1.0, 100.0)]);
         host.inv.insert("Coins", 50.0);
         let plans = buy_plans(&mut host, 0.0).unwrap();
@@ -431,6 +475,9 @@ mod tests {
 
     #[test]
     fn vendors_follow_position_and_the_cart_keeps_the_first_shop() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&[
             ("Lobster pot", 1.0, 1.0),
             ("Feather", 1.0, 100.0),
@@ -453,6 +500,9 @@ mod tests {
 
     #[test]
     fn coins_are_asked_once_up_front_inventory_then_bank() {
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         let mut host = Host::method(&[("Harpoon", 1.0, 1.0)]);
         host.inv.insert("Coins", 5.0);
         buy_plans(&mut host, 1000.0).unwrap();

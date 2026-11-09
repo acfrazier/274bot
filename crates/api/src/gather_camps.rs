@@ -1,8 +1,9 @@
 //! Curated gather camps: the woodcutting, mining and fishing camp tables of the
 //! rs2b0t script API (`data/woodcuttingLocations.ts`, `data/miningLocations.ts`,
-//! `data/fishingLocations.ts`), generated from the pinned sources by
-//! `tools/game-data/generate-gather-catalogs.ts` (an AST read; nothing is
-//! evaluated). The tables are immutable process-wide statics; a V8 isolate
+//! `data/fishingLocations.ts`), generated from the rs2b0t sources into
+//! `gather-catalog.json` by `tools/game-data/generate-gather-catalogs.ts` (an AST
+//! read; nothing is evaluated) and compiled by this crate's build script. The
+//! tables are immutable process-wide statics; a V8 isolate
 //! materializes its own copy once.
 //!
 //! Fields upstream computes with code are computed here from the generated
@@ -12,6 +13,7 @@
 //! [`fishing_rows`].
 
 use crate::cook_locations::{self, fish_camp_cook_surface_index, CookRole, FishCookSurface};
+use crate::selected::{embedded_table, FactError};
 use crate::snapshot::WorldTile;
 use std::sync::LazyLock;
 
@@ -142,27 +144,39 @@ pub struct GatherCamp {
     pub keys: &'static [CampKey],
 }
 
-include!("../data/game-data/woodcutting-camps.rs");
-include!("../data/game-data/mining-camps.rs");
-include!("../data/game-data/fishing-camps.rs");
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+mod generated {
+    use super::*;
+    include!(concat!(env!("OUT_DIR"), "/gather_camps.rs"));
+}
 
 /// Woodcutting camps in table order (`WOODCUTTING_LOCATIONS`, `woodcuttingLocations.ts:63-170`).
-pub fn woodcutting_camps() -> &'static [GatherCamp] {
-    WOODCUTTING_CAMPS
+pub fn woodcutting_camps() -> Result<&'static [GatherCamp], FactError> {
+    embedded_table!(generated::WOODCUTTING_CAMPS)
 }
 
 /// Mining camps in name order (`MINING_LOCATIONS`, `miningLocations.ts:61-279`).
-pub fn mining_camps() -> &'static [GatherCamp] {
-    MINING_CAMPS
+pub fn mining_camps() -> Result<&'static [GatherCamp], FactError> {
+    embedded_table!(generated::MINING_CAMPS)
+}
+
+/// Fishing camps before `withCampCook`, in table order (`FISHING_LOCATIONS`, `fishingLocations.ts`).
+pub fn fishing_camps() -> Result<&'static [GatherCamp], FactError> {
+    embedded_table!(generated::FISHING_CAMPS)
+}
+
+/// The Shilo water vendor (`SHILO_WATER_VENDOR`, `fishingLocations.ts:4`).
+pub fn shilo_water_vendor() -> Result<&'static WaterVendor, FactError> {
+    embedded_table!(&generated::SHILO_WATER_VENDOR)
 }
 
 /// `MINING_LOCATION_OPTION_LABELS`: only camps with a combat recommendation, in table order, each as
 /// `Name (N Combat recommended)` (`miningLocations.ts:54-59,284-286`).
-pub fn mining_option_labels() -> impl Iterator<Item = (&'static str, String)> {
-    MINING_CAMPS.iter().filter_map(|camp| {
+pub fn mining_option_labels() -> Result<impl Iterator<Item = (&'static str, String)>, FactError> {
+    Ok(mining_camps()?.iter().filter_map(|camp| {
         camp.recommended_combat
             .map(|combat| (camp.name, mining_label(camp.name, Some(combat))))
-    })
+    }))
 }
 
 /// `miningLocationLabel` for a typed row: the name, or `Name (N Combat recommended)`.
@@ -183,7 +197,7 @@ pub struct FishingRow {
     pub camp: &'static GatherCamp,
     /// Own properties after the spread: the literal's keys, then the keys `withCampCook` adds.
     pub keys: Vec<CampKey>,
-    /// Index into [`cook_locations::FISH_CAMP_COOK_SURFACES`] of the pier cook surface that set `rangeStand` and
+    /// Index into [`cook_locations::fish_camp_cook_surfaces`] of the pier cook surface that set `rangeStand` and
     /// `rangeName`.
     pub range: Option<usize>,
     /// `obstacles`, with the cook default when the literal has none.
@@ -194,21 +208,28 @@ pub struct FishingRow {
 
 impl FishingRow {
     /// The pier cook surface joined to this camp.
-    pub fn surface(&self) -> Option<&'static FishCookSurface> {
-        self.range
-            .map(|index| &cook_locations::FISH_CAMP_COOK_SURFACES[index])
+    pub fn surface(&self) -> Result<Option<&'static FishCookSurface>, FactError> {
+        let surfaces = cook_locations::fish_camp_cook_surfaces()?;
+        Ok(self.range.and_then(|index| surfaces.get(index)))
     }
 }
 
 /// Frozen `withCampCook` (`fishingLocations.ts:18-36`) over the generated camp literals: a camp with a curated
 /// pier cook surface gains `rangeStand`, `rangeName`, an obstacle default and notes joined with `; `.
-pub fn fishing_rows() -> &'static [FishingRow] {
-    static ROWS: LazyLock<Vec<FishingRow>> =
-        LazyLock::new(|| FISHING_CAMPS.iter().map(with_camp_cook).collect());
-    &ROWS
+pub fn fishing_rows() -> Result<&'static [FishingRow], FactError> {
+    static ROWS: LazyLock<Result<Vec<FishingRow>, FactError>> = LazyLock::new(|| {
+        fishing_camps()?
+            .iter()
+            .map(with_camp_cook)
+            .collect::<Result<Vec<_>, _>>()
+    });
+    match &*ROWS {
+        Ok(rows) => Ok(rows),
+        Err(error) => Err(error.clone()),
+    }
 }
 
-fn with_camp_cook(camp: &'static GatherCamp) -> FishingRow {
+fn with_camp_cook(camp: &'static GatherCamp) -> Result<FishingRow, FactError> {
     let plain = FishingRow {
         camp,
         keys: camp.keys.to_vec(),
@@ -216,10 +237,10 @@ fn with_camp_cook(camp: &'static GatherCamp) -> FishingRow {
         obstacles: camp.obstacles,
         notes: camp.notes.map(str::to_string),
     };
-    let Some(range) = fish_camp_cook_surface_index(camp.name, CookRole::Pier) else {
-        return plain;
+    let Some(range) = fish_camp_cook_surface_index(camp.name, CookRole::Pier)? else {
+        return Ok(plain);
     };
-    let cook = &cook_locations::FISH_CAMP_COOK_SURFACES[range];
+    let cook = &cook_locations::fish_camp_cook_surfaces()?[range];
     let mut keys = plain.keys;
     for key in [
         CampKey::RangeStand,
@@ -241,13 +262,13 @@ fn with_camp_cook(camp: &'static GatherCamp) -> FishingRow {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("; ");
-    FishingRow {
+    Ok(FishingRow {
         camp,
         keys,
         range: Some(range),
         obstacles: Some(camp.obstacles.unwrap_or(DEFAULT_COOK_OBSTACLES)),
         notes: Some(notes),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -258,38 +279,52 @@ mod tests {
         camps.iter().map(|camp| camp.name).collect()
     }
 
+    fn woodcutting() -> &'static [GatherCamp] {
+        woodcutting_camps().expect("woodcutting camps")
+    }
+
+    fn mining() -> &'static [GatherCamp] {
+        mining_camps().expect("mining camps")
+    }
+
+    fn fishing() -> &'static [GatherCamp] {
+        fishing_camps().expect("fishing camps")
+    }
+
     #[test]
     fn tables_keep_the_pinned_counts_and_order() {
-        assert_eq!(woodcutting_camps().len(), 14);
-        assert_eq!(mining_camps().len(), 24);
-        assert_eq!(FISHING_CAMPS.len(), 9);
-        assert_eq!(woodcutting_camps()[0].name, "Draynor (trees)");
+        if !crate::test_support::embedded_game_data_available() {
+            return;
+        }
+        assert_eq!(woodcutting().len(), 14);
+        assert_eq!(mining().len(), 24);
+        assert_eq!(fishing().len(), 9);
+        assert_eq!(woodcutting()[0].name, "Draynor (trees)");
         assert_eq!(
-            names(mining_camps())[..3],
+            names(mining())[..3],
             ["Al Kharid Mine", "Barbarian Village", "Coal Trucks"]
         );
-        assert_eq!(FISHING_CAMPS[0].name, "Draynor Village");
-        let mut sorted = names(mining_camps());
+        assert_eq!(fishing()[0].name, "Draynor Village");
+        let mut sorted = names(mining());
         sorted.sort_by_key(|name| name.to_lowercase());
-        assert_eq!(
-            sorted,
-            names(mining_camps()),
-            "mining rows are in name order"
-        );
+        assert_eq!(sorted, names(mining()), "mining rows are in name order");
     }
 
     #[test]
     fn helper_rows_keep_undefined_keys_and_literal_rows_omit_absent_ones() {
-        let wood = &woodcutting_camps()[0];
+        if !crate::test_support::embedded_game_data_available() {
+            return;
+        }
+        let wood = &woodcutting()[0];
         assert!(wood.keys.contains(&CampKey::Notes));
         assert!(!wood.keys.contains(&CampKey::RecommendedCombat));
-        let rock = mining_camps()
+        let rock = mining()
             .iter()
             .find(|camp| camp.name == "Rimmington Mine")
             .expect("row");
         assert_eq!(rock.recommended_combat, None);
         assert!(rock.keys.contains(&CampKey::RecommendedCombat));
-        let shilo = FISHING_CAMPS
+        let shilo = fishing()
             .iter()
             .find(|camp| camp.name == "Shilo Village")
             .expect("row");
@@ -299,7 +334,10 @@ mod tests {
 
     #[test]
     fn labels_cover_only_recommended_camps() {
-        let labels: Vec<_> = mining_option_labels().collect();
+        if !crate::test_support::embedded_game_data_available() {
+            return;
+        }
+        let labels: Vec<_> = mining_option_labels().expect("mining camps").collect();
         assert_eq!(labels.len(), 9);
         assert!(labels.contains(&(
             "Dwarven Mine",
@@ -310,12 +348,18 @@ mod tests {
 
     #[test]
     fn with_camp_cook_adds_the_pier_surface_in_spread_order() {
-        let rows = fishing_rows();
+        if !crate::test_support::embedded_game_data_available() {
+            return;
+        }
+        let rows = fishing_rows().expect("fishing rows");
         let catherby = rows
             .iter()
             .find(|row| row.camp.name == "Catherby")
             .expect("row");
-        let surface = catherby.surface().expect("Catherby has a pier surface");
+        let surface = catherby
+            .surface()
+            .expect("fish camp plans")
+            .expect("Catherby has a pier surface");
         assert_eq!(surface.loc_name, "Range");
         assert_eq!(
             catherby.notes.as_deref(),

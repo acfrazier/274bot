@@ -1,7 +1,7 @@
 //! JavaScript cards and the run that carries their isolate and wire state.
 
-use super::isolate::{GameplayFactory, LoadIsolate, Ready};
-use super::{ApiFamily, LoadShape};
+use crate::library::shape::{ApiFamily, LoadShape};
+use crate::runtime::isolate::{GameplayFactory, LoadIsolate, Ready};
 use crate::wire::{IsolateBuf, SnapshotFingerprint};
 use api::identity::ExecutionId;
 use script::interact::{InteractReq, QueuedInteract};
@@ -128,6 +128,12 @@ impl JsSurfaceRun {
         self.isolate.set_onstop_timeout_for_test(timeout);
     }
 
+    /// The run's isolate, for tests that drive the slot's production queue.
+    #[cfg(test)]
+    pub(crate) fn isolate_for_test(&self) -> &LoadIsolate {
+        &self.isolate
+    }
+
     fn post_encoded_snapshot(
         &mut self,
         bytes: Vec<u8>,
@@ -171,6 +177,25 @@ pub fn post_snapshot_delta_pages_for_test(
                 .is_some_and(|page| page.request_id() != 0),
             encoded.api_gather_outcome().is_some(),
         )
+    })
+    .expect("active surface run")
+}
+
+/// Run `f` against the real isolate of a slot's JavaScript surface run. Seat
+/// page tests use it to block the isolate thread, fill its queue and count
+/// the dispatches that executed.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn with_isolate_for_test<R>(
+    slot: &mut script::SlotScript,
+    f: impl FnOnce(&LoadIsolate) -> R,
+) -> R {
+    slot.with_surface_run_for_test(|run| {
+        let run = run
+            .as_any_mut()
+            .downcast_mut::<JsSurfaceRun>()
+            .expect("JavaScript surface run");
+        f(&run.isolate)
     })
     .expect("active surface run")
 }
@@ -332,6 +357,11 @@ impl SurfaceRun for JsSurfaceRun {
         );
     }
 
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        self.isolate
+            .on_seat_page_at(snap_tick, input_identity, release_floor)
+    }
+
     fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.isolate.drain_interacts_stamped()
     }
@@ -390,6 +420,14 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn journal_paint_hidden(&self, now: Instant) -> bool {
         self.isolate.compat_journal_paint_hidden(now)
+    }
+
+    fn journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
+        self.isolate.compat_journal_wait(now)
+    }
+
+    fn expired_hold_owners(&self, now: Instant) -> [Option<api::identity::RequestId>; 2] {
+        self.isolate.compat_journal_expired_owners(now)
     }
 
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {

@@ -72,6 +72,9 @@ export const SETTINGS = {
 
 #[test]
 fn cookbot_location_surface_and_log_options_are_usable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const SURFACE_OPTIONS = ['Range', 'Fire'] as const;
 export const SETTINGS = {
@@ -106,6 +109,9 @@ export const SETTINGS = {
 
 #[test]
 fn source_backed_mapped_keys_spreads_and_labels() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const BEST_AVAILABLE = 'Best available';
 export const CUSTOM = 'Custom';

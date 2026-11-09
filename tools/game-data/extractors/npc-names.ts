@@ -1,9 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
-import { buildSpellMaxHits, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
+import { buildSpellMaxHits, combatConstantCodes, extractNpcCombatFacts, extractNpcCombatTransformTarget, parseCombatScripts, type CombatNpcSource, type CombatScripts, type NpcCombatTransformTarget } from './combat.ts';
 
-export const npcNamesContentFiles = ['pack/npc.pack', 'scripts/skill_combat/configs/combat.param'];
+export const NPC_COMBAT_FACTS_VERSION = 2;
+
+export const npcNamesContentFiles = [
+    'pack/npc.pack',
+    'scripts/skill_combat/configs/combat.param',
+    'scripts/skill_combat/configs/npc_combat.param',
+    'scripts/skill_combat/configs/combat_damagetypes.constant',
+];
 
 type NpcBlock = {
     name: string;
@@ -16,16 +23,28 @@ type NpcBlock = {
     huntrange: number;
     vislevel: number;
     headicon: number | null;
+    attack: number;
+    defence: number;
+    strength: number;
     hitpoints: number;
+    ranged: number;
+    magic: number;
     damagetype: string | null;
     category: string | null;
-    strength: number | null;
-    ranged: number | null;
-    strengthbonus: number | null;
-    rangebonus: number | null;
+    attackbonus: number;
+    rangeattack: number;
+    magicattack: number;
+    stabdefence: number;
+    slashdefence: number;
+    crushdefence: number;
+    magicdefence: number;
+    rangedefence: number;
+    strengthbonus: number;
+    rangebonus: number;
+    max_dealt: number;
     undead: number | null;
-    attackrate: number | null;
-    poison_severity: number | null;
+    attackrate: number;
+    poison_severity: number;
     forcemulti: boolean;
     params: Map<string, string>;
 };
@@ -49,35 +68,96 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
     if (raw === '^false' || raw === 'false') return 0;
     return parseCombatInt(raw, label);
 }
+function requiredCombatInt(raw: string | undefined, label: string): number {
+    if (raw === undefined || raw.trim() === '') throw new Error(`npc_names: ${label} is missing`);
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed)) throw new Error(`npc_names: ${label} is not an integer: ${raw}`);
+    return parsed;
+}
 
-/**
- * Engine default for every NPC combat stat, including strength and ranged.
- * 289 `NpcType.ts:106` (`stats = [1, 1, 1, 1, 1, 1]`); 274 `NpcType.ts:107`.
- * A present `strength=` / `ranged=` line overrides it, including 0
- * (289 opcodes 76 and 78 at `NpcType.ts:184` and `:188`; 274 at `:173` and `:177`).
- * A pack row with no `.npc` block stays absent (`missing_main_stat`).
- */
-const ENGINE_NPC_STAT_DEFAULT = 1;
+function requiredParamInt(raw: string | undefined, label: string): number {
+    if (raw === '^true' || raw === 'true') return 1;
+    if (raw === '^false' || raw === 'false') return 0;
+    return requiredCombatInt(raw, label);
+}
 
-export function parseNpcFiles(content: string, revision: 274 | 289) {
+const NPC_STAT_NAMES = ['attack', 'defence', 'strength', 'hitpoints', 'ranged', 'magic'] as const;
+type NpcStatDefaults = Record<typeof NPC_STAT_NAMES[number], number>;
+
+function parseNpcStatDefaults(engineNpcTypeSource: string, revision: number): NpcStatDefaults {
+    const declarations = [...engineNpcTypeSource.matchAll(/^\s*stats\s*=\s*\[([^\]]*)\]\s*;/gm)];
+    if (declarations.length !== 1) {
+        throw new Error(`npc_names: ${revision} NpcType.ts is missing the engine default for hitpoints`);
+    }
+    const values = declarations[0]![1]!.split(',').map((value) => value.trim());
+    const defaults = {} as NpcStatDefaults;
+    for (let index = 0; index < NPC_STAT_NAMES.length; index++) {
+        const name = NPC_STAT_NAMES[index]!;
+        const raw = values[index];
+        if (raw === undefined || raw === '') {
+            throw new Error(`npc_names: ${revision} NpcType.ts is missing the engine default for ${name}`);
+        }
+        defaults[name] = requiredCombatInt(raw, `${revision} NpcType.ts ${name} default`);
+    }
+    if (values.length !== NPC_STAT_NAMES.length) {
+        throw new Error(`npc_names: ${revision} NpcType.ts has ${values.length} stat defaults; expected ${NPC_STAT_NAMES.length}`);
+    }
+    return defaults;
+}
+
+function requiredParamDefault(definitions: ReadonlyMap<string, { type?: string; default?: string }>, name: string, file = 'combat.param'): number {
+    const definition = definitions.get(name);
+    if (definition?.type?.toLowerCase() !== 'int') {
+        throw new Error(`npc_names: ${name} is missing an integer ${file} default`);
+    }
+    return requiredParamInt(definition.default, `${name} ${file} default`);
+}
+
+/** Parse the selected engine's six positional NPC stat defaults. */
+export function parseNpcFiles(content: string, revision: 274 | 289 | 377, engineNpcTypeSource: string) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const stats = parseNpcStatDefaults(engineNpcTypeSource, revision);
+    const npcDefinitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/npc_combat.param'));
+    const damageCode = requiredParamDefault(npcDefinitions, 'damagetype', 'npc_combat.param');
+    const damageCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagetypes.constant', 'damagetype');
+    const damageNames = [...damageCodes].filter(([, code]) => code === damageCode);
+    if (damageNames.length !== 1) throw new Error(`npc_names: damagetype default ${damageCode} has no unique content constant`);
+    const damagetype = `^${damageNames[0]![0]}`;
     const defaultMaxrange = revision === 274 ? 7 : -1;
-    const defaultParam = (name: string) => {
-        const definition = definitions.get(name);
-        if (definition?.type !== undefined && definition.type !== 'int') {
-            throw new Error(`npc_names: ${name} is not an integer parameter`);
-        }
-        const value = parseParamInt(definition?.default, `${name} default`);
-        if (name === 'attackrate' && value !== null && (value < 0 || value > 255)) {
-            throw new Error(`npc_names: ${name} default is out of range: ${value}`);
-        }
-        return value;
+    const attackbonus = requiredParamDefault(definitions, 'attackbonus');
+    const rangeattack = requiredParamDefault(definitions, 'rangeattack');
+    const magicattack = requiredParamDefault(definitions, 'magicattack');
+    const stabdefence = requiredParamDefault(definitions, 'stabdefence');
+    const slashdefence = requiredParamDefault(definitions, 'slashdefence');
+    const crushdefence = requiredParamDefault(definitions, 'crushdefence');
+    const magicdefence = requiredParamDefault(definitions, 'magicdefence');
+    const rangedefence = requiredParamDefault(definitions, 'rangedefence');
+    const strengthbonus = requiredParamDefault(definitions, 'strengthbonus');
+    const rangebonus = requiredParamDefault(definitions, 'rangebonus');
+    const attackrate = requiredParamDefault(definitions, 'attackrate');
+    if (attackrate < 0 || attackrate > 255) {
+        throw new Error(`npc_names: attackrate default is out of range: ${attackrate}`);
+    }
+    const poison_severity = requiredParamDefault(definitions, 'poison_severity');
+    const forcemulti = requiredParamDefault(definitions, 'npc_forcemulti') !== 0;
+    const max_dealt = requiredParamDefault(definitions, 'max_dealt');
+    const combatDefaults = {
+        damagetype,
+        attackbonus,
+        rangeattack,
+        magicattack,
+        stabdefence,
+        slashdefence,
+        crushdefence,
+        magicdefence,
+        rangedefence,
+        strengthbonus,
+        rangebonus,
+        attackrate,
+        poison_severity,
+        forcemulti,
+        max_dealt,
     };
-    const strengthbonus = defaultParam('strengthbonus');
-    const rangebonus = defaultParam('rangebonus');
-    const attackrate = defaultParam('attackrate');
-    const poisonSeverity = defaultParam('poison_severity');
-    const forcemulti = (defaultParam('npc_forcemulti') ?? 0) !== 0;
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -100,16 +180,28 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
                     huntrange: 0,
                     vislevel: 0,
                     headicon: null,
-                    hitpoints: 0,
-                    damagetype: null,
+                    attack: stats.attack,
+                    defence: stats.defence,
+                    hitpoints: stats.hitpoints,
+                    magic: stats.magic,
+                    damagetype,
                     category: null,
-                    strength: ENGINE_NPC_STAT_DEFAULT,
-                    ranged: ENGINE_NPC_STAT_DEFAULT,
+                    strength: stats.strength,
+                    ranged: stats.ranged,
+                    attackbonus,
+                    rangeattack,
+                    magicattack,
+                    stabdefence,
+                    slashdefence,
+                    crushdefence,
+                    magicdefence,
+                    rangedefence,
                     strengthbonus,
                     rangebonus,
+                    max_dealt,
                     undead: null,
                     attackrate,
-                    poison_severity: poisonSeverity,
+                    poison_severity,
                     forcemulti,
                     params: new Map(),
                 };
@@ -130,10 +222,13 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
             else if (key === 'huntrange') current.huntrange = parseIntField(value, key, 0);
             else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : parseIntField(value, key, 0);
             else if (key === 'headicon') current.headicon = parseCombatInt(value, `${current.name}.headicon`);
-            else if (key === 'hitpoints') current.hitpoints = parseIntField(value, key, 0);
             else if (key === 'category') current.category = value;
-            else if (key === 'strength') current.strength = parseCombatInt(value, `${current.name}.strength`);
-            else if (key === 'ranged') current.ranged = parseCombatInt(value, `${current.name}.ranged`);
+            else if (key === 'attack') current.attack = requiredCombatInt(value, `${current.name}.attack`);
+            else if (key === 'defence') current.defence = requiredCombatInt(value, `${current.name}.defence`);
+            else if (key === 'hitpoints') current.hitpoints = requiredCombatInt(value, `${current.name}.hitpoints`);
+            else if (key === 'magic') current.magic = requiredCombatInt(value, `${current.name}.magic`);
+            else if (key === 'strength') current.strength = requiredCombatInt(value, `${current.name}.strength`);
+            else if (key === 'ranged') current.ranged = requiredCombatInt(value, `${current.name}.ranged`);
             else if (key === 'param') {
                 const comma = value.indexOf(',');
                 if (comma <= 0) continue;
@@ -141,42 +236,114 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
                 const rawValue = value.slice(comma + 1);
                 current.params.set(param, rawValue);
                 if (param === 'damagetype') current.damagetype = rawValue;
-                else if (param === 'strengthbonus') current.strengthbonus = parseParamInt(rawValue, `${current.name}.strengthbonus`);
-                else if (param === 'rangebonus') current.rangebonus = parseParamInt(rawValue, `${current.name}.rangebonus`);
+                else if (param === 'attackbonus') current.attackbonus = requiredParamInt(rawValue, `${current.name}.attackbonus`);
+                else if (param === 'rangeattack') current.rangeattack = requiredParamInt(rawValue, `${current.name}.rangeattack`);
+                else if (param === 'magicattack') current.magicattack = requiredParamInt(rawValue, `${current.name}.magicattack`);
+                else if (param === 'stabdefence') current.stabdefence = requiredParamInt(rawValue, `${current.name}.stabdefence`);
+                else if (param === 'slashdefence') current.slashdefence = requiredParamInt(rawValue, `${current.name}.slashdefence`);
+                else if (param === 'crushdefence') current.crushdefence = requiredParamInt(rawValue, `${current.name}.crushdefence`);
+                else if (param === 'magicdefence') current.magicdefence = requiredParamInt(rawValue, `${current.name}.magicdefence`);
+                else if (param === 'rangedefence') current.rangedefence = requiredParamInt(rawValue, `${current.name}.rangedefence`);
+                else if (param === 'strengthbonus') current.strengthbonus = requiredParamInt(rawValue, `${current.name}.strengthbonus`);
+                else if (param === 'rangebonus') current.rangebonus = requiredParamInt(rawValue, `${current.name}.rangebonus`);
                 else if (param === 'undead') current.undead = parseParamInt(rawValue, `${current.name}.undead`);
-                else if (param === 'poison_severity') current.poison_severity = parseParamInt(rawValue, `${current.name}.poison_severity`);
-                else if (param === 'npc_forcemulti') {
-                    const value = parseParamInt(rawValue, `${current.name}.npc_forcemulti`);
-                    if (value !== null) current.forcemulti = value !== 0;
-                } else if (param === 'attackrate') {
-                    const rate = parseCombatInt(rawValue, `${current.name}.attackrate`);
-                    if (rate !== null && (rate < 0 || rate > 255)) throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
+                else if (param === 'poison_severity') current.poison_severity = requiredParamInt(rawValue, `${current.name}.poison_severity`);
+                else if (param === 'npc_forcemulti') current.forcemulti = requiredParamInt(rawValue, `${current.name}.npc_forcemulti`) !== 0;
+                else if (param === 'max_dealt') current.max_dealt = requiredParamInt(rawValue, `${current.name}.max_dealt`);
+                else if (param === 'attackrate') {
+                    const rate = requiredParamInt(rawValue, `${current.name}.attackrate`);
+                    if (rate < 0 || rate > 255) {
+                        throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
+                    }
                     current.attackrate = rate;
                 }
             }
         }
     }
-    return { blocks, files, poisonSeverity, forcemulti };
+    return {
+        blocks,
+        files,
+        stats,
+        combatDefaults,
+    };
 }
 
-export function extractNpcNamesFacts(content: string, revision: number, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
-    if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
+type NpcCombatTransform = { kind: 'known'; npc_id: number } | { kind: 'unknown' };
+
+function resolveNpcCombatTransforms(
+    pack: ReadonlyMap<string, number>,
+    blocks: ReadonlyMap<string, NpcBlock>,
+    scripts: CombatScripts,
+) {
+    const sources = new Map<string, NpcCombatTransformTarget | null>();
+    for (const config of pack.keys()) {
+        sources.set(config, extractNpcCombatTransformTarget(config, blocks.get(config)?.category ?? null, scripts));
+    }
+    const resolved = new Map<string, NpcCombatTransform | null>();
+    const active = new Set<string>();
+    const resolve = (config: string): NpcCombatTransform | null => {
+        if (resolved.has(config)) return resolved.get(config)!;
+        const target = sources.get(config) ?? null;
+        if (!target) return null;
+        if (target.kind === 'unknown') {
+            resolved.set(config, target);
+            return target;
+        }
+        if (active.has(config)) return { kind: 'unknown' };
+        active.add(config);
+        const targetId = pack.get(target.config);
+        let result: NpcCombatTransform;
+        if (targetId === undefined) {
+            result = { kind: 'unknown' };
+        } else {
+            const next = resolve(target.config);
+            result = next?.kind === 'unknown' ? next : next ?? { kind: 'known', npc_id: targetId };
+        }
+        active.delete(config);
+        resolved.set(config, result);
+        return result;
+    };
+    for (const config of pack.keys()) resolve(config);
+    return resolved;
+}
+
+
+
+export function extractNpcNamesFacts(
+    content: string,
+    revision: number,
+    engineNpcTypeSource: string,
+    scripts: CombatScripts = parseCombatScripts(content),
+    maxHits = buildSpellMaxHits(content),
+) {
+    if (revision !== 274 && revision !== 289 && revision !== 377) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
-    const { blocks, files, poisonSeverity, forcemulti: defaultForcemulti } = parseNpcFiles(content, revision);
+    const { blocks, files, stats, combatDefaults } = parseNpcFiles(content, revision, engineNpcTypeSource);
+    const combatTransforms = resolveNpcCombatTransforms(pack, blocks, scripts);
     const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
         .map(([config, id]) => {
             const block = blocks.get(config);
-            // Pinned NpcType.ts: 274 defaults at 102-103; 289 defaults/postDecode at 101-102,118-125.
+            // Stat levels use parsed NpcType.ts defaults; tether defaults remain revision-specific.
             const wanderrange = block?.wanderrange ?? 5;
             let maxrange = block?.maxrange ?? (revision === 274 ? 7 : -1);
-            if (revision === 289) {
+            if (revision !== 274) {
                 if (maxrange === -1) maxrange = wanderrange + 2;
                 maxrange = Math.max(maxrange, wanderrange);
             }
-            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
+            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits, revision);
+            const poisonSeverityFact = block?.poison_severity ?? combatDefaults.poison_severity;
+            const ordinaryMelee = combat.ordinary_melee
+                && block !== undefined
+                && block.strength !== null
+                && block.strength >= 0
+                && block.strengthbonus !== null
+                && block.attackrate !== null
+                && block.attackrate > 0
+                && !block.forcemulti
+                && poisonSeverityFact === 0;
             combatNpcs.push({
                 config,
                 category: block?.category ?? null,
@@ -187,6 +354,7 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
             return {
                 id,
                 config,
+                combat_transform: combatTransforms.get(config) ?? null,
                 display: block?.display ?? null,
                 ops: block?.ops ?? [],
                 size: block?.size ?? 1,
@@ -196,21 +364,33 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
                 huntrange: block?.huntrange ?? 0,
                 vislevel: block?.vislevel ?? 0,
                 headicon: block?.headicon ?? undefined,
-                hitpoints: block?.hitpoints ?? 0,
-                damagetype: block?.damagetype ?? null,
-                strength: block?.strength ?? null,
-                ranged: block?.ranged ?? null,
-                strengthbonus: block?.strengthbonus ?? null,
-                rangebonus: block?.rangebonus ?? null,
+                attack: block?.attack ?? stats.attack,
+                defence: block?.defence ?? stats.defence,
+                hitpoints: block?.hitpoints ?? stats.hitpoints,
+                magic: block?.magic ?? stats.magic,
+                damagetype: block?.damagetype ?? combatDefaults.damagetype,
+                strength: block?.strength ?? stats.strength,
+                ranged: block?.ranged ?? stats.ranged,
+                attackbonus: block?.attackbonus ?? combatDefaults.attackbonus,
+                rangeattack: block?.rangeattack ?? combatDefaults.rangeattack,
+                magicattack: block?.magicattack ?? combatDefaults.magicattack,
+                stabdefence: block?.stabdefence ?? combatDefaults.stabdefence,
+                slashdefence: block?.slashdefence ?? combatDefaults.slashdefence,
+                crushdefence: block?.crushdefence ?? combatDefaults.crushdefence,
+                magicdefence: block?.magicdefence ?? combatDefaults.magicdefence,
+                rangedefence: block?.rangedefence ?? combatDefaults.rangedefence,
+                strengthbonus: block?.strengthbonus ?? combatDefaults.strengthbonus,
+                rangebonus: block?.rangebonus ?? combatDefaults.rangebonus,
+                max_dealt: block?.max_dealt ?? combatDefaults.max_dealt,
                 undead: block?.undead ?? null,
                 ap_attack: combat.ap_attack,
                 attack_kind: combat.attack_kind,
                 forced_max_hit: combat.forced_max_hit,
                 dragonfire: combat.dragonfire,
-                attackrate: block?.attackrate ?? null,
-                poison_severity: block ? block.poison_severity : poisonSeverity,
-                forcemulti: block?.forcemulti ?? defaultForcemulti,
-                bespoke: combat.bespoke,
+                attackrate: block?.attackrate ?? combatDefaults.attackrate,
+                poison_severity: block?.poison_severity ?? combatDefaults.poison_severity,
+                forcemulti: block?.forcemulti ?? combatDefaults.forcemulti,
+                bespoke: combat.bespoke && !ordinaryMelee,
                 counter_protect: combat.counter_protect,
             };
         });
@@ -218,5 +398,5 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
     if (!rows.some((row) => row.config === 'khazard_warlord' && row.id === 477)) {
         throw new Error('npc_names: missing khazard_warlord pack join');
     }
-    return { rows, files, combatNpcs };
+    return { rows, files, combatNpcs, combat_facts_version: NPC_COMBAT_FACTS_VERSION };
 }

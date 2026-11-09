@@ -7,7 +7,7 @@ use script::melee_weapons::{self, WeaponPick};
 
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -48,7 +48,7 @@ fn run(
         "known" => "knownMeleeWeapon",
         _ => return Err(format!("not impl: meleeWeapons.{op}")),
     };
-    let data = crate::supply_v2::selected_data();
+    let data = crate::scene::supply_v2::selected_data();
     let family = data
         .as_deref()
         .and_then(|data| data.equipment_names())

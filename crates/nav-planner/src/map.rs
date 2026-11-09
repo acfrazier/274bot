@@ -13,7 +13,6 @@ pub mod poi;
 pub mod producer;
 pub mod raster;
 pub mod records;
-pub mod services;
 pub mod spatial;
 
 use std::fmt;

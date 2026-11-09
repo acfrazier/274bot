@@ -80,8 +80,8 @@ fn main() {
             "step:mode:mid",
             "step:mode:next",
             "gobank",
-            script::shim::HOST_PAUSE_CONTROL_ID,
-            script::shim::HOST_STOP_CONTROL_ID
+            script::paint::HOST_PAUSE_CONTROL_ID,
+            script::paint::HOST_STOP_CONTROL_ID
         ]),
         "{facts}"
     );

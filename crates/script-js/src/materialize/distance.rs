@@ -8,7 +8,7 @@
 use super::callback_v8::{self as cb, Callback};
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_tile", tile_callback)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
@@ -64,7 +64,7 @@ fn run_distance<'s>(
 /// Query a native posted tile without allocating an echoed Tile-like object.
 pub(super) fn planar_from_posted<'s>(
     scope: &mut v8::HandleScope<'s>,
-    from: crate::observed::Tile,
+    from: crate::scene::observed::Tile,
     to: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let to = cb::catching(scope, |scope| match required_tile(scope, to, "to") {

@@ -16,11 +16,11 @@
 //! identity in `refused_id{,_2,_3}` without touching the ring. Last-seen
 //! `unobserved` may local-stale begin/authorize; it is not a reservation.
 
-use crate::task_clock::InstantTaskClock;
-use crate::walk::avoid_refusal;
-use crate::walk_wait;
+use crate::compat::walk::avoid_refusal;
+use crate::scene::task_clock::InstantTaskClock;
+use crate::scene::walk_wait;
 use crate::wire::{InspectHop as InspectHopTable, Snapshot};
-use script::shim::{InspectAvoidWire, InteractReq};
+use script::interact::{InspectAvoidWire, InteractReq};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -890,10 +890,12 @@ pub(crate) fn dispatch(input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, InspectHopInput, NativeFactsInput,
-        ReachViewInput, RouteInspectFactsInput, RouteInspectTerminalInput, SnapshotInput,
-        TileInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
+            RouteInspectTerminalInput, SnapshotInput, TileInput,
+        },
     };
 
     fn empty_input(tick: u64) -> SnapshotInput<'static> {

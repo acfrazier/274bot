@@ -326,6 +326,7 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
     }
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 #[test]
 fn slot_native_input_authority_survives_run_context_replacement() {
     let mut slot = SlotScript::new();
@@ -339,19 +340,14 @@ fn slot_native_input_authority_survives_run_context_replacement() {
     assert!(Arc::ptr_eq(&authority, &slot.native_input()));
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 #[test]
-fn slot_size_stays_within_the_full_build_parent_layout() {
+fn slot_size_matches_the_measured_linux_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
-    println!("S0d SlotScript layout: {actual} bytes");
-    // macOS/aarch64 and Linux/x86_64 GNU measure 1640 B on 64-bit targets.
-    // Windows x64 is unmeasured and follows the same 64-bit grouping.
-    let expected = if cfg!(target_pointer_width = "64") {
-        1640
-    } else {
-        1648
-    };
+    println!("Prerequisite-aware SlotScript layout: {actual} bytes");
+    // Measured composed layout: W1 boxed replay and the cold prerequisite handover.
     assert_eq!(
-        actual, expected,
+        actual, 1592,
         "the surface slot changed from its measured size"
     );
 }

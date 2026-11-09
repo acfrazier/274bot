@@ -194,7 +194,7 @@ impl SettingsFixture {
     /// Open the settings at `path`.
     pub fn at(path: std::path::PathBuf) -> Self {
         Self {
-            store: script::ScriptSettingsStore::at(path),
+            store: script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
         }
     }
 

@@ -1,5 +1,12 @@
-use script_js::wire::{CombatStyleInput, ItemRowInput, SnapshotInput, StatInput, TileInput};
+use script::native::snapshot_source::{
+    CombatStyleInput, ItemRowInput, SnapshotInput, StatInput, TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -75,7 +82,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -91,6 +98,9 @@ fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn posted_spell_db_and_staff_runes_construct_later_superheater_fire_staves() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SPELL_DB, STAFF_RUNES } from '../../data/spelldb.js';
 export default class T extends LoopingBot {
@@ -144,6 +154,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn casts_available_and_withdraw_list_use_rust_staff_substitution() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { castsAvailable, runeWithdrawList, spellButtonCom } from '../../api/combat/CombatStyleLogic.js';
 export default class T extends LoopingBot {
@@ -188,6 +201,9 @@ export default class T extends LoopingBot {
 /// `runeWithdrawList` converts `casts` once per cost (`c.count * casts`).
 #[test]
 fn casts_available_calls_held_per_remaining_cost_in_order() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { castsAvailable, runeWithdrawList } from '../../api/combat/CombatStyleLogic.js';
 const capture = (fn) => { try { return fn(); } catch (e) { return 'THREW ' + e.name + ': ' + e.message; } };
@@ -338,7 +354,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__ok").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1922,
             kind: "held".into(),
             target_name: Some("Copper ore".into()),

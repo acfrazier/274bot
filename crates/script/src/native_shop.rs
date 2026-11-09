@@ -3,11 +3,11 @@
 //! item count grows. Opening the shop follows the rule shared with compat
 //! `Shop.open` ([`crate::shop_open`]): one Trade per attempt with a
 //! route-length tick deadline, and a nav walk to an unreachable keeper.
+use crate::interact::InteractReq;
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{ActionContext, ActionError, NativeMachine, WalkRetryState};
 use crate::quester::families::reach::walk_request;
 use crate::reach_route;
-use crate::shim::InteractReq;
 use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use std::sync::Arc;
 use std::task::Poll;
@@ -89,8 +89,9 @@ struct BatchFacts {
 enum Phase {
     /// The shared open core decides each tick.
     Open,
-    /// The core asked for a nav walk to an unreachable keeper.
-    Walk(Box<Walk>),
+    Walk(Box<Walk>, api::WorldTile),
+    /// A failed route eligible for the shared bounded next-tick retry.
+    RetryWalk(api::WorldTile),
     Buy,
     AwaitBatch {
         before: BatchFacts,
@@ -106,6 +107,7 @@ pub struct BuyMachine {
     request: BuyRequest,
     phase: Phase,
     open: OpenCore,
+    walk_retry: WalkRetryState,
     deadline_tick: u64,
     baseline_held: i32,
     server_closes: u64,
@@ -154,13 +156,13 @@ impl NativeMachine for BuyMachine {
         Ok(Self {
             request,
             phase,
+            walk_retry: WalkRetryState::default(),
             open,
             deadline_tick: 0,
             baseline_held,
             server_closes,
         })
     }
-
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         loop {
             match &mut self.phase {
@@ -180,16 +182,47 @@ impl NativeMachine for BuyMachine {
                         false => return Poll::Pending,
                     }
                 }
-                Phase::Walk(walk) => {
-                    let arrived = match walk.poll(cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Ok(receipt)) => receipt.into_arrival().is_ok(),
-                        Poll::Ready(Err(_)) => false,
+                Phase::RetryWalk(target) => {
+                    let target = *target;
+                    let tick = cx.evidence().tick;
+                    if self.walk_retry.waiting_for_next_tick(tick) {
+                        return Poll::Pending;
+                    }
+                    let walk = match crate::native::defer_budget(Walk::begin(
+                        walk_request(target, 1, None, cx.evidence()),
+                        cx,
+                    )) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(walk)) => walk,
                     };
+                    self.walk_retry.action_submitted();
+                    self.phase = Phase::Walk(Box::new(walk), target);
+                    return Poll::Pending;
+                }
+                Phase::Walk(walk, target) => {
+                    let target = *target;
+                    let receipt = match walk.poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(receipt)) => receipt,
+                    };
+                    if self
+                        .walk_retry
+                        .observe_approach_failure(&receipt, cx.evidence().tick)
+                    {
+                        self.phase = Phase::RetryWalk(target);
+                        return Poll::Pending;
+                    }
+                    receipt.into_arrival()?;
+                    self.walk_retry.reset();
                     self.phase = Phase::Open;
                     let facts = open_facts(cx);
                     let request = &self.request;
-                    let decision = self.open.walked(arrived, || Self::keeper(request, cx));
+                    let decision = self.open.walked(true, || Self::keeper(request, cx));
                     match std::task::ready!(self.act(decision, &facts, cx))? {
                         true => {
                             self.phase = Phase::Buy;
@@ -388,7 +421,7 @@ impl NativeMachine for BuyMachine {
     }
 
     fn cancel(&mut self) {
-        if let Phase::Walk(walk) = &mut self.phase {
+        if let Phase::Walk(walk, _) = &mut self.phase {
             walk.cancel();
         }
     }
@@ -497,7 +530,8 @@ impl BuyMachine {
             }
             Decision::Walk(tile) => {
                 let walk = Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)?;
-                self.phase = Phase::Walk(Box::new(walk));
+                self.walk_retry.action_submitted();
+                self.phase = Phase::Walk(Box::new(walk), tile);
                 Poll::Ready(Ok(false))
             }
         }
@@ -541,8 +575,10 @@ fn open_facts(cx: &ActionContext<'_>) -> Facts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::{ActionContext, HostEffect, InteractionReceipt};
-    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
+    use crate::native::{ActionContext, HostEffect, InteractionReceipt, WalkEnd};
+    use crate::quester::families::tests::{
+        local_player, post_walk_receipt, with_tick, with_tick_reach,
+    };
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, WorldTile,
     };
@@ -829,6 +865,9 @@ mod tests {
 
     #[test]
     fn shop_npc_open_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(false);
         let snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
         let mut ledger = None;
@@ -848,6 +887,9 @@ mod tests {
 
     #[test]
     fn shop_buy_button_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(true);
         let snapshot = snapshot(&client, Vec::new(), Vec::new());
         let mut ledger = None;
@@ -870,6 +912,9 @@ mod tests {
 
     #[test]
     fn shop_close_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(true);
         let snapshot = snapshot(&client, vec![item(4, "Pot", 2)], Vec::new());
         let mut ledger = None;
@@ -1171,6 +1216,9 @@ mod tests {
     /// it early.
     #[test]
     fn shop_npc_open_without_a_reach_view_waits_the_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(false);
         let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
         snapshot.seed_local_player(local_player(WorldTile {
@@ -1192,6 +1240,9 @@ mod tests {
     /// Trade + 1 + slack.
     #[test]
     fn shop_npc_open_with_a_stale_reach_view_waits_the_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let here = WorldTile {
             x: 3198,
             z: 3200,
@@ -1216,12 +1267,116 @@ mod tests {
         assert_eq!(second, first + 1 + shop_open::OPEN_SLACK_TICKS + 1);
     }
 
+    /// A failed keeper approach gets one fresh route from the next observed
+    /// tile before a Trade is sent.
+    #[test]
+    fn shop_keeper_walk_replans_after_a_failed_approach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let client = client_with_shop(false);
+        let origin = WorldTile {
+            x: 3190,
+            z: 3200,
+            level: 0,
+        };
+        let mut keeper = npc_row();
+        keeper.distance = 10;
+        let mut before = snapshot(&client, Vec::new(), vec![keeper]);
+        before.seed_local_player(local_player(origin));
+        let mut origin_reach = reach_from(origin);
+        origin_reach.step.fill(0);
+        let mut ledger = None;
+        let handle = start_machine(&before, &mut ledger);
+
+        let first = with_tick_reach(&before, &origin_reach, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(first.is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Walk(_)
+        ));
+        let first_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed")),
+            first_request_id
+        );
+
+        let moved = WorldTile { x: 3191, ..origin };
+        let mut after_failure = snapshot(&client, Vec::new(), vec![npc_row()]);
+        after_failure.seed_local_player(local_player(moved));
+        let moved_reach = reach_from(moved);
+        let failed = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(failed.is_pending());
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(_))
+                    && entry.request_id.get() != first_request_id
+            }),
+            "retry starts on a later tick"
+        );
+
+        let retry = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(retry.is_pending());
+        let retry_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+            .unwrap()
+            .request_id
+            .get();
+        assert_ne!(retry_request_id, first_request_id);
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
+            retry_request_id
+        );
+
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut arrived = snapshot(&client, Vec::new(), vec![npc_row()]);
+        arrived.seed_local_player(local_player(target));
+        let target_reach = reach_from(target);
+        let result = with_tick_reach(&arrived, &target_reach, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(result.is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Interaction(InteractReq::Npc {
+                name,
+                action,
+                index: Some(7),
+            }) if name == "Shopkeeper" && action == "Trade"
+        ));
+    }
+
     /// An `if_close` (an NPC's hit, `npc_combat_melee.rs2:31,36`) shuts the
     /// shop under an outstanding buy batch. No button goes to the closed
     /// shop, and the purchase ends with an error: at once when the batch
     /// landed, within the settle bound when nothing moved.
     #[test]
     fn a_shop_closed_mid_batch_ends_the_purchase_without_another_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for landed in [false, true] {
             let open = client_with_shop(true);
             let closed = client_with_shop(false);

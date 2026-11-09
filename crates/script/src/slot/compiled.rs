@@ -4,12 +4,35 @@ use crate::native::HostFrame;
 use crate::native::{
     ActionContext, ConfigError, Interrupt, NativeActions, NativeOutput, NativePhase, NativeTick,
     PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
-    ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason,
+    ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason, WalkHandover,
 };
 use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
-use api::selected::{FamilyPreparation, RunKey, SelectedPin};
+use api::selected::{ClientRevision, FamilyPreparation, RunKey};
 use std::sync::Mutex;
+
+pub(super) fn selected_revision(
+    selected: &api::game_data::SelectedGameData,
+) -> Result<ClientRevision, StartError> {
+    match selected.revision() {
+        274 => Ok(ClientRevision::R274),
+        289 => Ok(ClientRevision::R289),
+        377 => Ok(ClientRevision::R377),
+        _ => Err(StartError::Unavailable(
+            "selected game-data revision is unsupported".into(),
+        )),
+    }
+}
+#[cfg(test)]
+thread_local! {
+    static STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) fn set_heap_test_status_logging_suppressed(suppressed: bool) -> bool {
+    STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST.with(|current| current.replace(suppressed))
+}
 
 pub(super) struct CompiledRun {
     pub script: ScriptOwner,
@@ -17,7 +40,7 @@ pub(super) struct CompiledRun {
     pub pending: Option<PendingConfig>,
     pub run: RunKey,
     pub selected: Arc<api::game_data::SelectedGameData>,
-    pub pin: Arc<SelectedPin>,
+    pub revision: ClientRevision,
     pub output: Output,
     pub actions: NativeActions,
     pending_registry: Option<Box<crate::quester::registry::PreparedRegistry>>,
@@ -92,29 +115,22 @@ impl From<StartError> for PrepareRunError {
     }
 }
 
-/// One operator Start retained while the bounded work ledger is temporarily
-/// full. The slot owns exactly one demand and retries on an ordinary turn.
+/// One native Start demand. The slot retains it while work admission is full.
+#[derive(Clone)]
 pub(super) struct PendingCompiledStart {
-    card: &'static crate::native::CompiledCard,
-    run: RunKey,
-    bag: Arc<SettingsBag>,
-    selected: Arc<api::game_data::SelectedGameData>,
-    banks: Arc<api::named_banks::NamedBankFacts>,
-    retained: Arc<Mutex<RetainedMemory>>,
-    account: String,
+    pub(super) card: &'static crate::native::CompiledCard,
+    pub(super) run: RunKey,
+    pub(super) bag: Arc<SettingsBag>,
+    pub(super) selected: Arc<api::game_data::SelectedGameData>,
+    pub(super) banks: Arc<api::named_banks::NamedBankFacts>,
+    pub(super) retained: Arc<Mutex<RetainedMemory>>,
+    pub(super) nav: Option<nav_planner::contract::NavLease>,
+    pub(super) account: String,
 }
 
 impl PendingCompiledStart {
     fn try_admit(&self) -> Result<Preparation, PrepareRunError> {
-        prepare_run(
-            self.card,
-            self.run,
-            Arc::clone(&self.bag),
-            Arc::clone(&self.selected),
-            Arc::clone(&self.banks),
-            Arc::clone(&self.retained),
-            self.account.clone(),
-        )
+        prepare_run(self.clone())
     }
 }
 pub(super) struct Preparation {
@@ -163,7 +179,7 @@ pub enum CompiledDelivery {
 #[derive(Default)]
 pub(super) struct Output {
     pub status: Option<Arc<ScriptStatus>>,
-    pub paint: Option<Arc<crate::shim::ScriptPaint>>,
+    pub paint: Option<Arc<crate::paint::ScriptPaint>>,
     pub applied: Option<std::num::NonZeroU64>,
     pub account: Option<Box<str>>,
 }
@@ -338,12 +354,17 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
 impl NativeOutput for Output {
     fn status(&mut self, status: ScriptStatus) {
         let previous = self.status.as_deref();
+        #[cfg(test)]
+        if !STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST.with(|current| current.get()) {
+            log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
+        }
+        #[cfg(not(test))]
         log_status_change(self.account.as_deref().unwrap_or(""), previous, &status);
         if previous != Some(&status) {
             self.status = Some(Arc::new(status));
         }
     }
-    fn paint(&mut self, frame: Arc<crate::shim::ScriptPaint>) {
+    fn paint(&mut self, frame: Arc<crate::paint::ScriptPaint>) {
         if self.paint.as_deref() != Some(frame.as_ref()) {
             self.paint = Some(frame);
         }
@@ -379,7 +400,7 @@ impl NativeOutput for Output {
 pub(super) fn frame_context<'a>(
     ctx: &'a ScriptCtx<'_>,
     run: RunKey,
-    pin: &'a SelectedPin,
+    revision: ClientRevision,
     retained: &'a mut RetainedMemory,
     runtime: &'a mut crate::native::ledger::Runtime,
 ) -> ActionContext<'a> {
@@ -391,12 +412,14 @@ pub(super) fn frame_context<'a>(
     let now = Instant::now();
     runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
     ActionContext {
+        walk_prereq: Default::default(),
         evidence,
-        pin,
+        revision,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        stage_cross: None,
         condition: ctx.compiled.condition.filter(|fact| {
             fact.session == api::condition::SessionMark::Live
                 && ctx
@@ -413,6 +436,7 @@ pub(super) fn frame_context<'a>(
         pending_note_progress: Some(&mut runtime.pending_note_progress),
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
+        wilderness: ctx.compiled.wilderness,
         observed_walk_outcome_seq: runtime.observed_walk_outcome.seq(),
         observed_walk_cancel_reason: if runtime.observed_walk_outcome.seq()
             == runtime.takeover_consumed_seq
@@ -431,6 +455,30 @@ pub struct SeatTickPorts<'a> {
 }
 
 impl CompiledRun {
+    #[cfg(test)]
+    pub(super) fn for_heap_test(
+        run: RunKey,
+        config: Arc<PreparedConfig>,
+        script: Box<dyn Script>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        revision: ClientRevision,
+    ) -> Self {
+        Self {
+            script: ScriptOwner(Some(script)),
+            config,
+            pending: None,
+            pending_registry: None,
+            run,
+            selected,
+            revision,
+            output: Output {
+                account: Some(String::new().into_boxed_str()),
+                ..Default::default()
+            },
+            actions: NativeActions { _private: () },
+        }
+    }
+
     fn latest_config(&self) -> &PreparedConfig {
         self.pending
             .as_ref()
@@ -470,7 +518,7 @@ impl CompiledRun {
         seat_ports: SeatTickPorts<'tick>,
     ) -> (
         Result<ScriptFlow, ScriptFailure>,
-        Option<Vec<crate::shim::InteractReq>>,
+        Option<Vec<crate::interact::InteractReq>>,
     ) {
         if let Some(port) = pairs {
             let dead = crate::native::death::hitpoints_zero(
@@ -495,7 +543,6 @@ impl CompiledRun {
             port.observe(
                 crate::quester::pair::PairRegistration {
                     run: self.run,
-                    pin: Arc::clone(&self.pin),
                     settings: self.script.pair_settings(),
                     ready,
                     evidence,
@@ -507,13 +554,14 @@ impl CompiledRun {
         let result = {
             let mut tick = NativeTick {
                 actions: &mut self.actions,
-                cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
+                cx: frame_context(ctx, self.run, self.revision, retained, runtime),
                 output: &mut self.output,
                 pairs,
                 state,
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
                 walk_danger: ctx.compiled.walk_danger,
+                pvp_globals: ctx.compiled.pvp_globals,
                 frame: HostFrame {
                     here: ctx.here,
                     snapshot: ctx.snapshot,
@@ -528,7 +576,10 @@ impl CompiledRun {
                         cure_poison: ctx.compiled.cure_poison,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        nav: ctx.compiled.nav,
                         walk_danger: ctx.compiled.walk_danger,
+                        wilderness: ctx.compiled.wilderness,
+                        pvp_globals: ctx.compiled.pvp_globals,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
                         interacts,
@@ -630,12 +681,13 @@ pub fn prepare_config(
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
-    let pin = selected.selected_pin().map_err(StartError::Facts)?;
+    let client_revision = selected_revision(&selected)?;
     let mut cx = PrepareContext {
         selected,
-        pin,
+        revision: client_revision,
         banks,
         families: worker,
+        zones: None,
     };
     let config = catch_unwind(AssertUnwindSafe(|| {
         if card.id == crate::quester::card::CARD.id {
@@ -684,13 +736,16 @@ fn try_retained(
 
 /// The single off-pump registration transaction used by Browse and API seats.
 pub(super) fn prepare_run(
-    card: &'static crate::native::CompiledCard,
-    run: RunKey,
-    bag: Arc<SettingsBag>,
-    selected: Arc<api::game_data::SelectedGameData>,
-    banks: Arc<api::named_banks::NamedBankFacts>,
-    retained: Arc<Mutex<RetainedMemory>>,
-    account: String,
+    PendingCompiledStart {
+        card,
+        run,
+        bag,
+        selected,
+        banks,
+        retained,
+        account,
+        nav,
+    }: PendingCompiledStart,
 ) -> Result<Preparation, PrepareRunError> {
     let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
@@ -708,6 +763,7 @@ pub(super) fn prepare_run(
         preparation: Option<Box<crate::quester::registry::RegistryPreparation<'static>>>,
         quests: Option<Arc<api::quest_facts::QuestCatalog>>,
         pending: Option<Box<crate::quester::registry::PreparedRegistry>>,
+        nav: Option<nav_planner::contract::NavLease>,
         actions: u32,
     }
     let quester_state = quester.then(|| {
@@ -718,6 +774,7 @@ pub(super) fn prepare_run(
             preparation: None,
             quests: None,
             pending: None,
+            nav,
             actions: 0,
         })
     });
@@ -807,11 +864,14 @@ pub(super) fn prepare_run(
                                 )
                                 .map_err(StartError::Facts)?,
                             );
-                            state.preparation = Some(Box::new(
+                            let source =
+                                state.source.take().expect("Quester folder source captured");
+                            let preparation =
                                 crate::quester::registry::RegistryPreparation::from_source(
-                                    state.source.take().expect("Quester folder source captured"),
+                                    source,
                                     Arc::clone(&selected),
                                     Arc::clone(&quests),
+                                    state.nav.take(),
                                 )
                                 .map_err(|error| {
                                     StartError::Unavailable(
@@ -822,8 +882,8 @@ pub(super) fn prepare_run(
                                         )
                                         .into(),
                                     )
-                                })?,
-                            ));
+                                })?;
+                            state.preparation = Some(Box::new(preparation));
                             state.quests = Some(quests);
                         }
                         let preparation = state
@@ -916,7 +976,7 @@ pub(super) fn prepare_run(
                         config,
                         mut quester,
                     } => {
-                        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                        let revision = selected_revision(&selected)?;
                         let mut retained = try_retained(&retained)?;
                         let script = catch_unwind(AssertUnwindSafe(|| {
                             (card.create)(run, Arc::clone(&config), &mut retained)
@@ -935,7 +995,7 @@ pub(super) fn prepare_run(
                                 .and_then(|state| state.pending.take()),
                             run,
                             selected: Arc::clone(&selected),
-                            pin,
+                            revision,
                             output: Output {
                                 account: account.take(),
                                 ..Default::default()
@@ -1005,7 +1065,7 @@ pub(super) fn prepare_native_run(
         input,
         move |_| {
             PreparationResult(Some((|| {
-                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let revision = selected_revision(&selected)?;
                 let (script, config) = catch_unwind(AssertUnwindSafe(|| build(&selected)))
                     .map_err(|payload| {
                         StartError::Unavailable(
@@ -1019,7 +1079,7 @@ pub(super) fn prepare_native_run(
                     pending_registry: None,
                     run,
                     selected,
-                    pin,
+                    revision,
                     output: Output {
                         account: Some(account.into_boxed_str()),
                         ..Default::default()
@@ -1076,7 +1136,48 @@ impl SlotScript {
         bag: Arc<SettingsBag>,
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
     ) -> Result<(), StartError> {
+        self.start_compiled_inner(account, id, bag, selected, banks, nav, None)
+    }
+
+    pub fn start_manual_walk_handover(
+        &mut self,
+        account: &str,
+        handover: WalkHandover,
+        route_run: Option<RunKey>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartError> {
+        self.start_compiled_inner(
+            account,
+            crate::CompiledId("WalkTo"),
+            Arc::new(SettingsBag::new()),
+            selected,
+            banks,
+            None,
+            Some((handover, route_run)),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve private manual-handover/route lineage alongside captured navigation and compiled-start inputs without an artificial options object."
+    )]
+    fn start_compiled_inner(
+        &mut self,
+        account: &str,
+        id: crate::CompiledId,
+        bag: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
+        manual_handover: Option<(WalkHandover, Option<RunKey>)>,
+    ) -> Result<(), StartError> {
+        let (handover, route_run) = match manual_handover {
+            Some((handover, route_run)) => (Some(handover), route_run),
+            None => (None, None),
+        };
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
@@ -1090,7 +1191,7 @@ impl SlotScript {
             .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
         if id == crate::CompiledId("Quester")
             && self.quest_pairs.is_none()
-            && crate::quester::card::requires_pairs(&bag).map_err(StartError::Config)?
+            && crate::quester::card::requires_pairs(&bag, &selected).map_err(StartError::Config)?
         {
             return Err(StartError::Unavailable(
                 "partner capability is not installed in this Play".into(),
@@ -1101,6 +1202,9 @@ impl SlotScript {
             .max(self.runtime_generation)
             .checked_add(1)
             .ok_or_else(|| StartError::Unavailable("run generation exhausted".into()))?;
+        let manual_bank_fetch = handover
+            .as_ref()
+            .map(|handover| handover.outer.allow_bank_fetch);
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
@@ -1110,29 +1214,39 @@ impl SlotScript {
             self.retained
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default()))),
         );
-        let job = prepare_run(
+        let handover_reserved = if let Some(handover) = handover {
+            retained
+                .lock()
+                .map_err(|_| StartError::Unavailable("walk handover storage unavailable".into()))?
+                .set_walk_handover(run, handover)?;
+            true
+        } else {
+            false
+        };
+        let demand = PendingCompiledStart {
             card,
             run,
-            Arc::clone(&bag),
-            Arc::clone(&selected),
-            Arc::clone(&banks),
-            Arc::clone(&retained),
-            account.to_owned(),
-        );
+            bag,
+            selected,
+            banks,
+            retained,
+            account: account.to_owned(),
+            nav,
+        };
+        let job = demand.try_admit();
         match job {
             Ok(job) => self.preparing = Some(Box::new(job)),
             Err(PrepareRunError::Full) => {
-                self.pending_compiled_start = Some(PendingCompiledStart {
-                    card,
-                    run,
-                    bag,
-                    selected,
-                    banks,
-                    retained,
-                    account: account.to_owned(),
-                });
+                self.pending_compiled_start = Some(Box::new(demand));
             }
-            Err(PrepareRunError::Other(error)) => return Err(error),
+            Err(PrepareRunError::Other(error)) => {
+                if handover_reserved {
+                    if let Ok(mut memory) = demand.retained.lock() {
+                        memory.take_walk_handover(run);
+                    }
+                }
+                return Err(error);
+            }
         }
         self.control_generation = generation;
         self.terminal_native_status = None;
@@ -1140,6 +1254,8 @@ impl SlotScript {
         self.start_pending = true;
         self.start_outcome = None;
         self.state = RunState::Starting;
+        self.set_manual_route_run(route_run);
+        self.set_manual_route_bank_fetch(manual_bank_fetch);
         Ok(())
     }
 
@@ -1167,7 +1283,7 @@ impl SlotScript {
             boundary: pending.boundary,
         });
         let selected = Arc::clone(&current.selected);
-        let pin = Arc::clone(&current.pin);
+        let revision = current.revision;
         let account = current.output.account.clone();
         let retained = Arc::clone(self.retained.as_ref().ok_or("no retained memory")?);
         let input = PreparationInput::for_settings(generation, config.bag())
@@ -1205,7 +1321,7 @@ impl SlotScript {
                         pending_registry: None,
                         run,
                         selected,
-                        pin,
+                        revision,
                         output,
                         actions: NativeActions { _private: () },
                     })
@@ -1551,9 +1667,10 @@ impl SlotScript {
         }
         let selected = match selected {
             Some(selected) => selected,
-            None => api::game_data::for_revision(api::selected::ClientRevision::R289)?,
+            None => api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .map_err(|error| error.to_string())?,
         };
-        let pin = selected.selected_pin().map_err(|e| format!("{e:?}"))?;
+        let revision = selected_revision(&selected).map_err(|error| error.to_string())?;
         self.control_generation = self
             .control_generation
             .max(self.runtime_generation)
@@ -1579,7 +1696,7 @@ impl SlotScript {
                 session: self.work_epoch,
             },
             selected,
-            pin,
+            revision,
             output: Output::default(),
             actions: NativeActions { _private: () },
         });
@@ -1592,7 +1709,7 @@ impl SlotScript {
 #[derive(Default)]
 pub struct TestOutput {
     pub(crate) statuses: Vec<ScriptStatus>,
-    pub(crate) paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub(crate) paints: Vec<Arc<crate::paint::ScriptPaint>>,
     pub(crate) logs: Vec<String>,
 }
 
@@ -1609,7 +1726,7 @@ impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {
         self.statuses.push(status);
     }
-    fn paint(&mut self, paint: Arc<crate::shim::ScriptPaint>) {
+    fn paint(&mut self, paint: Arc<crate::paint::ScriptPaint>) {
         self.paints.push(paint);
     }
     fn log(&mut self, _level: api::hostlog::Level, message: &str) {

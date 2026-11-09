@@ -2,7 +2,7 @@
 
 mod common;
 
-use script_js::wire::{SnapshotInput, StatInput};
+use script::native::snapshot_source::{SnapshotInput, StatInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 

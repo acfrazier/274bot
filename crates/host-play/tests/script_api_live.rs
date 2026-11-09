@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use api::interact::{self, Interactions};
 use api::snapshot::{ChatLineView, GameSnapshot, QuestListStatus, WorldTile};
 use client::client::Client;
-use host_play::{mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions};
+use host_play::{
+    mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions, SlotArm,
+};
 use script::native::{ScriptStatus, StatusValue};
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -219,16 +221,27 @@ fn pre_relog_tutorial_step(
     ))
 }
 
-fn logout(client: &mut Client) -> Result<(), String> {
+/// Press the fixture logout, then post the host's explicit Login for this
+/// slot. Every fixture logout is a relog before Start: the bot has no script
+/// then, so the approved scriptless policy parks it after the exit and it
+/// waits for the operator's Login.
+fn logout_then_login(client: &mut Client, arm: &SlotArm) -> Result<(), String> {
     let ifaces = Arc::clone(&client.ifaces);
     if interact::logout(client, &ifaces) {
+        arm.arm_explicit_login();
         Ok(())
     } else {
         Err("fixture logout unavailable".into())
     }
 }
 
-fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<Fixture>) {
+fn fixture_frame(
+    client: &mut Client,
+    held: bool,
+    journal: bool,
+    shared: &Mutex<Fixture>,
+    arm: &SlotArm,
+) {
     let mut state = shared.lock().unwrap();
     if state.error.is_some() {
         return;
@@ -321,7 +334,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                         "fixture tutorial gate: fresh get tutorial: 1000 in the {}; no reseed needed",
                         PreRelogTutorialPhase::Initial.label()
                     );
-                    logout(client)?;
+                    logout_then_login(client, arm)?;
                     state.phase = 3;
                 }
                 Some(PreRelogTutorialAction::Reseed) => {
@@ -350,7 +363,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                         "fixture tutorial gate: fresh get tutorial: 1000 in the {}",
                         PreRelogTutorialPhase::AfterReseed.label()
                     );
-                    logout(client)?;
+                    logout_then_login(client, arm)?;
                     state.phase = 3;
                 }
                 Some(PreRelogTutorialAction::Reseed) => {
@@ -400,7 +413,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 state.phase = 6;
             }
             6 if journal && chat_has(&snapshot, "get rjquest: 30") => {
-                logout(client)?;
+                logout_then_login(client, arm)?;
                 state.phase = 7;
             }
             8 if journal
@@ -520,17 +533,32 @@ fn start_fixture_at(
         asset_host: Some("127.0.0.1".into()),
         port: Some(port),
         http_port: Some(http_port),
-        cache_dir: Some(PathBuf::from(
-            std::env::var_os("BOT_CACHE_DIR").expect("copied BOT_CACHE_DIR"),
-        )),
+        cache_dir: Some(
+            api::test_support::local_asset_path(
+                "BOT_CACHE_DIR",
+                "",
+                "copied local R289 cache snapshot for Script API live proof",
+            )
+            .expect("Script API cache should be preflighted"),
+        ),
         unpack_dir: Some(home.join(".274bot/unpack-289")),
         vault_path: Some(home.join("vault")),
-        nav_pack: Some(PathBuf::from(
-            std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
-        )),
-        engine_dir: Some(PathBuf::from(
-            std::env::var_os("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),
-        )),
+        nav_pack: Some(
+            api::test_support::local_asset_path(
+                "WORLD_NAV_PACK",
+                "",
+                "local R289 navigation pack for Script API live proof",
+            )
+            .expect("Script API navigation pack should be preflighted"),
+        ),
+        engine_dir: Some(
+            api::test_support::local_asset_path(
+                "WORLD_ENGINE_DIR",
+                "",
+                "local R289 engine content for Script API live proof",
+            )
+            .expect("Script API engine content should be preflighted"),
+        ),
         ..ProfileOptions::default()
     };
     let template = options
@@ -546,6 +574,10 @@ fn start_fixture_at(
     }));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
+    // The fixture relogs a scriptless bot before its script starts, so it
+    // owns the arm that posts the operator Login after its own logout.
+    let arm = SlotArm::new(274_289_303, true);
+    let frame_arm = Arc::clone(&arm);
     let mut play = run_with_template(
         template,
         false,
@@ -553,7 +585,7 @@ fn start_fixture_at(
         |_| (None, None),
         move |client, name, input| {
             if name == frame_account {
-                fixture_frame(client, input.hold, journal, &frame_state);
+                fixture_frame(client, input.hold, journal, &frame_state, &frame_arm);
             }
         },
     )
@@ -567,7 +599,7 @@ fn start_fixture_at(
         },
         None,
         None,
-        None,
+        Some(arm),
     )
     .expect("spawn fresh local fixture account");
     wait_for(&play, &account, &state, Duration::from_secs(240), |_| {
@@ -852,6 +884,85 @@ fn journal_cell() {
     });
     assert_eq!(play.script_api_live_probe(&account)["seat_present"], false);
     save("script-api-progress-journal-receipt.json", &receipt);
+}
+
+/// R4S-2 live: the compatibility journal (`api.questJournalBegin` and
+/// `api.questJournalRun`) reads the real Romeo & Juliet journal twice in a
+/// row. The second begin runs in the same isolate tick in which the first
+/// read settles, so the host can see the second read's lease without a free
+/// sample between them. Each read must own its own hold.
+const COMPAT_JOURNAL_TWICE_SCRIPT: &str = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  for (const read of [1, 2]) {
+    const begin = api.questJournalBegin({ name: 'Romeo & Juliet' });
+    api.log('compat journal ' + read + ' begin: ' + JSON.stringify(begin));
+    if (!begin.ok) return;
+    api.log('compat journal ' + read + ': ' + JSON.stringify(await api.questJournalRun(begin.value)));
+  }
+}
+"#;
+
+fn compat_journal_twice_cell() {
+    let (play, account, fixture) = start_fixture(true);
+    fixture.lock().unwrap().started = true;
+    play.script_start_load(
+        &account,
+        COMPAT_JOURNAL_TWICE_SCRIPT.into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .expect("Load the compatibility journal consumer");
+    let mut logs = Vec::new();
+    wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
+        take_logs(play, &account, &mut logs);
+        logs.iter()
+            .any(|line| line.starts_with("compat journal 2: "))
+            || logs
+                .iter()
+                .any(|line| line.contains(" begin: ") && line.contains("\"ok\":false"))
+    });
+    let reads = [1, 2].map(|read| {
+        let begin = logged(&logs, &format!("compat journal {read} begin: "));
+        assert_eq!(begin["ok"], true, "read {read} begin: {begin}");
+        let outcome = logged(&logs, &format!("compat journal {read}: "));
+        assert_eq!(outcome["kind"], "done", "read {read}: {outcome}");
+        assert_eq!(outcome["value"]["kind"], "done", "read {read}: {outcome}");
+        let lines = outcome["value"]["lines"].as_array().expect("journal lines");
+        assert!(!lines.is_empty(), "read {read} returned no journal lines");
+        assert_eq!(
+            outcome["value"]["token"], begin["value"]["token"],
+            "read {read} settled its own token"
+        );
+        outcome
+    });
+    assert_ne!(
+        reads[0]["value"]["token"], reads[1]["value"]["token"],
+        "each read is its own transaction"
+    );
+    assert_eq!(
+        reads[0]["value"]["lines"], reads[1]["value"]["lines"],
+        "both reads saw the same quest stage"
+    );
+    wait_for(&play, &account, &fixture, Duration::from_secs(5), |_| {
+        fixture.lock().unwrap().normal_closed
+    });
+    let hidden = fixture.lock().unwrap().hidden_journals;
+    assert!(hidden > 0, "the reads never owned the hidden journal paint");
+    no_drops(&account);
+    play.script_stop(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        play.script_state(&account) == script::RunState::Idle
+    });
+    save(
+        "script-api-compat-journal-twice-receipt.json",
+        &json!({"cell":"script_api_compat_journal_twice", "account":account,
+               "seed":"setvar rjquest 30", "reads":reads, "hidden_frames":hidden}),
+    );
 }
 
 const RUNTIME_SOURCE: &str = r#"
@@ -1254,6 +1365,27 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         Ok("1"),
         "ignored live cells require LIVE=1"
     );
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (name, description) in [
+        (
+            "BOT_CACHE_DIR",
+            "copied local R289 cache snapshot for Script API live proof",
+        ),
+        (
+            "WORLD_NAV_PACK",
+            "local R289 navigation pack for Script API live proof",
+        ),
+        (
+            "WORLD_ENGINE_DIR",
+            "local R289 engine content for Script API live proof",
+        ),
+    ] {
+        if api::test_support::local_asset_path(name, "", description).is_none() {
+            return;
+        }
+    }
     if std::env::var("SCRIPT_API_CHILD").as_deref() == Ok(cell) {
         body();
         return;
@@ -1343,6 +1475,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
             | "script_runtime_compat"
             | "script_api_start_during_catalogue_refresh"
             | "owner_lifecycle"
+            | "script_api_compat_journal_twice"
     ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
@@ -1450,6 +1583,16 @@ fn script_api_progress_journal() {
         "script_api_progress_journal",
         "script-api-progress-journal-receipt.json",
         journal_cell,
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and released R289 Romeo & Juliet journal rules"]
+fn script_api_compat_journal_twice() {
+    run_captured(
+        "script_api_compat_journal_twice",
+        "script-api-compat-journal-twice-receipt.json",
+        compat_journal_twice_cell,
     );
 }
 

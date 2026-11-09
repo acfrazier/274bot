@@ -2,17 +2,16 @@
 """Stage release binaries, navigation and the WalkTo map bundle; optionally
 Developer-ID sign macOS.
 
-Build first with cargo build --locked --release and default features. Every
-platform ships panel-play and tui-play. The input must be the Cargo profile
-directory containing matching nav/<revision> outputs. Revision 289 packages
-also ship the WalkTo map catalogue and terrain: the staged tui-play bakes
-them from the pinned client cache the nav bundle was built from
-(--map-cache and --map-unpack; by default the nav build's
-BOT_NAV_ENGINE_DIR / ENGINE_DIR and BOT_NAV_SNAPSHOT_ROOT resolution), and
-the bake must carry the nav bundle's decoded content identity. --check
-stages into a temporary directory, verifies every staged file, prints a
-summary and removes it. This tool never publishes a release or uploads to
-Apple's notary service.
+Build first with the local-data wrapper, then cargo build --locked --release
+with default features. Every platform ships panel-play and tui-play. The
+input must be the Cargo profile directory containing nav/<revision> outputs.
+Revision 289 packages also ship the WalkTo map catalogue and terrain: the
+staged tui-play bakes them from the local client cache and decoded snapshot
+(--map-cache and --map-unpack; by default the GAME_DATA_289_ENGINE cache and
+BOT_NAV_SNAPSHOT_ROOT). --check stages into a temporary directory,
+verifies every staged file against the same-build receipt, prints a summary
+and removes it. This tool never publishes a release or uploads to Apple's
+notary service.
 """
 import argparse
 import hashlib
@@ -41,20 +40,19 @@ def digest(path):
     return h.hexdigest()
 
 
-def nav_build_inputs(revision):
-    """Resolve optional nav-build inputs without assuming an operator's filesystem."""
-    engine = os.environ.get('BOT_NAV_ENGINE_DIR') or os.environ.get('ENGINE_DIR')
+def nav_build_inputs():
+    """Resolve the map-bake inputs from the local generator and snapshot roots."""
+    engine = os.environ.get('GAME_DATA_289_ENGINE')
     snapshots = os.environ.get('BOT_NAV_SNAPSHOT_ROOT')
     cache = Path(engine) / 'data/pack/client' if engine else None
     return cache, Path(snapshots) if snapshots else None
 
 
-def ship_map_bundle(p, tool, output, revision, cache, unpack, nav_manifest):
-    """Bake the shipped map catalogue and terrain with the staged tui-play and verify both."""
+def ship_map_bundle(p, tool, output, revision, cache, unpack):
+    """Bake and verify the release-shipped map catalogue and terrain."""
     for label, path in (('--map-cache', cache), ('--map-unpack', unpack)):
         if not path.is_dir():
-            p.error(f'{label} {path} is not a directory (the client cache the nav bundle '
-                    'was built from)')
+            p.error(f'{label} {path} is not a directory (a local map-bake input)')
     baked = subprocess.run([str(tool), '--map-bundle', str(output), '--revision', revision,
                             '--cache', str(cache), '--unpack', str(unpack)],
                            check=True, stdout=subprocess.PIPE, text=True)
@@ -64,11 +62,6 @@ def ship_map_bundle(p, tool, output, revision, cache, unpack, nav_manifest):
     if json.loads(baked.stdout.strip().splitlines()[-1]) != {'images': images,
                                                              'catalogue': catalogue}:
         p.error('tui-play --map-bundle printed other descriptions than it wrote')
-    content_id = json.loads(nav_manifest.read_text()).get('content_id')
-    for what, description in (('terrain', images), ('catalogue', catalogue)):
-        if description['identity']['content'] != content_id:
-            p.error(f'shipped map {what} was baked from another client cache than the nav '
-                    f'bundle (content {description["identity"]["content"]}, nav {content_id})')
     verify_map_bundle(p, output / 'map', revision, images, catalogue)
     return images, catalogue
 
@@ -185,12 +178,12 @@ def main():
                    if a.sign_identity in line and 'Developer ID Application:' in line]
         if not matches:
             p.error('a valid Developer ID Application identity is required')
-    default_cache, default_unpack = nav_build_inputs(a.revision)
+    default_cache, default_unpack = nav_build_inputs()
     map_cache = a.map_cache or default_cache
     map_unpack = a.map_unpack or default_unpack
     if a.revision == '289' and (map_cache is None or map_unpack is None):
         p.error('revision 289 requires --map-cache and --map-unpack (or '
-                'BOT_NAV_ENGINE_DIR and BOT_NAV_SNAPSHOT_ROOT)')
+                'GAME_DATA_289_ENGINE and BOT_NAV_SNAPSHOT_ROOT)')
     # Refuse to overwrite an earlier package or mix old and new artifacts.
     if a.output and a.output.exists():
         p.error('output already exists')
@@ -200,7 +193,7 @@ def main():
     names = ['panel-play', 'tui-play']
     nav = a.input / 'nav' / a.revision
     nav_names = ['274bot.navpack', '274bot.navflags', '274bot.navreach',
-                 '274bot.navcanlight', '274bot.navpois', '274bot.navpack.json']
+                 '274bot.navcanlight', '274bot.navpois']
     for path in [a.input / (n + suffix) for n in names] + [nav / n for n in nav_names]:
         if not path.is_file():
             p.error('missing required artifact: ' + str(path))
@@ -226,7 +219,7 @@ def main():
         if a.revision == '289':
             map_images, map_catalogue = ship_map_bundle(
                 p, output / ('tui-play' + suffix), output, a.revision,
-                map_cache, map_unpack, nav_out / '274bot.navpack.json')
+                map_cache, map_unpack)
         for name in ('LICENSE', 'NOTICE.md', 'FIRST-START.md'):
             shutil.copy2(root / name, output / name)
         signed = []

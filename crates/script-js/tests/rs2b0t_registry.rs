@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 use script::{ScriptKind, ScriptSource};
 use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
 /// multi-line default import, and a named import (`ShopRunner`).
@@ -419,7 +424,7 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
     let full = script_js::parse_registry_with_sources(CHICKEN_INDEX, &sources)
         .expect("full fixture parse");
     for card in &full {
-        let targeted = script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        let targeted = script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             CHICKEN_INDEX,
             &sources,
             &card.name,
@@ -428,7 +433,7 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
         assert_eq!(&targeted, card);
     }
     assert!(
-        script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             CHICKEN_INDEX,
             &sources,
             "missing card",
@@ -460,7 +465,7 @@ fn targeted_registry_parser_matches_every_frozen_real_catalogue_card() {
         .expect("full real registry parse");
     assert_eq!(full.len(), registrations.len());
     for card in &full {
-        let targeted = script_js::rs2b0t_registry::parse_registry_card_with_sources(
+        let targeted = script_js::library::rs2b0t_registry::parse_registry_card_with_sources(
             &index_ts, &sources, &card.name,
         )
         .unwrap_or_else(|error| panic!("target real card {}: {error}", card.name));
@@ -1248,6 +1253,11 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in [
         client::io::ClientRevision::R274,
         client::io::ClientRevision::R289,
@@ -1369,6 +1379,9 @@ export default class T extends LoopingBot {
     );
     offline.join();
 
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = LoadIsolate::spawn_with_game_data(
         src.to_string(),
         LoadShape::CompatClass,

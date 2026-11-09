@@ -19,7 +19,7 @@
 //! snapshot projection in `bank_tasks_v8`.
 
 use super::callback_v8::{self as cb, JsResult};
-use crate::observed::ItemRow;
+use crate::scene::observed::ItemRow;
 use rustyscript::Runtime;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -81,7 +81,7 @@ enum BankItemShape {
     Legacy,
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let cache = {
         let mut scope = runtime.deno_runtime().handle_scope();
         Rc::new(RefCell::new(BankItemsCache::new(&mut scope)?))
@@ -107,7 +107,7 @@ fn bank_items<'s>(
             .get_slot::<Rc<RefCell<BankItemsCache>>>()
             .cloned()
             .ok_or_else(|| cb::type_error(scope, "Bank item cache is not installed"))?;
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let latest = scene.latest();
             let open = latest.bank_open().unwrap_or(false);
             let key = BankItemsKey {
@@ -320,7 +320,7 @@ fn normal_backpack_snapshot<'s>(
     _args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let result = crate::observed::with(|scene| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let result = crate::scene::observed::with(|scene| -> JsResult<'s, v8::Local<'s, v8::Value>> {
         let latest = scene.latest();
         if latest.bank_open().unwrap_or(false)
             || latest.inv_size() != Some(BACKPACK_SLOTS)

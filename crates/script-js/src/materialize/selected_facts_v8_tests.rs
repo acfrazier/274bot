@@ -114,8 +114,8 @@ globalThis.__repeat = count => {
 "#;
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
-    crate::supply_v2::configure(Some(
+    crate::runtime::platform::bootstrap_test_v8_platform();
+    crate::scene::supply_v2::configure(Some(
         api::game_data::for_revision(ClientRevision::R289).expect("selected game data"),
     ));
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();

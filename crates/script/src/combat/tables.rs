@@ -8,7 +8,8 @@ use std::sync::Arc;
 use super::request::MeleeMode;
 use crate::native::ActionError;
 use api::game_data::{
-    ConsumptionFact, NpcNameRow, PrayerFact, SelectedGameData, StyleSpotanimFact, WeaponStyleFact,
+    ConsumptionFact, MeleeWeaponTier, NpcNameRow, PrayerFact, SelectedGameData, StyleSpotanimFact,
+    WeaponStyleFact,
 };
 
 const STYLE_BITS: u8 = 0x0f;
@@ -407,10 +408,29 @@ impl CombatTables {
         spotanim_style(&rows[index])
     }
 
+    /// Observation metadata shared by every style slot; returns the first slot.
     pub fn weapon_style(&self, obj_id: i32) -> Option<WeaponStyle> {
         let rows = self.selected.weapon_styles();
-        let index = rows.binary_search_by_key(&obj_id, |row| row.obj_id).ok()?;
-        weapon_style(&rows[index])
+        let index = rows.partition_point(|row| row.obj_id < obj_id);
+        let row = rows.get(index).filter(|row| row.obj_id == obj_id)?;
+        weapon_style(row)
+    }
+
+    /// Style-specific combat facts for one selected weapon slot.
+    pub fn weapon_style_slot(&self, obj_id: i32, style_slot: u8) -> Option<&WeaponStyleFact> {
+        let rows = self.selected.weapon_styles();
+        let key = (obj_id, style_slot);
+        let index = rows
+            .binary_search_by_key(&key, |row| (row.obj_id, row.style_slot))
+            .ok()?;
+        rows.get(index)
+    }
+
+    /// The melee attack tier of a weapon (PVP-DESIGN-1026 §4.2), or `None` when
+    /// the obj is not a melee-category weapon. A quest-gated row is never a plain
+    /// tier; the caller treats it as unusable.
+    pub fn melee_weapon_tier(&self, obj_id: i32) -> Option<MeleeWeaponTier> {
+        self.selected.melee_weapon_tier(obj_id)
     }
 
     /// Root interface ID for one tab in this selected content pin.
@@ -642,6 +662,7 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
             ));
         }
     }
+    let weapon_styles = selected.weapon_styles();
     if selected
         .style_seqs()
         .windows(2)
@@ -650,10 +671,9 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
             .style_spotanims()
             .windows(2)
             .any(|pair| pair[0].spotanim_id >= pair[1].spotanim_id)
-        || selected
-            .weapon_styles()
-            .windows(2)
-            .any(|pair| pair[0].obj_id >= pair[1].obj_id)
+        || weapon_styles.windows(2).any(|pair| {
+            (pair[0].obj_id, pair[0].style_slot) >= (pair[1].obj_id, pair[1].style_slot)
+        })
         || selected
             .combat_tabs()
             .windows(2)
@@ -661,6 +681,17 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
     {
         return Err(unavailable(
             "combat style or tab rows are not strictly sorted",
+        ));
+    }
+    if weapon_styles.windows(2).any(|pair| {
+        pair[0].obj_id == pair[1].obj_id
+            && (pair[0].style != pair[1].style
+                || pair[0].attackrate != pair[1].attackrate
+                || pair[0].category != pair[1].category
+                || pair[0].tab != pair[1].tab)
+    }) {
+        return Err(unavailable(
+            "weapon style slots disagree on their shared observation facts",
         ));
     }
     let combat_tabs = selected.combat_tabs();
@@ -703,6 +734,7 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
     }
     Ok(())
 }
+
 fn build_melee_mode_index(
     selected: &SelectedGameData,
 ) -> Result<(MeleeModeIndex, Option<i32>), ActionError> {
@@ -948,6 +980,29 @@ mod tests {
             }
         }
         let item_rows = items;
+        let npc_names = json!({
+            "combat_facts_version":2,
+            "rows":[
+                {
+                    "id":7,"config":"test_npc","display":"Test NPC","ops":["Attack"],
+                    "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
+                    "vislevel":0,"hitpoints":30,"damagetype":null,
+                    "attack":1,"defence":1,"magic":1,"attackbonus":0,
+                    "rangeattack":0,"magicattack":0,"stabdefence":0,"slashdefence":0,
+                    "crushdefence":0,"magicdefence":0,"rangedefence":0,"max_dealt":1000,
+                    "ap_attack":true,"attack_kind":null,"forced_max_hit":null,
+                    "dragonfire":null,"attackrate":6,"bespoke":false
+                },
+                {
+                    "id":8,"config":"not_attackable","display":"Not attackable","ops":["attack"],
+                    "size":1,"wanderrange":0,"maxrange":0,"attackrange":0,"huntrange":0,
+                    "attack":1,"defence":1,"magic":1,"attackbonus":0,
+                    "rangeattack":0,"magicattack":0,"stabdefence":0,"slashdefence":0,
+                    "crushdefence":0,"magicdefence":0,"rangedefence":0,"max_dealt":1000,
+                    "vislevel":0,"hitpoints":10,"damagetype":null
+                }
+            ]
+        });
         let data = json!({
             "schema_version":5,
             "revision":289,
@@ -959,20 +1014,7 @@ mod tests {
             "consumption":consumption,
             "pickpocket":[],
             "prayers":prayers,
-            "npc_names":{"rows":[
-                {
-                    "id":7,"config":"test_npc","display":"Test NPC","ops":["Attack"],
-                    "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
-                    "vislevel":0,"hitpoints":30,"damagetype":null,
-                    "ap_attack":true,"attack_kind":null,"forced_max_hit":null,
-                    "dragonfire":null,"attackrate":6,"bespoke":false
-                },
-                {
-                    "id":8,"config":"not_attackable","display":"Not attackable","ops":["attack"],
-                    "size":1,"wanderrange":0,"maxrange":0,"attackrange":0,"huntrange":0,
-                    "vislevel":0,"hitpoints":10,"damagetype":null
-                }
-            ]},
+            "npc_names":npc_names,
             "style_seqs":[{"seq_id":10,"style":1},{"seq_id":11,"style":6}],
             "style_spotanims":[{"spotanim_id":20,"style":8,"where":"projectile"}],
             "combat_tabs":[
@@ -996,8 +1038,9 @@ mod tests {
             ],
             "melee_mode_varp":43,
             "weapon_styles":[
-                {"obj_id":30,"style":1,"attackrate":5,"category":0,"tab":1},
-                {"obj_id":31,"style":1,"attackrate":4,"category":1,"tab":null}
+                {"obj_id":30,"style_slot":0,"style":1,"attackrate":5,"category":0,"tab":1,"damagetype":0,"damagestyle":0,"style_bonus":[1,0,2]},
+                {"obj_id":30,"style_slot":1,"style":1,"attackrate":5,"category":0,"tab":1,"damagetype":0,"damagestyle":1,"style_bonus":[0,3,7]},
+                {"obj_id":31,"style_slot":0,"style":1,"attackrate":4,"category":1,"tab":null,"damagetype":0,"damagestyle":0,"style_bonus":[0,0,0]}
             ]
         });
         data
@@ -1121,11 +1164,37 @@ mod tests {
         );
         assert_eq!(tables.weapon_style(31).unwrap().tab, None);
         assert_eq!(tables.weapon_style(31).unwrap().category, 1);
+        assert_eq!(tables.weapon_style(30).unwrap().attackrate, 5);
+        assert_eq!(tables.weapon_style_slot(30, 0).unwrap().style_bonus.2, 2);
+        assert_eq!(tables.weapon_style_slot(30, 1).unwrap().style_bonus.2, 7);
+        assert!(tables.weapon_style_slot(30, 2).is_none());
+        assert!(tables.weapon_style_slot(31, 0).is_some());
         assert_eq!(tables.combat_tab_root(CombatTab::HeavySword), Some(901));
         assert_eq!(tables.combat_tab_root(CombatTab::Unarmed), Some(904));
         assert_eq!(tables.combat_tab_root(CombatTab::Axe), None);
         assert_eq!(CombatStat::Magic.index(), 6);
         assert_eq!(tables.melee_mode_varp(), Some(43));
+    }
+
+    #[test]
+    fn weapon_style_slots_reject_duplicate_keys_and_inconsistent_shared_facts() {
+        let mut duplicate = selected_fixture_value();
+        let rows = duplicate["weapon_styles"].as_array_mut().unwrap();
+        let duplicate_row = rows[1].clone();
+        rows.push(duplicate_row);
+        rows.sort_by_key(|row| {
+            (
+                row["obj_id"].as_i64().unwrap(),
+                row["style_slot"].as_u64().unwrap(),
+            )
+        });
+        let duplicate = Arc::new(serde_json::from_value(duplicate).unwrap());
+        assert!(CombatTables::build(duplicate).is_err());
+
+        let mut inconsistent = selected_fixture_value();
+        inconsistent["weapon_styles"][1]["attackrate"] = json!(6);
+        let inconsistent = Arc::new(serde_json::from_value(inconsistent).unwrap());
+        assert!(CombatTables::build(inconsistent).is_err());
     }
 
     #[test]

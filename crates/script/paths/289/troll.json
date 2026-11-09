@@ -1,0 +1,56 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "troll",
+  "display_name": "Troll Stronghold",
+  "required": ["death-plateau", "agility-15"],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {"id":"death-plateau","kind":{"Quest":"death"},"at":"start","source":"content/scripts/quests/quest_troll/scripts/troll_journal.rs2:3-5; content/scripts/quests/quest_death/scripts/death_ig_commander.rs2:6-9,62-83"},
+      {"id":"agility-15","kind":{"Skill":{"skill":"agility","level":15}},"at":"start","source":"content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14"}
+    ],
+    "items": [], "acquire": {}, "bank": "nearest", "coin_float": 0,
+    "loadouts": {}, "areas": {},
+    "tools": ["obj:death_climbingboots", "obj:troll_key_prison", "obj:troll_key_eadgar", "obj:troll_key_godric"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null, "progress_binding": "journal:troll",
+    "progress": {
+      "colour": {"not_started":"troll:0", "in_progress":"troll:10", "complete":"troll:complete"},
+      "rules": [
+        {"stage":"troll:10","all":["i promised", "that i would rescue"],"any":[],"not":["i have defeated the troll champion"],"varp":10}
+      ],
+      "flags": [],
+      "monotonic": true
+    },
+    "prelude": [],
+    "sequences": [
+      {"stage":"troll:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_death/scripts/death_ig_commander.rs2:6-9,62-85; content/maps/m45_55.jm2:8215 and content/pack/npc.pack:1061.",
+         "args":{"npc":"death_ig_commander","anchor":{"tile":[2896,3528,0],"source":"content/maps/m45_55.jm2:8215; content/pack/npc.pack:1061"},"leash":8,"prefer":["How goes your fight with the trolls?","Is there anything I can do to help?","I'll get Godric back!"],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"troll","any":["troll:10"]}}}}
+      ]},
+      {"stage":"troll:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"buy-climbing-boots","kind":"talk","version":1,"advances":false,
+         "args":{"npc":"death_sherpa","anchor":{"tile":[2820,3556,0],"source":"content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"},"leash":8,"prefer":["Can I buy some Climbing boots?","OK, sounds good.","Nothing, thanks!"],"strict":true,"answer_once":true},
+         "comment":"content/scripts/quests/quest_death/scripts/death_sherpa.rs2:2-24 sells one pair for 12 coins after Death Plateau.",
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"death_climbingboots"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"death_climbingboots"}}}},
+        {"id":"wear-climbing-boots","kind":"equip","version":1,
+         "comment":"content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn climbing boots at the lower crossing.",
+         "args":{"obj":"death_climbingboots"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}}},
+        {"id":"GAP-troll-arena-rocks","kind":"wait","version":1,"advances":false,
+         "comment":"QUEST-CAMPAIGN/triage/review-troll-gap-2.md identifies missing nav edges for locs 3730, 3748, 3790, and 3791. This wait parks and does not cross the rocks.",
+         "args":{"until":{"Fact":{"kind":"near","version":1,"args":{"tile":[2896,3618,0],"radius":2}}},"max_ticks":20,"park_on_timeout":true},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2896,3618,0],"radius":2}}},
+         "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2896,3618,0],"radius":2}}}}
+      ]},
+      {"stage":"troll:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

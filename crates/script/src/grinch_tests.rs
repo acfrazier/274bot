@@ -1,4 +1,5 @@
 use super::CARD;
+use crate::interact::InteractReq;
 use crate::native::{
     ledger, ActionContext, HostEffect, InteractionReceipt, NativeActions, NativeOutput,
     NativePhase, NativeTick, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
@@ -6,7 +7,6 @@ use crate::native::{
     WalkStallReason,
 };
 use crate::native_bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -76,11 +76,11 @@ fn prepare_revision(
     revision: u64,
 ) -> Result<Arc<PreparedConfig>, crate::native::StartError> {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let pin = selected.selected_pin().unwrap();
     FamilyPreparation::run(move |families| {
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             selected,
-            pin,
+            revision: ClientRevision::R289,
             banks,
             families,
         };
@@ -106,7 +106,7 @@ impl NativeOutput for CaptureOutput {
         self.statuses.push(status);
     }
 
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
 
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.logs.push(message.to_owned());
@@ -118,7 +118,6 @@ impl NativeOutput for CaptureOutput {
 struct Driver {
     run: RunKey,
     selected: Arc<SelectedGameData>,
-    pin: Arc<api::selected::SelectedPin>,
     retained: RetainedMemory,
     ledger: Option<Box<ledger::Ledger>>,
     pending_note_progress: Option<RunKey>,
@@ -133,11 +132,9 @@ struct TickResult {
 impl Driver {
     fn new(run: RunKey) -> Self {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
         Self {
             run,
             selected,
-            pin,
             retained: RetainedMemory::default(),
             ledger: None,
             pending_note_progress: None,
@@ -164,17 +161,18 @@ impl Driver {
             sequence: tick,
         };
         let selected = Arc::clone(&self.selected);
-        let pin = Arc::clone(&self.pin);
         let mut budget = ledger::TickBudget::default();
         budget.observe(tick);
         let flow = {
             let mut actions = NativeActions { _private: () };
             let cx = ActionContext {
+                stage_cross: None,
+                walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 evidence,
-                pin: &pin,
+                revision: ClientRevision::R289,
                 snapshot: SnapshotView::new(Some(snapshot), evidence)
                     .with_reach(reach)
                     .with_world_members(Truth::Unknown)
@@ -189,9 +187,11 @@ impl Driver {
                 eligible: true,
                 observed_walk_outcome_seq: 0,
                 observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+                wilderness: None,
             };
             let mut native = NativeTick {
                 walk_danger: None,
+                pvp_globals: None,
                 actions: &mut actions,
                 cx,
                 output: &mut self.output,
@@ -204,10 +204,13 @@ impl Driver {
                     snapshot: Some(snapshot),
                     obj_names: None,
                     compiled: crate::CompiledTick {
+                        nav: None,
                         condition: None,
                         poison_unknown_pulse: None,
                         cure_poison: crate::survival::CurePoison::WhenNeeded,
                         walk_danger: None,
+                        wilderness: None,
+                        pvp_globals: None,
                         selected: Some(&selected),
                         reach: None,
                         reach_flood: None,
@@ -437,6 +440,7 @@ fn respond_walk(driver: &mut Driver, tick: u64, end: WalkEnd) -> (u64, WorldTile
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     (request_id, target)
 }
@@ -481,6 +485,7 @@ fn respond_stalled_walk(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     (request_id, target)
 }
@@ -509,7 +514,7 @@ fn respond_bank_pick(
         BankPickReceipt {
             request_id,
             evidence: stamp(run, tick),
-            selected: SelectedBank {
+            outcome: crate::bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index,
                 access_tile,
                 kind: PickKind::Reachable,
@@ -521,7 +526,7 @@ fn respond_bank_pick(
                     name: None,
                     choose: None,
                 })),
-            },
+            }),
         },
     );
     request_id
@@ -686,6 +691,9 @@ fn card_schema_exposes_native_defaults_all_items_and_mask_labels() {
 
 #[test]
 fn prepare_rejects_invalid_item_sets_and_radius_but_accepts_both_edges() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for items in [
         serde_json::json!([]),
         serde_json::json!(["999999"]),
@@ -730,6 +738,9 @@ fn prepare_rejects_invalid_item_sets_and_radius_but_accepts_both_edges() {
 
 #[test]
 fn prepare_stores_choices_in_the_typed_runtime_payload() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bank = NamedBank::new("Fixture bank", ANCHOR);
     let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let mut bag = settings(&[1055, ITEM]);
@@ -750,6 +761,9 @@ fn prepare_stores_choices_in_the_typed_runtime_payload() {
 
 #[test]
 fn first_ready_anchor_and_exact_square_plane_and_boundary_drive_shared_reach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = {
         let mut bag = settings(&[ITEM]);
         bag.insert("radius".into(), serde_json::json!(1));
@@ -791,6 +805,9 @@ fn first_ready_anchor_and_exact_square_plane_and_boundary_drive_shared_reach() {
 
 #[test]
 fn selected_mask_identity_is_emitted_exactly_from_three_same_tile_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[1055])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -830,6 +847,9 @@ fn selected_mask_identity_is_emitted_exactly_from_three_same_tile_rows() {
 
 #[test]
 fn stale_live_zone_row_inside_old_anchor_square_is_not_selected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = {
         let mut bag = settings(&[ITEM]);
         bag.insert("radius".into(), serde_json::json!(16));
@@ -860,6 +880,9 @@ fn stale_live_zone_row_inside_old_anchor_square_is_not_selected() {
 
 #[test]
 fn idle_waits_for_fresh_relevant_evidence_and_only_publishes_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -902,6 +925,9 @@ fn idle_waits_for_fresh_relevant_evidence_and_only_publishes_changes() {
 
 #[test]
 fn confirmed_pack_delta_counts_once_and_only_then_notes_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -957,6 +983,9 @@ fn confirmed_pack_delta_counts_once_and_only_then_notes_progress() {
 
 #[test]
 fn duplicate_refusals_exclude_only_scythe_or_bunny_and_continue_other_ids() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (duplicate, refusal) in [
         (
             1419,
@@ -1030,6 +1059,9 @@ fn duplicate_refusals_exclude_only_scythe_or_bunny_and_continue_other_ids() {
 
 #[test]
 fn repeated_yoyo_takes_are_legal_and_count_each_confirmed_delta() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[4079])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1088,6 +1120,9 @@ fn repeated_yoyo_takes_are_legal_and_count_each_confirmed_delta() {
 
 #[test]
 fn three_lost_races_do_not_fail_or_exclude_the_same_ground_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[1053])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1155,6 +1190,9 @@ fn three_lost_races_do_not_fail_or_exclude_the_same_ground_key() {
 
 #[test]
 fn three_failed_key_attempts_expire_then_exclude_only_that_id() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[1959, 1961])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1232,6 +1270,9 @@ fn three_failed_key_attempts_expire_then_exclude_only_that_id() {
 
 #[test]
 fn recovery_anchor_is_absent_before_ready_and_during_foreground_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1251,6 +1292,9 @@ fn recovery_anchor_is_absent_before_ready_and_during_foreground_walk() {
 
 #[test]
 fn stop_and_death_cancel_work_and_prevent_later_sends() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(Arc::clone(&config));
@@ -1304,6 +1348,9 @@ fn stop_and_death_cancel_work_and_prevent_later_sends() {
 
 #[test]
 fn full_pack_without_a_selected_depositable_item_fails_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1466,6 +1513,9 @@ fn deposit_only_return_fixture() -> (
 
 #[test]
 fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut driver, mut script, mut snapshot, _reach, return_walk) = deposit_only_return_fixture();
     let (return_receipt, returned_at) = respond_walk(&mut driver, 7, WalkEnd::Arrived);
     assert_eq!(return_receipt, return_walk);
@@ -1485,6 +1535,9 @@ fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
 
 #[test]
 fn transient_return_stalls_replan_and_arrive_at_original_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for why in [WalkStallReason::Expired, WalkStallReason::Dropped] {
         let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
         let stalled_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
@@ -1511,6 +1564,9 @@ fn transient_return_stalls_replan_and_arrive_at_original_start() {
 
 #[test]
 fn second_transient_return_stall_stops_after_one_recovery_with_typed_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
     let first_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
     let (first_stall, _) = respond_stalled_walk(
@@ -1558,6 +1614,9 @@ fn second_transient_return_stall_stops_after_one_recovery_with_typed_detail() {
 
 #[test]
 fn end_blocked_return_stall_is_terminal_without_recovery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
     let blocked_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
     let (stalled, _) = respond_stalled_walk(
@@ -1586,6 +1645,9 @@ fn end_blocked_return_stall_is_terminal_without_recovery() {
 
 #[test]
 fn return_accepts_network_arrival_while_the_rendered_tile_lags() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(prepare(settings(&[ITEM])).unwrap());
     let mut snapshot = ready_snapshot(ANCHOR, Vec::new(), Vec::new(), 28);
@@ -1620,6 +1682,9 @@ fn return_accepts_network_arrival_while_the_rendered_tile_lags() {
 
 #[test]
 fn return_uses_native_walk_receipt_even_when_already_at_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bank = NamedBank::new("Anchor bank", ANCHOR);
     let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let mut bag = settings(&[ITEM]);
@@ -1725,6 +1790,9 @@ fn return_uses_native_walk_receipt_even_when_already_at_anchor() {
 
 #[test]
 fn named_bank_choice_is_explicit_and_no_route_has_no_air_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let near = NamedBank::new("Near bank", BANK_TILE);
     let far_tile = tile(3240, 3216);
     let far = NamedBank::new("Far bank", far_tile);
@@ -1759,11 +1827,8 @@ fn named_bank_choice_is_explicit_and_no_route_has_no_air_fallback() {
         BankPickReceipt {
             request_id,
             evidence: stamp(run, 1),
-            selected: SelectedBank {
-                bank_index: u16::MAX,
-                access_tile: far_tile,
-                kind: PickKind::NoCandidate,
-                access: None,
+            outcome: crate::bank::BankPickOutcome::NoCandidate {
+                detail: Arc::from("no routable bank candidate"),
             },
         },
     );
@@ -1781,6 +1846,9 @@ fn named_bank_choice_is_explicit_and_no_route_has_no_air_fallback() {
 
 #[test]
 fn refused_or_incomplete_full_pack_transfer_does_not_count_or_return() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bank = NamedBank::new("Fixture bank", ANCHOR);
     let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let config = prepare_revision(settings(&[ITEM]), Arc::clone(&banks), 1).unwrap();
@@ -1841,6 +1909,9 @@ fn refused_or_incomplete_full_pack_transfer_does_not_count_or_return() {
 
 #[test]
 fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[1053, 1419, ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -1907,6 +1978,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     script.interrupt(crate::native::Interrupt::Resume);
     child_tick += 1;
@@ -1939,6 +2011,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     child_tick += 1;
     snapshot.seed_inventory_packet_generations(Some(4), None);
@@ -1974,6 +2047,9 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
 
 #[test]
 fn a_new_start_resets_exclusions_counters_and_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[1053, 1419, ITEM])).unwrap();
     let mut first = Driver::new(RUN);
     let mut old_script = first.create(Arc::clone(&config));
@@ -2029,6 +2105,9 @@ fn a_new_start_resets_exclusions_counters_and_anchor() {
 
 #[test]
 fn first_ready_anchor_does_not_wait_for_the_reach_flood() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     let mut driver = Driver::new(RUN);
     let mut script = driver.create(config);
@@ -2064,6 +2143,9 @@ fn retained_layouts_stay_within_reviewed_per_bot_budgets() {
 
 #[test]
 fn steady_empty_and_crowded_wait_ticks_allocate_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let config = prepare(settings(&[ITEM])).unwrap();
     for rows in [0, 2048] {
         let snapshot = ready_snapshot(
@@ -2105,6 +2187,9 @@ fn steady_empty_and_crowded_wait_ticks_allocate_nothing() {
 
 #[test]
 fn debug_state_tracks_actual_owner_and_failed_key_without_idle_churn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const CHILD: &str = "GRINCH_DEBUG_STATE_TEST_CHILD";
     const MARKER: &str = "GRINCH_DEBUG_STATE_TEST_OK";
     if std::env::var_os(CHILD).is_none() {
@@ -2189,4 +2274,153 @@ fn debug_state_tracks_actual_owner_and_failed_key_without_idle_churn() {
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
     assert_eq!(driver.output.logs.len(), cooling_logs);
     println!("{MARKER}");
+}
+
+#[test]
+fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut driver, mut script, mut snapshot, _, outer_id) = deposit_only_return_fixture();
+    let data = api::game_data::for_revision(ClientRevision::R289).expect("R289 data");
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        data.prepare_prereq_steps(worker)
+            .expect("R289 prerequisite catalog")
+    })
+    .expect("family preparation worker")
+    .join()
+    .expect("prerequisite preparation");
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
+        .expect("R289 has a prerequisite crossing");
+    let entry = row
+        .crossings
+        .iter()
+        .find(|entry| entry.crossing.option > 0)
+        .expect("selected row has a supported operation");
+    let crossing = entry.crossing;
+    let gate = api::prereq_steps::ActionableGate {
+        // The dialogue fixture needs its actual barrier promise, not any journal interval.
+        gate: api::selected::QuestGate::Window(row.establishes.clone()),
+        truth: Truth::Unknown,
+        leg: 0,
+        crossing,
+    };
+    set_position(&mut snapshot, crossing.takeoff);
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);
+    let outer_run = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == outer_id)
+        .expect("outer return walk is retained")
+        .run();
+    driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id: outer_id,
+        evidence: stamp(outer_run, 8),
+        end: WalkEnd::NeedsStep(Arc::from([gate])),
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: Some(crate::native::PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    });
+    let reach = crate::quester::families::tests::scene_reach(&snapshot);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
+    assert!(matches!(status(&driver).phase, NativePhase::Working));
+    assert_eq!(text_field(status(&driver), "status"), "returning to start");
+    assert!(
+        latest_walk(&driver).is_none(),
+        "the probe owns the foreground before the original return is reissued"
+    );
+    let probe = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Loc { id: Some(id), .. })
+                    if *id == crossing.loc_id
+            )
+        })
+        .expect("prerequisite probe was submitted");
+    assert!(probe.live());
+    respond_interaction(&mut driver, 8, true, 0);
+    set_position(&mut snapshot, entry.pass.landing);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        type_: 0,
+        username: None,
+        text: entry.pass.message.to_string(),
+    }]);
+    let reach = reach_view(entry.pass.landing, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 9));
+
+    let (reissued_id, target, radius) =
+        latest_walk(&driver).expect("the return walk is reissued after the pass");
+    assert!(reissued_id > outer_id);
+    assert_eq!((target, radius), (ANCHOR, 0));
+    assert_eq!(script.recovery_anchor(), None);
+    assert_eq!(integer_field(status(&driver), "banked"), 1);
+    let walk_count = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .count();
+    assert_eq!(walk_count, 1, "only the live return reissue remains queued");
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 10));
+    assert_eq!(latest_walk(&driver).unwrap().0, reissued_id);
+    assert_eq!(
+        driver
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count(),
+        walk_count,
+        "a pending reissue is not duplicated"
+    );
+
+    script.interrupt(crate::native::Interrupt::Pause);
+    assert!(!driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == reissued_id)
+        .expect("reissued walk remains recorded")
+        .live());
+    assert_eq!(script.recovery_anchor(), Some(ANCHOR));
+    assert_eq!(integer_field(status(&driver), "banked"), 1);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 11));
+    assert_eq!(
+        driver
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count(),
+        walk_count,
+        "paused cancellation emits no replacement walk"
+    );
 }

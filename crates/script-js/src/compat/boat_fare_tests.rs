@@ -4,13 +4,13 @@
 //! machine families and synthetic posts only.
 
 use super::{grove_anchor, recovery_facts, BoatFacts, Recover};
+use crate::compat::walk::tests::{post_walk_outcome, reset, NoJs};
 use crate::machine::{self, Cx, Outcome, Started, Take};
-use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
-use crate::task_clock::InstantTaskClock;
-use crate::walk::tests::{post_walk_outcome, reset, NoJs};
+use crate::scene::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
+use crate::scene::task_clock::InstantTaskClock;
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -51,6 +51,9 @@ fn grove_anchor_uses_nearest_content_tree_to_frozen_center_deterministically() {
 
 #[test]
 fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mainland = WorldTile {
         x: 3100,
         z: 3200,
@@ -59,7 +62,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(mainland, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     let mut logs = VecDeque::new();
     assert!(recovery_facts(PORT_SARIM, &mut logs).unwrap().is_none());
     assert!(
@@ -70,7 +73,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(MUSA, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     assert!(recovery_facts(PORT_SARIM, &mut logs).is_err());
     assert_eq!(logs.len(), 1);
     assert!(
@@ -82,7 +85,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
 fn selected_facts() -> Rc<BoatFacts> {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289)
         .expect("selected Karamja game data");
-    crate::supply_v2::configure(Some(data));
+    crate::scene::supply_v2::configure(Some(data));
     BoatFacts::selected().expect("selected Karamja facts")
 }
 
@@ -383,7 +386,7 @@ fn install_luthas_reach_view_with(
     let npc_index = index(npc);
     set_reach_bit(&mut reachable_adj, npc_index);
     adjacent_rank[npc_index] = 1;
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -453,7 +456,7 @@ fn install_luthas_staging_reach_view_with_ranks(
             adjacent_rank[i] = 1;
         }
     }
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -496,7 +499,7 @@ fn install_ranked_luthas_reach_view(anchor: WorldTile, ranked_stands: &[(WorldTi
         exact_rank[i] = *rank;
         adjacent_rank[i] = *rank;
     }
-    crate::reach_query::set_view_for_tests(ReachQueryView {
+    crate::materialize::reach_query::set_view_for_tests(ReachQueryView {
         available: true,
         base_x,
         base_z,
@@ -515,6 +518,9 @@ fn install_ranked_luthas_reach_view(anchor: WorldTile, ranked_stands: &[(WorldTi
 
 #[test]
 fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let brimhaven_cart = WorldTile {
         x: 2776,
@@ -549,6 +555,9 @@ fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
 
 #[test]
 fn a_short_luthas_staging_walk_without_a_row_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -587,6 +596,9 @@ fn a_short_luthas_staging_walk_without_a_row_retries() {
 
 #[test]
 fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -656,6 +668,9 @@ fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
 
 #[test]
 fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -712,6 +727,9 @@ fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
 
 #[test]
 fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -752,6 +770,9 @@ fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
 
 #[test]
 fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -777,7 +798,7 @@ fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
         max_steps: Some(400),
         adjacent_ok: false,
     };
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         let rank = |tile: WorldTile| {
             let lx = (tile.x - view.base_x) as usize;
             let lz = (tile.z - view.base_z) as usize;
@@ -858,10 +879,12 @@ fn talk(world: &mut World, options: &[String], want: i32, after_answer: impl FnO
     world.cont = false;
 }
 
-fn start_walk_to(world: &mut World) -> machine::Handle {
+fn start_walk_to(world: &mut World, consent: (Option<bool>, Option<bool>)) -> machine::Handle {
     world.post();
     let args = json!({
         "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },
+        "allowPrereqDialogue": consent.0,
+        "allowQuestStart": consent.1,
     });
     match machine::start("walk-to", args, Vec::new(), 0) {
         Started::Running(handle) => handle,
@@ -908,6 +931,7 @@ fn fail_luthas_reach(world: &mut World, what: &str) -> WorldTile {
 /// row, the world, the first walk and the re-walk.
 fn earn_the_fare(
     retry_point: Option<RetryPoint>,
+    consent: (Option<bool>, Option<bool>),
 ) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
@@ -924,7 +948,7 @@ fn earn_the_fare(
     let paid = world.facts.preferences[1].clone();
     let coins_id = world.facts.coins;
     let fare = world.facts.coin_payout;
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, consent);
     let first = machine::merge_ops(Vec::new());
     assert!(
         matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
@@ -1051,7 +1075,10 @@ fn earn_the_fare(
 
 #[test]
 fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
-    let (h, mut world, first, again) = earn_the_fare(None);
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (h, mut world, first, again) = earn_the_fare(None, (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1062,7 +1089,10 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
 
 #[test]
 fn walk_to_retries_a_failed_luthas_approach_and_completes() {
-    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::InitialTalk));
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::InitialTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1073,7 +1103,10 @@ fn walk_to_retries_a_failed_luthas_approach_and_completes() {
 
 #[test]
 fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
-    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::PostFillTalk));
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::PostFillTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -1084,6 +1117,9 @@ fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
 
 #[test]
 fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     install_luthas_reach_view(world.facts.luthas_anchor, None);
@@ -1184,6 +1220,9 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
 
 #[test]
 fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1194,7 +1233,7 @@ fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
     let fare = world.facts.coin_payout;
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
 
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         assert!(view.walkable(unreachable));
         assert!(!view.can_reach(
             unreachable,
@@ -1224,6 +1263,9 @@ fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
 
 #[test]
 fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1256,6 +1298,9 @@ fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
 
 #[test]
 fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -1327,6 +1372,9 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
 
 #[test]
 fn retries_skip_a_blocked_luthas_stand() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1376,6 +1424,9 @@ fn retries_skip_a_blocked_luthas_stand() {
 
 #[test]
 fn dialogue_timeout_retries_within_the_talk_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1438,6 +1489,9 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
 
 #[test]
 fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1488,9 +1542,55 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
 }
 
 #[test]
+fn walk_to_keeps_prerequisite_consent_after_earning_the_fare() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for consent in [
+        (Some(false), Some(false)),
+        (Some(false), Some(true)),
+        (Some(true), Some(false)),
+        (Some(true), Some(true)),
+    ] {
+        let (handle, mut world, first, again) = earn_the_fare(None, consent);
+        for walk in [&first, &again] {
+            let InteractReq::WalkNear {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            } = walk
+            else {
+                panic!("expected a world walk, got {walk:?}");
+            };
+            assert_eq!((*allow_prereq_dialogue, *allow_quest_start), consent);
+        }
+        world.here = PORT_SARIM;
+        world.post();
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(true)))
+        );
+    }
+}
+
+#[test]
+fn walk_to_consent_metadata_keeps_the_active_frame_bounded() {
+    let bytes = std::mem::size_of::<super::WalkTo>();
+    println!("WalkTo active frame: {bytes} bytes");
+    assert!(
+        bytes <= 176,
+        "WalkTo active frame exceeds 176 bytes: {bytes}"
+    );
+}
+
+#[test]
 fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
-    let (h, mut world, _, again) = earn_the_fare(None);
+    let (h, mut world, _, again) = earn_the_fare(None, (None, None));
     world.ours = true;
     world.post();
     assert_eq!(
@@ -1505,6 +1605,9 @@ fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
 
 #[test]
 fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (from, count) in [
         // Karamja, but the missing gate is a different coin count.
         (MUSA, 10),
@@ -1521,7 +1624,7 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
         reset();
         let mut world = World::new(from, 5);
         let coins_id = world.facts.coins;
-        let h = start_walk_to(&mut world);
+        let h = start_walk_to(&mut world, (None, None));
         let first = machine::merge_ops(Vec::new());
         fail_short(
             &mut world,
@@ -1544,12 +1647,15 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
 
 #[test]
 fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     world.filler = 27;
     let coins_id = world.facts.coins;
     let fare = world.facts.coin_payout;
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, (None, None));
     let first = machine::merge_ops(Vec::new());
     fail_short(
         &mut world,
@@ -1564,6 +1670,9 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
 
 #[test]
 fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let coins_id = world.facts.coins;
@@ -1608,6 +1717,9 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
 
 #[test]
 fn walk_to_waits_out_the_frozen_300_second_default() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Frozen `opts?.timeoutMs ?? 300_000` (WalkExecutor.ts:228).
     reset();
     let mut world = World::new(
@@ -1618,7 +1730,7 @@ fn walk_to_waits_out_the_frozen_300_second_default() {
         },
         5,
     );
-    let h = start_walk_to(&mut world);
+    let h = start_walk_to(&mut world, (None, None));
     let first = machine::merge_ops(Vec::new());
     assert!(
         matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),

@@ -2,20 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
-import { assertRs2b0tPinned, requireEnvPath } from './extractors/rs2b0t-literals.ts';
+import { requireEnvPath } from './extractors/rs2b0t-literals.ts';
 
 /**
- * Regenerates only the rs2b0t gather catalogs (camps, fishing methods and
- * facts, fish-camp cook plans, quest junk) in `crates/api/data/game-data/`.
- * It reads the pinned rs2b0t export and needs no engine or content checkout
- * beyond the engine's `node_modules/typescript` (the AST reader), so it runs
- * where the full `generate.ts` inputs are not available. `generate.ts` writes
- * the same bytes through the same function.
+ * Regenerates only the rs2b0t gather catalog (camps, fishing methods and
+ * facts, fish-camp cook plans, quest junk) as
+ * `crates/api/data/game-data/gather-catalog.json`. It reads the rs2b0t export
+ * and needs no engine or content checkout beyond the engine's
+ * `node_modules/typescript` (the AST reader), so it runs where the full
+ * `generate.ts` inputs are not available. `generate.ts` writes the same bytes
+ * through the same function.
  *
- *   RS2B0T=<pinned export> GAME_DATA_289_ENGINE=<dir with node_modules/typescript> \
+ *   RS2B0T=<rs2b0t export> GAME_DATA_289_ENGINE=<dir with node_modules/typescript> \
  *     bun tools/game-data/generate-gather-catalogs.ts [--check]
  *
- * `--check` writes nothing and fails when a committed file differs.
+ * `--check` writes nothing and fails when the local file differs.
  */
 const root = path.resolve(import.meta.dirname, '../..');
 const directory = path.join(root, 'crates/api/data/game-data');
@@ -23,8 +24,7 @@ const directory = path.join(root, 'crates/api/data/game-data');
 export async function main(args: string[]) {
     const check = args.includes('--check');
     if (args.some((arg) => arg !== '--check')) throw new Error('usage: generate-gather-catalogs.ts [--check]');
-    const rs2b0t = requireEnvPath('RS2B0T', 'the pinned rs2b0t checkout root');
-    assertRs2b0tPinned(rs2b0t);
+    const rs2b0t = requireEnvPath('RS2B0T', 'the rs2b0t checkout root');
     const files = await gatherCatalogFiles(requireEnvPath('GAME_DATA_289_ENGINE', 'a root holding node_modules/typescript'), rs2b0t);
     const stale: string[] = [];
     for (const [file, bytes] of Object.entries(files)) {
@@ -35,7 +35,7 @@ export async function main(args: string[]) {
             fs.writeFileSync(target, bytes);
         }
     }
-    if (stale.length) throw new Error(`stale gather catalogs: ${stale.join(', ')}`);
+    if (stale.length) throw new Error(`stale gather catalog: ${stale.join(', ')}`);
     console.log(JSON.stringify({ files: Object.keys(files), mode: check ? 'check' : 'write' }));
 }
 

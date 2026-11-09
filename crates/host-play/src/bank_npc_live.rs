@@ -144,6 +144,15 @@ fn legs() -> Vec<LegSpec> {
     legs
 }
 
+/// The fixture logs its scriptless bot out to bind the tutorial side tabs; the
+/// approved scriptless policy then parks it, so post the operator's explicit
+/// Login once per account when its preparation reaches the relog wait.
+fn post_relog_login(play: &super::Play, account: &str) {
+    if let Some(arm) = play.arm(account) {
+        arm.arm_explicit_login();
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Phase {
     Relog,
@@ -949,6 +958,7 @@ pub fn live_bankbudget_fetch_from_the_street() {
         uid: 274_279_003,
         settings: ProfileSettings::default(),
     }];
+    let account_name = name.clone();
     let live_state = Arc::new(Mutex::new(Live {
         phase: Phase::WaitReady,
         last_cheat: Instant::now() - Duration::from_secs(1),
@@ -973,8 +983,13 @@ pub fn live_bankbudget_fetch_from_the_street() {
     )
     .expect("live play starts");
     let deadline = Instant::now() + LEG_TIMEOUT * legs().len() as u32 + Duration::from_secs(120);
+    let mut relog_posted = false;
     loop {
         let phase = live_state.lock().phase.clone();
+        if matches!(phase, Phase::WaitRelog) && !relog_posted {
+            relog_posted = true;
+            post_relog_login(&play, &account_name);
+        }
         match phase {
             Phase::Pass => {
                 let s = play.statuses();
@@ -2012,11 +2027,16 @@ pub fn live_mage_teller_native_real_play_receipt() {
     let deadline = Instant::now() + Duration::from_secs(210);
     let capture_deadline = deadline + Duration::from_secs(20);
     let mut script_started = false;
+    let mut relog_posted = false;
 
     loop {
         let now = Instant::now();
         let should_start = {
             let mut live = state.lock();
+            if live.phase == TellerPrep::WaitRelog && !relog_posted {
+                relog_posted = true;
+                post_relog_login(&play, &account);
+            }
             if live.trace.outcome.is_none() && now >= deadline {
                 let message = format!(
                     "Mage cellar preparation/native action timed out in {:?}",
@@ -2540,8 +2560,10 @@ impl Script for BankPickBurstScript {
                         required_after: tick.cx.evidence(),
                         evidence: None,
                         cross: Box::default(),
+                        avoid: Box::default(),
                         protect: false,
                         food_guard: false,
+                        cure_guard: false,
                         allow: Default::default(),
                     };
                     self.guest.lock().burst.walk_started_at_ms =
@@ -3429,7 +3451,7 @@ fn bank_pick_burst_percentile(values: &[u128], percentile: usize) -> Option<u128
 #[cfg_attr(test, test)]
 #[cfg_attr(
     test,
-    ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and Engine A on 127.0.0.1:44594/1080"
+    ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and GATHERER_GAME_PORT/GATHERER_HTTP_PORT naming a local 289 engine (Engine A 44594/1080 by default)"
 )]
 pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
     // Keep Sherlock as the full-build holder. Without JS, the real Gatherer
@@ -3452,15 +3474,17 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
         !prefix.is_empty() && prefix.len() <= 4 && prefix.is_ascii(),
         "BOT_LIVE_NAME_PREFIX must be 1–4 ASCII bytes"
     );
+    let game_port = crate::live_ports::game_port();
+    let http_port = crate::live_ports::http_port();
     assert_eq!(
         std::env::var("GATHERER_GAME_PORT").unwrap_or_default(),
-        "44594",
-        "ten-guest bank-pick burst must use Engine A game port 44594"
+        game_port.to_string(),
+        "ten-guest bank-pick burst must use the configured engine game port"
     );
     assert_eq!(
         std::env::var("GATHERER_HTTP_PORT").unwrap_or_default(),
-        "1080",
-        "ten-guest bank-pick burst must use Engine A HTTP port 1080"
+        http_port.to_string(),
+        "ten-guest bank-pick burst must use the configured engine HTTP port"
     );
     let evidence_root = PathBuf::from(
         std::env::var_os("LIVE_EVIDENCE_DIR")
@@ -3565,6 +3589,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
 
     let start = play.script_start_handle();
     let mut run_keys = Vec::<(api::selected::RunKey, String)>::with_capacity(names.len());
+    let mut relog_posted = HashSet::<String>::new();
     let mut attempted_start = false;
     let mut gate_released = false;
     let mut admission = BankPickBurstAdmission::default();
@@ -3583,6 +3608,11 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
             &run_keys,
         );
         let snapshots = bank_pick_burst_account_snapshots(&names, &guest_map);
+        for (account, guest) in &snapshots {
+            if guest.phase == BankPickBurstPrep::WaitRelog && relog_posted.insert(account.clone()) {
+                post_relog_login(&play, account);
+            }
+        }
 
         if !attempted_start {
             let all_ready = snapshots.len() == BANK_PICK_BURST_GUESTS
@@ -3823,8 +3853,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
         "timestamp_unix_seconds": epoch,
         "engine": {
             "host": "127.0.0.1",
-            "game_port": 44594,
-            "http_port": 1080,
+            "game_port": game_port,
+            "http_port": http_port,
             "profile": "local-289",
         },
         "required_environment": {
@@ -3833,8 +3863,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
             "GATHERER_NAV_PACK": std::env::var("GATHERER_NAV_PACK").ok(),
             "GATHERER_ENGINE_DIR": std::env::var("GATHERER_ENGINE_DIR").ok(),
             "GATHERER_CATALOG_ROOT": std::env::var("GATHERER_CATALOG_ROOT").ok(),
-            "GATHERER_GAME_PORT": "44594",
-            "GATHERER_HTTP_PORT": "1080",
+            "GATHERER_GAME_PORT": game_port.to_string(),
+            "GATHERER_HTTP_PORT": http_port.to_string(),
             "LIVE_EVIDENCE_DIR": evidence_root.display().to_string(),
         },
         "account_names": names,

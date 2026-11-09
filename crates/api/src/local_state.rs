@@ -357,6 +357,9 @@ pub enum FailureReason {
     /// one.
     #[error("unusable schema in the durable store")]
     Schema,
+    /// The file uses a saved-data shape older than the supported 0.2.8 format.
+    #[error("saved data is in a format from before 0.2.8")]
+    UnsupportedSavedFormat,
     /// The staged write carried another account, profile or scope.
     #[error("identity mismatch in the staged write")]
     Identity,
@@ -371,9 +374,10 @@ pub enum FailureReason {
 
 impl FailureReason {
     /// Every failure reason, for exhaustive checks.
-    pub const ALL: [FailureReason; 5] = [
+    pub const ALL: [FailureReason; 6] = [
         FailureReason::Io,
         FailureReason::Schema,
+        FailureReason::UnsupportedSavedFormat,
         FailureReason::Identity,
         FailureReason::Dirty,
         FailureReason::Checksum,

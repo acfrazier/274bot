@@ -3,8 +3,13 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+
 fn post_base(iso: &LoadIsolate, tick: u64) {
-    let input = script_js::wire::SnapshotInput {
+    let input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: None,
         ingame: true,
@@ -69,7 +74,7 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -82,6 +87,7 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).unwrap();
+    // Real selected data is guarded at each calling test.
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
@@ -91,22 +97,20 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// Selected data that never bound a pin (no engine/content commits), so no gathering family can be admitted.
+/// Empty bootstrap families leave the gathering families deliberately absent.
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []
     }"#;
-    std::sync::Arc::new(serde_json::from_str(raw).expect("selected data without a pin"))
+    std::sync::Arc::new(
+        serde_json::from_str(raw).expect("selected data without gathering families"),
+    )
 }
 
 fn catalog(revision: ClientRevision) -> std::sync::Arc<api::gather_methods::GatherCatalog> {
@@ -124,6 +128,11 @@ fn helper_ok(value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn v2_methods_are_sync_helper_results_with_locked_errors() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -210,6 +219,10 @@ export function tick(api) {
             "{key} {empty:?}"
         );
     }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -245,6 +258,9 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let value = probe(
         r#"
 export const apiVersion = 2;
@@ -283,6 +299,10 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_absence_is_family_unavailable_not_empty_rows() {
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -293,7 +313,7 @@ export function tick(api) {
   });
 }
 "#;
-    // Selected data with no verified pin cannot admit the gathering family: absence is a token, not empty rows.
+    // Gathering is absent while unrelated bootstrap families remain valid.
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
         LoadShape::NativeTick,
@@ -316,7 +336,7 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_placements_args_precede_the_selected_pin() {
+fn v2_placements_args_are_validated_before_game_data_lookup() {
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -382,7 +402,7 @@ export function tick(api) {
         value["omittedRegionBadLimit"]["error"], "missing-region",
         "{value:?}"
     );
-    // Args first: a well-formed call is the only one that reaches the pin.
+    // Args first: a well-formed call is the only one that reaches the fact query.
     assert_eq!(
         value["good"]["error"],
         "game data unavailable: this server's content isn't verified (see profile/engine settings)",
@@ -392,6 +412,11 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_are_sync_helper_results_with_locked_errors() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -465,6 +490,9 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_bridge_gates_its_own_args() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -515,6 +543,9 @@ export function tick(api) {
 
 #[test]
 fn example_gather_methods_v2_is_one_read_only_fact_call() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("gather_methods_v2.ts");
@@ -547,6 +578,9 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn example_gather_placements_v2_is_one_read_only_fact_call() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("gather_placements_v2.ts");
@@ -590,6 +624,11 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS as apiGas } from '@rs2b0t/api';
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';

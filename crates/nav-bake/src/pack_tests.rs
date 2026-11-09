@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Cursor, Read};
-use std::num::NonZeroU16;
 
 use api::query::loc_approach::LocApproach;
 use api::selected::{FactKey, QuestGate, StageWindow};
@@ -16,11 +15,12 @@ use nav_planner::collision::{derive_walkable, pack_walk, walk_word_from_parts, W
 use nav_planner::grid::StepGrid;
 use nav_planner::pack::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
-    read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
-    sha256_hex, walkable_dots, BankAccess, BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION,
-    VERSION_FLAGS,
+    encode_atlas_sections, encode_multiway_keys, read_canlight_sidecar, read_flags_sidecar,
+    read_reach_sidecar, read_reach_sidecar_header, walkable_dots, BankAccess, BankStand, PackError,
+    MAGIC_FLAGS, MAX_GRID, VERSION, VERSION_FLAGS,
 };
-use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+use nav_planner::quest_gates::QuestGates;
+use nav_planner::reachability::{CellRun, Chunk, ReachabilityAtlas};
 use nav_planner::router::AvoidRect;
 use nav_planner::tile::Tile;
 use nav_planner::transport::{
@@ -29,23 +29,31 @@ use nav_planner::transport::{
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
 
-fn gate_family(byte: u8) -> QuestFamilyId {
-    gate_family_schema(byte, 1)
-}
-
-fn gate_family_schema(byte: u8, schema: u16) -> QuestFamilyId {
-    QuestFamilyId::new(
-        [byte; 32],
-        NonZeroU16::new(schema).expect("fixture schema is nonzero"),
-    )
-}
-
 fn gate_window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) -> QuestGate {
     QuestGate::Window(StageWindow {
         quest: FactKey::new(quest),
         signal: FactKey::new(signal),
         values: api::selected::InclusiveRange { min, max },
     })
+}
+
+/// Bytes after the v17 trailer: empty multiway keys plus an unlabeled atlas.
+fn v18_unlabeled_tail(width: usize, height: usize) -> usize {
+    let (walk, blocked) = pack_walk(&vec![0u32; 4 * width * height]);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    encode_multiway_keys(&[]).unwrap().len() + encode_atlas_sections(&atlas).unwrap().len()
 }
 
 /// A BufRead that yields at most one byte per fill, exercising all parser
@@ -363,13 +371,12 @@ fn flags_sidecar_bulk_matches_scalar_on_errors_and_roundtrip() {
 }
 
 #[test]
-fn read_flags_sidecar_streams_words_and_digest() {
+fn read_flags_sidecar_streams_words() {
     let origin = WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
-    // Exercise the streamed word and digest results on a substantial payload.
     let words: Vec<u32> = (0..256 * 1024).map(|i| i as u32).collect();
     let bytes = encode_flags_sidecar(origin, 512, 512, &words);
     let path = std::env::temp_dir().join(format!(
@@ -377,38 +384,30 @@ fn read_flags_sidecar_streams_words_and_digest() {
         std::process::id()
     ));
     std::fs::write(&path, &bytes).unwrap();
-    let expected = nav_planner::manifest::hash_bytes(&bytes);
 
-    let loaded = read_flags_sidecar(&path, true).expect("stream load");
+    let loaded = read_flags_sidecar(&path).expect("stream load");
     assert_eq!(loaded.origin, origin);
     assert_eq!((loaded.width, loaded.height), (512, 512));
     assert_eq!(loaded.flags.as_slice(), words.as_slice());
-    assert_eq!(loaded.content_sha256.as_deref(), Some(expected.as_str()));
     let (_, _, _, decoded) = decode_flags_sidecar(&bytes).unwrap();
     assert_eq!(decoded.as_slice(), loaded.flags.as_slice());
-    let trusted = read_flags_sidecar(&path, false).expect("no-hash load");
     let _ = std::fs::remove_file(&path);
-    assert_eq!(trusted.flags.as_slice(), words.as_slice());
-    assert!(trusted.content_sha256.is_none());
 }
 
 #[test]
-fn reach_sidecar_roundtrips_geometry_words_and_binding() {
+fn reach_sidecar_roundtrips_geometry_and_words() {
     let origin = WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
     let bits = vec![0x0102_0304_0506_0708u64, 0x8000_0000_0000_0001];
-    let binding = [0xABu8; 32];
-    let bytes = encode_reach_sidecar(origin, 2, 2, &bits, &binding);
+    let bytes = encode_reach_sidecar(origin, 2, 2, &bits);
     assert_eq!(&bytes[..4], b"274R");
     let side = decode_reach_sidecar(&bytes).unwrap();
     assert_eq!(side.origin, origin);
     assert_eq!((side.width, side.height, side.word_count), (2, 2, 2));
-    assert_eq!(side.binding, binding);
     assert_eq!(side.bits, bits);
-    assert_eq!(sha256_hex(&binding).len(), 64);
 }
 
 #[test]
@@ -418,17 +417,16 @@ fn reach_sidecar_rejects_bad_magic_version_and_truncated_payload() {
         z: 0,
         level: 0,
     };
-    let binding = [1u8; 32];
-    let full = encode_reach_sidecar(origin, 2, 2, &[0u64], &binding);
+    let full = encode_reach_sidecar(origin, 2, 2, &[0u64]);
     assert!(matches!(
         decode_reach_sidecar(b"XXXX"),
         Err(PackError::BadMagic)
     ));
     let mut bad_ver = full.clone();
-    bad_ver[4] = 2;
+    bad_ver[4] = 1;
     assert!(matches!(
         decode_reach_sidecar(&bad_ver),
-        Err(PackError::BadVersion(2))
+        Err(PackError::BadVersion(1))
     ));
     assert!(matches!(
         decode_reach_sidecar(&full[..10]),
@@ -449,24 +447,6 @@ fn reach_sidecar_rejects_bad_magic_version_and_truncated_payload() {
 }
 
 #[test]
-fn reach_sidecar_binding_is_independent_of_geometry() {
-    let origin = WorldTile {
-        x: 100,
-        z: 200,
-        level: 0,
-    };
-    let bits = vec![0xFFu64];
-    let a = encode_reach_sidecar(origin, 4, 4, &bits, &[0x11u8; 32]);
-    let b = encode_reach_sidecar(origin, 4, 4, &bits, &[0x22u8; 32]);
-    let da = decode_reach_sidecar(&a).unwrap();
-    let db = decode_reach_sidecar(&b).unwrap();
-    assert_eq!(da.origin, db.origin);
-    assert_eq!((da.width, da.height), (db.width, db.height));
-    assert_eq!(da.bits, db.bits);
-    assert_ne!(da.binding, db.binding);
-}
-
-#[test]
 fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
     let origin = WorldTile {
         x: 3200,
@@ -474,23 +454,21 @@ fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
         level: 0,
     };
     let bits = vec![0x0102_0304_0506_0708u64];
-    let binding = [0xCDu8; 32];
-    let bytes = encode_canlight_sidecar(origin, 2, 1, &bits, &binding);
+    let bytes = encode_canlight_sidecar(origin, 2, 1, &bits);
     assert_eq!(&bytes[..4], b"274L");
     let side = decode_canlight_sidecar(&bytes).unwrap();
     assert_eq!(side.origin, origin);
     assert_eq!((side.width, side.height, side.word_count), (2, 1, 1));
-    assert_eq!(side.binding, binding);
     assert_eq!(side.bits, bits);
     assert!(matches!(
         decode_canlight_sidecar(b"XXXX"),
         Err(PackError::BadMagic)
     ));
     let mut bad_ver = bytes.clone();
-    bad_ver[4] = 2;
+    bad_ver[4] = 1;
     assert!(matches!(
         decode_canlight_sidecar(&bad_ver),
-        Err(PackError::BadVersion(2))
+        Err(PackError::BadVersion(1))
     ));
     assert!(matches!(
         decode_canlight_sidecar(&bytes[..10]),
@@ -502,7 +480,7 @@ fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
         decode_canlight_sidecar(&extra),
         Err(PackError::Truncated)
     ));
-    let reach = encode_reach_sidecar(origin, 2, 1, &bits, &binding);
+    let reach = encode_reach_sidecar(origin, 2, 1, &bits);
     assert!(matches!(
         decode_canlight_sidecar(&reach),
         Err(PackError::BadMagic)
@@ -521,17 +499,15 @@ fn read_reach_and_canlight_sidecars_stream_into_arc() {
         0x8000_0000_0000_0001,
         0xAABB_CCDD_EEFF_1020,
     ];
-    let binding = [0x5Au8; 32];
-    let reach_bytes = encode_reach_sidecar(origin, 7, 9, &bits, &binding);
+    let reach_bytes = encode_reach_sidecar(origin, 7, 9, &bits);
     let mut reach_reader = ShortReadBuf::new(&reach_bytes);
     let reach = read_reach_sidecar(&mut reach_reader, reach_bytes.len()).unwrap();
     assert_eq!(reach.origin, origin);
     assert_eq!((reach.width, reach.height, reach.word_count), (7, 9, 3));
-    assert_eq!(reach.binding, binding);
     assert_eq!(reach.bits.as_ref(), bits.as_slice());
     assert_eq!(reach_reader.position, reach_bytes.len());
 
-    let canlight_bytes = encode_canlight_sidecar(origin, 7, 9, &bits, &binding);
+    let canlight_bytes = encode_canlight_sidecar(origin, 7, 9, &bits);
     let mut canlight_reader = ShortReadBuf::new(&canlight_bytes);
     let canlight = read_canlight_sidecar(&mut canlight_reader, canlight_bytes.len()).unwrap();
     assert_eq!(canlight.origin, origin);
@@ -539,10 +515,9 @@ fn read_reach_and_canlight_sidecars_stream_into_arc() {
         (canlight.width, canlight.height, canlight.word_count),
         (7, 9, 3)
     );
-    assert_eq!(canlight.binding, binding);
     assert_eq!(canlight.bits.as_ref(), bits.as_slice());
 
-    let empty_bytes = encode_reach_sidecar(origin, 1, 1, &[], &binding);
+    let empty_bytes = encode_reach_sidecar(origin, 1, 1, &[]);
     let mut empty_reader = ShortReadBuf::new(&empty_bytes);
     let empty = read_reach_sidecar(&mut empty_reader, empty_bytes.len()).unwrap();
     assert!(empty.bits.is_empty());
@@ -556,7 +531,7 @@ fn reach_header_leaves_words_unread_and_rejects_wrong_payload_length() {
         level: 2,
     };
     let bits = [0x0123u64, 0x4567];
-    let bytes = encode_reach_sidecar(origin, 3, 5, &bits, &[0xab; 32]);
+    let bytes = encode_reach_sidecar(origin, 3, 5, &bits);
     let mut reader = ShortReadBuf::new(&bytes);
     let header = read_reach_sidecar_header(&mut reader, bytes.len()).unwrap();
     assert_eq!(
@@ -585,11 +560,10 @@ fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
         z: 0,
         level: 0,
     };
-    let binding = [0xA5u8; 32];
     let words: Vec<u64> = (0..515)
         .map(|word| word as u64 ^ 0xA5A5_A5A5_A5A5_A5A5)
         .collect();
-    let bytes = encode_reach_sidecar(origin, 2, 2, &words, &binding);
+    let bytes = encode_reach_sidecar(origin, 2, 2, &words);
 
     let mut bad_magic_reader = ShortReadBuf::new(b"XXXX");
     assert!(matches!(
@@ -597,11 +571,11 @@ fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
         Err(PackError::BadMagic)
     ));
     let mut stale = bytes.clone();
-    stale[4] = 2;
+    stale[4] = 1;
     let mut stale_reader = ShortReadBuf::new(&stale);
     assert!(matches!(
         read_reach_sidecar(&mut stale_reader, stale.len()),
-        Err(PackError::BadVersion(2))
+        Err(PackError::BadVersion(1))
     ));
     let mut bad_geometry = bytes.clone();
     bad_geometry[17..21].copy_from_slice(&0u32.to_le_bytes());
@@ -630,7 +604,7 @@ fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
     // ends before the payload finishes. The later cuts occur after one full
     // 4 KiB batch, exercising a failed drop with both initialized and
     // uninitialized Arc slots.
-    const HEADER_LEN: usize = 4 + 1 + 12 + 8 + 4 + 32;
+    const HEADER_LEN: usize = 4 + 1 + 12 + 8 + 4;
     for cut in [
         0,
         3,
@@ -654,7 +628,7 @@ fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
         );
     }
 
-    let canlight = encode_canlight_sidecar(origin, 2, 2, &[1], &binding);
+    let canlight = encode_canlight_sidecar(origin, 2, 2, &[1]);
     let mut bad_canlight = canlight.clone();
     bad_canlight[4] = 4;
     let mut bad_canlight_reader = ShortReadBuf::new(&bad_canlight);
@@ -1294,7 +1268,8 @@ fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
 #[test]
 fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     let (bytes, table) = zone_table_pack_fixture();
-    let zone_start = bytes.len() - super::zones::wire_size(Some(&table)).unwrap();
+    let zone_end = bytes.len() - v18_unlabeled_tail(4, 4);
+    let zone_start = zone_end - super::zones::wire_size(Some(&table)).unwrap();
     let kind_0_size = 15 + "ranger".len() + "Ranger".len();
     let kind_1_start = zone_start + 4 + kind_0_size;
     let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
@@ -1314,7 +1289,7 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     ));
 
     let mut bad_shape_index = bytes.clone();
-    let shape_row = bytes.len() - 11;
+    let shape_row = zone_end - 11;
     bad_shape_index[shape_row..shape_row + 2].copy_from_slice(&3u16.to_le_bytes());
     assert!(matches!(
         decode(&bad_shape_index),
@@ -1343,16 +1318,21 @@ fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
         Err(PackError::BadLength(_))
     ));
     assert!(matches!(
-        decode(&bytes[..bytes.len() - 1]),
+        decode(&bytes[..zone_end - 1]),
         Err(PackError::BadLength(_))
     ));
 
     let mut duplicate_shape = bytes;
-    let shape_count_at = duplicate_shape.len() - 15;
+    let shape_count_at = zone_end - 15;
     duplicate_shape[shape_count_at..shape_count_at + 4].copy_from_slice(&2u32.to_le_bytes());
-    duplicate_shape.extend_from_slice(&1u16.to_le_bytes());
-    duplicate_shape.push(1);
-    duplicate_shape.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+    let extra = {
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&1u16.to_le_bytes());
+        extra.push(1);
+        extra.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+        extra
+    };
+    duplicate_shape.splice(zone_end..zone_end, extra);
     assert!(matches!(
         decode(&duplicate_shape),
         Err(PackError::BadLength(_))
@@ -1517,7 +1497,7 @@ fn v9_roundtrips_members_req_true_and_false() {
 }
 
 #[test]
-fn v16_decode_rejects_older_version_bytes() {
+fn v19_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -1552,7 +1532,7 @@ fn v16_decode_rejects_older_version_bytes() {
     // A v11 pack predates zone tables and is refused for a rebake.
     bytes[4] = 11;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(11))));
-    // A v10 pack predates quest-family binding and stage gates.
+    // A v10 pack predates typed quest-stage gates.
     bytes[4] = 10;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(10))));
 }
@@ -1611,8 +1591,9 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     let mut bytes = encode(&collision, &graph, &[]).unwrap();
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
     // count (u32), the takeoff field (13 B), bank-stand count (u32),
-    // wilderness rules (12 B), and the five zero-count zone tables (20 B).
-    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 13 - 1;
+    // wilderness rules (12 B), the five zero-count zone tables (20 B),
+    // and the v18 multiway/atlas tail.
+    let flag_at = bytes.len() - v18_unlabeled_tail(2, 2) - 20 - 12 - 4 - 4 - 4 - 13 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -1739,6 +1720,42 @@ param=next_loc_stage,loc_1563
     let open = parse_door_open_ids(text, &ids);
     assert_eq!(open.get(&2882), Some(&1562));
     assert_eq!(open.get(&2883), Some(&1563));
+}
+
+#[test]
+fn revision_377_named_door_admission_requires_a_closed_category() {
+    let text = "\
+[scenery_1551]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scenery_1552
+[scenery_1553]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scenery_1556
+[inaclefayeunopenabledoorl]
+op1=Open
+[inaclefayeunopenabledoorr]
+op1=Open
+";
+    let names = HashMap::from([
+        ("scenery_1551".into(), 1551),
+        ("scenery_1553".into(), 1553),
+        ("inaclefayeunopenabledoorl".into(), 73),
+        ("inaclefayeunopenabledoorr".into(), 74),
+    ]);
+    let doors = super::parse_door_config_377(text, &names);
+    assert_eq!(doors, HashSet::from([1551, 1553]));
+    // The legacy named parser remains available to dedicated handler derivations.
+    assert_eq!(
+        parse_door_config_ids(text, &names),
+        HashSet::from([73, 74, 1551, 1553])
+    );
+    // Numeric 274/289 declarations retain their existing op-based admission.
+    assert_eq!(
+        super::parse_door_config_377("[loc_1513]\nop1=Open\n", &names),
+        parse_door_config("[loc_1513]\nop1=Open\n")
+    );
 }
 
 #[test]
@@ -2502,28 +2519,17 @@ fn relative_stairs_wire_preserves_actual_takeoff_and_backward_proof() {
     assert_eq!(search.route().unwrap_err(), RouteError::NoPath);
 }
 
-/// v11 binds the quest family in the header and carries each edge's typed
-/// stage gates: an equality window, an upper-only window and a completed
-/// quest come back exactly, keys and open bounds included. A bake that
-/// consumed no family binds none.
 #[test]
-fn v11_roundtrips_quest_family_and_stage_gates() {
-    let family = gate_family(7);
-    let gates = QuestGates::new(
-        family,
-        [
-            gate_window("tbwt", "tbwt_main", Some(3), Some(3)),
-            gate_window("heroes", "heroes_main", None, Some(4)),
-            QuestGate::Complete(FactKey::new("arrav")),
-        ],
-    )
+fn pack_roundtrips_stage_gates() {
+    let gates = QuestGates::new([
+        gate_window("tbwt", "tbwt_main", Some(3), Some(3)),
+        gate_window("heroes", "heroes_main", None, Some(4)),
+        QuestGate::Complete(FactKey::new("arrav")),
+    ])
     .unwrap();
-    let mut graph = TransportGraph {
-        quest_family: Some(family),
-        ..TransportGraph::default()
-    };
+    let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(Some(gates.clone())));
-    let completed = QuestGates::new(family, [QuestGate::Complete(FactKey::new("tbwt"))]).unwrap();
+    let completed = QuestGates::new([QuestGate::Complete(FactKey::new("tbwt"))]).unwrap();
     graph.teleports.push(TransportEdge {
         takeoff: None,
         kind: TransportKind::Teleport,
@@ -2531,26 +2537,16 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
         ..gated_door(Some(completed))
     });
     let bytes = encode(&tiny_collision(), &graph, &[]).unwrap();
-    let (_, g, _) = decode(&bytes).unwrap();
-    assert_eq!(g.quest_family, Some(family));
-    assert_eq!(g.edges, graph.edges);
-    assert_eq!(g.edges[0].quest_gates, Some(gates));
-    assert_eq!(g.teleports, graph.teleports);
-
-    let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]).unwrap();
-    assert_eq!(decode(&plain).unwrap().1.quest_family, None);
+    let (_, decoded, _) = decode(&bytes).unwrap();
+    assert_eq!(decoded.edges, graph.edges);
+    assert_eq!(decoded.edges[0].quest_gates, Some(gates));
+    assert_eq!(decoded.teleports, graph.teleports);
 }
 
 #[test]
 fn nav_world_from_reader_streams_pack_and_legacy_grid() {
-    let family = gate_family(13);
-    let gates = QuestGates::new(
-        family,
-        [gate_window("heroes", "heroes_main", Some(2), Some(5))],
-    )
-    .unwrap();
+    let gates = QuestGates::new([gate_window("heroes", "heroes_main", Some(2), Some(5))]).unwrap();
     let mut graph = TransportGraph {
-        quest_family: Some(family),
         wilderness: nav_planner::transport::WildernessRules {
             zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
@@ -2595,7 +2591,6 @@ fn nav_world_from_reader_streams_pack_and_legacy_grid() {
     assert_eq!(streamed.graph.edges, expected.graph.edges);
     assert_eq!(streamed.graph.teleports, expected.graph.teleports);
     assert_eq!(streamed.graph.at, expected.graph.at);
-    assert_eq!(streamed.graph.quest_family, expected.graph.quest_family);
     assert_eq!(streamed.graph.wilderness, expected.graph.wilderness);
     assert_eq!(streamed.banks(), expected.banks());
 
@@ -2644,99 +2639,36 @@ fn nav_world_from_reader_streams_pack_and_legacy_grid() {
     assert_eq!(streamed_legacy.graph.at, expected_legacy.graph.at);
 }
 
-/// Encode never writes a family binding its own decoder refuses: every
-/// family a caller can build — extractor schema 1 through `u16::MAX`, the
-/// schema 0 the decoder rejects being unconstructible — binds a gated pack
-/// that decodes to the same family and gates.
 #[test]
-fn every_constructible_quest_family_encodes_a_decodable_pack() {
-    for (digest, schema) in [(0x00, 1), (0x7f, 0x0100), (0xff, u16::MAX)] {
-        let family = gate_family_schema(digest, schema);
-        let gates =
-            QuestGates::new(family, [gate_window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap();
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
-        graph.edges.push(gated_door(Some(gates.clone())));
-        let (_, g, _) = decode(&encode(&tiny_collision(), &graph, &[]).unwrap())
-            .unwrap_or_else(|e| panic!("schema {schema}: {e:?}"));
-        assert_eq!(g.quest_family, Some(family), "schema {schema}");
-        assert_eq!(g.edges[0].quest_gates, Some(gates), "schema {schema}");
-    }
-}
-
-/// Gates a pack cannot bind, or a malformed binding, refuse the whole pack
-/// as inconsistent; nothing loads as silently ungated.
-#[test]
-fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
-    // The takeoff field and geometry tag follow the gate list, before the
-    // bank count, Wilderness trailer, and zone counts.
+fn decode_rejects_malformed_quest_gate_payloads() {
     const TRAILER: usize = 4 + 12 + 20;
+    let exact = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
     let mut graph = TransportGraph::default();
-    graph.edges.push(gated_door(None));
-    let unbound = encode(&tiny_collision(), &graph, &[]).unwrap();
-    let count_at = unbound.len() - TRAILER - 1 - 13 - 4;
-    let mut spliced = unbound[..count_at].to_vec();
-    spliced.extend_from_slice(&1u32.to_le_bytes());
-    spliced.push(0); // a completed-quest gate
-    spliced.extend_from_slice(&5u32.to_le_bytes());
-    spliced.extend_from_slice(b"arrav");
-    spliced.extend_from_slice(&unbound[count_at + 4..]);
-    assert!(
-        matches!(decode(&spliced), Err(PackError::BadLength(_))),
-        "gates on a pack that binds no quest family"
-    );
-    let mut bad_tag = unbound.clone();
-    bad_tag[5] = 2; // the binding tag follows the version byte
+    graph
+        .edges
+        .push(gated_door(Some(QuestGates::new([exact]).unwrap())));
+    let bytes = encode(&tiny_collision(), &graph, &[]).unwrap();
+    assert!(decode(&bytes).is_ok());
+
+    let gate_record_len = 4 + 1 + 4 + "tbwt".len() + 4 + "tbwt_main".len() + 10;
+    let gate_start = bytes.len() - v18_unlabeled_tail(2, 2) - TRAILER - 1 - 13 - gate_record_len;
+    let max_at = gate_start + gate_record_len - 4;
+    let min_at = max_at - 1 - 4;
+
+    let mut bad_tag = bytes.clone();
+    bad_tag[gate_start + 4] = 2;
     assert!(matches!(decode(&bad_tag), Err(PackError::BadLength(_))));
 
-    let family = gate_family(7);
-    let mut bound = TransportGraph {
-        quest_family: Some(family),
-        ..TransportGraph::default()
-    };
-    let exact = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
-    bound
-        .edges
-        .push(gated_door(Some(QuestGates::new(family, [exact]).unwrap())));
-    let bytes = encode(&tiny_collision(), &bound, &[]).unwrap();
-    assert!(decode(&bytes).is_ok());
-    let mut schema_zero = bytes.clone();
-    schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
-    assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
-    // The window's bounds close the record: min flag + i32, max flag + i32.
-    let max_at = bytes.len() - TRAILER - 1 - 13 - 4;
-    let min_at = max_at - 1 - 4;
     let mut empty_window = bytes.clone();
     empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());
     assert!(
         matches!(decode(&empty_window), Err(PackError::BadLength(_))),
         "a [4,3] window admits no value"
     );
+
     let mut bad_flag = bytes;
     bad_flag[max_at - 1] = 2;
     assert!(matches!(decode(&bad_flag), Err(PackError::BadLength(_))));
-}
-
-/// One pack binds one quest family: an edge whose gates name another family
-/// cannot be written, so its keys are never silently rebound.
-#[test]
-fn encode_refuses_gates_of_another_quest_family() {
-    let foreign = QuestGates::new(
-        gate_family(8),
-        [gate_window("tbwt", "tbwt_main", Some(3), Some(3))],
-    )
-    .unwrap();
-    let mut graph = TransportGraph {
-        quest_family: Some(gate_family(7)),
-        ..TransportGraph::default()
-    };
-    graph.edges.push(gated_door(Some(foreign)));
-    assert!(matches!(
-        encode(&tiny_collision(), &graph, &[]),
-        Err(PackError::BadLength(message)) if message.contains("another quest family")
-    ));
 }
 
 #[test]
@@ -2790,4 +2722,247 @@ fn encode_returns_errors_for_invalid_edge_model_data() {
         encode(&tiny_collision(), &invalid_approach, &[]),
         Err(PackError::BadLength(_))
     ));
+}
+
+fn narrow_collision() -> WorldCollision {
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 2]);
+    WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 2,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    }
+}
+
+/// An atlas built for another collision grid is a malformed pack. The
+/// producer refuses it with a typed error, so no writer output reaches the
+/// reader with the wrong geometry.
+#[test]
+fn encoder_refuses_an_atlas_built_for_another_grid() {
+    let atlas = ReachabilityAtlas::unlabeled(&narrow_collision()).unwrap();
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 3]);
+    let wider = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 3,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let error = crate::pack::encode_with_atlas(&wider, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A baked atlas with an empty chunk directory is a pack the reader refuses
+/// (`atlas chunk directory count does not match geometry`). The writer
+/// refuses it first, with the same typed error.
+#[test]
+fn encoder_refuses_an_atlas_with_an_empty_chunk_directory() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::from_bake(
+        &collision,
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap();
+    let error = crate::pack::encode_with_atlas(&collision, &TransportGraph::default(), &[], &atlas)
+        .unwrap_err();
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("chunk directory")),
+        "{error}"
+    );
+}
+
+/// The reader refuses a pack whose atlas geometry names another grid than the
+/// pack's own collision (here the atlas width field says 3, the grid is 2).
+#[test]
+fn decoder_refuses_an_atlas_for_another_grid() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    assert!(decode(&bytes).is_ok());
+    // Labels payload: 4-byte length prefix, a 132-byte directory (count plus
+    // eight 16-byte entries), then the geometry row (x, z, then width).
+    let width_at = bytes.len() - tail + 4 + 132 + 8;
+    assert_eq!(&bytes[width_at..width_at + 4], &2u32.to_le_bytes());
+    bytes[width_at..width_at + 4].copy_from_slice(&3u32.to_le_bytes());
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong atlas geometry must be refused");
+    };
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("geometry")),
+        "{error}"
+    );
+}
+
+/// A table directory whose stride differs from the schema is refused, even
+/// when the table bytes happen to parse.
+#[test]
+fn decoder_refuses_a_directory_with_the_wrong_stride() {
+    let collision = narrow_collision();
+    let atlas = ReachabilityAtlas::unlabeled(&collision).unwrap();
+    let tail = encode_atlas_sections(&atlas).unwrap().len();
+    let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    // Directory entry 8 (scatter runs, kind 8, stride 8): the entry starts at
+    // 4 + 7 * 16 inside the labels payload; its stride is the last field.
+    let stride_at = bytes.len() - tail + 4 + 4 + 7 * 16 + 12;
+    assert_eq!(&bytes[stride_at..stride_at + 4], &8u32.to_le_bytes());
+    bytes[stride_at..stride_at + 4].copy_from_slice(&4u32.to_le_bytes());
+    let Err(error) = decode(&bytes) else {
+        panic!("the wrong stride must be refused");
+    };
+    assert!(
+        matches!(&error, PackError::BadLength(message) if message.contains("stride")),
+        "{error}"
+    );
+}
+
+/// An atlas on `narrow_collision` with the given chunk directory and legacy
+/// paint runs, and every other table empty. Each case below is one the
+/// reader refuses, built through the same entry the baker uses.
+fn atlas_with_chunks_and_paint(
+    collision: &WorldCollision,
+    chunks: Box<[Chunk]>,
+    paint: Box<[CellRun]>,
+) -> ReachabilityAtlas {
+    ReachabilityAtlas::from_bake(
+        collision,
+        chunks,
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        paint,
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([0]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+        Box::from([]),
+    )
+    .unwrap()
+}
+
+/// The producer must refuse `atlas` with exactly `message`, both when it
+/// validates the atlas and when the writer encodes it, and the reader must
+/// refuse the same table with the same message. The reader is fed the
+/// unchecked section bytes spliced into a good pack.
+fn assert_producer_refuses(collision: &WorldCollision, atlas: &ReachabilityAtlas, message: &str) {
+    let graph = TransportGraph::default();
+    let validation = atlas.validate(collision, &graph);
+    assert!(
+        matches!(&validation, Err(PackError::BadLength(got)) if got == message),
+        "validate: {validation:?}"
+    );
+    let written = crate::pack::encode_with_atlas(collision, &graph, &[], atlas);
+    assert!(
+        matches!(&written, Err(PackError::BadLength(got)) if got == message),
+        "writer: {written:?}"
+    );
+    let good_tail = encode_atlas_sections(&ReachabilityAtlas::unlabeled(collision).unwrap())
+        .unwrap()
+        .len();
+    let mut bytes = encode(collision, &graph, &[]).unwrap();
+    bytes.truncate(bytes.len() - good_tail);
+    bytes.extend_from_slice(&encode_atlas_sections(atlas).unwrap());
+    let read = decode(&bytes);
+    assert!(
+        matches!(&read, Err(PackError::BadLength(got)) if got == message),
+        "reader: {:?}",
+        read.err()
+    );
+}
+
+fn uniform_chunk() -> Chunk {
+    Chunk {
+        palette_start: 0,
+        palette_count: 1,
+        index_start: 0,
+        index_len: 0,
+        bit_width: 0,
+    }
+}
+
+/// A uniform palette with a nonzero bit width is not minimal: the reader
+/// refuses it, so the producer must.
+#[test]
+fn producer_refuses_a_chunk_bit_width_that_is_not_minimal() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        bit_width: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk bit width is not the minimum for its palette",
+    );
+}
+
+/// A chunk whose palette range runs past the palette table.
+#[test]
+fn producer_refuses_a_chunk_palette_range_past_the_palette() {
+    let collision = narrow_collision();
+    let chunk = Chunk {
+        palette_start: 1,
+        ..uniform_chunk()
+    };
+    let atlas = atlas_with_chunks_and_paint(&collision, Box::from([chunk; 4]), Box::from([]));
+    assert_producer_refuses(
+        &collision,
+        &atlas,
+        "atlas chunk palette range is out of bounds",
+    );
+}
+
+/// A legacy paint run with a zero count.
+#[test]
+fn producer_refuses_a_zero_count_paint_run() {
+    let collision = narrow_collision();
+    let atlas = atlas_with_chunks_and_paint(
+        &collision,
+        Box::from([uniform_chunk(); 4]),
+        Box::from([CellRun { first: 0, count: 0 }]),
+    );
+    assert_producer_refuses(&collision, &atlas, "atlas run count is zero");
 }

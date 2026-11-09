@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc", "tools/xtask"]
+default-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -30,7 +31,7 @@ todo = "deny"
 unimplemented = "deny"
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }
@@ -59,17 +60,20 @@ opt-level = 3
 # for panics and backtraces; third-party crates carry none and are lightly
 # optimized (they rarely rebuild, and unoptimized wgpu/deno make debug runs
 # and tests slow and memory-hungry).
+# Incremental compilation is off: its caches were about a third of each
+# worktree's `target/` (102 GB to 70 GB for three lab clones, test results
+# identical; BUILD-DISK-TRIAL-2, operator 2026-10-30). The test profile
+# inherits it from dev.
 [profile.dev]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 debug = false
 opt-level = 1
 
-# host-play's build script bakes navigation through the `nav-bake` crate.
-# Build scripts default to opt-level 0, which made a bake take about 46 s instead
-# of 9 s (measured 2026-10-05); the baked files are byte-identical either way.
-# Registry build deps in dev still get `package."*"` above, which takes precedence.
+# Keep build-script helpers optimized. Registry build dependencies use the
+# package override above, which takes precedence.
 [profile.dev.build-override]
 opt-level = 3
 

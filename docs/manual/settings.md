@@ -48,6 +48,12 @@ The **Routing** group holds the walk permissions: **allow teleports**,
 **WalkTo** only. The settings are global except where stated.
 rs2b0t-compatible scripts always allow wilderness and bank fetch.
 
+The group also holds the prerequisite grants: **Allow dialogue steps on
+walks** and **Allow starting quests on walks**. Both default on, including on
+a first run; an unreadable or malformed settings file denies them until the
+next save. The grants are additive: the global switch or the script's own
+grant allows the step, and only a per-request Forbid narrows it.
+
 **Danger routing** decides if a walk may pass dangerous monsters. Its levels
 are **Never**, **When survivable** and **Always**. While the middle level is
 held, a note under the control reads `Not available yet: acts as Never.`
@@ -88,6 +94,9 @@ Random-event handling is a profile option, not an app option. Set
 **random events** and **Policies** in the **Profiles** window, as
 [Manage your accounts and log in](profiles-and-accounts.md#add-change-or-remove-a-profile)
 describes.
+
+The guardian matches dialog and strange-plant NPC names, and hazard loc names,
+without regard to letter case.
 
 The **Loadouts** button opens the window of saved gear lists, which all
 profiles share.

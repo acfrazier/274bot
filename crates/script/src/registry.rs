@@ -3,6 +3,8 @@ use crate::native::CompiledCard;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
+#[path = "walkto/mod.rs"]
+mod walkto;
 
 /// A picker id: the exact string the picker shows and Start keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +22,8 @@ static CARDS: &[CompiledCard] = &[
     crate::grinch::CARD,
     crate::quester::CARD,
 ];
+
+const INTERNAL_CARDS: &[CompiledCard] = &[walkto::CARD];
 
 struct Registry {
     installed: Vec<&'static [CompiledCard]>,
@@ -75,6 +79,7 @@ impl CardRegistry {
             if registry
                 .merged
                 .iter()
+                .chain(INTERNAL_CARDS.iter())
                 .chain(cards[..index].iter())
                 .any(|existing| existing.id == card.id)
             {
@@ -184,7 +189,11 @@ pub fn compiled_cards() -> &'static [CompiledCard] {
 }
 
 pub fn compiled_card(id: CompiledId) -> Option<&'static CompiledCard> {
-    compiled_cards().iter().find(|card| card.id == id)
+    REGISTRY
+        .cards()
+        .iter()
+        .find(|card| card.id == id)
+        .or_else(|| INTERNAL_CARDS.iter().find(|card| card.id == id))
 }
 
 pub fn compiled_id(name: &str) -> Option<CompiledId> {
@@ -275,7 +284,24 @@ mod tests {
         id: CompiledId("registry-test-card"),
         ..crate::gatherer::CARD
     };
+    const INTERNAL_ID_COLLISION_CARD: CompiledCard = CompiledCard {
+        id: walkto::CARD.id,
+        ..ADDED_CARD
+    };
+    static INTERNAL_ID_COLLISION: [CompiledCard; 1] = [INTERNAL_ID_COLLISION_CARD];
     static ADDED: [CompiledCard; 1] = [ADDED_CARD];
+
+    #[test]
+    fn internal_walkto_is_lookupable_but_not_listed() {
+        assert!(compiled_cards()
+            .iter()
+            .all(|card| card.id != walkto::CARD.id));
+        assert_eq!(compiled_id(walkto::CARD.id.0), None);
+        assert!(std::ptr::eq(
+            compiled_card(walkto::CARD.id).expect("internal WalkTo remains startable"),
+            &walkto::CARD,
+        ));
+    }
 
     #[test]
     fn install_after_read_is_visible_and_same_slice_is_idempotent() {
@@ -309,6 +335,10 @@ mod tests {
         assert_eq!(
             REGISTRY.install(&INTERNAL_DUPLICATE),
             Err(CardInstallError::DuplicateId(ADDED_CARD.id))
+        );
+        assert_eq!(
+            REGISTRY.install(&INTERNAL_ID_COLLISION),
+            Err(CardInstallError::DuplicateId(walkto::CARD.id))
         );
         assert!(std::ptr::eq(before, REGISTRY.cards()));
         assert_eq!(
@@ -444,7 +474,11 @@ mod tests {
         let mut slot = SlotScript::new();
         slot.sync_compiled_clue(false);
         install_cards(&COUNTING_CARD).unwrap();
-        slot.start_test_script(Box::new(IdleScript), None).unwrap();
+        slot.start_test_script(
+            Box::new(IdleScript),
+            Some(crate::native::minimal_selected_data_for_test()),
+        )
+        .unwrap();
         slot.sync_compiled_clue(false);
         assert_calls(&[Call::Resume, Call::Hold(false)]);
 

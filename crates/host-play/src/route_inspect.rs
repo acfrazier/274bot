@@ -2,7 +2,7 @@
 //! bounded latest owner demand per profile. Pause does not cancel inspection,
 //! and inspection results never arm Traveller.
 
-use super::NavBot;
+use super::{try_clone_world_state, NavBot};
 use api::bank_memory::Origin;
 use api::identity::{Cancellation, Scope, Settlement, WorkIdentity};
 use api::obj_names::ObjNames;
@@ -2443,17 +2443,42 @@ pub(super) fn validate_request(
     Ok(())
 }
 
-/// `state` borrows the observe frame's gating facts. An admitted inspection
-/// copies them once into its capture, so it keeps that frame's facts.
+/// Share the immutable observe-time facts with an admitted inspection.
 #[expect(
     clippy::too_many_arguments,
-    reason = "The one production call site hands over the slot's navigation table, name, world, state, bank rows, cache and object names from separate owners, plus the request."
+    reason = "The production caller passes the slot's independent navigation, fact and inspection owners."
 )]
-pub(super) fn queue_inspect(
+pub(super) fn queue_inspect_shared(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
+    bank: BankRows,
+    cache: Option<Arc<Cache>>,
+    obj_names: Option<Arc<ObjNames>>,
+    req: InspectRequest,
+) {
+    queue_inspect_captured(
+        navs,
+        name,
+        world,
+        state.cloned(),
+        bank,
+        cache,
+        obj_names,
+        req,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The inspection queue keeps its separate owner inputs explicit."
+)]
+fn queue_inspect_captured(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<Arc<WorldState>>,
     bank: BankRows,
     cache: Option<Arc<Cache>>,
     obj_names: Option<Arc<ObjNames>>,
@@ -2527,13 +2552,23 @@ pub(super) fn queue_inspect(
         (generation, revision, opts, lease)
     };
 
+    let mut state = state.unwrap_or_else(|| Arc::new(WorldState::empty()));
+    if opts.allow_bank_fetch && Arc::get_mut(&mut state).is_none() {
+        state = match try_clone_world_state(&state) {
+            Ok(state) => Arc::new(state),
+            Err(_) => {
+                refuse_current(navs, name, req.request_id, generation, "spawn-failed");
+                return;
+            }
+        };
+    }
     let capture = InspectCapture {
         request_id: req.request_id,
         generation,
         revision,
         world,
         lease,
-        state: Arc::new(state.map_or_else(WorldState::empty, WorldState::clone)),
+        state,
         bank_origin: bank.origin,
         bank: bank.rows,
         from: req.from,

@@ -23,7 +23,7 @@
 //!   from an install-time cached native shape; reuse requires both the posted
 //!   bank-session and item-snapshot generations.
 use super::callback_v8::{self as cb, Callback, JsResult};
-use crate::periodic_bank::{
+use crate::compat::periodic_bank::{
     minutes_since_last_bank, parse_bank_strategy, should_bank_now, suppressed,
 };
 use rustyscript::Runtime;
@@ -46,7 +46,7 @@ struct BankItemsCache {
     items: Option<v8::Global<v8::Array>>,
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let cache = Rc::new(RefCell::new(BankItemsCache::default()));
     if !runtime.deno_runtime().v8_isolate().set_slot(cache) {
         return Err("Bank item snapshot cache already installed".to_string());
@@ -195,7 +195,8 @@ fn periodic_due<'s>(
         Some(value) => value,
     };
     let off = first.is_string() && first.to_rust_string_lossy(scope) == "off";
-    let in_combat = crate::observed::with(|scene| scene.since_login().in_combat().unwrap_or(false));
+    let in_combat =
+        crate::scene::observed::with(|scene| scene.since_login().in_combat().unwrap_or(false));
     if off || in_combat || suppressed() {
         return Ok(false);
     }
@@ -227,10 +228,10 @@ fn periodic_bank_rules<'s>(
                 String::new()
             };
             let strategy = match parse_bank_strategy(&label) {
-                crate::periodic_bank::BankStrategy::Off => "off",
-                crate::periodic_bank::BankStrategy::Items => "items",
-                crate::periodic_bank::BankStrategy::Time => "time",
-                crate::periodic_bank::BankStrategy::Either => "either",
+                crate::compat::periodic_bank::BankStrategy::Off => "off",
+                crate::compat::periodic_bank::BankStrategy::Items => "items",
+                crate::compat::periodic_bank::BankStrategy::Time => "time",
+                crate::compat::periodic_bank::BankStrategy::Either => "either",
             };
             Ok(cb::string(scope, strategy))
         }
@@ -253,7 +254,7 @@ fn death_due<'s>(
     instance: v8::Local<'s, v8::Object>,
     opts: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    use crate::death_recovery as death;
+    use crate::compat::death_recovery as death;
     let observed = death::observe(scope, instance);
     if observed.died {
         call_option(scope, opts, "onDeath")?;
@@ -416,7 +417,7 @@ fn bank_snapshot<'s>(
             f64::NAN
         };
 
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let latest = scene.latest();
             let rows = latest.bank().map_or(&[][..], Vec::as_slice);
             match operation.as_str() {
@@ -481,7 +482,7 @@ fn bank_items<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s,
         .get_slot::<Rc<RefCell<BankItemsCache>>>()
         .cloned()
         .ok_or_else(|| cb::type_error(scope, "Bank item snapshot cache is not installed"))?;
-    crate::observed::with(|scene| {
+    crate::scene::observed::with(|scene| {
         let latest = scene.latest();
         let key = BankItemsKey {
             open: latest.bank_open().unwrap_or(false),
@@ -514,7 +515,7 @@ fn bank_items<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s,
 
 fn materialize_bank_items<'s>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::observed::ItemRow],
+    rows: &[crate::scene::observed::ItemRow],
 ) -> JsResult<'s, v8::Local<'s, v8::Array>> {
     let length = i32::try_from(rows.len())
         .map_err(|_| cb::type_error(scope, "bank items exceed the V8 array limit"))?;

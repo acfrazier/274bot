@@ -21,6 +21,8 @@ pub fn verb_req(step: &Value) -> Option<InteractReq> {
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }),
         // Native-only loc approach requires Sherlock's `Reach` action. The
         // compatibility verb path has no such handoff, so reject rather than
@@ -37,6 +39,8 @@ pub fn verb_req(step: &Value) -> Option<InteractReq> {
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }),
         "held" => Some(InteractReq::Held {
             name: text_field(step, "name")?.to_string(),

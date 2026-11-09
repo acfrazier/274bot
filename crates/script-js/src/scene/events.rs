@@ -387,9 +387,11 @@ fn diff_inv(last: &[SlotState], current: &[SlotState]) -> Vec<NativeEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
-        SnapshotInput, StatInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_delta},
+        script::native::snapshot_source::{
+            ChatLineInput, ItemRowInput, ReachViewInput, SnapshotInput, StatInput,
+        },
     };
 
     fn base<'a>() -> SnapshotInput<'a> {

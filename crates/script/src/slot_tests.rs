@@ -181,13 +181,14 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
         },
         0,
         &[],
+        None,
     );
-    let (policy, visible, owned) = slot.drain_host_interacts();
+    let (policy, visible, owned) = slot.drain_host_interacts(None);
     assert!(policy.is_none());
     assert!(
         visible
             .iter()
-            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+            .all(|row| matches!(&row.req, crate::interact::InteractReq::LoopSettled)),
         "only surface lifecycle, not delegated gameplay, may reach host: {visible:?}"
     );
     assert!(
@@ -201,11 +202,11 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
     while slot.native_status().is_none() && Instant::now() < deadline {
         native_tick_at(slot, selected, tick, None, false);
         tick += 1;
-        let (_, visible, _) = slot.drain_host_interacts();
+        let (_, visible, _) = slot.drain_host_interacts(None);
         assert!(
             visible
                 .iter()
-                .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+                .all(|row| matches!(&row.req, crate::interact::InteractReq::LoopSettled)),
             "delegated Gatherer gameplay stays in the seat: {visible:?}"
         );
         std::thread::yield_now();
@@ -221,14 +222,22 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
 fn non_kept_stop_releases_the_seat_before_idle_and_rearms_on_next_start() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(39);
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     assert!(slot.seat.is_some(), "compiled card owns a native seat");
 
     slot.stop();
     assert_eq!(slot.state(), RunState::Idle);
     assert!(slot.seat.is_none(), "Stop drops the old seat owner");
 
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     assert!(slot.seat.is_some(), "a new run arms a new seat");
     slot.stop_removed();
     assert!(slot.seat.is_none(), "removal is also a non-kept boundary");
@@ -457,7 +466,7 @@ fn session_reset_discards_old_surface_policy_batch() {
 
     run.set_generation(1);
     slot.reset_session_work();
-    let (old_policy, old_requests, _) = slot.drain_host_interacts();
+    let (old_policy, old_requests, _) = slot.drain_host_interacts(None);
     assert!(
         old_policy.is_none() && old_requests.is_empty(),
         "the old connection generation stays fenced"
@@ -645,7 +654,11 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         ["retained log"],
         "Stop preserves diagnostic history for the panel"
     );
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -674,12 +687,20 @@ fn on_random_defaults_to_host_and_override_claims_handle() {
 
     // Default: Host.
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Noop), None).unwrap();
+    s.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     assert_eq!(s.on_random(&ev), RandomClaim::Host);
 
     // Override: Handle.
     s.stop();
-    s.start_test_script(Box::new(ClaimHandle), None).unwrap();
+    s.start_test_script(
+        Box::new(ClaimHandle),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     assert_eq!(s.on_random(&ev), RandomClaim::Handle);
 
     // Paused: Host — the knock only fires while Running.
@@ -694,7 +715,11 @@ fn on_random_defaults_to_host_and_override_claims_handle() {
 #[test]
 fn ticks_counts_dispatched_ticks_since_start() {
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Noop), None).unwrap();
+    s.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut d = NullDriver::default();
     s.on_game_tick(&mut ScriptCtx {
         driver: &mut d,
@@ -737,7 +762,11 @@ fn ticks_counts_dispatched_ticks_since_start() {
 
     // A fresh Start resets the counter.
     s.stop();
-    s.start_test_script(Box::new(Noop), None).unwrap();
+    s.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     s.on_game_tick(&mut ScriptCtx {
         driver: &mut d,
         tick: 4,
@@ -755,7 +784,11 @@ fn ticks_counts_dispatched_ticks_since_start() {
 #[test]
 fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     assert_eq!(
         slot.pending_withdraw_x().unwrap().remaining,
@@ -779,7 +812,11 @@ fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
         "Stop aborts pending work"
     );
 
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     let before_reset = slot.withdraw_x_result();
     slot.reset_session_work();
@@ -804,7 +841,11 @@ fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
 #[test]
 fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     slot.set_pending_bank_op(Some(PendingBankOp::new(
         PendingBankOpKind::Deposit,
         1,
@@ -828,7 +869,11 @@ fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
     slot.stop();
     assert!(slot.pending_bank_op().is_none(), "Stop drops old-slot work");
 
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     slot.set_pending_bank_op(Some(PendingBankOp::new(
         PendingBankOpKind::Withdraw,
         1,
@@ -897,7 +942,11 @@ fn settings_update_reaches_start_queued_behind_reap() {
 #[test]
 fn stop_clears_identity_and_bumps_runtime_generation() {
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Noop), None).unwrap();
+    slot.start_test_script(
+        Box::new(Noop),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     slot.attach_source_identity("file:shared.ts");
     let gen = slot.runtime_generation();
     slot.stop();
@@ -1139,13 +1188,15 @@ impl Script for Walker {
         ctx: &mut crate::native::NativeTick<'_>,
     ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
         if let Some(sink) = ctx.frame.compiled.interacts.as_mut() {
-            sink.push(crate::shim::InteractReq::Walk {
+            sink.push(crate::interact::InteractReq::Walk {
                 x: 3,
                 z: 4,
                 level: 0,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -1156,14 +1207,16 @@ impl Script for Walker {
 }
 
 /// The walk `Walker` queues, for comparing whole requests.
-fn walker_walk() -> crate::shim::InteractReq {
-    crate::shim::InteractReq::Walk {
+fn walker_walk() -> crate::interact::InteractReq {
+    crate::interact::InteractReq::Walk {
         x: 3,
         z: 4,
         level: 0,
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
@@ -1190,11 +1243,14 @@ fn compiled_ctx<'a>(
             poison_unknown_pulse: None,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             selected,
             reach: None,
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: false,
             world_members: api::selected::Truth::Unknown,
             interacts: None,
@@ -1216,7 +1272,11 @@ fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
     }
 
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Panics), None).unwrap();
+    slot.start_test_script(
+        Box::new(Panics),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut driver = NullDriver::default();
     slot.on_game_tick(&mut compiled_ctx(&mut driver, None));
     assert_eq!(slot.state(), RunState::Error);
@@ -1236,7 +1296,11 @@ fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
 #[test]
 fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Walker), None).unwrap();
+    slot.start_test_script(
+        Box::new(Walker),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut d = NullDriver::default();
     slot.on_game_tick(&mut compiled_ctx(&mut d, None));
     assert_eq!(
@@ -1272,7 +1336,11 @@ fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
 fn an_unheld_native_run_on_a_random_trap_square_blocks() {
     let maze = (2891, 4555, 0);
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Walker), None).unwrap();
+    slot.start_test_script(
+        Box::new(Walker),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut d = NullDriver::default();
 
     let mut held = compiled_ctx(&mut d, None);
@@ -1315,7 +1383,11 @@ fn an_unheld_native_run_on_a_random_trap_square_blocks() {
 
     // The Mime stage is the other trap square.
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Walker), None).unwrap();
+    slot.start_test_script(
+        Box::new(Walker),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut mime = compiled_ctx(&mut d, None);
     mime.here = Some((31 * 64 + 10, 74 * 64 + 10, 0));
     slot.on_game_tick(&mut mime);
@@ -1358,6 +1430,8 @@ fn queued_stub_walk_batch(generation: u64) -> crate::native::seat_rows::QueuedSe
                     allow_teleports: false,
                     allow_wilderness: false,
                     allow_bank_fetch: false,
+                    allow_prereq_dialogue: None,
+                    allow_quest_start: None,
                     request_id: 0,
                     avoid: Vec::new(),
                     cross: Vec::new(),
@@ -1405,7 +1479,7 @@ fn run_stub_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
 
 fn held_stub_walk_tick(slot: &mut SlotScript, run: &StubSurfaceHandle, n: u64, now: Instant) {
     let here = run_stub_walk_tick(slot, n);
-    let (_, game_rows, _) = slot.drain_host_interacts();
+    let (_, game_rows, _) = slot.drain_host_interacts(None);
     assert!(
         game_rows.iter().all(|row| !matches!(
             &row.req,
@@ -1478,6 +1552,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
             queued.batch,
             queued.observed_walk_outcome_seq,
             &queued.machine_events,
+            None,
         );
     }
     let in_custody = slot
@@ -1495,7 +1570,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
 
     assert!(slot.reconnect_session_work());
     slot.on_is_up(true);
-    let (_, discarded, _) = slot.drain_host_interacts();
+    let (_, discarded, _) = slot.drain_host_interacts(None);
     assert!(
         !discarded.iter().any(|row| is_test_walk(&row.req)),
         "the old-session walk is discarded: {discarded:?}"
@@ -1504,7 +1579,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
     run.set_generation(1);
     align_ready_test_seat(&mut slot);
     run.queue_seat_batches([queued_stub_walk_batch(1)]);
-    let (_, fresh, _) = slot.drain_host_interacts();
+    let (_, fresh, _) = slot.drain_host_interacts(None);
     let fresh: Vec<_> = fresh
         .into_iter()
         .filter(|row| is_test_walk(&row.req))
@@ -1532,6 +1607,9 @@ fn stop_ends_stub_surface_after_reconnect() {
 }
 #[test]
 fn ignored_maze_trap_cleans_up_core_api_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
     let selected =
@@ -1594,6 +1672,9 @@ fn ignored_maze_trap_cleans_up_core_api_work() {
 
 #[test]
 fn ignored_mime_trap_returns_core_terminal_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
     let selected =
@@ -1628,7 +1709,7 @@ fn surface_watchdog_holds_pen_recovery_until_the_player_leaves() {
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
     slot.note_game_packet_tick(now + crate::watchdog::WEDGE);
@@ -1645,12 +1726,12 @@ fn surface_watchdog_holds_pen_recovery_until_the_player_leaves() {
     );
 
     let anchor = [
-        crate::shim::InteractReq::RecoveryAnchor {
+        crate::interact::InteractReq::RecoveryAnchor {
             x: 3368,
             z: 3274,
             level: 0,
         },
-        crate::shim::InteractReq::LoopSettled,
+        crate::interact::InteractReq::LoopSettled,
     ];
     slot.note_game_packet_tick(now + crate::watchdog::WEDGE + Duration::from_secs(1));
     let action = slot.feed_watchdog(
@@ -1728,7 +1809,7 @@ fn surface_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(inside_pen), &[], false, true, &settled);
     for seconds in (5..=crate::watchdog::WEDGE.as_secs()).step_by(5) {
@@ -1745,7 +1826,7 @@ fn surface_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset
         z: 3274,
         level: 0,
     };
-    let anchor_reply = [crate::shim::InteractReq::RecoveryAnchor {
+    let anchor_reply = [crate::interact::InteractReq::RecoveryAnchor {
         x: anchor.x,
         z: anchor.z,
         level: anchor.level,
@@ -1814,7 +1895,7 @@ fn surface_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
         slot.feed_watchdog(now, Some(here), &[], false, true, &[]),
         crate::watchdog::WatchdogAction::None
     );
-    let outside_anchor = [crate::shim::InteractReq::RecoveryAnchor {
+    let outside_anchor = [crate::interact::InteractReq::RecoveryAnchor {
         x: 3220,
         z: 3274,
         level: 0,
@@ -1822,7 +1903,7 @@ fn surface_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
     for seconds in (5..crate::watchdog::HARD_STALL.as_secs()).step_by(5) {
         let tick_at = now + Duration::from_secs(seconds);
         slot.note_game_packet_tick(tick_at);
-        let lifecycle: &[crate::shim::InteractReq] =
+        let lifecycle: &[crate::interact::InteractReq] =
             if seconds == crate::watchdog::HARD_STALL.as_secs() - 5 {
                 &outside_anchor
             } else {
@@ -1866,7 +1947,7 @@ fn surface_watchdog_logs_packet_silence_and_clears_it_on_resume() {
 
     let now = Instant::now();
     let here = (3200, 3274, 0);
-    let settled = [crate::shim::InteractReq::LoopSettled];
+    let settled = [crate::interact::InteractReq::LoopSettled];
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(here), &[], false, true, &settled);
 
@@ -1933,4 +2014,175 @@ fn native_only_slot_metrics_count_late_controls_without_logging() {
         }
     );
     assert!(slot.take_pending_logs().is_empty());
+}
+
+fn prompt_on_a_live_bank_request(slot: &mut SlotScript, run: api::selected::RunKey) {
+    slot.arm_seat(run);
+    let id = RequestId::isolate(1).unwrap();
+    let seat = slot.seat.as_mut().unwrap();
+    assert_eq!(
+        seat.start(
+            RequestStamp::new(id, None, None, ExecutionId::first(run)).unwrap(),
+            crate::native::request::NativeKind::BankPlan,
+            false,
+        )
+        .unwrap(),
+        Admission::Admitted
+    );
+    let point = crate::native::PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized prompt");
+    seat.prompt_with_details(id, point, &[1]).unwrap();
+}
+
+#[test]
+fn seat_answer_owed_is_false_while_the_seat_is_held() {
+    let (mut slot, _factory, _run) = ready_stub_slot();
+    let run = api::selected::RunKey {
+        slot: 1,
+        run: 1,
+        session: 1,
+    };
+    assert!(!slot.seat_answer_owed(), "no seat, nothing owed");
+    prompt_on_a_live_bank_request(&mut slot, run);
+    assert!(slot.seat_answer_owed(), "an undelivered prompt is owed");
+    slot.seat.as_mut().unwrap().hold(true);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a held seat refuses prompts and decisions: nothing may poll"
+    );
+    slot.seat.as_mut().unwrap().hold(false);
+    assert!(slot.seat_answer_owed());
+    slot.seat_guardian_hold(true);
+    assert!(!slot.seat_answer_owed(), "the guardian hold holds the seat");
+    slot.seat_guardian_hold(false);
+    slot.align_seat_session(None);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a session boundary holds the seat until the next session is ready"
+    );
+}
+
+#[test]
+fn a_slot_without_a_surface_owes_no_seat_answer_dispatch() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(1);
+    let run = api::selected::RunKey {
+        slot: 1,
+        run: 1,
+        session: 1,
+    };
+    prompt_on_a_live_bank_request(&mut slot, run);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a compiled run has no surface to dispatch to"
+    );
+}
+
+#[test]
+fn the_seat_page_dispatch_reaches_the_surface_with_its_floor_and_answers_its_acceptance() {
+    use crate::surface::test_support::StubSurfaceOperation;
+    let (slot, _factory, run) = ready_stub_slot();
+    assert!(slot.on_seat_page_at(7, 3), "the stub accepts by default");
+    run.set_seat_page_acceptance(false);
+    assert!(!slot.on_seat_page_at(8, 5), "a refusal reaches the caller");
+    let dispatches: Vec<_> = run
+        .operations()
+        .into_iter()
+        .filter_map(|operation| match operation {
+            StubSurfaceOperation::OnSeatPageAt {
+                tick,
+                release_floor,
+                ..
+            } => Some((tick, release_floor)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dispatches, vec![(7, 3), (8, 5)]);
+}
+
+/// A seat answer polls only the row that owns the answer: a second live bank
+/// request stays unstarted until a tick or an evidence wake polls it.
+#[test]
+fn seat_answer_wake_polls_only_the_answered_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::bank::request::{BankSeatArgs, BankSeatOperation};
+    use crate::native::request::NativeKind;
+    use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs, SeatStartInput};
+
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let (mut slot, _factory, _run) = ready_stub_slot_with_incarnation(1206);
+    slot.surface_start
+        .as_mut()
+        .expect("surface identity")
+        .game_data = Some(Arc::clone(&selected));
+    let run = slot.seat.as_ref().expect("owned native seat").run();
+    let answered = RequestId::isolate(1).unwrap();
+    let bystander = RequestId::isolate(2).unwrap();
+    let starts = vec![
+        SeatStartInput {
+            id: answered,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankPlan,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::DepositMatch)),
+        },
+        SeatStartInput {
+            id: bystander,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankNearest,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::BankNearest)),
+        },
+    ];
+    slot.consume_seat_batch(
+        DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts,
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+        None,
+    );
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![answered, bystander],
+        "both requests are live bank rows no poll has started"
+    );
+    let point = crate::native::PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized prompt");
+    let seat = slot.seat.as_mut().unwrap();
+    let sequence = seat.prompt_with_details(answered, point, &[1]).unwrap();
+    assert_eq!(
+        seat.decide_with_answer(answered, sequence, vec![9]),
+        crate::native::seat::SeatDecisionStatus::Consumed
+    );
+
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, Some(&selected));
+    ctx.tick = 5;
+    assert!(slot.on_seat_answer(&mut ctx), "the wake may post its page");
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![bystander],
+        "the answered row was polled once, the other was not"
+    );
 }

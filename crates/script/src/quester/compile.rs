@@ -1,7 +1,7 @@
-//! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
+//! Lazy per-activation Path compiler and the `(revision, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
 #[cfg(test)]
-use super::path::SequenceOrder;
+use super::path::{HazardDocument, SequenceOrder};
 use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
@@ -11,15 +11,17 @@ use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use crate::native_bank::BankItem;
+use crate::survival::{HazardStat, StepHazard};
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{
-    ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
-    SkillMinimum, SourceSpan, Truth,
+    FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
+    Truth,
 };
+use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -148,6 +150,7 @@ pub struct CompiledPath {
     pub role: Option<FactKey>,
     pub kind: super::path::PathKind,
     pub partner: Option<super::pair::PartnerDeclaration>,
+    pub(crate) prereq: crate::native::PrereqOptions,
     pub display_name: Arc<str>,
     pub tested_stats: Option<Arc<[api::selected::SkillMinimum]>>,
     pub digest: [u8; 32],
@@ -250,7 +253,19 @@ pub struct CompiledSequence {
     pub stage: FactKey,
     pub terminal: bool,
     pub order: super::path::SequenceOrder,
+    pub cross: Arc<[Arc<str>]>,
     pub steps: Vec<CompiledStep>,
+    /// Distinct trace lines this stage can log: one per step, plus one per
+    /// step of every recipe an `acquire` step runs, counting nested recipes.
+    /// The run trace sizes the stage's budget from it; see
+    /// `super::runner::stage_event_limit`.
+    pub trace_units: usize,
+}
+
+#[derive(Clone)]
+pub struct StepAttemptBudget {
+    pub max_attempts: u32,
+    pub stop: Arc<str>,
 }
 
 pub struct CompiledStep {
@@ -260,10 +275,13 @@ pub struct CompiledStep {
     pub loadout: Option<Arc<str>>,
     pub tactic: Option<Arc<str>>,
     pub advances: bool,
+    pub attempt_budget: Option<StepAttemptBudget>,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
     pub plan: Arc<dyn StepPlan>,
+    pub hazard: Option<StepHazard>,
+    pub hazard_source: Option<Arc<str>>,
 }
 
 /// The frame a predicate reads. Bank facts come from `cx.snapshot().stock()`:
@@ -289,6 +307,44 @@ pub struct StepContext<'a, 'frame> {
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
+    fn attempt_count(&self) -> Option<u32> {
+        None
+    }
+    fn attempt_stop(&self) -> Option<&Arc<str>> {
+        None
+    }
+}
+pub(crate) struct StepAttemptReceipt {
+    inner: Option<Arc<dyn FamilyReceipt>>,
+    attempts: u32,
+    stop: Arc<str>,
+}
+impl StepAttemptReceipt {
+    pub(crate) fn new(
+        inner: Option<Arc<dyn FamilyReceipt>>,
+        attempts: u32,
+        stop: Arc<str>,
+    ) -> Self {
+        Self {
+            inner,
+            attempts,
+            stop,
+        }
+    }
+}
+impl FamilyReceipt for StepAttemptReceipt {
+    fn as_any(&self) -> &dyn Any {
+        match self.inner.as_deref() {
+            Some(inner) => inner.as_any(),
+            None => self,
+        }
+    }
+    fn attempt_count(&self) -> Option<u32> {
+        Some(self.attempts)
+    }
+    fn attempt_stop(&self) -> Option<&Arc<str>> {
+        Some(&self.stop)
+    }
 }
 pub struct StepOutcome {
     pub progress: Option<Arc<QuestProgress>>,
@@ -305,6 +361,16 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Begin the retry of a step that failed while a dialogue page was still
+    /// open. A family that drives dialogue continues that page from the
+    /// current tile instead of walking to the step's anchor; every other
+    /// family begins as usual.
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.begin(cx)
+    }
     /// Stable authored world anchor for nearest-first selection.
     fn anchor(&self) -> Option<api::WorldTile> {
         None
@@ -343,6 +409,10 @@ pub enum StepTraceEvent {
         target: crate::combat::Target,
         end: crate::combat::CombatEnd,
     },
+    WalkRetry {
+        attempt: u8,
+        failure_detail: Arc<str>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +433,10 @@ pub enum AcquisitionTraceOutcome {
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
+    fn transfer_in_flight(&self) -> bool {
+        false
+    }
+    fn interrupt_transfer(&mut self, _actions: &mut NativeActions) {}
     /// Combat raises retained for a cancellation/error hygiene handoff.
     fn prayer_cleanup(&self) -> RaisedPrayers {
         RaisedPrayers::empty()
@@ -421,8 +495,6 @@ pub struct PredicateHandler {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     revision: u16,
-    engine: Arc<str>,
-    content: Arc<str>,
     digest: [u8; 32],
     abi: u64,
     gang: Option<super::pair::Gang>,
@@ -430,6 +502,8 @@ struct CacheKey {
     /// operator row overrides a compiled kit of the same name, so rows
     /// are part of the compiled identity.
     loadouts: [u8; 32],
+    /// Pack that supplied the stable navigation-zone catalog.
+    nav_pack: Option<PackId>,
 }
 
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
@@ -464,16 +538,17 @@ pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-/// Compile `bytes` against the selected facts and the operator's loadout
-/// rows (`operator`: the slot's local-state lease, or explicitly absent).
+/// Compile `bytes` against selected facts, the nav zone catalog, and operator
+/// loadout rows (`operator`: the slot's local-state lease, or explicitly absent).
 pub fn compile_path(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
     worker: &mut FamilyPreparation,
     operator: &OperatorLoadouts,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_path_for_gang(bytes, selected, quests, worker, None, operator)
+    compile_path_for_gang(bytes, selected, quests, worker, None, operator, zones)
 }
 
 /// Select an immutable gang role after the owned membership read.
@@ -484,30 +559,22 @@ pub fn compile_path_for_gang(
     worker: &mut FamilyPreparation,
     gang: Option<super::pair::Gang>,
     operator: &OperatorLoadouts,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
-    let (revision, engine, content) = match selected.selected_pin() {
-        Ok(pin) => {
-            let revision = match pin.revision {
-                ClientRevision::R274 => 274,
-                ClientRevision::R289 => 289,
-            };
-            (
-                revision,
-                Arc::clone(&pin.engine_commit),
-                Arc::clone(&pin.content_commit),
-            )
-        }
-        Err(_) => return Err(CompileError::code("missing-pin")),
+    let revision = match selected.revision() {
+        274 => 274,
+        289 => 289,
+        377 => 377,
+        _ => return Err(CompileError::code("unsupported-revision")),
     };
     let key = CacheKey {
         revision,
-        engine,
-        content,
         digest,
         abi: abi_set(),
         gang,
         loadouts: operator.digest(),
+        nav_pack: zones.map(ZoneTableView::pack),
     };
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
@@ -518,7 +585,16 @@ pub fn compile_path_for_gang(
         .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
     let gathering = prepare_gathering(&document, selected, worker)?;
     let compiled = Arc::new(compile_uncached(
-        &document, digest, selected, quests, gathering, gang, operator,
+        &document,
+        digest,
+        CompileInputs {
+            selected,
+            quests,
+            gathering,
+            gang,
+            operator,
+            zones,
+        },
     )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
@@ -536,6 +612,303 @@ pub(super) fn prepare_gathering(
         .then(|| selected.prepare_gathering(worker))
         .transpose()
         .map_err(|_| CompileError::code("gathering-unavailable").with_path(document.id.clone()))
+}
+
+fn cross_id_error(
+    document: &PathDocument,
+    id: &str,
+    owner: &str,
+    step: Option<&FactKey>,
+) -> CompileError {
+    let mut error = CompileError::code("unknown-cross-id")
+        .with_path(document.id.clone())
+        .with_detail(format!(
+            "{owner} references unknown navigation zone id {id:?}"
+        ));
+    error.step = step.cloned();
+    error
+}
+
+fn route_cross_union_len(
+    ids: &[serde_json::Value],
+    stage_cross: &[super::path::RequiredZoneDocument],
+) -> usize {
+    let mut count = 0;
+    for (index, value) in ids.iter().enumerate() {
+        let Some(id) = value.as_str() else {
+            continue;
+        };
+        if ids[..index]
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|previous| previous == id)
+            || stage_cross.iter().any(|zone| zone.id.as_str() == id)
+        {
+            continue;
+        }
+        count += 1;
+    }
+    for (index, zone) in stage_cross.iter().enumerate() {
+        if stage_cross[..index]
+            .iter()
+            .any(|previous| previous.id == zone.id)
+        {
+            continue;
+        }
+        count += 1;
+    }
+    count
+}
+
+fn is_route_cross_kind(kind: &str) -> bool {
+    matches!(kind, "walk" | "combat")
+}
+
+fn nested_step_parts(value: &serde_json::Value) -> Option<(&str, &str, &serde_json::Value)> {
+    let object = value.as_object()?;
+    if object.keys().any(|key| {
+        ![
+            "id", "kind", "version", "args", "comment", "advances", "skip_if", "settle",
+        ]
+        .contains(&key.as_str())
+    }) || !object.contains_key("skip_if")
+        || !object.contains_key("settle")
+        || object
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|version| version > u64::from(u16::MAX))
+        || object
+            .get("comment")
+            .is_some_and(|comment| !comment.is_null() && !comment.is_string())
+        || object
+            .get("advances")
+            .is_some_and(|advances| !advances.is_null() && !advances.is_boolean())
+    {
+        return None;
+    }
+    Some((
+        object.get("id")?.as_str()?,
+        object.get("kind")?.as_str()?,
+        object.get("args")?,
+    ))
+}
+
+fn visit_nested_step_documents(
+    value: &serde_json::Value,
+    visit: &mut impl FnMut(&str, &str, &serde_json::Value) -> Result<(), CompileError>,
+) -> Result<(), CompileError> {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some((id, kind, args)) = nested_step_parts(value) {
+                visit(id, kind, args)?;
+                visit_nested_step_documents(args, visit)?;
+            } else {
+                for value in object.values() {
+                    visit_nested_step_documents(value, visit)?;
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                visit_nested_step_documents(value, visit)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_step_cross_array(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step_id: &FactKey,
+    sequence: Option<&super::path::SequenceDocument>,
+    ids: &[serde_json::Value],
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    let maximum = nav_planner::contract::MAX_ZONE_KEYS;
+    if ids.len() > maximum {
+        let stage = sequence
+            .map(|sequence| format!(" in stage {:?}", sequence.stage.0))
+            .unwrap_or_default();
+        let mut error = CompileError::code("too-many-route-cross")
+            .with_path(document.id.clone())
+            .with_detail(format!(
+                "step {:?}{stage} declares {} cross values; the maximum per route is {maximum}",
+                step_id.0,
+                ids.len()
+            ));
+        error.step = Some(step_id.clone());
+        return Err(error);
+    }
+
+    if ids.iter().any(serde_json::Value::is_string) && zones.is_none() {
+        let mut error = CompileError::code("cross-catalog-unavailable")
+            .with_path(document.id.clone())
+            .with_detail(format!(
+                "the nav zone catalog is required to validate step {:?} cross ids",
+                step_id.0
+            ));
+        error.step = Some(step_id.clone());
+        return Err(error);
+    }
+    for id in ids.iter().filter_map(serde_json::Value::as_str) {
+        if zones.is_some_and(|zones| zones.resolve(id).is_none()) {
+            return Err(cross_id_error(
+                document,
+                id,
+                &format!("step {:?}", step_id.0),
+                Some(step_id),
+            ));
+        }
+    }
+
+    let check_stage = |stage: Option<&super::path::SequenceDocument>| -> Result<(), CompileError> {
+        let stage_cross = stage.map_or(&[][..], |sequence| sequence.cross.as_slice());
+        let union_len = route_cross_union_len(ids, stage_cross);
+        if union_len > maximum {
+            let stage_detail = stage
+                .map(|sequence| format!(" and stage {:?}", sequence.stage.0))
+                .unwrap_or_default();
+            let mut error = CompileError::code("too-many-route-cross")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "step {:?}{stage_detail} grants {union_len} unique cross ids; the maximum per route is {maximum}",
+                        step_id.0
+                    ));
+            error.step = Some(step_id.clone());
+            return Err(error);
+        }
+        Ok(())
+    };
+
+    if let Some(sequence) = sequence {
+        check_stage(Some(sequence))?;
+    } else if role.sequences.is_empty() {
+        check_stage(None)?;
+    } else {
+        // Unscoped steps, including automatically provisioned recipes, can
+        // run while any stage is current, so validate each possible union.
+        for sequence in &role.sequences {
+            check_stage(Some(sequence))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_route_step_cross(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step_id: &FactKey,
+    sequence: Option<&super::path::SequenceDocument>,
+    args: &serde_json::Value,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if let Some(ids) = args.get("cross").and_then(serde_json::Value::as_array) {
+        validate_step_cross_array(document, role, step_id, sequence, ids, zones)?;
+    }
+    Ok(())
+}
+
+fn validate_step_cross(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step: &super::path::StepDocument,
+    sequence: Option<&super::path::SequenceDocument>,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if is_route_cross_kind(&step.kind) {
+        validate_route_step_cross(document, role, &step.id, sequence, &step.args, zones)?;
+    }
+    let mut validate_nested = |id: &str, kind: &str, args: &serde_json::Value| {
+        if is_route_cross_kind(kind) {
+            validate_route_step_cross(document, role, &FactKey::new(id), sequence, args, zones)?;
+        }
+        Ok(())
+    };
+    visit_nested_step_documents(&step.args, &mut validate_nested)
+}
+
+fn validate_cross_ids(
+    document: &PathDocument,
+    header: &super::path::QuestHeaderDocument,
+    role: &super::path::PathRoleDocument,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if role
+        .sequences
+        .iter()
+        .any(|sequence| !sequence.cross.is_empty())
+        && zones.is_none()
+    {
+        return Err(CompileError::code("cross-catalog-unavailable")
+            .with_path(document.id.clone())
+            .with_detail("the nav zone catalog is required to validate stage cross ids"));
+    }
+
+    for sequence in &role.sequences {
+        if sequence.cross.len() > nav_planner::contract::MAX_ZONE_KEYS {
+            return Err(CompileError::code("too-many-stage-cross")
+                .with_path(document.id.clone())
+                .with_detail(format!(
+                    "stage {:?} declares {} cross identities; the maximum is {}",
+                    sequence.stage.0,
+                    sequence.cross.len(),
+                    nav_planner::contract::MAX_ZONE_KEYS
+                )));
+        }
+        if sequence.cross.iter().enumerate().any(|(index, zone)| {
+            sequence.cross[..index]
+                .iter()
+                .any(|previous| previous.id == zone.id)
+        }) {
+            return Err(CompileError::code("duplicate-cross-id")
+                .with_path(document.id.clone())
+                .with_detail(format!("stage {:?} repeats a cross id", sequence.stage.0)));
+        }
+        for zone in &sequence.cross {
+            if zone.id.trim().is_empty() {
+                return Err(CompileError::code("empty-cross-id")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "stage {:?} has an empty cross id",
+                        sequence.stage.0
+                    )));
+            }
+            if zone.name.trim().is_empty() || zone.reason.trim().is_empty() {
+                return Err(CompileError::code("empty-cross-guide-text")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "stage {:?} cross id {:?} needs non-empty name and reason",
+                        sequence.stage.0, zone.id
+                    )));
+            }
+            if zones.is_some_and(|zones| zones.resolve(&zone.id).is_none()) {
+                return Err(cross_id_error(
+                    document,
+                    &zone.id,
+                    &format!("stage {:?}", sequence.stage.0),
+                    None,
+                ));
+            }
+        }
+    }
+
+    for step in header
+        .acquire
+        .values()
+        .flatten()
+        .chain(role.prelude.iter())
+        .chain(role.progress_reader.iter())
+    {
+        validate_step_cross(document, role, step, None, zones)?;
+    }
+    for sequence in &role.sequences {
+        for step in &sequence.steps {
+            validate_step_cross(document, role, step, Some(sequence), zones)?;
+        }
+    }
+    Ok(())
 }
 
 fn uses_gathering(document: &PathDocument) -> bool {
@@ -566,22 +939,96 @@ pub fn prepare_for_test<R: Send + 'static>(
 }
 
 /// Test helper: compile without the process cache and with no operator
-/// loadout rows.
+/// loadout rows or zone catalog.
 pub fn compile_uncached_for_test(
     document: &PathDocument,
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_uncached_for_test_with_loadouts(document, selected, quests, &OperatorLoadouts::absent())
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        None,
+        None,
+    )
 }
 
-/// Test helper: compile without the process cache, against `operator`'s
-/// rows.
+#[cfg(test)]
+pub(crate) fn stage_cross_lease(ids: &[&str]) -> nav_planner::contract::NavLease {
+    crate::gatherer::select::tests::test_nav_lease(|world| {
+        let rect = nav_planner::router::AvoidRect {
+            min_x: 0,
+            max_x: 0,
+            min_z: 0,
+            max_z: 0,
+            level: Some(0),
+        };
+        let zones = ids
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                nav_planner::zones::Zone::hazard(
+                    rect,
+                    0,
+                    u16::try_from(index).expect("fixture zone index fits"),
+                )
+            })
+            .collect();
+        let kinds = ids
+            .iter()
+            .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
+            .collect();
+        let table = nav_planner::zones::ZoneTable::from_parts(
+            zones,
+            kinds,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            world.collision.origin,
+            world.collision.width as u32,
+            world.collision.height as u32,
+            &world.graph.wilderness,
+        )
+        .expect("stage cross fixture");
+        world.graph.zones = Some(table);
+    })
+}
+
+/// Test helper: compile with one actual zone catalog.
+pub fn compile_uncached_for_test_with_zones(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    zones: ZoneTableView<'_>,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        None,
+        Some(zones),
+    )
+}
+/// Test helper: compile without the process cache, against `operator`'s rows.
 pub fn compile_uncached_for_test_with_loadouts(
     document: &PathDocument,
     selected: &SelectedGameData,
     quests: &QuestCatalog,
     operator: &OperatorLoadouts,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(document, selected, quests, operator, None, None)
+}
+
+fn compile_uncached_for_test_with_context(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    operator: &OperatorLoadouts,
+    gang: Option<super::pair::Gang>,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let gathering = uses_gathering(document)
         .then(|| api::gather_methods::cached(selected))
@@ -589,13 +1036,52 @@ pub fn compile_uncached_for_test_with_loadouts(
     compile_uncached(
         document,
         digest_bytes(b"test"),
-        selected,
-        quests,
-        gathering,
-        None,
-        operator,
+        CompileInputs {
+            selected,
+            quests,
+            gathering,
+            gang,
+            operator,
+            zones,
+        },
     )
     .map(Arc::new)
+}
+
+/// Test helper: compile a partner Path as the member of `gang`, without the
+/// process cache and with no operator loadout rows.
+pub fn compile_uncached_for_test_as(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    gang: super::pair::Gang,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        Some(gang),
+        None,
+    )
+}
+
+/// Test helper: compile a partner Path against one actual zone catalog.
+pub fn compile_uncached_for_test_as_with_zones(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    gang: super::pair::Gang,
+    zones: ZoneTableView<'_>,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        Some(gang),
+        Some(zones),
+    )
 }
 
 fn compile_requirement(
@@ -666,15 +1152,28 @@ fn skill_index(name: &str) -> Option<u8> {
         .and_then(|id| u8::try_from(id).ok())
 }
 
+pub(super) struct CompileInputs<'a> {
+    pub selected: &'a SelectedGameData,
+    pub quests: &'a QuestCatalog,
+    pub gathering: Option<Arc<GatherCatalog>>,
+    pub gang: Option<super::pair::Gang>,
+    pub operator: &'a OperatorLoadouts,
+    pub zones: Option<ZoneTableView<'a>>,
+}
+
 pub(super) fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
-    selected: &SelectedGameData,
-    quests: &QuestCatalog,
-    gathering: Option<Arc<GatherCatalog>>,
-    gang: Option<super::pair::Gang>,
-    operator: &OperatorLoadouts,
+    inputs: CompileInputs<'_>,
 ) -> Result<CompiledPath, CompileError> {
+    let CompileInputs {
+        selected,
+        quests,
+        gathering,
+        gang,
+        operator,
+        zones,
+    } = inputs;
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
     }
@@ -709,6 +1208,7 @@ pub(super) fn compile_uncached(
         }
         &document.roles[0]
     };
+    validate_cross_ids(document, header, role, zones)?;
     if document.kind == super::path::PathKind::Miniquest && role.progress_reader.is_none() {
         return Err(CompileError::code("missing-miniquest-reader").with_path(document.id.clone()));
     }
@@ -971,7 +1471,7 @@ pub(super) fn compile_uncached(
         .progress_reader
         .as_ref()
         .map(|reader| {
-            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
+            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document, false)
                 .map(|mut steps| Box::new(steps.remove(0)))
         })
         .transpose()?;
@@ -979,7 +1479,7 @@ pub(super) fn compile_uncached(
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
     }
-    let prelude = compile_steps(&role.prelude, &recipe_ctx, document)?;
+    let prelude = compile_steps(&role.prelude, &recipe_ctx, document, true)?;
     let mut sequences = Vec::new();
     let mut seen_stages = std::collections::HashSet::new();
     let mut global_ids = std::collections::HashSet::new();
@@ -1019,7 +1519,7 @@ pub(super) fn compile_uncached(
         if sequence.steps.is_empty() && !sequence.terminal {
             return Err(CompileError::code("empty-nonterminal").with_path(document.id.clone()));
         }
-        let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
+        let steps = compile_steps(&sequence.steps, &recipe_ctx, document, true)?;
         if sequence.order == super::path::SequenceOrder::Nearest
             && steps.iter().any(|step| step.plan.anchor().is_none())
         {
@@ -1031,6 +1531,13 @@ pub(super) fn compile_uncached(
             stage: sequence.stage.clone(),
             terminal: sequence.terminal,
             order: sequence.order,
+            cross: sequence
+                .cross
+                .iter()
+                .map(|zone| Arc::<str>::from(zone.id.as_str()))
+                .collect::<Vec<_>>()
+                .into(),
+            trace_units: sequence_trace_units(&sequence.steps, &header.acquire),
             steps,
         });
     }
@@ -1091,6 +1598,7 @@ pub(super) fn compile_uncached(
         role: role.role.clone(),
         kind: document.kind,
         partner: document.partner.clone(),
+        prereq: document.prereq.options(),
         display_name: Arc::from(document.display_name.as_str()),
         tested_stats: document.tested_stats.as_deref().map(Arc::from),
         digest,
@@ -1198,10 +1706,66 @@ fn resolve_bank_item_with_stackable(
     ))
 }
 
+fn step_compile_error(
+    step: &StepDocument,
+    document: &PathDocument,
+    code: &'static str,
+) -> CompileError {
+    let mut error = CompileError::code(code).with_path(document.id.clone());
+    error.step = Some(step.id.clone());
+    error
+}
+
+fn compile_step_hazard(
+    step: &StepDocument,
+    document: &PathDocument,
+) -> Result<(Option<StepHazard>, Option<Arc<str>>), CompileError> {
+    let Some(hazard) = &step.hazard else {
+        return Ok((None, None));
+    };
+
+    if hazard.source.trim().is_empty() {
+        return Err(step_compile_error(
+            step,
+            document,
+            "step-hazard-source-missing",
+        ));
+    }
+    if hazard.div == 0
+        || hazard.cap == Some(0)
+        || (hazard.of != HazardStat::None && hazard.mul == 0)
+        || (hazard.of == HazardStat::None && (hazard.mul != 0 || hazard.plus < 1))
+    {
+        return Err(step_compile_error(step, document, "step-hazard-bound"));
+    }
+
+    if matches!(step.kind.as_str(), "walk" | "combat") {
+        return Err(step_compile_error(
+            step,
+            document,
+            "step-hazard-unsupported",
+        ));
+    }
+
+    let compiled = StepHazard {
+        of: hazard.of,
+        mul: hazard.mul,
+        div: hazard.div,
+        plus: hazard.plus,
+        cap: hazard.cap,
+    };
+    if !(1..=99).any(|hp| compiled.max_damage(hp, hp) >= 1) {
+        return Err(step_compile_error(step, document, "step-hazard-bound"));
+    }
+
+    Ok((Some(compiled), Some(Arc::from(hazard.source.as_str()))))
+}
+
 fn compile_steps(
     steps: &[StepDocument],
     cx: &CompileContext<'_>,
     document: &PathDocument,
+    supports_attempt_budget: bool,
 ) -> Result<Vec<CompiledStep>, CompileError> {
     let mut out = Vec::new();
     let mut ids = std::collections::HashSet::new();
@@ -1226,6 +1790,29 @@ fn compile_steps(
                 source: None,
             });
         }
+        let step_error = |code: &'static str| {
+            let mut error = CompileError::code(code).with_path(document.id.clone());
+            error.step = Some(step.id.clone());
+            error
+        };
+        if !supports_attempt_budget && (step.max_attempts.is_some() || step.stop.is_some()) {
+            return Err(step_error("step-attempt-budget-unsupported"));
+        }
+        let attempt_budget = match (step.max_attempts, step.stop.as_deref()) {
+            (None, None) => None,
+            (Some(0), _) => return Err(step_error("step-max-attempts-zero")),
+            (Some(max_attempts), Some(_)) if max_attempts > super::path::MAX_STEP_ATTEMPTS => {
+                return Err(step_error("step-max-attempts-too-large"));
+            }
+            (Some(max_attempts), Some(stop)) if !stop.trim().is_empty() => {
+                Some(StepAttemptBudget {
+                    max_attempts,
+                    stop: Arc::from(stop),
+                })
+            }
+            (Some(_), _) => return Err(step_error("step-max-attempts-needs-stop")),
+            (None, Some(_)) => return Err(step_error("step-stop-without-max-attempts")),
+        };
         let handler = step_handlers()
             .find(|handler| handler.kind == step.kind && handler.version == step.version)
             .ok_or_else(|| CompileError {
@@ -1236,6 +1823,7 @@ fn compile_steps(
                 detail: None,
                 source: None,
             })?;
+        let (hazard, hazard_source) = compile_step_hazard(step, document)?;
         if handler.advance == AdvanceClass::Explicit && step.advances.is_none() {
             let mut error =
                 CompileError::code("advances-undeclared").with_path(document.id.clone());
@@ -1319,10 +1907,13 @@ fn compile_steps(
                 })
                 .flatten(),
             advances: step.advances.unwrap_or(false),
+            attempt_budget,
             skip_if,
             skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
             plan,
+            hazard,
+            hazard_source,
         });
     }
     Ok(out)
@@ -1542,6 +2133,53 @@ fn collect_settled_items(
 }
 const MAX_RECIPE_NESTING_DEPTH: usize = 32;
 
+/// Distinct trace lines one stage can log: one per step of the stage, plus one
+/// per step of every recipe an `acquire` step runs, counting a nested recipe's
+/// steps through its own `acquire` children. The compile step and the trace's
+/// per-stage budget must agree on this count, so both read it here.
+pub(crate) fn sequence_trace_units(
+    steps: &[StepDocument],
+    recipes: &std::collections::BTreeMap<String, Vec<StepDocument>>,
+) -> usize {
+    let mut memo = HashMap::new();
+    steps
+        .iter()
+        .map(|step| 1usize.saturating_add(step_recipe_units(step, recipes, &mut memo, 0)))
+        .fold(0, usize::saturating_add)
+}
+
+/// Steps one stage step adds through its recipe, if any. Each recipe's count
+/// is memoized, so a recipe shared by two branches is counted once per branch
+/// without walking it twice.
+fn step_recipe_units(
+    step: &StepDocument,
+    recipes: &std::collections::BTreeMap<String, Vec<StepDocument>>,
+    memo: &mut HashMap<String, usize>,
+    depth: usize,
+) -> usize {
+    if step.kind != "acquire" {
+        return 0;
+    }
+    let Some(recipe) = step.args.get("recipe").and_then(serde_json::Value::as_str) else {
+        return 0;
+    };
+    if let Some(units) = memo.get(recipe) {
+        return *units;
+    }
+    let Some(steps) = recipes.get(recipe) else {
+        return 0;
+    };
+    if depth >= MAX_RECIPE_NESTING_DEPTH {
+        return 0;
+    }
+    let units = steps
+        .iter()
+        .map(|step| 1usize.saturating_add(step_recipe_units(step, recipes, memo, depth + 1)))
+        .fold(0, usize::saturating_add);
+    memo.insert(recipe.to_owned(), units);
+    units
+}
+
 enum RecipeBinding {
     Active { index: usize },
     Bound { depth: usize },
@@ -1617,7 +2255,7 @@ fn compile_recipe<'a>(
     }
     let context = CompileContext { recipes, ..*base };
     let compiled: Arc<[CompiledAcquireStep]> = Arc::from(
-        compile_steps(steps, &context, document)?
+        compile_steps(steps, &context, document, false)?
             .into_iter()
             .map(|step| CompiledAcquireStep {
                 id: step.id,
@@ -1798,6 +2436,50 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "junglepotion" => Some(JUNGLE_POTION_JSON.as_bytes()),
         "seaslug" => Some(SEA_SLUG_JSON.as_bytes()),
         "totem" => Some(TRIBAL_TOTEM_JSON.as_bytes()),
+        "priest" => Some(include_str!("../../paths/289/priest.json").as_bytes()),
+        "fortress" => Some(include_str!("../../paths/289/fortress.json").as_bytes()),
+        "haunted" => Some(include_str!("../../paths/289/haunted.json").as_bytes()),
+        "fishingcompo" => Some(include_str!("../../paths/289/fishingcompo.json").as_bytes()),
+        "elemental_workshop" => {
+            Some(include_str!("../../paths/289/elemental_workshop.json").as_bytes())
+        }
+        "arthur" => Some(include_str!("../../paths/289/arthur.json").as_bytes()),
+        "zanaris" => Some(include_str!("../../paths/289/zanaris.json").as_bytes()),
+        "tree" => Some(include_str!("../../paths/289/tree.json").as_bytes()),
+        "scorpcatcher" => Some(include_str!("../../paths/289/scorpcatcher.json").as_bytes()),
+        "itgronigen" => Some(include_str!("../../paths/289/itgronigen.json").as_bytes()),
+        "blackarmgang" => Some(include_str!("../../paths/289/blackarmgang.json").as_bytes()),
+        "hero" => Some(include_str!("../../paths/289/hero.json").as_bytes()),
+        "ikov" => Some(include_str!("../../paths/289/ikov.json").as_bytes()),
+        "grail" => Some(include_str!("../../paths/289/grail.json").as_bytes()),
+        "itwatchtower" => Some(include_str!("../../paths/289/itwatchtower.json").as_bytes()),
+        "itexam" => Some(include_str!("../../paths/289/itexam.json").as_bytes()),
+        "biohazard" => Some(include_str!("../../paths/289/biohazard.json").as_bytes()),
+        "murder" => Some(include_str!("../../paths/289/murder.json").as_bytes()),
+        "ball" => Some(include_str!("../../paths/289/ball.json").as_bytes()),
+        "chompybird" => Some(include_str!("../../paths/289/chompybird.json").as_bytes()),
+        "mcannon" => Some(include_str!("../../paths/289/mcannon.json").as_bytes()),
+        "crest" => Some(include_str!("../../paths/289/crest.json").as_bytes()),
+        "arena" => Some(include_str!("../../paths/289/arena.json").as_bytes()),
+        "grandtree" => Some(include_str!("../../paths/289/grandtree.json").as_bytes()),
+        "dragon" => Some(include_str!("../../paths/289/dragon.json").as_bytes()),
+        "horror" => Some(include_str!("../../paths/289/horror.json").as_bytes()),
+        "zombiequeen" => Some(include_str!("../../paths/289/zombiequeen.json").as_bytes()),
+        "tbwt" => Some(include_str!("../../paths/289/tbwt.json").as_bytes()),
+        "druidspirit" => Some(include_str!("../../paths/289/druidspirit.json").as_bytes()),
+        "routequest" => Some(include_str!("../../paths/289/routequest.json").as_bytes()),
+        "troll" => Some(include_str!("../../paths/289/troll.json").as_bytes()),
+        "eadgar" => Some(include_str!("../../paths/289/eadgar.json").as_bytes()),
+        "troll_love" => Some(include_str!("../../paths/289/troll_love.json").as_bytes()),
+        "misc" => Some(include_str!("../../paths/289/misc.json").as_bytes()),
+        "waterfall" => Some(include_str!("../../paths/289/waterfall.json").as_bytes()),
+        "legends" => Some(include_str!("../../paths/289/legends.json").as_bytes()),
+        "sheepherder" => Some(include_str!("../../paths/289/sheepherder.json").as_bytes()),
+        "upass" => Some(include_str!("../../paths/289/upass.json").as_bytes()),
+        "regicide" => Some(include_str!("../../paths/289/regicide.json").as_bytes()),
+        "mortton" => Some(include_str!("../../paths/289/mortton.json").as_bytes()),
+        "viking" => Some(include_str!("../../paths/289/viking.json").as_bytes()),
+        "mm" => Some(include_str!("../../paths/289/mm.json").as_bytes()),
         _ => None,
     }
 }
@@ -1808,6 +2490,46 @@ pub fn cook_bytes() -> &'static [u8] {
 
 pub fn decode_cook() -> Result<PathDocument, CompileError> {
     serde_json::from_str(COOK_JSON).map_err(|_| CompileError::code("invalid-json"))
+}
+
+#[cfg(test)]
+pub(crate) fn real_nav_lease(
+    revision: api::selected::ClientRevision,
+) -> Option<&'static nav_planner::contract::NavLease> {
+    use api::selected::ClientRevision;
+    use std::sync::OnceLock;
+
+    static NAV_289: OnceLock<Option<nav_planner::contract::NavLease>> = OnceLock::new();
+    static NAV_377: OnceLock<Option<nav_planner::contract::NavLease>> = OnceLock::new();
+    let (nav, env_key, default_path) = match revision {
+        ClientRevision::R289 => (&NAV_289, "NAV_PACK", ""),
+        ClientRevision::R377 => (
+            &NAV_377,
+            "NAV_377_PACK",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/local-data/nav/377/274bot.navpack"
+            ),
+        ),
+        ClientRevision::R274 => panic!("no real revision-274 navigation fixture"),
+    };
+    nav.get_or_init(|| {
+        let description = format!("real {} nav pack", revision.as_i32());
+        let pack = if revision == ClientRevision::R377 {
+            api::test_support::local_asset_path_377(env_key, default_path, &description)?
+        } else {
+            api::test_support::local_asset_path(env_key, default_path, &description)?
+        };
+        let bytes = std::fs::read(&pack)
+            .unwrap_or_else(|error| panic!("read {description} {}: {error}", pack.display()));
+        let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+            .unwrap_or_else(|error| panic!("load {description} {}: {error}", pack.display()));
+        Some(
+            nav_planner::contract::NavLease::wrap(Arc::new(world))
+                .expect("create a lease for the real zone catalog"),
+        )
+    })
+    .as_ref()
 }
 
 #[cfg(test)]
@@ -1831,9 +2553,14 @@ mod tests {
     #[test]
     fn quester_compile_policy_timing() {
         let _home = crate::IsolatedEnv::enter("quester-compile-policy-timing");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let Some(nav) = real_nav_lease(ClientRevision::R289) else {
+            return;
+        };
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
+            let zones = nav.zones().expect("real 289 zone catalog");
             let largest = crate::quester::registry::PathRegistry::Bundled
                 .ids()
                 .into_iter()
@@ -1857,8 +2584,14 @@ mod tests {
                     b' ',
                 );
                 let started = std::time::Instant::now();
-                let result =
-                    compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent());
+                let result = compile_path(
+                    &bytes,
+                    &data,
+                    &quests,
+                    worker,
+                    &OperatorLoadouts::absent(),
+                    Some(zones),
+                );
                 eprintln!(
                     "QUESTER_COMPILE_POLICY name={name} bytes={} elapsed={:?}",
                     bytes.len(),
@@ -1875,6 +2608,7 @@ mod tests {
     #[test]
     fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
         let _home = crate::IsolatedEnv::enter("quester-compile-cache");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
@@ -1884,6 +2618,7 @@ mod tests {
                 &quests,
                 worker,
                 &OperatorLoadouts::absent(),
+                None,
             )
             .unwrap();
             let hit = compile_path(
@@ -1892,14 +2627,22 @@ mod tests {
                 &quests,
                 worker,
                 &OperatorLoadouts::absent(),
+                None,
             )
             .unwrap();
             assert!(Arc::ptr_eq(&first, &hit));
             let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
             changed["id"] = serde_json::json!("cook-cache-different");
             let bytes = serde_json::to_vec(&changed).unwrap();
-            let miss =
-                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
+            let miss = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap();
             assert!(!Arc::ptr_eq(&first, &miss));
             assert_eq!(first.id.0.as_ref(), "cook");
             assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
@@ -1913,6 +2656,7 @@ mod tests {
     #[test]
     fn gather_progress_reader_prepares_catalog_through_production_compiler() {
         let _home = crate::IsolatedEnv::enter("quester-gather-progress-reader");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         prepare_for_test(move |worker| {
             let data = selected();
             let quests = quests(&data);
@@ -1935,8 +2679,15 @@ mod tests {
             });
             document["roles"][0]["progress_reader"] = reader;
             let bytes = serde_json::to_vec(&document).unwrap();
-            let compiled =
-                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
+            let compiled = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap();
             assert_eq!(
                 compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
                 "gather-progress-reader"
@@ -1974,6 +2725,7 @@ mod tests {
 
     #[test]
     fn protected_items_union_path_gather_tools_and_every_loadout_field() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let data = selected();
         let gather_ids: std::collections::BTreeSet<_> = api::gather_tools::AXES
             .iter()
@@ -2023,6 +2775,7 @@ mod tests {
 
     #[test]
     fn path_bank_required_is_preserved_in_compiled_provisioning() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let data = selected();
         let quests = quests(&data);
@@ -2041,6 +2794,7 @@ mod tests {
 
     #[test]
     fn always_skipped_all_empty_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::All(vec![]);
         let data = selected();
@@ -2054,6 +2808,7 @@ mod tests {
 
     #[test]
     fn unknown_from_stage_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let err = compile_err(|document| {
             document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:99"));
         });
@@ -2062,6 +2817,7 @@ mod tests {
 
     #[test]
     fn from_stage_resolves_to_the_compiled_sequence_index() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:1"));
         let data = selected();
@@ -2090,6 +2846,538 @@ mod tests {
             Ok(_) => panic!("compile must fail"),
         }
     }
+    fn stage_cross_declaration(
+        id: &str,
+        name: &str,
+        reason: &str,
+    ) -> crate::quester::path::RequiredZoneDocument {
+        crate::quester::path::RequiredZoneDocument {
+            id: id.into(),
+            name: name.into(),
+            reason: reason.into(),
+        }
+    }
+
+    fn compile_with_stage_cross(
+        document: &PathDocument,
+        ids: &[&str],
+    ) -> Result<Arc<CompiledPath>, CompileError> {
+        let data = selected();
+        let quests = quests(&data);
+        let lease = stage_cross_lease(ids);
+        compile_uncached_for_test_with_zones(
+            document,
+            &data,
+            &quests,
+            lease.zones().expect("fixture zone catalog"),
+        )
+    }
+
+    fn cook_cross_walk(document: &PathDocument) -> StepDocument {
+        let mut walk = document
+            .quest
+            .as_ref()
+            .unwrap()
+            .acquire
+            .values()
+            .flatten()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk acquisition step")
+            .clone();
+        walk.id = FactKey::new("cross-test-walk");
+        walk
+    }
+
+    #[test]
+    fn stage_cross_compiles_exact_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let id = "stage-zone-0";
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            id,
+            "Stage zone",
+            "Cross to the next room.",
+        )];
+
+        let compiled = compile_with_stage_cross(&document, &[id]).unwrap();
+        assert_eq!(compiled.sequences[0].cross.len(), 1);
+        assert_eq!(compiled.sequences[0].cross[0].as_ref(), id);
+    }
+
+    #[test]
+    fn stage_cross_rejects_unknown_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "missing-zone",
+            "Missing zone",
+            "This identity is not in the selected pack.",
+        )];
+
+        let error = compile_with_stage_cross(&document, &["known-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "unknown-cross-id");
+    }
+
+    #[test]
+    fn stage_cross_requires_a_catalog_when_declarations_exist() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "stage-zone",
+            "Stage zone",
+            "Cross to the next room.",
+        )];
+        let data = selected();
+        let error = compile_uncached_for_test(&document, &data, &quests(&data))
+            .err()
+            .expect("invalid guide must fail");
+        assert_eq!(error.code.as_ref(), "cross-catalog-unavailable");
+    }
+
+    #[test]
+    fn stage_cross_rejects_duplicate_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        let declaration =
+            stage_cross_declaration("stage-zone", "Stage zone", "Cross to the next room.");
+        document.roles[0].sequences[0].cross = vec![declaration.clone(), declaration];
+
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "duplicate-cross-id");
+    }
+
+    #[test]
+    fn stage_cross_rejects_blank_ids_and_guide_text() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("  ", "Stage zone", "Cross safely.")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-id");
+
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("stage-zone", "  ", "Cross safely.")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-guide-text");
+
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("stage-zone", "Stage zone", "  ")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-guide-text");
+    }
+
+    #[test]
+    fn stage_cross_accepts_eight_ids_and_rejects_nine() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("stage-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+
+        let compiled = compile_with_stage_cross(&document, &id_refs).unwrap();
+        assert_eq!(
+            compiled.sequences[0]
+                .cross
+                .iter()
+                .map(|id| id.as_ref())
+                .collect::<Vec<_>>(),
+            id_refs[..nav_planner::contract::MAX_ZONE_KEYS].to_vec(),
+        );
+
+        document.roles[0].sequences[0]
+            .cross
+            .push(stage_cross_declaration(
+                id_refs[nav_planner::contract::MAX_ZONE_KEYS],
+                "Stage zone",
+                "Cross to the next room.",
+            ));
+        let error = compile_with_stage_cross(&document, &id_refs)
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "too-many-stage-cross");
+    }
+    #[test]
+    fn stage_cross_defaults_to_empty_without_a_catalog() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let document = decode_cook().unwrap();
+        assert!(document.roles[0]
+            .sequences
+            .iter()
+            .all(|sequence| sequence.cross.is_empty()));
+
+        let data = selected();
+        let compiled = compile_uncached_for_test(&document, &data, &quests(&data)).unwrap();
+        assert!(compiled
+            .sequences
+            .iter()
+            .all(|sequence| sequence.cross.is_empty()));
+    }
+
+    #[test]
+    fn walk_rejects_step_danger_override_with_stage_level_guidance() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let error = compile_err(|document| {
+            let mut walk = cook_cross_walk(document);
+            walk.args["allow_danger_zones"] = serde_json::json!(true);
+            document.roles[0].sequences[0].steps.push(walk);
+        });
+        assert_eq!(error.code.as_ref(), "invalid-args");
+        assert_eq!(error.step, Some(FactKey::new("cross-test-walk")));
+        let detail = error
+            .detail
+            .as_deref()
+            .expect("the error explains the field");
+        assert!(detail.contains("allow_danger_zones"), "{detail}");
+        assert!(detail.contains("stage-level `cross`"), "{detail}");
+    }
+
+    #[test]
+    fn step_cross_rejects_unknown_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        let mut walk = cook_cross_walk(&document);
+        walk.args["cross"] = serde_json::json!(["missing-zone"]);
+        document.roles[0].sequences[0].steps.push(walk);
+
+        let error = compile_with_stage_cross(&document, &["known-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "unknown-cross-id");
+        assert_eq!(error.step, Some(FactKey::new("cross-test-walk")));
+    }
+
+    #[test]
+    fn step_cross_requires_a_catalog_when_declarations_exist() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        let mut walk = cook_cross_walk(&document);
+        walk.args["cross"] = serde_json::json!(["known-zone"]);
+        document.roles[0].sequences[0].steps.push(walk);
+
+        let data = selected();
+        let error = compile_uncached_for_test(&document, &data, &quests(&data))
+            .err()
+            .expect("invalid guide must fail");
+        assert_eq!(error.code.as_ref(), "cross-catalog-unavailable");
+    }
+
+    #[test]
+    fn non_route_cross_arguments_are_not_route_authority() {
+        let document = decode_cook().unwrap();
+        let role = &document.roles[0];
+        let sequence = &role.sequences[0];
+        let mut talk = sequence
+            .steps
+            .iter()
+            .find(|step| step.kind == "talk")
+            .expect("Cook has a talk step")
+            .clone();
+        talk.args["cross"] = serde_json::json!(["missing-zone"]);
+
+        validate_step_cross(&document, role, &talk, Some(sequence), None)
+            .expect("unrelated family data is not route consent");
+    }
+
+    #[test]
+    fn nested_step_cross_is_checked_in_every_authored_step_list() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        for location in ["acquire", "prelude", "progress_reader", "sequence"] {
+            let mut document = decode_cook().unwrap();
+            let mut walk = cook_cross_walk(&document);
+            walk.id = FactKey::new("parent-route");
+            walk.args["nested"] = serde_json::json!({
+                "route": {
+                    "id": "nested-route",
+                    "kind": "walk",
+                    "version": 1,
+                    "args": { "cross": ["missing-zone"] },
+                    "skip_if": { "Any": [] },
+                    "settle": { "Any": [] }
+                }
+            });
+            match location {
+                "acquire" => {
+                    document
+                        .quest
+                        .as_mut()
+                        .unwrap()
+                        .acquire
+                        .insert("acquire:cross-test".into(), vec![walk.clone()]);
+                }
+                "prelude" => document.roles[0].prelude.push(walk.clone()),
+                "progress_reader" => document.roles[0].progress_reader = Some(walk.clone()),
+                "sequence" => document.roles[0].sequences[0].steps.push(walk.clone()),
+                _ => unreachable!(),
+            }
+
+            let error = compile_with_stage_cross(&document, &["known-zone"])
+                .err()
+                .expect("invalid zone declaration must fail");
+            assert_eq!(error.code.as_ref(), "unknown-cross-id", "{location}");
+            assert_eq!(error.step, Some(FactKey::new("nested-route")), "{location}");
+        }
+    }
+
+    #[test]
+    fn step_and_stage_cross_union_is_limited_to_eight_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("route-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+        let mut walk = cook_cross_walk(&document);
+        walk.args["cross"] =
+            serde_json::json!([id_refs[0], id_refs[nav_planner::contract::MAX_ZONE_KEYS],]);
+        document.roles[0].sequences[0].steps.push(walk);
+
+        let error = compile_with_stage_cross(&document, &id_refs)
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "too-many-route-cross");
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("9 unique cross ids"));
+    }
+
+    #[test]
+    fn step_and_stage_cross_union_deduplicates_shared_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let ids: Vec<_> = (0..nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("route-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+        let mut walk = cook_cross_walk(&document);
+        walk.args["cross"] = serde_json::json!([id_refs[0]]);
+        document.roles[0].sequences[0].steps.push(walk);
+
+        compile_with_stage_cross(&document, &id_refs)
+            .expect("the same grant from the step and stage counts only once");
+    }
+
+    #[test]
+    fn compile_cache_separates_navigation_catalog_identities() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "stage-zone",
+            "Stage zone",
+            "Cross safely.",
+        )];
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        prepare_for_test(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let first_nav = stage_cross_lease(&["stage-zone"]);
+            let first = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                first_nav.zones(),
+            )
+            .unwrap();
+
+            let second_nav = stage_cross_lease(&["stage-zone"]);
+            let second = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                second_nav.zones(),
+            )
+            .unwrap();
+
+            assert!(!Arc::ptr_eq(&first, &second));
+        });
+    }
+
+    fn find_step_mut<'a>(
+        document: &'a mut PathDocument,
+        kind: &str,
+    ) -> Option<&'a mut StepDocument> {
+        for role in &mut document.roles {
+            if let Some(step) = role.prelude.iter_mut().find(|step| step.kind == kind) {
+                return Some(step);
+            }
+            for sequence in &mut role.sequences {
+                if let Some(step) = sequence.steps.iter_mut().find(|step| step.kind == kind) {
+                    return Some(step);
+                }
+            }
+        }
+        None
+    }
+
+    fn set_step_hazard(document: &mut PathDocument, kind: &str, hazard: HazardDocument) -> FactKey {
+        let step = find_step_mut(document, kind).expect("fixture has the requested step kind");
+        step.hazard = Some(hazard);
+        step.id.clone()
+    }
+
+    fn hazard_document(
+        of: HazardStat,
+        mul: u8,
+        div: u8,
+        plus: i8,
+        cap: Option<u8>,
+        source: &str,
+    ) -> HazardDocument {
+        HazardDocument {
+            of,
+            mul,
+            div,
+            plus,
+            cap,
+            source: source.to_owned(),
+        }
+    }
+
+    fn compile_document(document: &PathDocument) -> Result<Arc<CompiledPath>, CompileError> {
+        let data = selected();
+        let quest_catalog = quests(&data);
+        compile_uncached_for_test(document, &data, &quest_catalog)
+    }
+
+    fn compile_document_error(document: &PathDocument) -> CompileError {
+        match compile_document(document) {
+            Err(error) => error,
+            Ok(_) => panic!("Path unexpectedly compiled"),
+        }
+    }
+
+    #[test]
+    fn step_hazard_requires_source_bounds_and_a_supported_family() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        const SOURCE: &str = "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:87-91";
+        let mut fixture = decode_cook().unwrap();
+        let mut interact = fixture.quest.as_ref().unwrap().acquire["acquire:egg"][0].clone();
+        interact.id = FactKey::new("hazard-interact");
+        fixture.roles[0].prelude.push(interact);
+        let cases = [
+            (
+                hazard_document(HazardStat::None, 0, 1, 7, None, ""),
+                "step-hazard-source-missing",
+            ),
+            (
+                hazard_document(HazardStat::None, 0, 0, 7, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Base, 1, 10, 0, Some(0), SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Current, 0, 100, 1, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::None, 0, 1, 0, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::None, 1, 1, 7, None, SOURCE),
+                "step-hazard-bound",
+            ),
+            (
+                hazard_document(HazardStat::Current, 1, 100, 0, None, SOURCE),
+                "step-hazard-bound",
+            ),
+        ];
+        for (hazard, expected_code) in cases {
+            let mut document = fixture.clone();
+            let step_id = set_step_hazard(&mut document, "interact", hazard);
+            let error = compile_document_error(&document);
+            assert_eq!(error.code.as_ref(), expected_code);
+            assert_eq!(error.step.as_ref(), Some(&step_id));
+        }
+
+        let mut document = fixture;
+        let step_id = set_step_hazard(
+            &mut document,
+            "interact",
+            hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE),
+        );
+        let compiled = compile_document(&document).unwrap();
+        let step = compiled
+            .prelude
+            .iter()
+            .chain(
+                compiled
+                    .sequences
+                    .iter()
+                    .flat_map(|sequence| &sequence.steps),
+            )
+            .find(|step| step.id == step_id)
+            .expect("compiled interaction step");
+        assert_eq!(
+            step.hazard,
+            Some(StepHazard {
+                of: HazardStat::Base,
+                mul: 1,
+                div: 10,
+                plus: 0,
+                cap: Some(3),
+            })
+        );
+        assert_eq!(step.hazard_source.as_deref(), Some(SOURCE));
+
+        let mut walk_document = decode_cook().unwrap();
+        let walk = find_step_mut(&mut walk_document, "talk").expect("Cook has a talk step");
+        walk.kind = "walk".into();
+        walk.hazard = Some(hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE));
+        let walk_id = walk.id.clone();
+        let error = compile_document_error(&walk_document);
+        assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
+        assert_eq!(error.step.as_ref(), Some(&walk_id));
+
+        let mut combat_document = decode_cook().unwrap();
+        let combat = find_step_mut(&mut combat_document, "talk").expect("Cook has a talk step");
+        combat.kind = "combat".into();
+        combat.hazard = Some(hazard_document(HazardStat::Base, 1, 10, 0, Some(3), SOURCE));
+        let combat_id = combat.id.clone();
+        let error = compile_document_error(&combat_document);
+        assert_eq!(error.code.as_ref(), "step-hazard-unsupported");
+        assert_eq!(error.step.as_ref(), Some(&combat_id));
+    }
+
+    #[test]
+    fn compiled_step_stride_accounts_for_typed_hazard_fields() {
+        assert_eq!(std::mem::size_of::<StepHazard>(), 6);
+        assert_eq!(std::mem::size_of::<Option<StepHazard>>(), 6);
+        assert_eq!(std::mem::size_of::<Option<Arc<str>>>(), 16);
+        assert_eq!(std::mem::size_of::<Option<StepAttemptBudget>>(), 24);
+        assert_eq!(std::mem::size_of::<CompiledStep>(), 192);
+    }
 
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
         StepDocument {
@@ -2099,13 +3387,17 @@ mod tests {
             args: serde_json::json!({"recipe": recipe}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
+            hazard: None,
         }
     }
 
     #[test]
     fn recipe_peak_retains_use_on_source_without_explicit_absence() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let document = decode_cook().unwrap();
         let data = selected();
         let quests = quests(&data);
@@ -2143,6 +3435,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_forward_and_shared_dependencies_resolve() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-recipe-forward");
         let mut document = decode_cook().unwrap();
         let header = document.quest.as_mut().unwrap();
@@ -2180,6 +3473,7 @@ mod tests {
     #[test]
     fn acquire_recipe_cycle_names_the_cycle() {
         let _home = crate::IsolatedEnv::enter("quester-recipe-cycle");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             let recipes = &mut document.quest.as_mut().unwrap().acquire;
             recipes.insert(
@@ -2202,6 +3496,7 @@ mod tests {
     #[test]
     fn acquire_recipe_missing_dependency_stays_unresolved_recipe() {
         let _home = crate::IsolatedEnv::enter("quester-recipe-missing");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             document.quest.as_mut().unwrap().acquire.insert(
                 "acquire:root".into(),
@@ -2213,6 +3508,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_depth_limit_is_order_independent() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-recipe-depth");
         let data = selected();
         let quests = quests(&data);
@@ -2428,6 +3724,7 @@ mod tests {
 
     #[test]
     fn schema_three_accepts_schema_reference_and_rejects_schema_two() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-three");
         let document = decode_cook().unwrap();
         assert_eq!(document.schema, super::super::path::PATH_SCHEMA);
@@ -2439,6 +3736,7 @@ mod tests {
 
     #[test]
     fn explicit_steps_require_advances_and_progress_settles_require_true() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-explicit-advances");
         let missing = compile_err(|document| {
             let step = document
@@ -2471,9 +3769,65 @@ mod tests {
         });
         assert_eq!(contradiction.code.as_ref(), "settle-needs-advance");
     }
+    #[test]
+    fn step_attempt_budget_requires_positive_bounded_limit_and_nonblank_stop() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let _home = crate::IsolatedEnv::enter("quester-step-attempt-budget");
+        for (max_attempts, stop, expected) in [
+            (Some(0u32), Some("retry-stop"), "step-max-attempts-zero"),
+            (
+                Some(crate::quester::path::MAX_STEP_ATTEMPTS + 1),
+                Some("retry-stop"),
+                "step-max-attempts-too-large",
+            ),
+            (Some(1), None, "step-max-attempts-needs-stop"),
+            (Some(1), Some(" \t"), "step-max-attempts-needs-stop"),
+            (None, Some("retry-stop"), "step-stop-without-max-attempts"),
+        ] {
+            let error = compile_err(|document| {
+                let step = document
+                    .roles
+                    .iter_mut()
+                    .flat_map(|role| &mut role.sequences)
+                    .flat_map(|sequence| &mut sequence.steps)
+                    .find(|step| step.kind == "talk")
+                    .expect("Cook has a default talk step");
+                step.max_attempts = max_attempts;
+                step.stop = stop.map(str::to_owned);
+            });
+            assert_eq!(error.code.as_ref(), expected);
+        }
+    }
+
+    #[test]
+    fn attempt_budgets_are_rejected_for_recipes_and_progress_readers() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let recipe = compile_err(|document| {
+            let step = &mut document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .get_mut("acquire:egg")
+                .expect("Cook has an egg recipe")[0];
+            step.max_attempts = Some(2);
+            step.stop = Some("recipe-stop".into());
+        });
+        assert_eq!(recipe.code.as_ref(), "step-attempt-budget-unsupported");
+
+        let reader = compile_err(|document| {
+            let mut step = document.roles[0].sequences[0].steps[0].clone();
+            step.id = FactKey::new("budgeted-progress-reader");
+            step.max_attempts = Some(2);
+            step.stop = Some("reader-stop".into());
+            document.roles[0].progress_reader = Some(step);
+        });
+        assert_eq!(reader.code.as_ref(), "step-attempt-budget-unsupported");
+    }
 
     #[test]
     fn default_steps_allow_omitted_advances_and_dynamic_quantity_settles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-default-advances");
         let mut document = decode_cook().unwrap();
         let walk = StepDocument {
@@ -2486,8 +3840,11 @@ mod tests {
             }),
             comment: None,
             advances: None,
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::Any(vec![]),
+            hazard: None,
         };
         document.roles[0].prelude = vec![walk];
         let data = selected();
@@ -2514,8 +3871,7 @@ mod tests {
 
     #[test]
     fn path_walk_crossing_and_protection_compile_independently() {
-        let data = selected();
-        let quests = quests(&data);
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for args in [
             serde_json::json!({
                 "tile": [3224, 3200, 0],
@@ -2544,13 +3900,14 @@ mod tests {
                 version: 1,
                 args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
             };
-            compile_uncached_for_test(&document, &data, &quests)
+            compile_with_stage_cross(&document, &["death-plateau-throwers"])
                 .expect("a named crossing or protection does not require the other");
         }
     }
 
     #[test]
     fn path_walk_cross_with_protect_guard_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "walk".into();
@@ -2571,14 +3928,13 @@ mod tests {
             version: 1,
             args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
         };
-        let data = selected();
-        let quests = quests(&data);
-        compile_uncached_for_test(&document, &data, &quests)
+        compile_with_stage_cross(&document, &["death-plateau-throwers"])
             .expect("guard protect admits a named zone crossing");
     }
 
     #[test]
     fn unknown_handler_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let err = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].kind = "no_such_family".into();
         });
@@ -2587,6 +3943,7 @@ mod tests {
 
     #[test]
     fn unresolved_npc_obj_loc_and_area_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-unresolved-alias-details");
         let npc = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].args["npc"] = serde_json::json!("no_such_npc");
@@ -2635,6 +3992,7 @@ mod tests {
 
     #[test]
     fn empty_nonterminal_and_duplicate_step_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         assert_eq!(
             compile_err(|document| {
                 document.roles[0].sequences[0].steps.clear();
@@ -2656,6 +4014,7 @@ mod tests {
 
     #[test]
     fn prelude_over_four_steps_warns() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let step = document.roles[0].sequences[0].steps[0].clone();
         document.roles[0].prelude = (0..5)
@@ -2677,6 +4036,7 @@ mod tests {
 
     #[test]
     fn invalid_header_references_and_ignored_step_args_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for edit in [
             |d: &mut PathDocument| d.quest.as_mut().unwrap().items[0].obj = "bucket_milkk".into(),
             |d: &mut PathDocument| {
@@ -2720,6 +4080,7 @@ mod tests {
 
     #[test]
     fn predicate_argument_typos_do_not_silently_compile() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for (kind, mut args) in [
             ("npc_present", serde_json::json!({"npc":"cook"})),
             ("loc_present", serde_json::json!({"loc":"wheat"})),
@@ -2749,6 +4110,7 @@ mod tests {
 
     #[test]
     fn progress_program_compiles_and_validates_authored_rules() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let progress = document.roles[0].progress.as_mut().unwrap();
         progress
@@ -2790,6 +4152,7 @@ mod tests {
 
     #[test]
     fn progress_program_rejects_bad_needles_counts_and_bindings() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         assert_eq!(
             compile_err(|document| {
                 document.roles[0].progress.as_mut().unwrap().rules.push(
@@ -2879,6 +4242,7 @@ mod tests {
     }
     #[test]
     fn progress_predicate_errors_keep_path_context() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
                 kind: "stage_in".into(),
@@ -2893,6 +4257,7 @@ mod tests {
 
     #[test]
     fn compiled_loadout_carry_preserves_authored_alias_identity() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-carry-alias-identity");
         let data = selected();
         let quests = quests(&data);
@@ -2988,6 +4353,7 @@ mod tests {
 
     #[test]
     fn alias_loadout_compiles_and_begins_application() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-alias-loadout");
         let data = selected();
         let quests = quests(&data);
@@ -3028,6 +4394,7 @@ mod tests {
 
     #[test]
     fn certificate_worn_header_loadout_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-cert-worn-header");
         let data = selected();
         let certificate = data.item_by_alias("cert_rune_scimitar").unwrap();
@@ -3051,6 +4418,7 @@ mod tests {
 
     #[test]
     fn certificate_carry_header_loadout_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-cert-carry-header");
         let data = selected();
         let certificate = data.item_by_alias("cert_lobster").unwrap();
@@ -3074,6 +4442,7 @@ mod tests {
 
     #[test]
     fn all_released_s2_paths_compile() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let data = selected();
         let quests = quests(&data);
         for (id, json) in [
@@ -3116,6 +4485,7 @@ mod tests {
 
     #[test]
     fn uncovered_authored_tile_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].args["anchor"]["tile"] =
             serde_json::json!([0, 0, 0]);

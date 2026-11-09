@@ -238,11 +238,11 @@ fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
 
 fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWorld>) {
     for _ in 0..3 {
-        queue_inspect(
+        queue_inspect_shared(
             navs,
             "p",
             &Some(Arc::clone(world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -683,7 +683,7 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
 }
 
 #[test]
-fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
+fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
     let from = tile(0, 0, 0);
     let destination = tile(4, 0, 1);
     let mut graph = TransportGraph::default();
@@ -704,7 +704,20 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
         }],
     );
     let cache = named_cache();
-    let state = Arc::new(WorldState::empty());
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let here = Some((from.x, from.z, from.level));
+    let mut slot_cache = crate::script_runtime::NavWorldStateCache::default();
+    let state = crate::script_runtime::nav_world_state_for_observe(
+        &mut slot_cache,
+        here,
+        &snapshot,
+        true,
+        false,
+        false,
+        1,
+    )
+    .expect("active slot has cached navigation facts");
+    assert_eq!(Arc::strong_count(&state), 2, "slot cache retains its Arc");
     let bank = BankRows {
         origin: Origin::Session,
         rows: vec![(995, 10)],
@@ -740,21 +753,33 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut request = req(from, destination, 57);
     request.allow_bank_fetch = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&*state),
+        Some(&state),
         bank,
         Some(cache),
         None,
         request,
     );
     let actual = wait_latest(&navs, 57);
+    let cached_again = crate::script_runtime::nav_world_state_for_observe(
+        &mut slot_cache,
+        here,
+        &snapshot,
+        true,
+        false,
+        false,
+        1,
+    )
+    .expect("active slot retains cached navigation facts");
+    assert!(Arc::ptr_eq(&state, &cached_again), "cache entry stays live");
     assert_eq!(
         actual, expected,
         "cooperative bank-fetch/post-route outcome"
     );
+    assert!(actual.ok && actual.bank_planned, "bank deltas were applied");
     assert!(
         actual.hops.owner.is_some(),
         "published hops borrow the compact result"
@@ -829,11 +854,11 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut request = req(from, destination, 58);
     request.allow_bank_fetch = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&*state),
+        Some(&state),
         bank,
         Some(cache),
         None,
@@ -853,11 +878,11 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
 fn cooperative_work_service_publishes_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -880,11 +905,11 @@ fn inspection_publication_retries_when_owner_ledger_is_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let request_id = 93;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -975,11 +1000,11 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let request_id = 94;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1050,11 +1075,11 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
 fn reset_abandons_accepted_inspection_and_fences_generation() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1070,11 +1095,11 @@ fn reset_abandons_accepted_inspection_and_fences_generation() {
         assert!(bot.inspect.latest.is_none());
         bot.inspect.generation
     };
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1117,11 +1142,11 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
     let _service_override = InspectionWorkServiceOverride::install(Arc::clone(&service));
     let baseline = service.lock().capacity();
 
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1188,11 +1213,11 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
     }
 
     const REPLACEMENT_ID: u64 = 24;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1232,32 +1257,32 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
 fn pending_replace_publishes_stale_for_replaced_request() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), 41),
     );
     wait_running(&navs, 41);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(2, 2, 0), 42),
     );
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1333,7 +1358,7 @@ fn invalid_args_and_missing_graph() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut bad = req(tile(0, 0, 9), tile(1, 1, 0), 51);
     bad.invalid_args = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &None,
@@ -1355,7 +1380,7 @@ fn invalid_args_and_missing_graph() {
             .reason,
         "invalid-args"
     );
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &None,
@@ -1383,11 +1408,11 @@ fn invalid_args_and_missing_graph() {
 fn abort_script_walk_does_not_cancel_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1949,11 +1974,11 @@ fn admission_refuses_fourth_when_ring_and_held_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for id in 1..=3 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -1969,11 +1994,11 @@ fn admission_refuses_fourth_when_ring_and_held_full() {
         assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
         assert_eq!(bot.inspect.accepted_id, 3);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2009,11 +2034,11 @@ fn apply_ack_rejects_future_and_wrong_generation() {
 fn request_id_zero_publishes_preview() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2053,11 +2078,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for id in 1..=3 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2065,11 +2090,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
         );
         let _ = wait_latest(&navs, id);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2090,11 +2115,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
         let latest = bot.inspect.latest.as_ref().unwrap().seq;
         bot.inspect.apply_ack(latest, bot.inspect.generation);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2118,11 +2143,11 @@ fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
             bot.inspect.refused,
         )
     };
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2143,22 +2168,22 @@ fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
 fn duplicate_running_id_does_not_double_reserve() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), 81),
     );
     wait_running(&navs, 81);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2230,9 +2255,11 @@ fn publish_overflow_panics_when_held_full() {
 #[cfg(feature = "js")]
 fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
     use {
-        script_js::wire::encode_snapshot_with_native, script_js::wire::NativeFactsInput,
-        script_js::wire::ReachViewInput, script_js::wire::RouteInspectFactsInput,
-        script_js::wire::SnapshotInput,
+        script::native::snapshot_source::NativeFactsInput,
+        script::native::snapshot_source::ReachViewInput,
+        script::native::snapshot_source::RouteInspectFactsInput,
+        script::native::snapshot_source::SnapshotInput,
+        script_js::wire::encode_snapshot_with_native,
     };
     let latest_hops = nav
         .latest
@@ -2387,7 +2414,9 @@ fn drain_inspect_acks(iso: &script_js::LoadIsolate) -> Vec<(u64, u64)> {
     iso.drain_interacts()
         .into_iter()
         .filter_map(|req| match req {
-            script::shim::InteractReq::InspectAck { seq, generation } => Some((seq, generation)),
+            script::interact::InteractReq::InspectAck { seq, generation } => {
+                Some((seq, generation))
+            }
             _ => None,
         })
         .collect()
@@ -2414,7 +2443,7 @@ fn isolate_begin_and_authorize(
     let forwarded = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id, .. } if request_id == token
+            script::interact::InteractReq::InspectRoute { request_id, .. } if request_id == token
         )
     });
     forwarded.then_some(token)
@@ -2467,33 +2496,33 @@ export function tick() {}
 
     let a = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 1, 0));
     let b = inspect_begin_at(&iso, tile(0, 0, 0), tile(2, 2, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), a),
     );
     wait_running(&navs, a);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(2, 2, 0), b),
     );
     let c = inspect_begin_at(&iso, tile(0, 0, 0), tile(3, 3, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2550,11 +2579,11 @@ export function tick() {}
     assert!(!navs.lock().unwrap().get("p").unwrap().inspect.executing);
 
     let d = inspect_begin_at(&iso, tile(0, 0, 0), tile(4, 4, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2562,11 +2591,11 @@ export function tick() {}
     );
     wait_running(&navs, d);
     let e = inspect_begin_at(&iso, tile(0, 0, 0), tile(5, 5, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2589,11 +2618,11 @@ export function tick() {}
     assert!(inspect_settled(&iso, e));
 
     let f = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 2, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2601,11 +2630,11 @@ export function tick() {}
     );
     let _ = wait_latest(&navs, f);
     let g = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 3, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2613,11 +2642,11 @@ export function tick() {}
     );
     let _ = wait_latest(&navs, g);
     let h = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 4, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2667,11 +2696,11 @@ export function tick() {}
         .latest
         .as_ref()
         .map(|t| t.request_id);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2693,7 +2722,7 @@ export function tick() {}
     let leaked = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id: 99, .. }
+            script::interact::InteractReq::InspectRoute { request_id: 99, .. }
         )
     });
     assert!(!leaked, "invented token must not reach the host queue");
@@ -2713,11 +2742,11 @@ export function tick() {}
     assert!(!inspect_settled(&iso, hold_tok));
 
     let live = inspect_begin_at(&iso, tile(0, 0, 0), tile(7, 7, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2778,11 +2807,11 @@ fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     let dest = tile(2, 3, 1);
     let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 1)
         .expect("authorize must succeed when isolate has not seen host fullness");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2823,11 +2852,11 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     {
         let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 10 + i as u64)
             .expect("registered begin while isolate unsettled < 3");
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2849,11 +2878,11 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     let dest = tile(2, 5, 1);
     let next = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 20)
         .expect("new begin after timeout; isolate has not observed host fullness");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2886,11 +2915,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for i in 0..6u64 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2912,11 +2941,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
         let dest = tile(2, 6 + i as i32, 1);
         let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 30 + i)
             .expect("ACK progress must keep registered begin authorizable");
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2935,11 +2964,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let dest = tile(2, 20, 1);
     let after = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 51)
         .expect("ACK after id0 fill must admit registered traffic");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -3016,6 +3045,9 @@ impl api::interact::Driver for CaptureDriver {
 
 #[test]
 fn native_observation_without_compat_harvests_completed_inspection() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Observer;
     impl script::native::Script for Observer {
         fn tick(
@@ -3037,11 +3069,11 @@ fn native_observation_without_compat_harvests_completed_inspection() {
         assert!(!slot.surface_active(), "there is no active compat isolate");
     }
     let request_id = 94;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &world,
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -3090,52 +3122,32 @@ fn native_observation_without_compat_harvests_completed_inspection() {
 
 fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)> {
     const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
-    const CONFIG_SHA256: &str = "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce";
-    const FLAGS_SHA256: &str = "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a";
-    const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
-    use sha2::Digest as _;
-    let pack = script::ctx::test_support::local_asset_path(
-        "WORLD_NAV_PACK",
-        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-        "reviewed real 289 navpack",
-    )?;
-    let snapshot_root = script::ctx::test_support::local_asset_path(
-        "BOT_NAV_SNAPSHOT_ROOT",
-        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
-        "decoded 289 cache snapshot root",
-    )?;
-
-    let pack_manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),
-    )
-    .expect("valid pack manifest");
-    assert_eq!(pack_manifest["revision"], 289);
-    assert_eq!(pack_manifest["cache_id"], PACK_CACHE_ID);
-    for extension in ["navflags", "navreach", "navcanlight", "navpois"] {
-        assert!(
-            pack.with_extension(extension).is_file(),
-            "missing real-content sidecar .{extension}"
-        );
-    }
+    let pack = api::test_support::local_asset_path("WORLD_NAV_PACK",
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
+    "reviewed real 289 navpack",)?;
+    let snapshot_root = api::test_support::local_asset_path("BOT_NAV_SNAPSHOT_ROOT",
+    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
+    "decoded 289 cache snapshot root",)?;
 
     let cache_dir = snapshot_root.join(CACHE_VERSION_HASH);
-    let versionlist =
-        std::fs::read(cache_dir.join("versionlist")).expect("matching decoded versionlist");
-    assert_eq!(
-        client::unpack::version_hash(&versionlist),
-        CACHE_VERSION_HASH
-    );
-    let config_bytes =
-        std::fs::read(cache_dir.join("config")).expect("matching decoded config archive");
-    let config_digest: [u8; 32] = sha2::Sha256::digest(&config_bytes).into();
-    assert_eq!(nav_planner::pack::sha256_hex(&config_digest), CONFIG_SHA256);
+    let config_path = cache_dir.join("config");
+    api::test_support::local_asset_path(
+        "",
+        &config_path.to_string_lossy(),
+        "decoded revision 289 config archive for route inspection",
+    )?;
+    let config_bytes = std::fs::read(config_path).expect("decoded config archive");
     let cache = Arc::new(Cache::unpack(&client::io::JagFile::new(config_bytes)));
     let obj_names = names(&cache);
 
     let mut loaded_world = NavWorld::load_pack(&pack).expect("real revision-289 navpack");
-    let flags = nav_planner::pack::read_flags_sidecar(&pack.with_extension("navflags"), true)
-        .expect("matching raw flags sidecar");
-    assert_eq!(flags.content_sha256.as_deref(), Some(FLAGS_SHA256));
+    let flags_path = pack.with_extension("navflags");
+    api::test_support::local_asset_path(
+        "",
+        &flags_path.to_string_lossy(),
+        "raw revision 289 flags for route inspection",
+    )?;
+    let flags = nav_planner::pack::read_flags_sidecar(&flags_path).expect("raw flags sidecar");
     assert_eq!(flags.origin, loaded_world.collision.origin);
     assert_eq!(
         (flags.width, flags.height),
@@ -3147,14 +3159,14 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
     Some((Arc::new(loaded_world), cache, obj_names))
 }
 
-/// Deterministic old/new inspection handoff over the pinned real revision-289
-/// content. Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
+/// Deterministic old/new inspection handoff over local revision-289 content.
+/// Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
 /// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
 #[cfg(feature = "js")]
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
-    let Some(old_capture) = script::ctx::test_support::local_asset_path(
+    let Some(old_capture) = api::test_support::local_asset_path(
         "T5W_INSPECT_CAPTURE_BASELINE",
         "/Volumes/dev-scratch/274bot-evidence/TRACK-T5/T5W/inspection-old-capture-r5/inspect.fb",
         "immutable old inspection capture",
@@ -3244,11 +3256,11 @@ fn real_content_inspection_capture_bytes() {
         .expect("native observation slot starts");
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let world_arg = Some(Arc::clone(&world));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &world_arg,
-        Some(&*capture.state),
+        Some(&capture.state),
         BankRows::default(),
         Some(Arc::clone(&cache)),
         Some(Arc::clone(&obj_names)),
@@ -3327,7 +3339,7 @@ fn real_content_inspection_capture_bytes() {
     // captured snapshot covers both terminal payloads and custody metadata.
     let missing_id = REQUEST_ID + 1;
     let missing_world: Option<Arc<NavWorld>> = None;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &missing_world,

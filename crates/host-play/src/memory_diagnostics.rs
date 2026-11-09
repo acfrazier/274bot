@@ -642,8 +642,8 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str, run_state: 
     }
 }
 
-fn pending_chop(reqs: &[script::shim::InteractReq], tick: u64) -> Option<PendingChop> {
-    let [script::shim::InteractReq::Loc {
+fn pending_chop(reqs: &[script::interact::InteractReq], tick: u64) -> Option<PendingChop> {
+    let [script::interact::InteractReq::Loc {
         id: Some(id),
         x,
         z,
@@ -692,7 +692,7 @@ fn record_chop_dispatch(
     }
 }
 
-pub(crate) fn gatherer_requests(name: &str, reqs: &[script::shim::InteractReq]) {
+pub(crate) fn gatherer_requests(name: &str, reqs: &[script::interact::InteractReq]) {
     if !GATHERER_ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -1056,7 +1056,7 @@ pub(crate) fn logs(name: &str, lines: &[String]) {
         }
     }
 }
-pub(crate) fn requests(name: &str, reqs: &[script::shim::InteractReq]) {
+pub(crate) fn requests(name: &str, reqs: &[script::interact::InteractReq]) {
     gatherer_requests(name, reqs);
     if reqs.is_empty() {
         return;
@@ -1628,7 +1628,7 @@ mod tests {
 
     #[test]
     fn chop_receipt_requires_one_exact_chop_down_request() {
-        use script::shim::InteractReq;
+        use script::interact::InteractReq;
 
         let request = || InteractReq::Loc {
             id: Some(1278),

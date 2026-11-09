@@ -3,10 +3,16 @@ use std::sync::Arc;
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
 use bank_slot::BankSlot;
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+};
 use script::native::{HostAction, HostEffect};
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadShape;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn spawn(source: impl Into<String>) -> BankSlot {
     spawn_with_facts(source, Arc::new(api::named_banks::NamedBankFacts::empty()))
@@ -138,6 +144,7 @@ fn arrive_walk(slot: &mut BankSlot, action: &HostAction, tick: u64) {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
 }
@@ -153,15 +160,74 @@ fn no_bank_candidate(slot: &mut BankSlot, action: &HostAction, tick: u64) {
                 tick,
                 sequence: tick,
             },
-            selected: script::native_bank::SelectedBank {
-                bank_index: u16::MAX,
-                access_tile: api::snapshot::WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                kind: script::native_bank::PickKind::NoCandidate,
-                access: None,
+            outcome: script::native_bank::BankPickOutcome::NoCandidate {
+                detail: std::sync::Arc::from("bank selection failed: NoPath"),
+            },
+        },
+    );
+}
+
+fn refused_bank_prerequisite(slot: &mut BankSlot, action: &HostAction, tick: u64, supported: bool) {
+    use api::prereq_steps::{ActionableGate, ConsentSwitch, CrossingId, CrossingKind};
+    use api::selected::{ClientRevision, FactKey, FamilyPreparation, QuestGate, Truth};
+
+    let gate = if supported {
+        let catalog = FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            selected.prepare_quests(worker).unwrap();
+            selected.prepare_prereq_steps(worker).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let (_, row) = catalog
+            .iter()
+            .find(|(_, row)| {
+                row.consent == ConsentSwitch::PrereqDialogue
+                    && catalog
+                        .for_journal(&QuestGate::Window(row.establishes.clone()))
+                        .is_none()
+            })
+            .expect("the shipped catalog contains a consent-gated conversation");
+        ActionableGate {
+            gate: QuestGate::Window(row.establishes.clone()),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: row.crossings[0].crossing,
+        }
+    } else {
+        let at = api::snapshot::WorldTile {
+            x: 3222,
+            z: 3218,
+            level: 0,
+        };
+        ActionableGate {
+            gate: QuestGate::Complete(FactKey::new("unsupported_bank_prerequisite")),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: CrossingId {
+                loc_id: 7,
+                option: 0,
+                at,
+                takeoff: at,
+                to: at,
+                kind: CrossingKind::Ladder,
+            },
+        }
+    };
+    let authority = action.authority();
+    slot.slot.complete_native_bank_pick(
+        &authority,
+        script::native_bank::BankPickReceipt {
+            request_id: action.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            outcome: script::native_bank::BankPickOutcome::NeedsStep {
+                gates: Arc::from([gate]),
+                allow: script::native::PrereqAllow::default(),
             },
         },
     );
@@ -295,12 +361,12 @@ fn deposit_all(id: i32, slot: i32, generation: u64) -> InteractReq {
     }
 }
 
-fn seers_booth() -> &'static script_js::wire::SceneEntityInput<'static> {
-    static BOOTH: std::sync::LazyLock<script_js::wire::SceneEntityInput<'static>> =
+fn seers_booth() -> &'static script::native::snapshot_source::SceneEntityInput<'static> {
+    static BOOTH: std::sync::LazyLock<script::native::snapshot_source::SceneEntityInput<'static>> =
         std::sync::LazyLock::new(|| {
             static OPS: std::sync::LazyLock<Vec<String>> =
                 std::sync::LazyLock::new(|| vec!["Use-quickly".to_owned()]);
-            script_js::wire::SceneEntityInput {
+            script::native::snapshot_source::SceneEntityInput {
                 index: 0,
                 id: 2213,
                 name: Some("Bank booth"),
@@ -395,7 +461,7 @@ fn stand_ready_reach() -> ReachViewInput<'static> {
     }
 }
 
-fn booth_at(x: i32, z: i32) -> script_js::wire::SceneEntityInput<'static> {
+fn booth_at(x: i32, z: i32) -> script::native::snapshot_source::SceneEntityInput<'static> {
     let mut booth = *seers_booth();
     booth.x = x;
     booth.z = z;
@@ -427,6 +493,9 @@ export default class ChickenShaped extends TaskBot {
 
 #[test]
 fn off_periodic_bank_validates_false_and_sends_nothing() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Off"));
@@ -450,6 +519,10 @@ fn off_periodic_bank_validates_false_and_sends_nothing() {
 
 #[test]
 fn combat_suppresses_loot_count_trigger() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -473,6 +546,10 @@ fn combat_suppresses_loot_count_trigger() {
 
 #[test]
 fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -581,6 +658,10 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
 
 #[test]
 fn either_label_and_loot_count_label_both_trigger() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 import { parseBankStrategy } from '../../api/bank/Banking.js';
@@ -621,6 +702,10 @@ export default class T extends TaskBot {
 /// status, destination, commonJunk and returnTo, then banks.
 #[test]
 fn validate_and_execute_call_the_options_in_frozen_order() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 export default class T extends TaskBot {
@@ -676,6 +761,10 @@ export default class T extends TaskBot {
 /// PeriodicBank.ts:46–53 forwards that destination without changing priority.
 #[test]
 fn supplied_destination_is_a_fallback_and_local_access_still_wins() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 globalThis.__after = 0;
@@ -791,6 +880,10 @@ export default class T extends TaskBot {
 
 #[test]
 fn common_junk_true_deposits_gem_false_skips_it() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 export default class T extends TaskBot {
@@ -843,6 +936,10 @@ export default class T extends TaskBot {
 
 #[test]
 fn missing_access_backs_off_without_retry_spam() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn_with_facts(CHICKEN, picker_facts());
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -866,7 +963,101 @@ fn missing_access_backs_off_without_retry_spam() {
 }
 
 #[test]
+fn needs_step_refusal_backs_off_without_retry_spam() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
+    // Cover both unsupported evidence at resolution and a supported owner
+    // refusing its conversation before it can emit without consent.
+    let supported_data_available = crate::local_game_data::local_game_data_available(289);
+    for supported in [false, true] {
+        if supported && !supported_data_available {
+            continue;
+        }
+        let mut iso = spawn_with_facts(CHICKEN, picker_facts());
+        let mut bag = serde_json::Map::new();
+        bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+        iso.post_settings_bag(&bag);
+        let mut snap = base_snapshot();
+        post_snapshot_input(&mut iso, &snap);
+        tick(&mut iso, 1, &snap);
+        let pick = one_action(&mut iso, "no-scene banking awaits the native picker");
+        assert!(matches!(&pick.effect, HostEffect::BankPick(_)));
+        refused_bank_prerequisite(&mut iso, &pick, 2, supported);
+        let mut later = Vec::new();
+        for n in 2..=6 {
+            snap.tick = n;
+            post_snapshot_input(&mut iso, &snap);
+            tick(&mut iso, n, &snap);
+            later.extend(iso.take_actions().into_iter().map(|action| action.effect));
+        }
+        assert!(
+            later.is_empty(),
+            "a refused step must retain the 180 s backoff: supported={supported}, later actions={}",
+            later.len()
+        );
+        iso.join();
+    }
+}
+
+#[test]
+fn needs_step_refusal_still_tries_the_default_nearest_booth() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
+    let supported_data_available = crate::local_game_data::local_game_data_available(289);
+    for supported in [false, true] {
+        if supported && !supported_data_available {
+            continue;
+        }
+        let mut iso = spawn_with_facts(CHICKEN, picker_facts());
+        let mut bag = serde_json::Map::new();
+        bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+        iso.post_settings_bag(&bag);
+        let mut snap = base_snapshot();
+        post_snapshot_input(&mut iso, &snap);
+        tick(&mut iso, 1, &snap);
+        let pick = one_action(&mut iso, "selection starts before a booth is in the scene");
+        assert!(matches!(&pick.effect, HostEffect::BankPick(_)));
+        refused_bank_prerequisite(&mut iso, &pick, 2, supported);
+        snap.here = Some(TileInput {
+            x: 2724,
+            z: 3490,
+            level: 0,
+        });
+        set_seers_scene(&mut snap);
+        let mut actions = Vec::new();
+        for n in 2..=6 {
+            snap.tick = n;
+            post_snapshot_input(&mut iso, &snap);
+            tick(&mut iso, n, &snap);
+            actions.extend(iso.take_actions());
+            if !actions.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(actions.len(), 1, "supported={supported}");
+        assert!(matches!(
+            &actions[0].effect,
+            HostEffect::Interaction(InteractReq::OpenBooth {
+                x: 2725,
+                z: 3490,
+                id: 2213,
+                ..
+            })
+        ));
+        iso.join();
+    }
+}
+
+#[test]
 fn pause_and_session_reset_drop_late_callback_and_sends() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -933,6 +1124,10 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
 
 #[test]
 fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -989,6 +1184,10 @@ fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
 
 #[test]
 fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -1055,6 +1254,10 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
 /// deposits through the caller's matcher once the list posts.
 #[test]
 fn bank_nearest_chest_destination_opens_through_the_access_row() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -1075,7 +1278,7 @@ export default class T extends LoopingBot {
 "#;
     let mut iso = spawn(src);
     let actions = ["Open".to_string()];
-    let chest = script_js::wire::SceneEntityInput {
+    let chest = script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2693,
         name: Some("Shantay chest"),
@@ -1146,6 +1349,10 @@ export default class T extends LoopingBot {
 /// matcher's Promise is truthy, so the first backpack row is deposited.
 #[test]
 fn synchronous_options_are_not_awaited() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 export default class T extends TaskBot {
@@ -1222,6 +1429,10 @@ export default class T extends TaskBot {
 /// the run fails closed and backs off with the frozen log line.
 #[test]
 fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     let mut iso = spawn(CHICKEN);
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -1249,6 +1460,10 @@ fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
 
 #[test]
 fn nearby_scene_booth_beats_a_distant_preset_unless_disabled() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     for prefer in [true, false] {
         let source = format!(
             r#"

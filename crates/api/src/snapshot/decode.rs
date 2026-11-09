@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "npc_377.rs"]
+mod npc_377;
+
 impl NpcView {
     fn from_slot(
         index: usize,
@@ -8,17 +11,30 @@ impl NpcView {
         level: i32,
         distance: i32,
         loop_cycle: i32,
-        cache: &Cache,
+        client: &Client,
     ) -> Self {
         let entity = &npc.entity;
-        let (name, actions, npc_level, size) = match npc.r#type.and_then(|t| cache.npcs.get(t)) {
-            Some(t) => (
-                Some(t.name.clone()),
-                t.op.clone(),
-                t.vislevel.max(0),
-                t.size,
-            ),
-            None => (None, Vec::new(), 0, entity.size),
+        let cache = &client.cache;
+        let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
+        let is_377 = client.revision() == client::io::ClientRevision::R377;
+        let form = if is_377 {
+            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
+        } else {
+            placed
+        };
+        let (name, actions) = match form {
+            Some(form) => (Some(form.name.clone()), form.op.clone()),
+            None => (None, Vec::new()),
+        };
+        let (npc_level, size) = if is_377 {
+            (
+                form.map(|form| form.vislevel.max(0)).unwrap_or(0),
+                placed.map(|placed| placed.size).unwrap_or(entity.size),
+            )
+        } else {
+            placed
+                .map(|placed| (placed.vislevel.max(0), placed.size))
+                .unwrap_or((0, entity.size))
         };
         NpcView {
             index,
@@ -158,7 +174,7 @@ impl GameSnapshot {
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
-                headicons: lp.headicons,
+                headicons: i32::from(lp.headicons),
                 weapon: player_weapon(&lp.appearance),
             },
             energy: client.runenergy,
@@ -194,7 +210,7 @@ impl GameSnapshot {
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
-                    headicons: player.headicons,
+                    headicons: i32::from(player.headicons),
                     weapon: player_weapon(&player.appearance),
                 });
             }
@@ -740,9 +756,29 @@ impl GameSnapshot {
         let side_pack =
             inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
         let (accept_component_id, decline_component_id) = trade_controls(client);
+        let confirm_open = client.main_modal_id == TRADECONFIRM;
+        // The engine stops the offer containers at the mutual accept
+        // (`trade.rs2:80-86`) and the client empties a stopped container, so
+        // the confirm lists are the only record of the agreed trade.
+        let confirm = confirm_open.then(|| {
+            Box::new(TradeConfirmView {
+                mine: confirm_rows(
+                    client,
+                    TRADECONFIRM_INV1,
+                    TRADECONFIRM_INV2,
+                    ItemContainer::TradeMyOffer,
+                ),
+                theirs: confirm_rows(
+                    client,
+                    TRADECONFIRM_OTHER_INV1,
+                    TRADECONFIRM_OTHER_INV2,
+                    ItemContainer::TradeTheirOffer,
+                ),
+            })
+        });
         self.trade = TradeView {
             offer_open: client.main_modal_id == TRADEMAIN,
-            confirm_open: client.main_modal_id == TRADECONFIRM,
+            confirm_open,
             my_offer,
             their_offer,
             side_pack,
@@ -759,6 +795,7 @@ impl GameSnapshot {
             their_offer_stopped,
             my_offer_available,
             their_offer_available,
+            confirm,
         };
         true
     }
@@ -1284,17 +1321,23 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     pub(super) fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.loc_varp_gen);
         let standalone = self.loc_bits_prelude.is_none();
         let (stamp, static_gen) = self.loc_bits(client);
         let projection_state_dirty = self.projection_locs_wanted != self.projection_locs_built;
         if !moved
+            && !morph_changed
             && stamp == self.loc_model_stamp
             && static_gen == self.loc_static_gen
             && !projection_state_dirty
         {
             return false;
         }
-        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let dirty = moved
+            || morph_changed
+            || stamp != self.loc_model_stamp
+            || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
         if standalone && client.ingame && client.scene_state == 2 {
@@ -1319,7 +1362,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(sprite) = client.world.get_scene(level, sx, sz) {
@@ -1332,7 +1375,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(gd) = client.world.get_gd(level, sx, sz) {
@@ -1345,7 +1388,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(decor) = client.world.get_decor(level, sx, sz) {
@@ -1358,7 +1401,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
             }
@@ -1559,10 +1602,13 @@ impl GameSnapshot {
     }
 
     pub(super) fn rebuild_npcs(&mut self, client: &Client) -> bool {
-        if client.gens.npc == self.gens.npc {
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.npc_varp_gen);
+        let moved = track(client.gens.npc, &mut self.gens.npc);
+        if !moved && !morph_changed {
             return false;
         }
-        self.gens.npc = client.gens.npc;
+        self.gens.npc_info = client.gens.npc_info;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
         let base = (client.map_build_base_x, client.map_build_base_z);
@@ -1582,7 +1628,7 @@ impl GameSnapshot {
                     level,
                     distance,
                     client.loop_cycle,
-                    &client.cache,
+                    client,
                 ));
             }
         }
@@ -1761,17 +1807,31 @@ fn loc_view(
     sx: i32,
     sz: i32,
     local_tile: Option<(i32, i32)>,
-    cache: &Cache,
+    client: &Client,
 ) -> LocView {
     let id = (typecode >> 14) & 0x7fff;
     let shape = info & 0x1f;
     let angle = (info >> 6) & 0x3;
     let x = base.0 + sx;
     let z = base.1 + sz;
+    let base_loc = client.cache.locs.get(id as usize);
+    // Java 377 Client:4133-4176 resolves only menu text/options (including
+    // the Examine target). Routing keeps the base size/forceapproach at
+    // Client:6979-6993; World:795-858 keeps base placement/collision/anim.
+    let display_loc = if client.revision() == client::io::ClientRevision::R377 {
+        client.cache.resolve_loc(id as usize, &client.var)
+    } else {
+        base_loc
+    };
+    let (name, description, actions) = match display_loc {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+        ),
+        None => (None, None, Vec::new()),
+    };
     let (
-        name,
-        description,
-        actions,
         width,
         length,
         block_walk,
@@ -1781,11 +1841,8 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
-    ) = match cache.locs.get(id as usize) {
+    ) = match base_loc {
         Some(loc) => (
-            (!loc.name.is_empty()).then(|| loc.name.clone()),
-            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
-            loc.op.clone(),
             loc.width,
             loc.length,
             loc.blockwalk,
@@ -1796,20 +1853,7 @@ fn loc_view(
             loc.mapscene,
             loc.forceapproach,
         ),
-        None => (
-            None,
-            None,
-            Vec::new(),
-            1,
-            1,
-            true,
-            true,
-            false,
-            -1,
-            -1,
-            -1,
-            0,
-        ),
+        None => (1, 1, true, true, false, -1, -1, -1, 0),
     };
     LocView {
         typecode,
@@ -2329,6 +2373,40 @@ fn read_inv_component(cache: &Cache, com: &IfTypeView, container: ItemContainer)
     out
 }
 
+/// One confirm-screen list: the rows of the `small` component followed by
+/// those of the `large` one. The engine fills exactly one of them
+/// (`trade.rs2:111-145`), so the other adds nothing. The rows are display
+/// only: no action family and no ops, and a list with no rows allocates
+/// nothing.
+fn confirm_rows(
+    client: &Client,
+    small: i32,
+    large: i32,
+    container: ItemContainer,
+) -> Vec<ItemView> {
+    let mut rows = Vec::new();
+    for com_id in [small, large] {
+        let Some(com) = client.if_(com_id as usize) else {
+            continue;
+        };
+        let Some(ids) = &com.link_obj_type else {
+            continue;
+        };
+        let n = com.link_obj_number.as_ref().map_or(0, |n| n.len());
+        for slot in 0..ids.len().min(n) {
+            rows.extend(item_view(
+                &client.cache,
+                &com,
+                slot,
+                container,
+                ItemActionFamily::None,
+                Vec::new(),
+            ));
+        }
+    }
+    rows
+}
+
 /// The items of the iface-table component `com_id` (component ops).
 fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<Vec<ItemView>> {
     if com_id < 0 {
@@ -2415,6 +2493,13 @@ const TRADEMAIN_INV: i32 = 3415;
 const TRADEMAIN_OTHER_INV: i32 = 3416;
 const TRADEMAIN_OTHER_PLAYER: i32 = 3417;
 const TRADESIDE_INV: i32 = 3322;
+/// The confirm screen's four lists (`interface.pack:3543, 3539, 3533, 3540`).
+/// `trade.rs2:111-145` transmits each offer to `inv1`/`otherinv1` when it
+/// holds fewer than 14 items and to `inv2`/`otherinv2` otherwise.
+const TRADECONFIRM_INV1: i32 = 3542;
+const TRADECONFIRM_INV2: i32 = 3538;
+const TRADECONFIRM_OTHER_INV1: i32 = 3532;
+const TRADECONFIRM_OTHER_INV2: i32 = 3539;
 
 /// The trade partner's name: the `otherplayer` label ("Trading With: X")
 /// with the prefix stripped and whitespace trimmed (m8aq
@@ -2813,5 +2898,158 @@ mod tests {
             !snapshot.tutorial_pending(),
             "the clear path bumps no gen — a gated copy would stick true"
         );
+    }
+    const VIEW_RESOLUTION_ITERATIONS: usize = 128;
+    const ALLOCATION_ROUNDING_UNIT_BYTES: usize = 8;
+    // R274, R289 and R377 share this Linux-measured 128-resolution baseline.
+    const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
+
+    fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
+        use client::config::runtime_377::{
+            CacheFields377, InterfaceFields377, LocFields377, NpcFields377,
+        };
+        use client::config::{CacheRevision377, LocType, NpcType};
+
+        let mut cache = Cache::default();
+        let loc = LocType {
+            name: "loc name with a heap-backed payload".to_owned(),
+            desc: "location description with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Open the location".to_owned()),
+                Some("Search the location".to_owned()),
+            ],
+            ..LocType::default()
+        };
+        cache.locs.push(loc);
+
+        let npc_type = NpcType {
+            name: "npc name with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Talk to the npc".to_owned()),
+                Some("Attack the npc".to_owned()),
+            ],
+            ..NpcType::default()
+        };
+        cache.npcs.push(npc_type);
+        if revision == ClientRevision::R377 {
+            cache.revision_377 = Some(Box::new(CacheRevision377 {
+                config: CacheFields377 {
+                    locs: vec![LocFields377 { morph: None }],
+                    npcs: vec![NpcFields377 {
+                        field_1451: -1,
+                        field_1430: -1,
+                        field_1440: -1,
+                        field_1434: true,
+                        morph: None,
+                    }],
+                    ..Default::default()
+                },
+                interfaces: InterfaceFields377 {
+                    client_code_layers: Default::default(),
+                    type1_fields: Vec::new(),
+                    null_string_masks: Vec::new(),
+                    initial_overlays: Vec::new(),
+                },
+            }));
+        }
+
+        let client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(cache),
+            Arc::new(vec![]),
+            Vec::new(),
+            revision,
+        );
+        let mut npc = client::client::ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
+        npc.entity.chat_message = Some("npc overhead text with heap-backed storage".to_owned());
+
+        let resolve_loc = || {
+            std::hint::black_box(loc_view(
+                9,
+                (2 << 6) | 10,
+                LocLayer::Wall,
+                (3_200, 3_400),
+                1,
+                12,
+                18,
+                Some((3_210, 3_405)),
+                &client,
+            ));
+        };
+        let resolve_npc = || {
+            std::hint::black_box(NpcView::from_slot(
+                17,
+                &npc,
+                (3_200, 3_400),
+                1,
+                6,
+                100,
+                &client,
+            ));
+        };
+
+        for _ in 0..2 {
+            resolve_loc();
+            resolve_npc();
+        }
+
+        let loc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_loc();
+            }
+        });
+        let npc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_npc();
+            }
+        });
+        [
+            loc.count_total as usize,
+            loc.bytes_total as usize,
+            npc.count_total as usize,
+            npc.bytes_total as usize,
+        ]
+    }
+
+    #[test]
+    fn loc_and_npc_view_resolution_allocation_gate_for_each_revision() {
+        for revision in [
+            ClientRevision::R274,
+            ClientRevision::R289,
+            ClientRevision::R377,
+        ] {
+            let allocations = snapshot_view_resolution_allocations(revision);
+            let expected = VIEW_RESOLUTION_BASELINE;
+            assert_eq!(
+                allocations[0], expected[0],
+                "{revision:?} LocView allocation count changed across 128 unchanged resolutions"
+            );
+            assert!(
+                allocations[1] <= expected[1] + ALLOCATION_ROUNDING_UNIT_BYTES,
+                "{revision:?} LocView allocated {} bytes across 128 resolutions; baseline {} plus one allocator rounding unit",
+                allocations[1],
+                expected[1]
+            );
+            assert_eq!(
+                allocations[2], expected[2],
+                "{revision:?} NpcView allocation count changed across 128 unchanged resolutions"
+            );
+            assert!(
+                allocations[3] <= expected[3] + ALLOCATION_ROUNDING_UNIT_BYTES,
+                "{revision:?} NpcView allocated {} bytes across 128 resolutions; baseline {} plus one allocator rounding unit",
+                allocations[3],
+                expected[3]
+            );
+            eprintln!("snapshot view allocations {revision:?}: {allocations:?}");
+        }
     }
 }

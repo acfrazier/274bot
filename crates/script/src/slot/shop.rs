@@ -5,13 +5,13 @@ use crate::native::request::NativeKind;
 use crate::native::{ActionError, ActionHandle, NativeActions};
 use crate::native_shop::{BuyMachine, BuyReceipt, BuyRequest, ShopBuyByIdArgs};
 use api::script_contract::AuthorityStatus;
-use api::selected::{RunKey, SelectedPin};
+use api::selected::{ClientRevision, RunKey};
 use std::task::Poll;
 
 struct ShopRun {
     id: RequestId,
     run: RunKey,
-    pin: Arc<SelectedPin>,
+    revision: ClientRevision,
     args: ShopBuyByIdArgs,
     handle: Option<ActionHandle<BuyMachine>>,
     needs_resume: bool,
@@ -98,7 +98,7 @@ impl SlotScript {
             self.finish_shop(id, 0);
             return;
         };
-        let Ok(pin) = selected.selected_pin() else {
+        let Ok(revision) = compiled::selected_revision(&selected) else {
             self.finish_shop(id, 0);
             return;
         };
@@ -141,7 +141,7 @@ impl SlotScript {
             .active = Some(Box::new(ShopRun {
             id,
             run,
-            pin,
+            revision,
             args: ShopBuyByIdArgs {
                 item_id: f64::from(item_id),
                 quantity: args.quantity,
@@ -231,7 +231,7 @@ impl SlotScript {
             let mut cx = compiled::frame_context(
                 ctx,
                 run.run,
-                &run.pin,
+                run.revision,
                 &mut retained,
                 &mut self.native_runtime,
             );

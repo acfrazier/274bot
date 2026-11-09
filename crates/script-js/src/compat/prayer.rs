@@ -6,14 +6,14 @@
 //! each over the same selected rows.
 
 use crate::machine::{self, Begin, Cx, Family, Step};
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use api::game_data::SelectedGameData;
 use api::prayer::{
     active, available, lookup, matches_on, max, on_is_truthy, points, OnArg, PrayerObservation,
     TOGGLE_MS,
 };
 use script::combat::prayer::{PrayerSweep, PrayerToggle, ToggleProgress};
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -204,7 +204,7 @@ impl Family for Prayer {
         if args.admit == Admit::RefuseBusy && machine::live(Self::NAME) {
             return Begin::Refuse("busy".into());
         }
-        let data = crate::supply_v2::selected_data();
+        let data = crate::scene::supply_v2::selected_data();
         let obs = observed::with(prayer_observation);
         match args.op {
             Op::Set => begin_set(data.as_deref(), &args, &obs, cx),
@@ -213,7 +213,7 @@ impl Family for Prayer {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<PrayerDone> {
-        let data = crate::supply_v2::selected_data();
+        let data = crate::scene::supply_v2::selected_data();
         let obs = observed::with(prayer_observation);
         match self {
             Self::Toggle(toggle) => toggle.step(&obs, cx),
@@ -229,7 +229,9 @@ fn begin_set(
     cx: &mut Cx<'_>,
 ) -> Begin<Prayer> {
     let Some(data) = data else {
-        return Begin::Done(PrayerDone::failed(crate::supply_v2::GAME_DATA_UNAVAILABLE));
+        return Begin::Done(PrayerDone::failed(
+            crate::scene::supply_v2::GAME_DATA_UNAVAILABLE,
+        ));
     };
     let Some(row) = lookup(data, &args.name) else {
         return Begin::Done(PrayerDone::failed("unknown-prayer"));
@@ -316,7 +318,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> Called {
             panic!("the prayer family calls no script callback");
@@ -336,7 +338,7 @@ mod tests {
     }
 
     fn protect_identity() -> (i32, i32, i32) {
-        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let data = crate::scene::supply_v2::selected_data().expect("selected data configured");
         let prayer = data
             .prayer_by_name("Protect from Melee")
             .expect("Protect from Melee row");
@@ -370,7 +372,7 @@ mod tests {
     fn prepare(rev: ClientRevision) {
         machine::on_reset();
         observed::on_reset();
-        crate::supply_v2::configure(Some(data(rev)));
+        crate::scene::supply_v2::configure(Some(data(rev)));
     }
 
     fn tick() {
@@ -410,6 +412,9 @@ mod tests {
 
     #[test]
     fn matching_set_does_not_click_and_unknown_is_error() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_protect(1);
         assert_eq!(
@@ -432,7 +437,7 @@ mod tests {
     fn missing_selected_data_has_an_explicit_reason() {
         machine::on_reset();
         observed::on_reset();
-        crate::supply_v2::configure(None);
+        crate::scene::supply_v2::configure(None);
         assert_eq!(
             start(set(on(true))),
             Started::Settled(Outcome::Done(json!({
@@ -445,6 +450,9 @@ mod tests {
 
     #[test]
     fn unavailable_on_does_not_click_off_ignores_available() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_obs(0, 1, protect_identity().0, 0);
         assert_eq!(
@@ -473,6 +481,9 @@ mod tests {
 
     #[test]
     fn omitted_on_clicks_then_times_out_after_the_frozen_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_protect(0);
         let handle = running(start(set(json!({ "kind": "undefined" }))));
@@ -499,6 +510,9 @@ mod tests {
 
     #[test]
     fn a_second_start_supersedes_the_first() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let first = running(start(set(on(true))));
@@ -532,6 +546,9 @@ mod tests {
 
     #[test]
     fn a_v2_admit_refuses_busy_before_anything_is_emitted() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let admitted = running(start(set(on(true))));
@@ -563,6 +580,9 @@ mod tests {
 
     #[test]
     fn pause_and_hold_freeze_the_deadline_and_reset_settles_the_row() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let handle = running(start(set(on(true))));
@@ -621,8 +641,11 @@ mod tests {
 
     #[test]
     fn clear_clicks_each_active_prayer_once_and_counts_them() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
-        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let data = crate::scene::supply_v2::selected_data().expect("selected data configured");
         let first = data.prayers().first().expect("selected prayers").clone();
         let second = data.prayers().get(1).expect("two selected prayers").clone();
         assert_ne!(first.varp, second.varp);

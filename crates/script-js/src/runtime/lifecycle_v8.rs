@@ -4,8 +4,8 @@
 //! The static catalog parser remains an input adapter; this registry retains
 //! the exact JavaScript metadata object and its original `create` callback.
 
-use crate::callback_v8::{self as cb, JsResult};
-use crate::lineage_v8;
+use crate::materialize::callback_v8::{self as cb, JsResult};
+use crate::materialize::lineage_v8;
 use api::local_state::{DomainEdit, LocalStateDomain, RuntimeSettingsEdit, SubmitReceipt};
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
@@ -1241,9 +1241,9 @@ globalThis.__resolveSchema = {
     }
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        crate::callback_v8::install_ops(&mut runtime).unwrap();
+        crate::materialize::callback_v8::install_ops(&mut runtime).unwrap();
         let state = std::sync::Arc::new(script::local_state::SlotState::new(
             std::sync::Arc::new(SettingsRawPort),
             api::local_state::AccountKey::try_new("local-289", "runtime").unwrap(),

@@ -92,7 +92,7 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
     #[cfg(feature = "js")]
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     #[cfg(not(feature = "js"))]
     let scripts = Scripts::new();

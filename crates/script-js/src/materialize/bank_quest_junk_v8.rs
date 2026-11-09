@@ -1,19 +1,19 @@
 //! `bankQuestJunk` (`src/bot/api/bank/bankQuestJunk.ts:13-15,431-444`) over
-//! the shared immutable Rust table [`api::quest_junk::QUEST_JUNK`].
+//! the shared immutable Rust table [`api::quest_junk::quest_junk`].
 //!
 //! Only each caller row's `id` crosses into Rust, bounded by the selected
 //! bank capacity. The caller's `statusOf` stays a V8 callback, called once per
 //! matched table entry in table order. Nothing is dropped.
 
 use super::callback_v8::{self as cb, JsResult};
-use api::quest_junk::QUEST_JUNK;
+use api::quest_junk::quest_junk;
 use rustyscript::Runtime;
 
 /// Most banked rows one call accepts: the 289 bank holds
 /// `^bank_total_slots = 288` rows (`interface_bank/configs/bank.constant:1`).
 pub(crate) const MAX_BANKED_ROWS: u32 = 288;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_quest_junk_table", quest_junk_table)?;
     cb::install(runtime, "__rs2b0t_find_quest_junk", find_quest_junk)
 }
@@ -26,8 +26,9 @@ fn quest_junk_table<'s>(
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let array = v8::Array::new(scope, QUEST_JUNK.len() as i32);
-        for (index, entry) in QUEST_JUNK.iter().enumerate() {
+        let table = junk_table(scope)?;
+        let array = v8::Array::new(scope, table.len() as i32);
+        for (index, entry) in table.iter().enumerate() {
             let id = cb::num(scope, f64::from(entry.id));
             let name = cb::string(scope, entry.name);
             let quest = cb::string(scope, entry.quest);
@@ -37,6 +38,13 @@ fn quest_junk_table<'s>(
         Ok(array.into())
     })();
     cb::finish(scope, rv, result);
+}
+
+/// The quest-junk table, or a `TypeError` in a build without local game data.
+fn junk_table<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> JsResult<'s, &'static [api::quest_junk::QuestJunkEntry]> {
+    quest_junk().map_err(|error| cb::type_error(scope, &format!("quest junk: {error:?}")))
 }
 
 /// `findQuestJunk(banked, statusOf)`: `held = new Set(banked.map(i => i.id))`,
@@ -90,7 +98,7 @@ fn find<'s>(
     let held = &held[..held_len];
     let out = v8::Array::new(scope, 0);
     let mut written = 0_u32;
-    for entry in QUEST_JUNK {
+    for entry in junk_table(scope)? {
         if !held.contains(&entry.id) {
             continue;
         }

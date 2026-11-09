@@ -1,5 +1,5 @@
 // Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.
-// Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored
+// Regen: cargo test -p script-js --test declared_abi regen_declared_surface_from_fixture -- --ignored
 import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';
 
 export const defineBot = globalThis.defineBot;

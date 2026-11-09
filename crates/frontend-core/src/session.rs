@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
-use api::identity::SessionKey;
+use api::identity::{RequestId, SessionKey};
 use api::lifecycle::Intent;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
@@ -607,6 +607,9 @@ pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState, RENDER_ALL_
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
+    /// Post-decrypt old-format refusals waiting for the matching frontend
+    /// to resolve the unlock result, keyed by its command request.
+    vault_refusals: HashMap<RequestId, host_play::saved_data::SavedDataRefusal>,
     play: Option<Play>,
     fleet: Fleet,
     selected: Option<String>,
@@ -710,6 +713,11 @@ pub struct OperatorSession<Io> {
     profiles_generation: u64,
     /// The saved Load order, reconciled with the vault.
     profile_order: crate::profile_order::ProfileOrder,
+    /// Uids of profiles created since the order last reconciled, in
+    /// creation sequence: the next reconcile appends them in that
+    /// sequence (an import batch keeps its file's order). Taken by each
+    /// reconcile; empty in steady state.
+    created_since_reconcile: Vec<i32>,
     /// The preferences hold a saved order (the operator reordered, or a
     /// rename kept a place): reconcile changes are written back.
     order_saved: bool,
@@ -770,6 +778,7 @@ impl<Io> OperatorSession<Io> {
         crate::log::global();
         Self {
             vault: None,
+            vault_refusals: HashMap::new(),
             play: None,
             fleet: Fleet::default(),
             selected: None,
@@ -828,6 +837,7 @@ impl<Io> OperatorSession<Io> {
             capacity_generation: 0,
             profiles_generation: 0,
             profile_order: crate::profile_order::ProfileOrder::default(),
+            created_since_reconcile: Vec::new(),
             order_saved: false,
             durable_order: crate::profile_order::ProfileOrder::default(),
             durable_order_doc: None,
@@ -953,7 +963,7 @@ impl<Io> OperatorSession<Io> {
     ) -> Result<(), crate::launch::UnlockError> {
         use crate::launch::{UnlockError, UnlockStage};
         let vault = crate::launch::open_vault_typed(path, typed)
-            .map_err(|error| UnlockError::new(UnlockStage::Vault, error.to_string()))?;
+            .map_err(crate::launch::UnlockError::from_vault)?;
         self.start_play(vault, launch, hook)
             .map_err(|error| UnlockError::new(UnlockStage::Launch, error))
     }
@@ -1051,6 +1061,14 @@ impl<Io> OperatorSession<Io> {
         self.preference_error.as_deref()
     }
 
+    /// Whether startup is continuing with in-memory defaults because the
+    /// saved preferences use an unsupported pre-0.2.8 format.
+    pub fn preference_refused(&self) -> bool {
+        self.initial_preference_failure
+            .as_ref()
+            .is_some_and(crate::prefs::PreferenceError::is_unsupported_saved_format)
+    }
+
     /// Read the latest durable preference snapshot and let the
     /// session-owned state follow it once per durable version: the walk
     /// grants, the manual-walk pause, the Load order and the session file.
@@ -1076,6 +1094,12 @@ impl<Io> OperatorSession<Io> {
             }
             Err(error) if error.is_not_ready() => None,
             Err(error) => {
+                if error.is_unsupported_saved_format() {
+                    // A refused saved shape is a typed startup failure, not
+                    // an empty store. The front end reports it and uses
+                    // defaults only in memory for this run.
+                    self.preferences_adopted = true;
+                }
                 if self.initial_preference_failure.as_ref() != Some(&error) {
                     self.preference_error = Some(error.to_string());
                     self.initial_preference_failure = Some(error);
@@ -1486,6 +1510,7 @@ impl<Io> OperatorSession<Io> {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
+        let mut created = std::mem::take(&mut self.created_since_reconcile);
         let changed = match self.vault.as_ref() {
             Some(vault) => {
                 let rows = || {
@@ -1501,11 +1526,13 @@ impl<Io> OperatorSession<Io> {
                 };
                 // The durable copy follows the vault too, so a failed
                 // write's revert shows current names.
-                self.durable_order.reconcile(rows(), pending);
-                self.profile_order.reconcile(rows(), pending)
+                self.durable_order.reconcile(rows(), pending, &created);
+                self.profile_order.reconcile(rows(), pending, &created)
             }
             None => crate::profile_order::Reconciled::default(),
         };
+        created.clear();
+        self.created_since_reconcile = created;
         if changed.stored_changed || changed.sequence_changed {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
         }
@@ -2463,6 +2490,22 @@ impl<Io> OperatorSession<Io> {
         self.poll_at(Instant::now());
     }
 
+    /// Post the operator Login for slots whose live fixture relogged itself.
+    /// A bot with no script stays parked after its exit, so the scenario's
+    /// Relog step and a companion's prep relog ask the front end for this
+    /// intent; a scripted bot ignores it (its own demand already relogs it).
+    #[cfg(feature = "live-harness")]
+    fn service_live_relog_logins(&mut self) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        for name in self.live_runner.take_relog_logins() {
+            if let Some(arm) = play.arm(&name) {
+                arm.arm_explicit_login();
+            }
+        }
+    }
+
     pub fn poll_at(&mut self, now: Instant) {
         self.advance_removals(now);
         self.poll_host_at(now);
@@ -2477,6 +2520,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        #[cfg(feature = "live-harness")]
+        self.service_live_relog_logins();
         self.sync_snapshot();
         // The saved Load order follows the vault before anything reads it
         // (both halves of a split poll reach here).
@@ -3072,6 +3117,9 @@ impl<Io> OperatorSession<Io> {
         assignment_action: &'static str,
     ) -> Result<OperationId, String> {
         self.refuse_existing(&profile.username, label)?;
+        // The next order reconcile appends this profile in creation
+        // sequence with its batch (an import submits in file order).
+        self.created_since_reconcile.push(profile.uid);
         self.save_profile_with_log_action(profile, mirror, label, assignment_action)
     }
 
@@ -3439,6 +3487,14 @@ impl<Io> OperatorSession<Io> {
         profile.settings.raster = raster.to_vault();
         self.save_profile(profile, ArmMirror::none(), "render prefs")
             .map(Some)
+    }
+
+    /// Remove the typed saved-format refusal produced by this unlock request.
+    pub fn take_vault_refusal(
+        &mut self,
+        request: RequestId,
+    ) -> Option<host_play::saved_data::SavedDataRefusal> {
+        self.vault_refusals.remove(&request)
     }
 
     /// Whether a vault is open.
@@ -3925,6 +3981,15 @@ impl<Io> OperatorSession<Io> {
     /// (a failing, unsupported or counting probe) instead of the OS.
     pub fn set_resource_probe(&mut self, probe: fn() -> crate::resources::ProcessProbe) {
         self.resources = Resources::with_probe(probe);
+    }
+    /// Number of process probes published by the resource-meter worker.
+    pub fn resource_probe_generation(&self) -> u64 {
+        self.resources.probe_generation()
+    }
+
+    /// Whether the resource meter is still waiting for its worker's result.
+    pub fn resource_probe_in_flight(&self) -> bool {
+        self.resources.probe_in_flight()
     }
 
     /// Rows re-derived since the session started (their facts changed).

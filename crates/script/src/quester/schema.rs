@@ -29,8 +29,11 @@ const _: fn(super::path::StepDocument) = |super::path::StepDocument {
                                               args: _,
                                               comment: _,
                                               advances: _,
+                                              max_attempts: _,
+                                              stop: _,
                                               skip_if: _,
                                               settle: _,
+                                              hazard: _,
                                           }| {};
 
 #[cfg(feature = "path-schema")]
@@ -72,10 +75,17 @@ impl schemars::JsonSchema for super::path::StepDocument {
                     "args": (handler.args_schema)(generator),
                     "comment": generator.subschema_for::<Option<String>>(),
                     "advances": { "type": "boolean" },
+                    "max_attempts": { "type": "integer", "minimum": 1, "maximum": super::path::MAX_STEP_ATTEMPTS },
+                    "stop": { "type": "string", "minLength": 1, "pattern": "\\S" },
                     "skip_if": generator.subschema_for::<super::path::PredicateDocument>(),
-                    "settle": generator.subschema_for::<super::path::PredicateDocument>()
+                    "settle": generator.subschema_for::<super::path::PredicateDocument>(),
+                    "hazard": generator.subschema_for::<Option<super::path::HazardDocument>>()
                 },
                 "required": required,
+                "dependentRequired": {
+                    "max_attempts": ["stop"],
+                    "stop": ["max_attempts"]
+                },
                 "additionalProperties": false
             });
             generator

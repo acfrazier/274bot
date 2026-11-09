@@ -50,12 +50,13 @@ import stat
 import statistics
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
 import urllib.request
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -81,6 +82,7 @@ ROOT = Path(os.environ.get("NIGHTLY_ROOT", DEFAULT_ROOT))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
 RUNNER_REPO = HERE.parent.parent
 NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
+PURGED_DATA_DIR = Path(os.environ.get("NIGHTLY_PURGED_DATA_DIR") or str(ROOT / "purged-data"))
 
 
 # Engine A is the non-Windows revision-289 pack. Engine B has its own
@@ -336,7 +338,7 @@ CATALOG = Path(os.environ.get("NIGHTLY_CATALOG", str(ROOT / "rs2b0t")))
 NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snapshot")))
 NAV_FIXTURE = Path(os.environ.get(
     "NIGHTLY_NAV_FIXTURE",
-    str(ROOT / "fixtures" / "274bot-289-v17.navpack"),
+    str(ROOT / "fixtures" / "274bot-289-v18.navpack"),
 ))
 # The old inspection capture the host-play route-inspect test compares
 # against. The test's built-in default path exists only on merlot, so each
@@ -1600,10 +1602,407 @@ def apply_274_inventory_overlay(tree: Path) -> None:
         log("274: pinned-content nav inventory overlay already current")
 
 
-def build(tree: Path, target: Path, run_dir: Path, build_log: Path) -> dict[str, Path]:
+LOCAL_DATA_OUTPUTS = (
+    Path("crates/api/data/game-data"),
+    Path("target/local-data"),
+    Path("tools/game-data/gather-sites-hidden.json"),
+)
+LOCAL_DATA_REQUIRED_OUTPUTS = (
+    Path("crates/api/data/game-data/274.json"),
+    Path("crates/api/data/game-data/289.json"),
+    Path("crates/api/data/game-data/274/debug.json"),
+    Path("crates/api/data/game-data/289/debug.json"),
+    Path("crates/api/data/game-data/274/quests.json"),
+    Path("crates/api/data/game-data/289/quests.json"),
+    Path("crates/api/data/game-data/274/gathering.json"),
+    Path("crates/api/data/game-data/289/gathering.json"),
+    Path("crates/api/data/game-data/289/prereq_steps.json"),
+    Path("crates/api/data/game-data/bank-catalog.json"),
+    Path("crates/api/data/game-data/cook-catalog.json"),
+    Path("crates/api/data/game-data/gather-catalog.json"),
+    Path("target/local-data/prereq-crossings-289.json"),
+    Path("tools/game-data/gather-sites-hidden.json"),
+) + tuple(
+    Path(f"target/local-data/nav/{revision}/{name}")
+    for revision in ("274", "289")
+    for name in ("274bot.navpack", "274bot.navflags", "274bot.navreach",
+                 "274bot.navcanlight", "274bot.navpois")
+)
+
+
+def _tree_sha256(root: Path, *, excluded: tuple[str, ...] = (),
+                 ignored_names: tuple[str, ...] = (".git", ".DS_Store", "__pycache__",
+                                                    "node_modules", "runtime", "target")) -> str:
+    """Hash file names and bytes in a tree, following only contained input symlinks."""
+    root = Path(root)
+    digest = hashlib.sha256()
+    if not root.exists() and not root.is_symlink():
+        raise FileNotFoundError(f"local-data input does not exist: {root}")
+
+    def excluded_path(relative: Path) -> bool:
+        if any(part in ignored_names or part.startswith("db.sqlite") for part in relative.parts):
+            return True
+        value = relative.as_posix()
+        return any(value == prefix or value.startswith(prefix + "/") for prefix in excluded)
+
+    def record(kind: bytes, relative: Path, extra: bytes = b"") -> None:
+        name = relative.as_posix().encode("utf-8")
+        digest.update(kind)
+        digest.update(len(name).to_bytes(4, "big"))
+        digest.update(name)
+        digest.update(len(extra).to_bytes(8, "big"))
+        digest.update(extra)
+
+    def file_bytes(path: Path) -> None:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+
+    def visit(directory: Path, prefix: Path, ancestors: frozenset[Path]) -> None:
+        resolved = directory.resolve(strict=True)
+        if resolved in ancestors:
+            raise RuntimeError(f"circular symlink in local-data input tree: {directory}")
+        ancestors = ancestors | {resolved}
+        for child in sorted(directory.iterdir(), key=lambda path: path.name):
+            relative = prefix / child.name
+            if excluded_path(relative):
+                continue
+            info = child.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                target = child.resolve(strict=True)
+                record(b"L", relative, os.readlink(child).encode("utf-8"))
+                if target.is_file():
+                    record(b"F", relative, target.stat().st_size.to_bytes(8, "big"))
+                    file_bytes(target)
+                elif target.is_dir():
+                    visit(target, relative, ancestors)
+                else:
+                    raise RuntimeError(f"unsupported local-data input link: {child}")
+            elif stat.S_ISDIR(info.st_mode):
+                record(b"D", relative)
+                visit(child, relative, ancestors)
+            elif stat.S_ISREG(info.st_mode):
+                record(b"F", relative, info.st_size.to_bytes(8, "big"))
+                file_bytes(child)
+            else:
+                raise RuntimeError(f"unsupported local-data input file: {child}")
+
+    if root.is_file():
+        record(b"F", Path(root.name), root.stat().st_size.to_bytes(8, "big"))
+        file_bytes(root)
+    elif root.is_dir():
+        visit(root, Path(), frozenset())
+    else:
+        raise RuntimeError(f"local-data input is not a file or directory: {root}")
+    return digest.hexdigest()
+
+
+def local_data_environment(tree: Path, target: Path) -> dict[str, str]:
+    """Bind each generator revision only to its exact staged or configured inputs."""
+    environment = os.environ.copy()
+    environment.pop("BOT_NAV_BUILD", None)
+    environment.pop("GAME_DATA_289_PREREQ_CROSSINGS", None)
+    environment["CARGO_TARGET_DIR"] = str(target)
+    environment["RS2B0T"] = str(CATALOG)
+    for revision in ("274", "289"):
+        engine_setting = f"NIGHTLY_GAME_DATA_{revision}_ENGINE"
+        content_setting = f"NIGHTLY_GAME_DATA_{revision}_CONTENT"
+        engine_value = environment.get(engine_setting)
+        content_value = environment.get(content_setting)
+        if revision == REVISION:
+            engine_value = engine_value or str(ENGINE_PRISTINE / "engine")
+            content_value = content_value or str(ENGINE_PRISTINE / "content")
+        missing = [
+            name for name, value in ((engine_setting, engine_value), (content_setting, content_value))
+            if not value
+        ]
+        if missing:
+            generator_names = [name.replace("NIGHTLY_", "") for name in missing]
+            raise RuntimeError(
+                f"missing local-data input {', '.join(generator_names)}: this revision-{REVISION} "
+                f"nightly stages only its revision at {ENGINE_PRISTINE}; stage the exact "
+                f"revision-{revision} engine and content roots on this host and set "
+                f"{engine_setting} and {content_setting}"
+            )
+        for kind, value, setting in (
+            ("ENGINE", engine_value, engine_setting),
+            ("CONTENT", content_value, content_setting),
+        ):
+            path = Path(value).expanduser()
+            if not path.is_dir():
+                raise RuntimeError(
+                    f"missing local-data input GAME_DATA_{revision}_{kind}: {path}; "
+                    f"set {setting} to the exact revision-{revision} {kind.lower()} root"
+                )
+            environment[f"GAME_DATA_{revision}_{kind}"] = str(path.resolve())
+    return environment
+
+
+def local_data_identity(tree: Path, environment: dict[str, str]) -> str:
+    """Fingerprint generator code, both exact input revisions, and catalog sources."""
+    identity = {
+        "schema": 1,
+        "revisions": {
+            revision: {
+                kind.lower(): _tree_sha256(
+                    Path(environment[f"GAME_DATA_{revision}_{kind}"]),
+                    excluded=("data/players",),
+                )
+                for kind in ("ENGINE", "CONTENT")
+            }
+            for revision in ("274", "289")
+        },
+        "generator_sources": {
+            "tools/local-data": _tree_sha256(tree / "tools/local-data"),
+            "tools/game-data": _tree_sha256(
+                tree / "tools/game-data", excluded=("gather-sites-hidden.json",)
+            ),
+            "crates": _tree_sha256(
+                tree / "crates", excluded=("api/data/game-data", "api/data/shops")
+            ),
+            "vendor/fr-client-rust": _tree_sha256(tree / "vendor/fr-client-rust"),
+            "Cargo.toml": _tree_sha256(tree / "Cargo.toml"),
+            "Cargo.lock": _tree_sha256(tree / "Cargo.lock"),
+            "rust-toolchain.toml": _tree_sha256(tree / "rust-toolchain.toml"),
+            ".cargo": _tree_sha256(tree / ".cargo"),
+        },
+        "catalog": _tree_sha256(Path(environment["RS2B0T"])),
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _local_data_output_hashes(output_root: Path) -> dict[str, str] | None:
+    hashes = {}
+    for relative in LOCAL_DATA_OUTPUTS:
+        path = output_root / relative
+        if not path.exists() and not path.is_symlink():
+            return None
+        hashes[relative.as_posix()] = _tree_sha256(path)
+    return hashes
+
+
+def _restore_local_data_cache(entry: Path, tree: Path, identity: str) -> bool:
+    try:
+        manifest = json.loads((entry / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("identity") != identity:
+            return False
+        outputs = manifest.get("outputs")
+        if not isinstance(outputs, dict) or set(outputs) != {path.as_posix() for path in LOCAL_DATA_OUTPUTS}:
+            return False
+        output_root = entry / "outputs"
+        for relative in LOCAL_DATA_OUTPUTS:
+            path = output_root / relative
+            if _tree_sha256(path) != outputs[relative.as_posix()]:
+                return False
+    except (OSError, ValueError, RuntimeError, TypeError):
+        return False
+
+    for relative in LOCAL_DATA_OUTPUTS:
+        destination = tree / relative
+        if destination.exists() or destination.is_symlink():
+            rmtree(destination)
+        source = output_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+    return True
+
+
+def _store_local_data_cache(entry: Path, tree: Path, identity: str) -> None:
+    output_hashes = _local_data_output_hashes(tree)
+    if output_hashes is None:
+        raise RuntimeError("local-data generator omitted a cache output")
+    for relative in LOCAL_DATA_REQUIRED_OUTPUTS:
+        if not (tree / relative).is_file():
+            raise RuntimeError(f"local-data generator omitted required output: {tree / relative}")
+
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{identity}.", dir=entry.parent))
+    try:
+        output_root = staging / "outputs"
+        for relative in LOCAL_DATA_OUTPUTS:
+            source = tree / relative
+            destination = output_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, destination)
+            else:
+                shutil.copy2(source, destination)
+        (staging / "manifest.json").write_text(
+            json.dumps({"identity": identity, "outputs": output_hashes}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if entry.exists() or entry.is_symlink():
+            rmtree(entry)
+        os.replace(staging, entry)
+    finally:
+        if staging.exists() or staging.is_symlink():
+            rmtree(staging)
+
+
+def _build_log_tail(build_log: Path) -> str:
+    try:
+        lines = build_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-30:])[-4000:]
+
+
+def _append_build_log(build_log: Path, text: str) -> None:
+    with build_log.open("a", encoding="utf-8") as output:
+        output.write(text.rstrip() + "\n")
+
+
+def restore_purged_game_data(tree: Path, purged_data_dir: Path | None = None) -> str:
+    """Restore the verified original API data for one rewritten pre-ADR commit."""
+    purged_data_dir = purged_data_dir or PURGED_DATA_DIR
+    manifest_path = purged_data_dir / "manifest.tsv"
+    readme_path = purged_data_dir / "README.md"
+    head = run(git_cmd("-C", str(tree), "rev-parse", "HEAD")).stdout.strip()
+    try:
+        rows = manifest_path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise RuntimeError(
+            f"pre-ADR-0019 data for commit {head} is unavailable: cannot read {manifest_path}; "
+            f"see {readme_path}"
+        ) from error
+    if not rows:
+        raise RuntimeError(
+            f"no purged-data archive matches tree commit {head}; see {readme_path}"
+        )
+    columns = rows[0].split("\t")
+    try:
+        commit_column, digest_column = columns.index("new"), columns.index("sha256")
+    except ValueError as error:
+        raise RuntimeError(f"invalid purged-data manifest {manifest_path}; see {readme_path}") from error
+    digests: dict[str, str] = {}
+    for line_number, line in enumerate(rows[1:], 2):
+        if not line:
+            continue
+        values = line.split("\t")
+        if len(values) <= max(commit_column, digest_column):
+            raise RuntimeError(f"invalid purged-data manifest row {line_number}: {manifest_path}")
+        commit_value, digest_value = values[commit_column], values[digest_column]
+        if not re.fullmatch(r"[0-9a-f]{40}", commit_value) or not re.fullmatch(r"[0-9a-f]{64}", digest_value):
+            raise RuntimeError(f"invalid purged-data manifest row {line_number}: {manifest_path}")
+        digests[commit_value] = digest_value
+
+    ancestors = run(git_cmd("-C", str(tree), "rev-list", "HEAD")).stdout.splitlines()
+    selected = next((commit_value for commit_value in ancestors if commit_value in digests), None)
+    if selected is None:
+        raise RuntimeError(
+            f"no purged-data archive matches tree commit {head} or any ancestor; "
+            f"see {readme_path}"
+        )
+    archive_path = purged_data_dir / f"{selected}.tar"
+    if not archive_path.is_file() or archive_path.is_symlink():
+        raise RuntimeError(
+            f"purged-data archive for commit {selected} is missing: {archive_path}; "
+            f"see {readme_path}"
+        )
+    actual_digest = sha256(archive_path)
+    expected_digest = digests[selected]
+    if actual_digest != expected_digest:
+        raise RuntimeError(
+            f"purged-data archive SHA-256 mismatch for commit {selected}: "
+            f"expected {expected_digest}, got {actual_digest}"
+        )
+
+    members: list[tarfile.TarInfo]
+    with tarfile.open(str(archive_path), mode="r:") as bundle:
+        members = bundle.getmembers()
+        seen: set[str] = set()
+        for member in members:
+            relative = PurePosixPath(member.name)
+            if (relative.is_absolute() or not relative.parts or ".." in relative.parts
+                    or "\\" in member.name
+                    or relative.parts[:3] != ("crates", "api", "data")):
+                raise RuntimeError(f"unsafe purged-data archive member: {member.name!r}")
+            canonical = relative.as_posix()
+            if canonical in seen:
+                raise RuntimeError(f"duplicate purged-data archive member: {member.name!r}")
+            seen.add(canonical)
+            if not (member.isdir() or member.isfile()):
+                raise RuntimeError(f"unsupported purged-data archive member: {member.name!r}")
+
+        for parent in (tree / "crates", tree / "crates" / "api"):
+            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+                raise RuntimeError(f"unsafe destination parent for purged game data: {parent}")
+
+        data_root = tree / "crates" / "api" / "data"
+        if data_root.exists() or data_root.is_symlink():
+            rmtree(data_root)
+        for member in members:
+            relative = PurePosixPath(member.name)
+            destination = tree.joinpath(*relative.parts)
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = bundle.extractfile(member)
+            if source is None:
+                raise RuntimeError(f"purged-data archive member has no data: {member.name}")
+            with source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1 << 20)
+            os.chmod(destination, member.mode & 0o777)
+    return selected
+
+
+def prepare_build_data(tree: Path, target: Path, build_log: Path,
+                       timeout: float | None = None) -> None:
+    """Generate post-ADR data once per input identity or restore a legacy archive."""
+    if not (tree / "tools/local-data/build.py").is_file():
+        commit = restore_purged_game_data(tree)
+        message = f"restored pre-ADR-0019 data for commit {commit} from {PURGED_DATA_DIR}"
+        _append_build_log(build_log, message)
+        log(message)
+        return
+
+    environment = local_data_environment(tree, target)
+    identity = local_data_identity(tree, environment)
+    cache_root = ROOT / "local-data-cache"
+    entry = cache_root / identity
+    if _restore_local_data_cache(entry, tree, identity):
+        message = f"local-data cache hit: {identity}"
+        _append_build_log(build_log, message)
+        log(message)
+        return
+
+    message = f"local-data cache miss: {identity}; generating for exact revision inputs"
+    _append_build_log(build_log, message)
+    log(message)
+    try:
+        run([sys.executable, "tools/local-data/build.py"], cwd=tree, env=environment,
+            log_to=build_log, timeout=timeout)
+    except subprocess.CalledProcessError as error:
+        detail = _build_log_tail(build_log) or str(error)
+        raise RuntimeError(f"local-data generation failed (exit {error.returncode}):\n{detail}") from error
+    _store_local_data_cache(entry, tree, identity)
+
+
+def prepare_nightly_data(tree: Path, target: Path, build_log: Path,
+                         timeout: float | None = None) -> None:
+    """Apply lane-specific inputs and prepare the tree's game data."""
     apply_274_inventory_overlay(tree)
+    try:
+        prepare_build_data(tree, target, build_log, timeout)
+    except subprocess.TimeoutExpired:
+        raise
+    except (OSError, RuntimeError) as error:
+        message = f"local-data preparation failed: {error}"
+        _append_build_log(build_log, message)
+        raise RuntimeError(message) from error
+
+
+def build(tree: Path, target: Path, run_dir: Path, build_log: Path, *,
+          data_prepared: bool = False) -> dict[str, Path]:
     deadline = step_deadline("build", time.monotonic())
     remaining = lambda: max(60.0, deadline - time.monotonic())  # noqa: E731
+    if not data_prepared:
+        prepare_nightly_data(tree, target, build_log, remaining())
     bins = frontend_bins()
     if not snapshot_ready():
         bootstrap_nav_snapshot(tree, run_dir, build_log, remaining())
@@ -2706,18 +3105,23 @@ def run_latency_pass(branch: str, binary: Path | None, cells: list[str], bands: 
 # ---------------------------------------------------------------- CI lanes
 
 
-def lane_asset_env() -> dict:
-    """The local test inputs each test lane gets, as on Linux CI.
+def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) -> dict:
+    """Return local test inputs, choosing packs from the tested tree's format.
 
-    GitHub CI and the merge-check script set the three nav pack names to
-    the one v17 reference pack for every test lane. The engine content
-    comes from the pristine copy. It exists before the lanes step. The
-    per-step engine-run copy does not exist yet at that point. The
-    snapshot root and the inspection baseline join only when the host
-    holds them. A test then keeps its own loud failure on a host that
-    lacks the file, and it names the local path to supply.
+    Post-ADR trees use their generated pack for this runner's revision. Legacy
+    trees keep the configured reference fixture. When a generated pack is
+    required, missing outputs use the generator's diagnostic.
     """
-    pack = str(NAV_FIXTURE)
+    generated_tree = tree is not None and (tree / "tools/local-data/build.py").is_file()
+    if generated_tree:
+        pack_path = tree / "target" / "local-data" / "nav" / str(REVISION) / "274bot.navpack"
+        if require_generated:
+            for output in (pack_path, pack_path.with_suffix(".navflags")):
+                if not output.is_file():
+                    raise RuntimeError(f"local-data generator omitted required output: {output}")
+        pack = str(pack_path)
+    else:
+        pack = str(NAV_FIXTURE)
     env = {
         "NAV_PACK": pack,
         "WORLD_NAV_PACK": pack,
@@ -2729,6 +3133,15 @@ def lane_asset_env() -> dict:
         env["BOT_NAV_SNAPSHOT_ROOT"] = str(NAV_SNAPSHOT)
     if INSPECT_BASELINE.is_file():
         env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
+    if generated_tree:
+        engine_289 = os.environ.get("NIGHTLY_GAME_DATA_289_ENGINE")
+        content_289 = os.environ.get("NIGHTLY_GAME_DATA_289_CONTENT")
+        if REVISION == "289":
+            engine_289 = engine_289 or str(ENGINE_PRISTINE / "engine")
+            content_289 = content_289 or str(ENGINE_PRISTINE / "content")
+        if engine_289 and content_289:
+            env["ISOLATED_289_ENGINE_DIR"] = str(Path(engine_289).expanduser().resolve())
+            env["ISOLATED_289_CONTENT_DIR"] = str(Path(content_289).expanduser().resolve())
     return env
 
 
@@ -2758,7 +3171,7 @@ def seed_lane_home(home: Path, snapshot_root: Path | None = None, fallback_root:
     return copied
 
 
-def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
+def lane_list(tree: Path | None, *, require_generated: bool = True) -> list[tuple[str, list[str], dict]]:
     """The Windows platform gate's lane set (gate.ps1), run with the GPU on.
 
     `test-panel-memory` runs every panel target, including the `ime_frame`
@@ -2766,7 +3179,7 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     `cargo fmt` runs per crate: a workspace-root fmt hits OS error 206 on Windows.
     """
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
-    assets = lane_asset_env()
+    assets = lane_asset_env(tree, require_generated=require_generated)
     # The runner follows dev, but a night also tests release branches
     # that predate the S1 script-js split. The script-load lane must
     # name the crate the tested tree has: script-js after S1, or
@@ -2892,7 +3305,7 @@ def run_lanes(tree: Path, run_dir: Path, work: Path, base: LaneResult, deadline:
               only: list[str] | None) -> list[LaneResult]:
     target = ROOT / "target" / f"{slug(branch)}-ci"
     results = []
-    for name, args, extra in lane_list(tree):
+    for name, args, extra in lane_list(tree, require_generated=True):
         if only and name not in only:
             continue
         outcome = run_lane(name, args, extra, tree, target, run_dir, work, base, deadline)
@@ -3107,6 +3520,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     commit_full = commit = "unknown"
     tree: Path | None = None
     build_ok, build_error, binaries = True, None, {}
+    build_data_prepared = False
     build_started = time.monotonic()
     steps: dict[str, dict] = {name: {"status": "not started", "deadline_s": STEP_DEADLINE_S[name]}
                               for name in STEPS}
@@ -3205,7 +3619,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
 
     def lane_rows(result: str, reason: str) -> list[LaneResult]:
         rows = []
-        for name, args, _ in lane_list(tree):
+        for name, args, _ in lane_list(tree, require_generated=False):
             if only_lanes and name not in only_lanes:
                 continue
             lane_dir = run_dir / "lanes" / name
@@ -3240,9 +3654,25 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                     except QuietLockError as error:
                         lanes, step["status"] = lane_rows("NOT_RUN", str(error)), f"not run: {error}"
                     else:
-                        lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start),
-                                          branch, only_lanes)
-                        step["status"] = "ran: " + counts_text(count(lanes))
+                        prepare_started = time.monotonic()
+                        try:
+                            prepare_deadline = step_deadline("build", prepare_started)
+                            prepare_nightly_data(
+                                tree, target, build_log,
+                                max(60.0, prepare_deadline - time.monotonic()))
+                            build_data_prepared = True
+                        except subprocess.TimeoutExpired:
+                            build_ok = False
+                            build_error = f"build {deadline_text('build')} reached; see build.log"
+                        except (OSError, RuntimeError) as error:
+                            build_ok, build_error = False, f"{error}"
+                        if build_ok:
+                            lanes = run_lanes(tree, run_dir, work, lane_base,
+                                              step_deadline("lanes", step_start), branch, only_lanes)
+                            step["status"] = "ran: " + counts_text(count(lanes))
+                        else:
+                            reason = f"build data preparation failed: {build_error}; see build.log"
+                            lanes, step["status"] = lane_rows("NOT_RUN", reason), f"not run: {reason}"
         step["wall_s"] = round(time.monotonic() - step_start, 1)
 
     cell_steps = [name for name in STEPS if name in ("panel", "tui")]
@@ -3254,7 +3684,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if build_ran:
         build_started = time.monotonic()
         try:
-            binaries = build(tree, target, run_dir, build_log)
+            binaries = build(tree, target, run_dir, build_log, data_prepared=build_data_prepared)
         except subprocess.TimeoutExpired:
             build_ok, build_error = False, f"build {deadline_text('build')} reached; see build.log"
         except (subprocess.CalledProcessError, OSError, RuntimeError) as error:

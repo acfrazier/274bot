@@ -1,4 +1,4 @@
-import { header, int, list, onlyKeys, pinnedLiterals, record, str, text } from './rs2b0t-literals.ts';
+import { int, list, onlyKeys, pinnedLiterals, record, str } from './rs2b0t-literals.ts';
 
 /** One bank quest-junk row (`QuestJunkEntry`, `api/bank/bankQuestJunk.ts:3-7`). */
 export type QuestJunk = { id: number; name: string; quest: string };
@@ -16,11 +16,4 @@ export async function extractQuestJunk(engine: string, source: string): Promise<
     });
     if (!rows.length) throw new Error('QUEST_JUNK: empty');
     return rows;
-}
-
-export function questJunkRust(rows: QuestJunk[]) {
-    return header('api/bank/bankQuestJunk.ts')
-        + 'pub const QUEST_JUNK: &[QuestJunkEntry] = &[\n'
-        + rows.map((row) => `    QuestJunkEntry { id: ${row.id}, name: ${text(row.name)}, quest: ${text(row.quest)} },\n`).join('')
-        + '];\n';
 }

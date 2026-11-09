@@ -23,7 +23,7 @@ it, or work on its code.
 | Look up what each Fleet button does | [Fleet actions](reference/fleet-actions.md) |
 | Change the app, walking and script options | [Change the settings](manual/settings.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
-| Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
+| Upgrade to 0.2.9 or read earlier release changes | [Upgrade guide](upgrade-0.2.0.md) |
 | See what changed in each release | [CHANGELOG](../CHANGELOG.md) |
 | Look up a word | [Glossary](manual/glossary.md) |
 
@@ -50,12 +50,12 @@ headings to jump to the part you need.
 | Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
 | Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
 | Learn the crates and who owns what | [Architecture](dev/architecture.md) |
-| Change navigation generation or the combined v18 schema | [Baked reachability contract](dev/baked-reachability.md) |
+| Change navigation generation or the v19 pack format | [Baked reachability contract](dev/baked-reachability.md) |
 | Change the Quester guide format or step handlers | [Quest paths for contributors](dev/quest-paths.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
 | Run the end-to-end suite | [e2e suite](dev/e2e-suite.md) |
-| Check an upgrade from 0.1.8.1 before a release | [Release gate](dev/release-gate-0.1.8.1.md) |
+| Check which saved formats load | [Saved data in 0.2.9](upgrade-0.2.0.md#saved-data-in-029) |
 | See the open and deferred issues | [`known-issues.toml`](known-issues.toml) |
 | Write or edit a doc | [Writing docs](dev/writing-docs.md) |
 

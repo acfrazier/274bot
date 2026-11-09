@@ -7,10 +7,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub use script::card::ScriptSel;
-
-use crate::js_cache::{CacheMeta, JsCache};
-use crate::rs2b0t_registry::ScriptSource;
+use crate::library::js_cache::{CacheMeta, JsCache};
+use script::card::ScriptSource;
 
 /// Existing source bound applied to operator-loaded script bodies.
 pub(crate) const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
@@ -367,7 +365,7 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
 /// declarations are skipped: the transpiled module never loads them.
 pub fn scan_import_specifiers(source: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for import in crate::module_imports::module_imports(source) {
+    for import in crate::library::module_imports::module_imports(source) {
         if !import.is_runtime() {
             continue;
         }
@@ -1195,7 +1193,7 @@ export const target = resolveDestination('Lumbridge');"#;
             origin,
             &cache,
             CacheMeta {
-                kind: crate::rs2b0t_registry::ScriptKind::Compat,
+                kind: script::card::ScriptKind::Compat,
                 source: ScriptSource::File,
                 shape: None,
                 api_family: Some("v1".into()),

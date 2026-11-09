@@ -22,7 +22,10 @@ pub fn parse_revision(value: &str) -> Result<ClientRevision, String> {
     match value {
         "274" => Ok(ClientRevision::R274),
         "289" => Ok(ClientRevision::R289),
-        _ => Err(format!("unsupported revision {value:?}; use 274 or 289")),
+        "377" => Ok(ClientRevision::R377),
+        _ => Err(format!(
+            "unsupported revision {value:?}; use 274, 289 or 377"
+        )),
     }
 }
 
@@ -43,11 +46,7 @@ pub enum WorldMembersSource {
     /// Guarded local `data/config/world.json` whose revision and
     /// `node.members` bool matched a selected loopback profile. Connect ports
     /// may be forwarded independently from the engine declaration.
-    LocalWorldJson {
-        path: PathBuf,
-        sha256: String,
-        bytes: u64,
-    },
+    LocalWorldJson { path: PathBuf },
     /// `--world-members true|false` on this profile.
     ExplicitOverride,
     /// Every configured endpoint is an rs2b2t members world, including fallback.
@@ -93,7 +92,6 @@ pub struct ProfileOptions {
     pub content_dir: Option<PathBuf>,
     pub vault_path: Option<PathBuf>,
     pub catalog_root: Option<PathBuf>,
-    pub cache_manifest: Option<PathBuf>,
     /// Operator-declared WORLD membership for the profile (`true`/`false`).
     pub world_members: Option<bool>,
 }
@@ -131,7 +129,6 @@ pub fn parse_profile_args(
                 | "--content"
                 | "--vault"
                 | "--catalog"
-                | "--cache-manifest"
                 | "--world-members"
         ) {
             rest.push(flag.to_string());
@@ -167,7 +164,6 @@ pub fn parse_profile_args(
             "--content" => options.content_dir = Some(value.into()),
             "--vault" => options.vault_path = Some(value.into()),
             "--catalog" => options.catalog_root = Some(value.into()),
-            "--cache-manifest" => options.cache_manifest = Some(value.into()),
             "--world-members" => {
                 options.world_members = Some(match value {
                     "true" => true,
@@ -194,7 +190,6 @@ pub struct ProfileEnvironment {
     pub nav_pack: Option<PathBuf>,
     pub nav_flags: Option<PathBuf>,
     pub catalog_root: Option<PathBuf>,
-    pub cache_manifest: Option<PathBuf>,
     pub rsa_modulus: Option<String>,
     pub rsa_exponent: Option<String>,
 }
@@ -218,7 +213,6 @@ impl ProfileEnvironment {
             catalog_root: script_js::rs2b0t_root(),
             #[cfg(not(feature = "js"))]
             catalog_root: None,
-            cache_manifest: value("BOT_CACHE_MANIFEST").map(PathBuf::from),
             rsa_modulus: value("LOGIN_RSAN"),
             rsa_exponent: value("LOGIN_RSAE"),
         }

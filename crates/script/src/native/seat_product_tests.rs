@@ -1784,3 +1784,48 @@ fn physical_walk_terminal_retires_only_armed_unqueued_slot() {
     assert_eq!(output, [50, 51]);
     assert_eq!(seat.reserved_releases(), 0);
 }
+
+#[test]
+fn compat_handover_requires_dispatched_unreleased_physical_walk() {
+    for source in [
+        EmissionSource::Root,
+        EmissionSource::Mirror {
+            owner: fixture_id(7),
+            parent: None,
+        },
+    ] {
+        let mut seat = GameplaySeat::<u32>::new(fixture_run());
+        let id = fixture_id(50);
+        assert!(!seat.has_armed_walk(id));
+        seat.push_walk(50, source, id).unwrap();
+        assert!(!seat.has_armed_walk(id));
+        seat.take();
+        assert!(!seat.has_armed_walk(id));
+        let mut output = Vec::new();
+        seat.dispatch_into(&mut output);
+        assert_eq!(output, [50]);
+        assert!(seat.live().is_empty());
+        assert_eq!(seat.lookup(id), AuthorityStatus::Pending);
+        assert!(seat.has_armed_walk(id));
+        assert!(!seat.has_armed_walk(fixture_id(51)));
+
+        seat.push(
+            51,
+            EmissionClass::Release,
+            EmissionSource::Root,
+            Some(Release::AbortWalk(id)),
+        )
+        .unwrap();
+        assert!(
+            !seat.has_armed_walk(id),
+            "a queued abort ends handover authority"
+        );
+        seat.walk_terminal(id);
+        assert_eq!(seat.reserved_releases(), 1);
+        seat.take();
+        seat.dispatch_into(&mut output);
+        assert_eq!(output, [50, 51]);
+        assert!(!seat.has_armed_walk(id));
+        assert_eq!(seat.reserved_releases(), 0);
+    }
+}

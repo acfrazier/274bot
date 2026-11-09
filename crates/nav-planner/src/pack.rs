@@ -10,45 +10,19 @@
 //! The parser lives in `nav-bake::pack`. Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 17, the quest-family
-//! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
-//! the family artifact's 32-byte `quest_facts_sha256` and its
-//! `quest_extractor_schema` as a nonzero u16le), collision origin
-//! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
-//! packed walk surface — first the `u8` face byte per tile per level,
-//! four planes, level-major, each `width × height` (row-major z then x),
-//! then the `SQ_BLOCKED` bit-plane as `u64le` words, 64 cells per word,
-//! same indexing — then the transport edge count u32le and per edge
-//! `(kind u8, at x/z/level, to x/z/level, loc_id, option, ticks, dir u8,
-//! open_loc_id)` i32le plus requirement vectors, membership and wilderness
-//! caps, quest-stage gates, the conjunctive `worn_all_req` list, and a
-//! per-edge takeoff tag (`0` absent, `1` + exact `(x, z, level)` i32le).
-//! The takeoff is stored after quest gates and before approach geometry.
-//! Version 14 reserves bit 7 of the existing kind byte for a player-relative
-//! ladder/stairs landing. The low seven bits retain the kind; flagged `to - at`
-//! encodes the content displacement, resolved against each actual takeoff
-//! stand. Absolute edge records are unchanged and the flag adds no wire bytes.
-//! Teleport edges round-trip inside the same array as kind-4 edges; [`decode`]
-//! splits them out and never indexes them into `at`. After edges come bank
-//! stands, Wilderness rules, and the v12 zone section:
-//! a kind table (npc id i32, vislevel u16, AP/visibility flags u8, then id
-//! and label as length-prefixed UTF-8), zone rows (tag 0 for NPC spawn/radius
-//! and tag 1 for a hazard rectangle), curated groups (identity, label, rect,
-//! optional level, and zone indices), carves, and shaped-zone masks
-//! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
-//! rows store the east extent in `r`). Decode rebuilds the validated
-//! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v17 stream has `Some(ZoneTable)`, even when every row count
-//! is zero; legacy grids and synthetic in-memory graphs use `zones: None`.
-//! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v15 or older whole-world stream is
-//! [`PackError::BadVersion`], never compat-loaded. Takeoff levels must match
-//! the loc anchor's valid game plane, and exact tiles must be standable in
-//! the decoded collision.
+//! Pack format (274V): magic `b"274V"`, version `u8` 19, collision origin
+//! `(x, z, level)` i32le, width/height u32le, the four-plane walk surface,
+//! blocked bit-plane, transport edges and requirement payloads, bank stands,
+//! wilderness rules, zones, multiway keys, and reachability sections.
+//! Transport edges include typed quest-stage gates but no quest-family
+//! identity metadata. Older whole-world streams return
+//! [`PackError::BadVersion`]; malformed gate keys, windows, resource
+//! requirements, takeoffs, or approach geometry return [`PackError::BadLength`].
+//! Takeoff levels must match the loc anchor's valid game plane, and exact
+//! tiles must be standable in the decoded collision.
 
 use std::fmt;
 use std::io::{self, BufRead, Cursor, Read};
-use std::num::NonZeroU16;
 use std::path::Path;
 
 use api::query::loc_approach::LocApproach;
@@ -57,17 +31,25 @@ use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
-use crate::quest_gates::{QuestFamilyId, QuestGates};
+use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
 mod banks;
+mod coord;
 mod mapsquare;
+mod multiway;
+mod reach;
 mod sidecars;
 mod zones;
 use banks::read_bank_stands;
 pub use banks::{BankAccess, BankStand};
+pub use coord::{pack_tile_key, unpack_tile_key, KEY_COORD_MAX, KEY_LEVELS};
 pub use mapsquare::walkable_dots;
+pub use multiway::{
+    decode_multiway_section, encode_multiway_keys, keys_from_tiles, validate_multiway_keys,
+};
+pub use reach::encode_atlas_sections;
 pub use sidecars::{
     decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
     read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
@@ -89,19 +71,20 @@ pub const MAGIC_GRID: &[u8; 4] = b"274N";
 /// four u32 flag planes with compact packed walk words. v7 splits those
 /// words into the `u8` face byte plus packed `SQ_BLOCKED` bit-plane. v8
 /// appends the bank stand table; v9 adds `members_req`; v10 adds wilderness
-/// teleport caps and the Wilderness-level formula. v11 binds the selected
-/// quest family and appends typed quest-stage gates. v12 appends the zone
-/// table, v13 approach geometry, v14 player-relative landings, v15 consumed
-/// resources and returns, v16 `worn_all_req` plus optional exact takeoff,
-/// and v17 observed held/equipment exclusion requirements.
-pub const VERSION: u8 = 17;
+/// teleport caps and the Wilderness-level formula. v11 adds typed quest-stage
+/// gates. v12 appends the zone table, v13 approach geometry, v14 player-relative
+/// landings, v15 consumed resources and returns, v16 `worn_all_req` plus
+/// optional exact takeoff, v17 observed held/equipment exclusions, and v18
+/// survivable multiway keys plus the reachability atlas. v19 removes quest
+/// family identity metadata while retaining gate payloads.
+pub const VERSION: u8 = 19;
 
 /// Current pack file magic.
 pub const MAGIC: &[u8; 4] = b"274V";
 
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V17";
+pub const FORMAT_ID: &str = "274V19";
 
 /// Bytes per door entry.
 pub const DOOR_BYTES: usize = 40;
@@ -145,7 +128,7 @@ impl fmt::Display for PackError {
 impl std::error::Error for PackError {}
 
 /// Bounded input shared by the byte-slice and streaming decoders.
-pub(super) trait PackRead {
+pub(crate) trait PackRead {
     fn remaining(&self) -> usize;
     fn read_bytes_exact(&mut self, buf: &mut [u8]) -> Result<(), PackError>;
 
@@ -345,16 +328,21 @@ fn decode_grid_body<R: PackRead>(mut r: R) -> Result<StepGrid, PackError> {
 pub(super) fn decode_any_reader<R: BufRead, T>(
     reader: &mut R,
     length: usize,
-    from_pack: impl FnOnce(WorldCollision, TransportGraph, Vec<BankStand>) -> T,
+    from_pack: impl FnOnce(
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ) -> T,
     from_grid: impl FnOnce(StepGrid) -> T,
 ) -> Result<T, PackError> {
     let mut r = BoundedReader::new(reader, length);
     let mut magic = [0u8; 4];
     r.read_bytes_exact(&mut magic)?;
     if &magic == MAGIC {
-        let (collision, graph, banks) = decode_pack_body(&mut r)?;
+        let (collision, graph, banks, atlas) = decode_pack_body(&mut r)?;
         r.drain_remaining()?;
-        Ok(from_pack(collision, graph, banks))
+        Ok(from_pack(collision, graph, banks, atlas))
     } else if &magic == MAGIC_GRID {
         let grid = decode_grid_body(&mut r)?;
         r.drain_remaining()?;
@@ -382,10 +370,27 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
-/// Version 16 is the only accepted wire; older streams are rejected rather
-/// than compat-loaded. Quest-stage gates bind to the header's quest family;
-/// malformed resource requirements, gates, or approach geometry are rejected.
+/// Version 19 is the current accepted wire format; older streams are rejected
+/// with the ordinary [`PackError::BadVersion`] error. Quest gates remain
+/// actual fact payloads and have no file-identity binding; malformed resource
+/// requirements, gates, or approach geometry are rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
+    let (collision, graph, banks, _) = decode_full(bytes)?;
+    Ok((collision, graph, banks))
+}
+
+/// Decode a v19 pack including its reachability atlas.
+pub fn decode_full(
+    bytes: &[u8],
+) -> Result<
+    (
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ),
+    PackError,
+> {
     let mut r = Cursor::new(bytes);
     read_magic(&mut r, MAGIC)?;
     decode_pack_body(r)
@@ -393,12 +398,19 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
 
 fn decode_pack_body<R: PackRead>(
     mut r: R,
-) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
+) -> Result<
+    (
+        WorldCollision,
+        TransportGraph,
+        Vec<BankStand>,
+        crate::reachability::ReachabilityAtlas,
+    ),
+    PackError,
+> {
     let version = read_u8(&mut r)?;
     if version != VERSION {
         return Err(PackError::BadVersion(version));
     }
-    let quest_family = read_quest_family(&mut r)?;
     // Gate keys share one allocation per distinct string; the table itself
     // is dropped with this decode.
     let mut keys = FactStrings::default();
@@ -439,7 +451,6 @@ fn decode_pack_body<R: PackRead>(
         // A v16 edge is at least 97 bytes, including its takeoff field and trailer.
         edges: Vec::with_capacity(n_edges.min(remaining / 97)),
         approaches: Vec::with_capacity(n_edges.min(remaining / 97)),
-        quest_family,
         ..Default::default()
     };
     for _ in 0..n_edges {
@@ -508,7 +519,7 @@ fn decode_pack_body<R: PackRead>(
                     Some(cap)
                 }
             },
-            quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
+            quest_gates: read_quest_gates(&mut r, &mut keys)?,
             takeoff: None,
         };
         edge.takeoff = read_takeoff(&mut r, edge.at)?;
@@ -544,6 +555,8 @@ fn decode_pack_body<R: PackRead>(
         &mut keys,
     )?;
     graph.zones = zone_table;
+    graph.multiway = multiway::decode_multiway_keys(&mut r)?;
+    let atlas = reach::decode_atlas_sections(&mut r)?;
     let collision = WorldCollision {
         origin,
         width,
@@ -570,7 +583,8 @@ fn decode_pack_body<R: PackRead>(
         }
     }
     graph.rebuild_index(&collision);
-    Ok((collision, graph, banks))
+    atlas.validate(&collision, &graph)?;
+    Ok((collision, graph, banks, atlas))
 }
 
 /// Wire byte → [`TransportKind`], rejecting unknown values.
@@ -663,44 +677,15 @@ pub fn validate_resource_requirements(edge: &TransportEdge) -> Result<(), PackEr
     Ok(())
 }
 
-/// Read the header's quest-family binding; no [`QuestFamilyId`] has
-/// extractor schema 0, so it is malformed rather than "no schema".
-fn read_quest_family<R: PackRead>(r: &mut R) -> Result<Option<QuestFamilyId>, PackError> {
-    match read_u8(r)? {
-        0 => Ok(None),
-        1 => {
-            let mut quest_facts_sha256 = [0u8; 32];
-            r.read_bytes_exact(&mut quest_facts_sha256)?;
-            let quest_extractor_schema = NonZeroU16::new(read_u16(r)?)
-                .ok_or_else(|| PackError::BadLength("quest family extractor schema is 0".into()))?;
-            Ok(Some(QuestFamilyId::new(
-                quest_facts_sha256,
-                quest_extractor_schema,
-            )))
-        }
-        other => Err(PackError::BadLength(format!(
-            "quest family binding tag {other} is not 0 or 1"
-        ))),
-    }
-}
-
-/// Read an edge's quest-stage gates, bound to the header's `family`. Gates
-/// on a pack that binds no family, or that fail [`QuestGates::new`]'s
-/// validation (an empty key, an empty or unbounded window), are malformed.
+/// Read an edge's quest-stage gates. Malformed keys and windows are rejected.
 fn read_quest_gates<R: PackRead>(
     r: &mut R,
-    family: Option<&QuestFamilyId>,
     keys: &mut FactStrings,
 ) -> Result<Option<QuestGates>, PackError> {
     let n = read_u32(r)? as usize;
     if n == 0 {
         return Ok(None);
     }
-    let Some(family) = family else {
-        return Err(PackError::BadLength(
-            "quest gates without a quest-family binding".into(),
-        ));
-    };
     let remaining = r.remaining();
     let mut gates = Vec::with_capacity(n.min(remaining / 6));
     for _ in 0..n {
@@ -721,7 +706,7 @@ fn read_quest_gates<R: PackRead>(
             }
         });
     }
-    QuestGates::new(*family, gates)
+    QuestGates::new(gates)
         .map(Some)
         .map_err(|error| PackError::BadLength(error.to_string()))
 }

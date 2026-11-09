@@ -3,7 +3,7 @@
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 
-use crate::callback_v8::{self as cb, Flow, JsResult, Poll};
+use crate::materialize::callback_v8::{self as cb, Flow, JsResult, Poll};
 
 /// Install the native TreeBot sequencing callback into one runtime.
 pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -152,7 +152,7 @@ mod tests {
         "bindings::tree_bot::tests::bot_objects_have_fast_properties_and_bounded_heap";
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
         super::install(&mut runtime).unwrap();

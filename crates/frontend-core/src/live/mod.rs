@@ -12,6 +12,28 @@ use serde_json::{Map, Value};
 /// An owned scenario. The scenario adapter value stays private to this crate.
 pub struct Scenario(Box<scenario::Scenario>);
 
+/// Fixture-only combat logout escape shared with the headless Quester cells.
+/// The scenario adapter stays private, as with the runner and fixture identity.
+pub struct CombatLogout(scenario::teardown::CombatLogout);
+
+impl CombatLogout {
+    pub fn new(snapshot: &api::snapshot::GameSnapshot, deadline: Instant) -> Self {
+        Self(scenario::teardown::CombatLogout::new(snapshot, deadline))
+    }
+
+    pub fn allows_retry(&mut self, snapshot: &api::snapshot::GameSnapshot, now: Instant) -> bool {
+        self.0.allows_retry(snapshot, now)
+    }
+
+    pub fn send_escape<D: api::interact::Driver>(
+        &mut self,
+        driver: &mut D,
+        now: Instant,
+    ) -> Result<bool, String> {
+        self.0.send_escape(driver, now)
+    }
+}
+
 /// A borrowed, scalar view of the scenario settings used by the front ends.
 #[derive(Debug, Clone, Copy)]
 pub struct ScenarioView<'a> {
@@ -106,7 +128,8 @@ impl<Client, Tick, Companion> crate::frames::LiveClientFrame<Client>
     for ScenarioFrame<Tick, Companion>
 where
     Tick: Fn(&mut scenario::ScenarioRunner, &mut Client, bool) + Send + Sync + 'static,
-    Companion: Fn(&mut scenario::ScenarioRunner, usize, &mut Client) + Send + Sync + 'static,
+    Companion:
+        Fn(&mut scenario::ScenarioRunner, usize, &mut Client) -> bool + Send + Sync + 'static,
 {
     fn run(&self, client: &mut Client, name: &str, hold: bool) {
         self.runner.frame(
@@ -132,6 +155,10 @@ struct RunnerState {
     external_reload_pending: Option<ExternalReloadPending>,
     live_timing: Option<host_play::live_gate::LiveTiming>,
     core_mode: Option<host_play::live_gate::LiveCore>,
+    /// Slots whose fixture pressed its logout and asked for the host's
+    /// explicit Login (the scriptless park policy). The front end drains
+    /// them each poll and posts `SlotArm::arm_explicit_login` for that slot.
+    login_requests: Vec<String>,
 }
 
 #[cfg(feature = "js")]
@@ -518,11 +545,20 @@ impl RunnerHandle {
         self.0.lock().unwrap().external = watch;
     }
 
+    /// Drain the slots whose live fixture pressed its logout and needs the
+    /// host's explicit Login. The front end posts
+    /// `SlotArm::arm_explicit_login` for each name (the operator's Login
+    /// command); a bot with no script does not reconnect by itself.
+    pub(crate) fn take_relog_logins(&self) -> Vec<String> {
+        std::mem::take(&mut self.0.lock().unwrap().login_requests)
+    }
+
     /// Remove the current scenario runner, staged Starts, timing, and watches.
     pub fn clear(&self) {
         let mut state = self.0.lock().unwrap();
         state.runner.take();
         state.pending.clear();
+        state.login_requests.clear();
         state.start_handle = None;
         state.catalog = None;
         state.pair = None;
@@ -1422,7 +1458,7 @@ impl RunnerHandle {
         companion_tick: U,
     ) where
         T: Fn(&mut scenario::ScenarioRunner, &mut C, bool),
-        U: Fn(&mut scenario::ScenarioRunner, usize, &mut C),
+        U: Fn(&mut scenario::ScenarioRunner, usize, &mut C) -> bool,
     {
         let mut state = self.0.lock().unwrap();
         let RunnerState {
@@ -1432,6 +1468,7 @@ impl RunnerHandle {
             catalog,
             pair,
             live_timing,
+            login_requests,
             ..
         } = &mut *state;
         let Some(runner) = runner_slot.as_mut() else {
@@ -1479,6 +1516,11 @@ impl RunnerHandle {
                         );
                     }
                     tick_with_hold(runner, client, hold);
+                    if runner.take_relog_login() {
+                        // The Relog step logged a scriptless bot out: post the
+                        // operator Login for it on the next front-end poll.
+                        login_requests.push(name.to_owned());
+                    }
                     if runner.on_start_script() {
                         let pump = if pair_setup_expired(live_timing) {
                             runner.fail_start("paired fixture setup deadline expired before Start");
@@ -1509,7 +1551,10 @@ impl RunnerHandle {
                 }
             }
         } else if let Some(index) = runner.companion_for(name) {
-            companion_tick(runner, index, client);
+            if companion_tick(runner, index, client) {
+                // The companion's prep relog wants the operator Login.
+                login_requests.push(name.to_owned());
+            }
         }
     }
 }

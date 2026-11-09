@@ -20,8 +20,8 @@
 //! ladder run `Sustain.run()` each iteration (`WalkExecutor.ts:853`,
 //! `Traversal.ts:130`). Frozen `execute` resolves `void`.
 
+use crate::compat::walk::{here, interrupted, Resilient, Walk, WalkOpening};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::walk::{here, interrupted, Resilient, Walk, WalkOpening};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
@@ -290,6 +290,8 @@ impl ReturnToAnchor {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            None,
             cx,
         ) {
             Ok(walk) => {
@@ -304,11 +306,11 @@ impl ReturnToAnchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::{self, Outcome, Started, Take};
-    use crate::walk::tests::{
+    use crate::compat::walk::tests::{
         door_loc, post_here, post_walk_outcome, post_walled_scene, reset, NoJs,
     };
-    use script::shim::InteractReq;
+    use crate::machine::{self, Outcome, Started, Take};
+    use script::interact::InteractReq;
     use serde_json::{json, Value};
 
     const ANCHOR: WorldTile = WorldTile {

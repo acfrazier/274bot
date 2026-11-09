@@ -185,7 +185,10 @@ pub(crate) fn nav_door_scenario() -> Scenario {
             profile: 1,
             per_frame: {
                 let mut slot = CloserSlot::default();
-                Box::new(move |c| closer_frame(c, &mut slot))
+                Box::new(move |c| {
+                    closer_frame(c, &mut slot);
+                    false
+                })
             },
         }],
         settings: ScenarioSettings {

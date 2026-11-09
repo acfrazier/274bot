@@ -152,6 +152,28 @@ struct WalkReleaseSlot {
     state: WalkReleaseState,
 }
 
+/// How one `SeatPage` dispatch attempt ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeatPageOutcome {
+    /// The surface accepted the paired page and the dispatch.
+    Accepted,
+    /// The surface refused the paired page, so it refused the dispatch too.
+    RefusedPage,
+    /// The surface accepted the page and refused the dispatch.
+    RefusedDispatch,
+}
+
+/// Counts of the `SeatPage` dispatch attempts, by outcome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SeatPageCounts {
+    /// Dispatches the surface accepted.
+    pub accepted: u32,
+    /// Attempts whose paired page the surface refused.
+    pub refused_page: u32,
+    /// Attempts whose page was accepted and whose dispatch was refused.
+    pub refused_dispatch: u32,
+}
+
 /// One bounded forest, terminal ledger, history and row queue. The row type is
 /// the caller's owned payload; native-only builds instantiate it without V8.
 /// Capacity is reserved once, on the first real script/seat activation.
@@ -182,6 +204,17 @@ pub struct GameplaySeat<R> {
     stopped: bool,
     dropped: u64,
     late_controls: u64,
+    /// Changes to prompts, consumed decisions and published results since the
+    /// seat was armed. Admissions, phases and acknowledgements do not count.
+    answer_seq: u64,
+    /// The `answer_seq` that the page of the last accepted `SeatPage`
+    /// dispatch carried.
+    answer_dispatched: u64,
+    /// The result sequence the seat had when the last accepted `SeatPage`
+    /// dispatch was captured: the release floor of the next attempt.
+    terminal_dispatched: u64,
+    /// Diagnostic counts of the seat page dispatches observe attempted.
+    page_counts: SeatPageCounts,
 }
 
 impl<R> GameplaySeat<R> {
@@ -213,6 +246,10 @@ impl<R> GameplaySeat<R> {
             stopped: false,
             dropped: 0,
             late_controls: 0,
+            answer_seq: 0,
+            answer_dispatched: 0,
+            terminal_dispatched: 0,
+            page_counts: SeatPageCounts::default(),
         }
     }
 
@@ -281,6 +318,71 @@ impl<R> GameplaySeat<R> {
         self.held
     }
 
+    /// Count one attempted `SeatPage` dispatch for the receipt line.
+    pub fn note_seat_page(&mut self, outcome: SeatPageOutcome) {
+        let counts = &mut self.page_counts;
+        let count = match outcome {
+            SeatPageOutcome::Accepted => &mut counts.accepted,
+            SeatPageOutcome::RefusedPage => &mut counts.refused_page,
+            SeatPageOutcome::RefusedDispatch => &mut counts.refused_dispatch,
+        };
+        *count = count.saturating_add(1);
+    }
+
+    /// The `SeatPage` dispatch counts observe recorded so far.
+    pub fn seat_page_counts(&self) -> SeatPageCounts {
+        self.page_counts
+    }
+
+    /// How many answers wait for their owner runtime.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn untaken_answer_count(&self) -> usize {
+        self.answers.len()
+    }
+
+    /// Changes to prompts, consumed decisions and published results since the
+    /// seat was armed. Moves with each successful prompt post, each consumed
+    /// decision and each published result. A held seat refuses all three, so
+    /// it never moves while held.
+    pub fn answer_seq(&self) -> u64 {
+        self.answer_seq
+    }
+
+    /// The sequence of the newest published result.
+    pub fn result_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// The release floor: [`Self::result_seq`] when the last accepted seat
+    /// answer dispatch was captured.
+    pub fn terminal_dispatched(&self) -> u64 {
+        self.terminal_dispatched
+    }
+
+    /// The `answer_seq` that the last accepted seat answer dispatch carried.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn answer_dispatched(&self) -> u64 {
+        self.answer_dispatched
+    }
+
+    /// A page that carries an answer-page change is owed to the surface.
+    pub fn answer_page_owed(&self) -> bool {
+        self.answer_seq != self.answer_dispatched
+    }
+
+    /// Record that an accepted `SeatPage` dispatch carried every change up to
+    /// `carried` and every result up to `carried_terminal`. The two counters
+    /// move together and only here.
+    pub fn mark_answer_dispatched(&mut self, carried: u64, carried_terminal: u64) {
+        self.answer_dispatched = carried;
+        self.terminal_dispatched = carried_terminal;
+    }
+
+    /// An answer waits for its owner runtime to take it.
+    pub fn has_untaken_answers(&self) -> bool {
+        !self.answers.is_empty()
+    }
+
     pub fn has_rows(&self) -> bool {
         !self.queued.is_empty() || !self.in_flight.is_empty()
     }
@@ -342,6 +444,15 @@ impl<R> GameplaySeat<R> {
             None => true,
             Some(armed) => armed.id == id,
         })
+    }
+
+    /// A host-fenced compatibility handover owns a dispatched physical walk,
+    /// which need not have a native forest entry. Queued aborts are not live.
+    pub(crate) fn has_armed_walk(&self, id: RequestId) -> bool {
+        self.walk_releases
+            .iter()
+            .flatten()
+            .any(|slot| slot.id == id && slot.state == WalkReleaseState::Armed)
     }
 
     /// Retire an armed physical walk after its matching host terminal. A
@@ -563,6 +674,7 @@ impl<R> GameplaySeat<R> {
             authority_revoked,
         });
         self.note_id(id);
+        self.answer_seq = self.answer_seq.saturating_add(1);
         Ok(())
     }
 
@@ -594,6 +706,7 @@ impl<R> GameplaySeat<R> {
             authority_revoked,
         });
         self.note_id(id);
+        self.answer_seq = self.answer_seq.saturating_add(1);
         Ok(())
     }
 
@@ -626,6 +739,23 @@ impl<R> GameplaySeat<R> {
             }
         }
         true
+    }
+
+    /// The interaction hold of the in-isolate owner `owner` expired at the
+    /// host's sample (finding N1 of `HOLD-MODEL-AB`): its rows that still
+    /// wait in the seat are stale. They are dropped at dispatch and counted
+    /// there. Unlike [`Self::revoke_mirror_owner`], this keeps no revocation
+    /// history: the owner fails at its own next step and sends nothing more.
+    pub fn drop_expired_hold_rows(&mut self, owner: RequestId) {
+        for row in self.queued.iter_mut().chain(&mut self.in_flight) {
+            if row
+                .authority
+                .as_ref()
+                .is_some_and(|lease| lease.owner() == owner)
+            {
+                row.boundary = AuthorityBoundary::Revoked;
+            }
+        }
     }
 
     pub fn mirror_revokes_consumed(&self) -> u64 {
@@ -874,6 +1004,7 @@ impl<R> GameplaySeat<R> {
         entry.decisions_consumed = raw;
         self.prompts.retain(|prompt| prompt.id != id);
         self.answers.push(SeatAnswer { id, seq, answer });
+        self.answer_seq = self.answer_seq.saturating_add(1);
         SeatDecisionStatus::Consumed
     }
 
@@ -928,6 +1059,7 @@ impl<R> GameplaySeat<R> {
             point,
             args: args.to_vec(),
         });
+        self.answer_seq = self.answer_seq.saturating_add(1);
         Ok(seq)
     }
 
@@ -1733,6 +1865,10 @@ impl<R> GameplaySeat<R> {
         self.mirror_revokes_consumed = 0;
         self.next_seq = 0;
         self.consumed_seq = 0;
+        // Nothing is owed after a destructive boundary: the new result
+        // sequence starts again at 1, so no earlier stamp can qualify.
+        self.answer_dispatched = self.answer_seq;
+        self.terminal_dispatched = 0;
         self.run = run;
         self.held = false;
         self.stopped = false;
@@ -1761,6 +1897,9 @@ impl<R> GameplaySeat<R> {
         self.mirror_revokes_consumed = 0;
         self.next_seq = 0;
         self.consumed_seq = 0;
+        self.answer_seq = 0;
+        self.answer_dispatched = 0;
+        self.terminal_dispatched = 0;
         self.held = false;
         self.dropped = 0;
         self.late_controls = 0;

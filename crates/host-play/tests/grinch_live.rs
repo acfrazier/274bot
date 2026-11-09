@@ -352,8 +352,8 @@ mod return_boundary {
             revision: Some("289".into()),
             host: Some("127.0.0.1".into()),
             asset_host: Some("127.0.0.1".into()),
-            port: Some(44594),
-            http_port: Some(1080),
+            port: Some(host_play::live_ports::game_port()),
+            http_port: Some(host_play::live_ports::http_port()),
             nav_pack: Some(path("NAV_PACK")),
             engine_dir: Some(path("ENGINE_DIR")),
             catalog_root: Some(path("CATALOG_ROOT")),
@@ -403,6 +403,12 @@ mod return_boundary {
         let mut last_status = String::new();
         let mut arrived = false;
         while Instant::now() < deadline {
+            let relog_login = state.lock().unwrap().relog.take_relog_login();
+            if relog_login {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             let ready = matches!(state.lock().unwrap().prep, Prep::Ready);
             if ready && !started {
                 play.script_start(
@@ -459,7 +465,7 @@ mod return_boundary {
         let passed = arrived && rebuild_on_return && crossed_boundary && state.failure.is_none();
         let receipt = json!({
             "request":"GRINCH-RETURN-STALL-1023", "passed":passed, "account":account,
-            "engine":"127.0.0.1:44594", "deadline_seconds":DEADLINE.as_secs(),
+            "engine":format!("127.0.0.1:{}", host_play::live_ports::game_port()), "deadline_seconds":DEADLINE.as_secs(),
             "anchor":ANCHOR, "run":run, "banked":state.banked, "picked":state.picked,
             "arrived":arrived, "rebuild_on_return":rebuild_on_return, "crossed_boundary":crossed_boundary,
             "failure":state.failure, "frames":state.frames, "statuses":state.statuses, "seeds":state.seeds,

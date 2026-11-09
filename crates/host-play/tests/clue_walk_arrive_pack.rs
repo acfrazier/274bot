@@ -28,9 +28,10 @@ fn entrana_drawers_north_stand_routes_via_real_boat_and_house_door() {
         level: 0,
     };
     let mut state = WorldState::empty().with_map_members(true);
+    state.inventory_ready = true;
+    state.equipment_ready = true;
     state.inv.insert(3579, 1);
     state.inv.insert(952, 1);
-    state.combat_level = Some(3);
     assert!(!world.collision.walkable(drawers));
     assert!(matches!(
         find_with(

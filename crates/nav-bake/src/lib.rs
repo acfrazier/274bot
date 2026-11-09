@@ -5,11 +5,10 @@
 //! Release navigation generation. Runtime planning stays in `nav-planner`.
 
 pub mod bake;
-pub mod bundle;
 pub mod canlight;
 pub mod collision;
-pub mod manifest;
 pub mod pack;
+pub mod reachability;
 pub mod services;
 pub mod transport;
 mod zones;
@@ -17,95 +16,34 @@ mod zones;
 /// Failure at a navigation-generation boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
-    /// A source file, its identity, or the required source inventory is invalid.
+    /// A required source file or local fact input is invalid.
     #[error(transparent)]
     SourceInput(#[from] SourceInputError),
-    /// A staged artifact no longer matches its bake stamp.
-    #[error(transparent)]
-    StaleStamp(#[from] StaleStampError),
     /// Canlight input or generation failed.
     #[error(transparent)]
     Canlight(#[from] canlight::CanlightError),
+    /// Multiway table input or generation failed.
+    #[error(transparent)]
+    Multiway(#[from] pack::MultiwayError),
     /// A selected release revision is not supported.
-    #[error("unsupported revision {revision}; use 274 or 289")]
+    #[error("unsupported revision {revision}; use 274, 289 or 377")]
     UnsupportedRevision { revision: u16 },
-    /// A selected revision's embedded game data could not be loaded.
-    #[error("{detail}")]
-    SelectedGameDataUnavailable { revision: u16, detail: String },
     /// A revision-bound cache path lacks the expected parent.
     #[error("revision 274 cache path has no data/pack parent")]
     CachePathMissingParent { cache_dir: std::path::PathBuf },
-    /// A cache manifest could not be read.
-    #[error("cache manifest {path}: {source}")]
-    CacheManifestRead {
+    /// The revision-377 config archive could not be decoded.
+    #[error("revision 377 config {path}: {source}")]
+    ConfigDecode377 {
         path: std::path::PathBuf,
         #[source]
-        source: std::io::Error,
+        source: client::config::config_377::DecodeError377,
     },
-    /// A cache manifest could not be parsed.
-    #[error("cache manifest {path}: {source}")]
-    CacheManifestParse {
-        path: std::path::PathBuf,
-        #[source]
-        source: serde_json::Error,
-    },
-    /// Capturing or verifying a cache manifest failed.
-    #[error("{detail}")]
-    CacheManifestCapture { detail: String },
-    /// The cache manifest and selected revision differ.
-    #[error(
-        "cache manifest revision {manifest_revision} does not match selected revision {selected_revision}"
-    )]
-    CacheManifestRevisionMismatch {
-        manifest_revision: u16,
-        selected_revision: u16,
-    },
-    /// The cache manifest does not match the cache files.
-    #[error("cache manifest does not match cache bytes at {cache_dir}")]
-    CacheManifestMismatch { cache_dir: std::path::PathBuf },
-    /// The cache manifest has no config archive identity.
-    #[error("cache manifest has no config archive")]
-    CacheManifestConfigMissing,
-    /// The selected config archive does not belong to the verified cache.
-    #[error("selected config {path} does not belong to the verified revision {revision} cache")]
-    ConfigCacheMismatch {
-        revision: u16,
-        path: std::path::PathBuf,
-    },
-    /// The decoded cache identity could not be computed.
-    #[error(transparent)]
-    DecodedIdentityFailed(#[from] client::content_identity::ContentIdentityError),
-    /// The versionlist could not be read during offline identity preparation.
-    #[error("{source}")]
-    VersionlistRead {
-        path: std::path::PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    /// Cache files changed during offline identity preparation.
-    #[error("cache changed during offline identity preparation")]
-    CacheChangedDuringIdentityPreparation,
-    /// Captured cache inputs no longer match during offline identity preparation.
-    #[error("cache inputs changed before offline identity preparation")]
-    CacheInputsChangedDuringIdentityPreparation,
-    /// The versionlist changed during offline identity preparation.
-    #[error("cache versionlist changed during offline identity preparation")]
-    VersionlistChangedDuringIdentityPreparation,
-    /// The configured resource directory is empty.
-    #[error("BOT_NAV_RESOURCE_DIR is empty")]
-    EmptyResourceDirectory,
-    /// The build-script output path does not have the expected Cargo layout.
-    #[error("unexpected build script output layout {out_dir}; set BOT_NAV_RESOURCE_DIR")]
-    UnexpectedBuildOutputLayout { out_dir: std::path::PathBuf },
-    /// A relative resource directory escapes its root.
-    #[error("resource directory {path} must not escape its root")]
-    ResourceDirectoryEscapesRoot { path: std::path::PathBuf },
-    /// The current working directory could not be read.
-    #[error("working directory: {source}")]
-    WorkingDirectoryRead {
-        #[source]
-        source: std::io::Error,
-    },
+    /// A selected revision's local game data could not be decoded.
+    #[error("game data revision {revision}: {detail}")]
+    SelectedGameDataUnavailable { revision: u16, detail: String },
+    /// Local quest facts could not be decoded.
+    #[error("quest facts revision {revision}: {detail}")]
+    QuestFactsUnavailable { revision: u16, detail: String },
     /// The hunter source inputs could not be collected or interpreted.
     #[error("{detail}")]
     HunterInputInvalid { detail: String },
@@ -218,9 +156,6 @@ pub enum GenerationError {
         doors_dir: std::path::PathBuf,
         gates: std::path::PathBuf,
     },
-    /// The selected quest family identity could not be built.
-    #[error("quest family: {error:?}")]
-    QuestFamilyIdentityFailed { error: api::selected::FactError },
     /// A transport-content validation failed.
     #[error("{detail}")]
     TransportValidation {
@@ -233,30 +168,6 @@ pub enum GenerationError {
         #[source]
         source: Box<GenerationError>,
     },
-    /// The generated zone count cannot be recorded in a manifest.
-    #[error("zone count exceeds the manifest range")]
-    ManifestZoneCountOverflow,
-    /// The generated NPC zone count cannot be recorded in a manifest.
-    #[error("NPC zone count exceeds the manifest range")]
-    ManifestNpcZoneCountOverflow,
-    /// The decoded content identity is not a SHA-256 value.
-    #[error("decoded content identity is not SHA-256 hex")]
-    InvalidDecodedContentIdentity,
-    /// The baker source digest is not a SHA-256 value.
-    #[error("source digest is not SHA-256 hex")]
-    InvalidSourceDigest,
-    /// The navpois generator identity is not a SHA-256 value.
-    #[error("navpois generator identity is not SHA-256 hex")]
-    InvalidPoisGeneratorIdentity,
-    /// Baker inputs changed during bake preparation.
-    #[error("baker inputs changed during preparation")]
-    BakerInputsChangedDuringPreparation,
-    /// A bound bake was requested without both its revision and cache.
-    #[error("a bound bake needs both a revision and its cache manifest")]
-    BoundBakeNeedsRevisionAndCache,
-    /// Navpois generator source root could not be found.
-    #[error("navpois generator workspace root is unavailable")]
-    PoisGeneratorWorkspaceUnavailable,
     /// Navpois source data could not be analyzed.
     #[error("{detail}")]
     PoisSourceInvalid { detail: String },
@@ -282,32 +193,29 @@ pub enum GenerationError {
 /// Context for a file that belongs to a bake's required source closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceInputContext {
-    /// A regular bake source file.
-    BakeInput,
-    /// A recursive bake source directory.
-    BakeInputDirectory,
     /// One door configuration.
     DoorConfig,
     /// The gates configuration.
     GatesConfig,
+    /// A local core game-data file.
+    GameData,
+    /// Local quest facts.
+    QuestFacts,
     /// The client cache's loc definitions.
     LocDefinitions,
     /// The bank-zone source.
     BankZones,
-    /// A navpois generator source file.
-    PoisGeneratorSource,
 }
 
 impl std::fmt::Display for SourceInputContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::BakeInput => "bake input",
-            Self::BakeInputDirectory => "bake input directory",
             Self::DoorConfig => "door config",
             Self::GatesConfig => "gates config",
+            Self::GameData => "game data",
+            Self::QuestFacts => "quest facts",
             Self::LocDefinitions => "cannot load loc defs from",
             Self::BankZones => "canlight bank_zones",
-            Self::PoisGeneratorSource => "navpois generator source",
         })
     }
 }
@@ -331,144 +239,6 @@ pub enum SourceInputError {
         #[source]
         source: std::str::Utf8Error,
     },
-    /// A source file could not be hashed.
-    #[error("bake input {path}: {detail}")]
-    HashFailed {
-        path: std::path::PathBuf,
-        detail: String,
-    },
-    /// An explicit input path does not identify a regular file.
-    #[error("bake input {path} is not a file")]
-    NotRegularFile { path: std::path::PathBuf },
-    /// A requested source path is absent from the captured fingerprint set.
-    #[error("source input {path} was not fingerprinted")]
-    NotFingerprinted { path: std::path::PathBuf },
-    /// A required-input inventory line names an unknown kind.
-    #[error("required-content-{revision} line {line}: unknown kind {kind:?}")]
-    UnknownInventoryKind {
-        revision: u16,
-        line: usize,
-        kind: String,
-    },
-    /// A required-input inventory line has no path.
-    #[error("required-content-{revision} line {line}: no path")]
-    MissingInventoryPath { revision: u16, line: usize },
-    /// A required-input inventory path is not content-relative.
-    #[error("required-content-{revision} line {line}: {path} is not content-relative")]
-    InvalidInventoryPath {
-        revision: u16,
-        line: usize,
-        path: String,
-    },
-}
-
-/// Kind of a staged artifact checked by a bake stamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StagedArtifact {
-    /// The navigation pack.
-    Pack,
-    /// The collision-flags sidecar.
-    Flags,
-    /// The reachability sidecar.
-    Reach,
-    /// The canlight sidecar.
-    Canlight,
-    /// The navigation manifest.
-    Manifest,
-    /// The point-of-interest sidecar.
-    NavPois,
-}
-
-impl std::fmt::Display for StagedArtifact {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Pack => "pack",
-            Self::Flags => "flags",
-            Self::Reach => "reach",
-            Self::Canlight => "canlight",
-            Self::Manifest => "manifest",
-            Self::NavPois => "navpois",
-        })
-    }
-}
-
-/// The exact stale-stamp cause returned by [`bundle::BakeStamp::covers`].
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum StaleStampError {
-    /// The stamp's selected revision differs.
-    #[error("staged navigation is revision {stamped}, build selects {selected}")]
-    RevisionMismatch { stamped: u16, selected: u16 },
-    /// The stamp's selected format differs.
-    #[error("staged navigation format {stamped} is not {selected}")]
-    FormatMismatch { stamped: String, selected: String },
-    /// The baker or its source identity changed.
-    #[error("bake generator changed (nav bake/format sources or generator id)")]
-    GeneratorChanged,
-    /// The selected cache identity changed.
-    #[error("selected cache identity changed")]
-    CacheIdentityChanged,
-    /// A staged artifact is absent.
-    #[error("staged {artifact} {path} is missing")]
-    StagedArtifactMissing {
-        artifact: StagedArtifact,
-        path: String,
-    },
-    /// A staged artifact's byte count differs from the stamp.
-    #[error("staged {artifact} {path} is {actual_bytes} bytes, stamped {stamped_bytes}")]
-    StagedArtifactSizeMismatch {
-        artifact: StagedArtifact,
-        path: String,
-        actual_bytes: u64,
-        stamped_bytes: u64,
-    },
-    /// The navpois byte count differs from the stamp.
-    #[error("staged navpois is {actual_bytes} bytes, stamped {stamped_bytes}")]
-    NavPoisSizeMismatch {
-        actual_bytes: u64,
-        stamped_bytes: u64,
-    },
-    /// The stamp has no navpois byte count.
-    #[error("staged navpois byte count is missing from the stamp")]
-    NavPoisBytesMissingFromStamp,
-    /// The staged manifest byte count differs from the stamp.
-    #[error("staged navigation manifest is {actual_bytes} bytes, stamped {stamped_bytes}")]
-    ManifestSizeMismatch {
-        actual_bytes: u64,
-        stamped_bytes: u64,
-    },
-    /// A staged digest is absent.
-    #[error("staged {artifact} is missing")]
-    StagedDigestMissing { artifact: StagedArtifact },
-    /// A staged digest differs from the stamp.
-    #[error("staged {artifact} digest does not match the stamp")]
-    StagedDigestMismatch { artifact: StagedArtifact },
-    /// The stamp has no manifest byte count.
-    #[error("staged navigation manifest is missing")]
-    ManifestBytesMissingFromStamp,
-    /// The manifest is missing from the staged directory.
-    #[error("staged navigation manifest is missing")]
-    ManifestBytesMissingFromDisk,
-    /// The stamp has no relative manifest path.
-    #[error("staged navigation manifest path is missing from the stamp")]
-    ManifestPathMissingFromStamp,
-    /// The stamp has no manifest digest.
-    #[error("staged navigation manifest digest is missing from the stamp")]
-    ManifestDigestMissingFromStamp,
-    /// The stamp has no navpois digest.
-    #[error("staged navpois is missing")]
-    NavPoisDigestMissingFromStamp,
-    /// The navpois generator identity changed.
-    #[error("navpois generator changed")]
-    NavPoisGeneratorChanged {
-        stamped: Option<String>,
-        expected: String,
-    },
-    /// The canonical fingerprint set has a different number of entries.
-    #[error("canonical inputs changed ({stamped} stamped, {present} present)")]
-    CanonicalInputCountMismatch { stamped: usize, present: usize },
-    /// One canonical fingerprint differs.
-    #[error("canonical input {path} changed")]
-    CanonicalInputChanged { path: String },
 }
 
 /// Which content validation produced a transport-bake error.

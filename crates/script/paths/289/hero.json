@@ -1,0 +1,4044 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "hero",
+  "display_name": "Hero's Quest",
+  "required": [
+    "quest-points-55",
+    "complete-blackarmgang",
+    "complete-zanaris",
+    "complete-dragon",
+    "complete-arthur",
+    "mining-50",
+    "herblore-25",
+    "fishing-53",
+    "cooking-53"
+  ],
+  "tested_stats": null,
+  "partner": {
+    "protocol": "hero",
+    "roles": [
+      {
+        "id": "phoenix",
+        "gang": "Phoenix"
+      },
+      {
+        "id": "blackarm",
+        "gang": "BlackArm"
+      }
+    ]
+  },
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "quest-points-55",
+        "kind": {
+          "QuestPoints": 55
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_hero/scripts/quest_hero.rs2:1-7; scripts/quests/quest_hero/configs/quest_hero.constant:20"
+      },
+      {
+        "id": "complete-blackarmgang",
+        "kind": {
+          "Quest": "blackarmgang"
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_hero/scripts/quest_hero.rs2:1-7"
+      },
+      {
+        "id": "complete-zanaris",
+        "kind": {
+          "Quest": "zanaris"
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_hero/scripts/quest_hero.rs2:1-7"
+      },
+      {
+        "id": "complete-dragon",
+        "kind": {
+          "Quest": "dragon"
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_hero/scripts/quest_hero.rs2:1-7"
+      },
+      {
+        "id": "complete-arthur",
+        "kind": {
+          "Quest": "arthur"
+        },
+        "at": "start",
+        "source": "scripts/quests/quest_hero/scripts/quest_hero.rs2:1-7"
+      },
+      {
+        "id": "mining-50",
+        "kind": {
+          "Skill": {
+            "skill": "mining",
+            "level": 50
+          }
+        },
+        "at": "start",
+        "source": "scripts/areas/area_white_wolf_mountain/scripts/white_wolf_mountain.rs2:14-22"
+      },
+      {
+        "id": "herblore-25",
+        "kind": {
+          "Skill": {
+            "skill": "herblore",
+            "level": 25
+          }
+        },
+        "at": "start",
+        "source": "scripts/skill_herblore/configs/brewing/brew_potion.struct:207-213"
+      },
+      {
+        "id": "fishing-53",
+        "kind": {
+          "Skill": {
+            "skill": "fishing",
+            "level": 53
+          }
+        },
+        "at": "start",
+        "source": "scripts/skill_fishing/scripts/fishing_spots/lavafish.rs2:82-98"
+      },
+      {
+        "id": "cooking-53",
+        "kind": {
+          "Skill": {
+            "skill": "cooking",
+            "level": 53
+          }
+        },
+        "at": "start",
+        "source": "scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:105-112"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "entrana": {
+        "boxes": [
+          [
+            2816,
+            3328,
+            2879,
+            3391,
+            0
+          ],
+          [
+            2816,
+            3328,
+            2879,
+            3391,
+            1
+          ]
+        ],
+        "source": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:20-23; maps/m44_52.jm2:8063"
+      }
+    },
+    "tools": [
+      "obj:ice_gloves",
+      "obj:hot_feather",
+      "obj:bronze_pickaxe",
+      "obj:blamish_snail_slime",
+      "obj:harralandervial",
+      "obj:blamish_oil",
+      "obj:oily_fishing_rod",
+      "obj:raw_lava_eel",
+      "obj:lava_eel",
+      "obj:misc_key",
+      "obj:id_papers",
+      "obj:black_full_helm",
+      "obj:black_platebody",
+      "obj:black_platelegs",
+      "obj:grip_keys",
+      "obj:petecandlestick",
+      "obj:master_thief_armband"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": "phoenix",
+      "progress_binding": "journal:hero",
+      "progress": {
+        "colour": {
+          "not_started": "hero:p0",
+          "in_progress": "hero:p1",
+          "complete": "hero:pdone"
+        },
+        "rules": [
+          {
+            "stage": "hero:p6",
+            "all": [
+              "i gave straven scarface pete's candlestick"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:p5",
+            "all": [
+              "a rival gang member collected a candlestick for me after i"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:p4",
+            "all": [
+              "maybe another player can help me get through this door"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:p3",
+            "all": [
+              "he said i should speak to charlie"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:p2",
+            "all": [
+              "he told me that i can get one by stealing"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:p1",
+            "all": [
+              "i worked with the phoenix gang"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "phoenix-buy-queen-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food for the queen: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
+          "id": "phoenix-mine-rockslide",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "herorockslide",
+              "tile": [
+                2838,
+                3517,
+                0
+              ],
+              "source": "maps/m44_54.jm2:4576"
+            },
+            "op": "Mine",
+            "anchor": {
+              "tile": [
+                2839,
+                3517,
+                0
+              ],
+              "source": "maps/m44_54.jm2:4576"
+            },
+            "radius": 3
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "ice_gloves"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "worn",
+                          "version": 1,
+                          "args": {
+                            "obj": "ice_gloves"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "hot_feather"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2835,
+                          3518,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2835,
+                  3518,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          },
+          "comment": "scripts/areas/area_white_wolf_mountain/scripts/white_wolf_mountain.rs2:14-41",
+          "advances": false
+        },
+        {
+          "id": "phoenix-ice-queen",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": "ice_queen",
+              "pick": "nearest",
+              "not_targeting_others": true
+            },
+            "stand": {
+              "tile": [
+                2866,
+                9956,
+                0
+              ],
+              "source": "maps/m44_155.jm2:8693"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true
+            },
+            "lost_radius": 12,
+            "kill_budget_ticks": 200,
+            "loot": [
+              "ice_gloves"
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "ice_gloves"
+              }
+            }
+          },
+          "comment": "scripts/_unpack/225/all.npc:5348-5388; maps/m44_155.jm2:8693",
+          "advances": false
+        },
+        {
+          "id": "phoenix-sheathe-queen-weapon", "kind": "unequip", "version": 1, "advances": false,
+          "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Entrana rejects weapons: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "phoenix-bank-queen-weapon", "kind": "bank", "version": 1, "advances": false,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_scimitar"}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "phoenix-remove-helm", "kind": "unequip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}
+        },
+        {
+          "id": "phoenix-remove-body", "kind": "unequip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}
+        },
+        {
+          "id": "phoenix-remove-legs", "kind": "unequip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}
+        },
+        {
+          "id": "phoenix-remove-shield", "kind": "unequip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}
+        },
+        {
+          "id": "phoenix-bank-armour", "kind": "bank", "version": 1,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_full_helm"}, {"obj": "rune_chainbody"}, {"obj": "rune_platelegs"}, {"obj": "rune_kiteshield"}]},
+          "skip_if": {"Any": [{"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]},
+          "comment": "Entrana rejects helmet, body, legs and shield categories: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-32."
+        },
+        {"id":"phoenix-bank-ranged-kit","kind":"bank","version":1,"args":{"op":"deposit","at":"nearest","items":[{"obj":"yew_shortbow"},{"obj":"blue_dragonhide_body"},{"obj":"blue_dragonhide_chaps"},{"obj":"blue_dragon_vambraces"}]},"skip_if":{"Any":[{"All":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}}]},{"Not":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ice_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"ice_gloves"}}}]}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"hot_feather"}}}]},"settle":{"All":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}}]},"comment":"Entrana rejects carried bows and armour: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:27-32,47."},
+        {
+          "id": "phoenix-bank-pick",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "bronze_pickaxe"
+              }
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "bronze_pickaxe"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "bronze_pickaxe"
+                }
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-40"
+        },
+        {
+          "id": "phoenix-wear-gloves",
+          "kind": "equip",
+          "version": 1,
+          "args": {
+            "obj": "ice_gloves"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "worn",
+              "version": 1,
+              "args": {
+                "obj": "ice_gloves"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+        },
+        {
+          "id": "phoenix-buy-bird-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food before sailing to the firebird: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
+          "id": "phoenix-sail-entrana",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "shipmonk",
+            "anchor": {
+              "tile": [
+                3045,
+                3236,
+                0
+              ],
+              "source": "maps/m47_50.jm2:10013"
+            },
+            "leash": 8,
+            "prefer": [
+              "Yes, okay, I'm ready to go."
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "entrana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "entrana"
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:1-23; scripts/interface_boat/scripts/sail.rs2:1-29",
+          "advances": false
+        },
+        {
+          "id": "phoenix-firebird",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": "fire_bird",
+              "pick": "nearest",
+              "not_targeting_others": true
+            },
+            "stand": {
+              "tile": [
+                2847,
+                3386,
+                0
+              ],
+              "source": "maps/m44_52.jm2:8063"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true
+            },
+            "lost_radius": 12,
+            "kill_budget_ticks": 200,
+            "loot": [
+              "hot_feather"
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "hot_feather"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "hot_feather"
+              }
+            }
+          },
+          "comment": "scripts/drop tables/scripts/entrana_firebird.rs2:1-10; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:1-13",
+          "advances": false
+        },
+        {
+          "id": "phoenix-withdraw-helm", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_full_helm", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "phoenix-equip-helm", "kind": "equip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "phoenix-withdraw-body", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_chainbody", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "phoenix-equip-body", "kind": "equip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "phoenix-withdraw-legs", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_platelegs", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "phoenix-equip-legs", "kind": "equip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "phoenix-withdraw-shield", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_kiteshield", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "phoenix-equip-shield", "kind": "equip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "phoenix-withdraw-scimitar", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_scimitar", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}
+        },
+        {
+          "id": "phoenix-equip-scimitar", "kind": "equip", "version": 1, "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+          "comment": "Restore the melee kit before the man fight for harralander: content/scripts/drop tables/scripts/man.rs2:2,43-44."
+        },
+        {
+          "id": "phoenix-gerrant",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "gerrant",
+            "anchor": {
+              "tile": [
+                3013,
+                3225,
+                0
+              ],
+              "source": "maps/m47_50.jm2:10003"
+            },
+            "leash": 8,
+            "prefer": [
+              "I want to find out how to catch a lava eel."
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_snail_slime"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "blamish_snail_slime"
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/gerrant.rs2:9-35",
+          "advances": false
+        },
+        {
+          "id": "phoenix-find-harralander", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "man", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "stand": {"tile": [3017, 3238, 0], "source": "content/maps/m47_50.jm2:10008; content/pack/npc.pack:1"}, "lost_radius": 12, "kill_budget_ticks": 1200, "loadout": null, "loot": ["unidentified_harralander"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralandervial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}},
+          "comment": "Citizens drop random herbs: content/scripts/drop tables/scripts/man.rs2:2,43-44; content/scripts/drop tables/scripts/shared_droptables.rs2:18-19."
+        },
+        {
+          "id": "phoenix-identify-harralander", "kind": "interact", "version": 1, "advances": false,
+          "args": {"target": {"held": "unidentified_harralander"}, "op": "Identify"},
+          "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}},
+          "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:10-11; content/scripts/levelup/scripts/levelup_unlocks_herblore.rs2:8."
+        },
+        {
+          "id": "phoenix-buy-vial", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "aemad", "anchor": {"tile": [2613, 3294, 0], "source": "content/maps/m40_51.jm2:10809; content/pack/npc.pack:590"}}, "obj": "vial_water", "qty": 1, "est_gp": 2},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+          "comment": "Full-stock price 2: content/scripts/skill_herblore/configs/brewing/vials.obj:1-12; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-657; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
+          "id": "phoenix-harralander",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "harralander",
+            "target": {
+              "item": "vial_water"
+            },
+            "product": "harralandervial"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "harralandervial"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "harralandervial"
+              }
+            }
+          },
+          "comment": "scripts/skill_herblore/configs/brewing/brew_potion.struct:21-26",
+          "advances": false
+        },
+        {
+          "id": "phoenix-oil",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "blamish_snail_slime",
+            "target": {
+              "item": "harralandervial"
+            },
+            "product": "blamish_oil"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "blamish_oil"
+              }
+            }
+          },
+          "comment": "scripts/skill_herblore/configs/brewing/brew_potion.struct:207-213",
+          "advances": false
+        },
+        {
+          "id": "phoenix-rod",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "blamish_oil",
+            "target": {
+              "item": "fishing_rod"
+            },
+            "product": "oily_fishing_rod"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "oily_fishing_rod"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_hero/scripts/objs/oily_fishing_rod.rs2:4-12",
+          "advances": false
+        },
+        {
+          "id": "phoenix-buy-bait", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "harry", "anchor": {"tile": [2834, 3445, 0], "source": "content/maps/m44_53.jm2:5564; content/pack/npc.pack:576"}}, "obj": "fishing_bait", "qty": 1, "est_gp": 3},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}},
+          "comment": "One bait costs 3 at full stock: content/scripts/skill_fishing/configs/fishing.obj:103-113; content/scripts/areas/area_catherby/configs/catherby.npc:142-145; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
+          "id": "phoenix-fish",
+          "kind": "gather",
+          "version": 1,
+          "args": {
+            "skill": "fishing",
+            "method": "fishing.0_45_152_lavafish.op1",
+            "until": {
+              "obj": "raw_lava_eel",
+              "qty": 1
+            },
+            "anchor": {
+              "tile": [
+                2889,
+                9766,
+                0
+              ],
+              "source": "maps/m45_152.jm2:8924"
+            },
+            "radius": 12
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "raw_lava_eel"
+              }
+            }
+          },
+          "comment": "scripts/skill_fishing/scripts/fishing_spots/lavafish.rs2:46-67,82-106",
+          "advances": false
+        },
+        {
+          "id": "phoenix-cook",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "raw_lava_eel",
+            "target": {
+              "loc": "range"
+            },
+            "anchor": {
+              "tile": [
+                3019,
+                3237,
+                0
+              ],
+              "source": "maps/m47_50.jm2:7032"
+            },
+            "product": "lava_eel"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lava_eel"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "lava_eel"
+              }
+            }
+          },
+          "comment": "scripts/skill_cooking/scripts/cooking.rs2:1-15,32-33,74-82; scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:105-112",
+          "advances": false
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "hero:p0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-apply",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "achietties",
+                "anchor": {
+                  "tile": [
+                    2903,
+                    3510,
+                    0
+                  ],
+                  "source": "maps/m45_54.jm2:7437"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm a hero, may I apply to join?",
+                  "I'll start looking for all those things then."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:31-55,65-67",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:p1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-straven",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "straven",
+                "anchor": {
+                  "tile": [
+                    3246,
+                    9780,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:4117"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:p2"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/straven.rs2:103-105,152-159",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:p2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-alfonse",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "alfonse_the_waiter",
+                "anchor": {
+                  "tile": [
+                    2793,
+                    3188,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9202"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Do you sell Gherkins?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:p3"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_brimhaven/scripts/alfonse_the_waiter.rs2:1-20",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:p3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-charlie",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "charlie_the_cook",
+                "anchor": {
+                  "tile": [
+                    2790,
+                    3191,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9196"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm a fellow member of the Phoenix gang.",
+                  "I want to steal Scarface Pete's candlesticks."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:p4"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/charlie_the_cook.rs2:1-27",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:p4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-buy-grip-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy food before the Grip encounter: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
+            {"id":"phoenix-withdraw-yew_shortbow","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"yew_shortbow","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},
+            {"id":"phoenix-equip-yew_shortbow","kind":"equip","version":1,"args":{"obj":"yew_shortbow"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}},"comment":"Grip permits the Phoenix role to attack: content/scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64. The bow and arrow levels match: content/scripts/skill_combat/scripts/player/player_ranged.rs2:76-102; content/scripts/skill_combat/configs/ranged/bows.obj:256-277; content/scripts/skill_combat/configs/ranged/arrows.obj:302-327."},
+            {"id":"phoenix-withdraw-blue_dragonhide_body","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragonhide_body","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},
+            {"id":"phoenix-equip-blue_dragonhide_body","kind":"equip","version":1,"args":{"obj":"blue_dragonhide_body"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}}},
+            {"id":"phoenix-withdraw-blue_dragonhide_chaps","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragonhide_chaps","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},
+            {"id":"phoenix-equip-blue_dragonhide_chaps","kind":"equip","version":1,"args":{"obj":"blue_dragonhide_chaps"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},
+            {"id":"phoenix-withdraw-blue_dragon_vambraces","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragon_vambraces","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}},
+            {"id":"phoenix-equip-blue_dragon_vambraces","kind":"equip","version":1,"args":{"obj":"blue_dragon_vambraces"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}}},
+            {"id":"phoenix-withdraw-rune_arrow","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"rune_arrow","qty":100}],"partial_ok":true},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rune_arrow"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rune_arrow"}}}},
+            {"id":"phoenix-equip-rune_arrow","kind":"equip","version":1,"args":{"obj":"rune_arrow"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}}},
+            {
+              "id": "phoenix-open-panel",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "herokitchenpanel",
+                  "tile": [
+                    2787,
+                    3190,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6471"
+                },
+                "op": "Push",
+                "anchor": {
+                  "tile": [
+                    2787,
+                    3190,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6471"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3198,
+                      0
+                    ],
+                    "radius": 5
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_restaurant.rs2:8-13; maps/m43_49.jm2:6471",
+              "advances": false
+            },
+            {
+              "id": "phoenix-receive-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "hero-misc-key",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "misc_key",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    2781,
+                    3198,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6316,6335; scripts/_unpack/225/all.loc:12815-12817"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "misc_key"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:44-53; scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-48"
+            },
+            {
+              "id": "phoenix-firing-position",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2781,
+                  3198,
+                  0
+                ],
+                "radius": 0,
+                "source": "maps/m43_49.jm2:6316; scripts/_unpack/225/all.loc:12815-12817"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3198,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3198,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "maps/m43_49.jm2:6316; scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:17-30"
+            },
+            {
+              "id": "phoenix-wait-for-grip",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "npc_near",
+                    "version": 1,
+                    "args": {
+                      "npc": "grip",
+                      "radius": 4
+                    }
+                  }
+                },
+                "max_ticks": 1200,
+                "park_on_timeout": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_near",
+                  "version": 1,
+                  "args": {
+                    "npc": "grip",
+                    "radius": 4
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_near",
+                  "version": 1,
+                  "args": {
+                    "npc": "grip",
+                    "radius": 4
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/configs/quest_hero.npc:127-153; maps/m43_49.jm2:9183; scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:17-30"
+            },
+            {
+              "id": "phoenix-defeat-grip",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "grip",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    2781,
+                    3198,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6316; scripts/_unpack/225/all.loc:12815-12817"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "ranged",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:p5"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64; scripts/drop tables/scripts/grip.rs2:1-10",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "hero:p5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-receive-candlestick",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "hero-candlestick",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "petecandlestick",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    2793,
+                    3188,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9202"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "petecandlestick"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "petecandlestick"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:79-90; scripts/quests/quest_hero/scripts/hero_journal.rs2:95-107"
+            },
+            {
+              "id": "phoenix-armband",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "straven",
+                "anchor": {
+                  "tile": [
+                    3246,
+                    9780,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:4117"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:p6"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/straven.rs2:95-100,139-149",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "hero:p6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "phoenix-finish",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "achietties",
+                "anchor": {
+                  "tile": [
+                    2903,
+                    3510,
+                    0
+                  ],
+                  "source": "maps/m45_54.jm2:7437"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:10-21",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:pdone",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    },
+    {
+      "role": "blackarm",
+      "progress_binding": "journal:hero",
+      "progress": {
+        "colour": {
+          "not_started": "hero:b0",
+          "in_progress": "hero:b1",
+          "complete": "hero:bdone"
+        },
+        "rules": [
+          {
+            "stage": "hero:b13",
+            "all": [
+              "in reward she gave me a master thief's armband"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b12",
+            "all": [
+              "after rewarding the player who assisted me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b11",
+            "all": [
+              "i can move around the hideout"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b10",
+            "all": [
+              "now i need to present myself to grip"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b9",
+            "all": [
+              "i need to disguise myself as hartigen"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b8",
+            "all": [
+              "i should speak to other gang members in the hideout"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b7",
+            "all": [
+              "i should say the password she gave me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "hero:b1",
+            "all": [
+              "katrine",
+              "can help me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "blackarm-buy-queen-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food for the queen: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
+          "id": "blackarm-mine-rockslide",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "herorockslide",
+              "tile": [
+                2838,
+                3517,
+                0
+              ],
+              "source": "maps/m44_54.jm2:4576"
+            },
+            "op": "Mine",
+            "anchor": {
+              "tile": [
+                2839,
+                3517,
+                0
+              ],
+              "source": "maps/m44_54.jm2:4576"
+            },
+            "radius": 3
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "ice_gloves"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "worn",
+                          "version": 1,
+                          "args": {
+                            "obj": "ice_gloves"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "hot_feather"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2835,
+                          3518,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2835,
+                  3518,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          },
+          "comment": "scripts/areas/area_white_wolf_mountain/scripts/white_wolf_mountain.rs2:14-41",
+          "advances": false
+        },
+        {
+          "id": "blackarm-ice-queen",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": "ice_queen",
+              "pick": "nearest",
+              "not_targeting_others": true
+            },
+            "stand": {
+              "tile": [
+                2866,
+                9956,
+                0
+              ],
+              "source": "maps/m44_155.jm2:8693"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true
+            },
+            "lost_radius": 12,
+            "kill_budget_ticks": 200,
+            "loot": [
+              "ice_gloves"
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "ice_gloves"
+              }
+            }
+          },
+          "comment": "scripts/_unpack/225/all.npc:5348-5388; maps/m44_155.jm2:8693",
+          "advances": false
+        },
+        {
+          "id": "blackarm-sheathe-queen-weapon", "kind": "unequip", "version": 1, "advances": false,
+          "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Entrana rejects weapons: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "blackarm-bank-queen-weapon", "kind": "bank", "version": 1, "advances": false,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_scimitar"}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "blackarm-remove-helm", "kind": "unequip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}
+        },
+        {
+          "id": "blackarm-remove-body", "kind": "unequip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}
+        },
+        {
+          "id": "blackarm-remove-legs", "kind": "unequip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}
+        },
+        {
+          "id": "blackarm-remove-shield", "kind": "unequip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}
+        },
+        {
+          "id": "blackarm-bank-armour", "kind": "bank", "version": 1,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_full_helm"}, {"obj": "rune_chainbody"}, {"obj": "rune_platelegs"}, {"obj": "rune_kiteshield"}]},
+          "skip_if": {"Any": [{"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]},
+          "comment": "Entrana rejects helmet, body, legs and shield categories: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-32."
+        },
+        {
+          "id": "blackarm-bank-pick",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "bronze_pickaxe"
+              }
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "bronze_pickaxe"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "bronze_pickaxe"
+                }
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-40"
+        },
+        {
+          "id": "blackarm-wear-gloves",
+          "kind": "equip",
+          "version": 1,
+          "args": {
+            "obj": "ice_gloves"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "ice_gloves"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "worn",
+              "version": 1,
+              "args": {
+                "obj": "ice_gloves"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+        },
+        {
+          "id": "blackarm-buy-bird-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food before sailing to the firebird: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
+          "id": "blackarm-sail-entrana",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "shipmonk",
+            "anchor": {
+              "tile": [
+                3045,
+                3236,
+                0
+              ],
+              "source": "maps/m47_50.jm2:10013"
+            },
+            "leash": 8,
+            "prefer": [
+              "Yes, okay, I'm ready to go."
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "entrana"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "hot_feather"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "entrana"
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:1-23; scripts/interface_boat/scripts/sail.rs2:1-29",
+          "advances": false
+        },
+        {
+          "id": "blackarm-firebird",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": {
+              "npc": "fire_bird",
+              "pick": "nearest",
+              "not_targeting_others": true
+            },
+            "stand": {
+              "tile": [
+                2847,
+                3386,
+                0
+              ],
+              "source": "maps/m44_52.jm2:8063"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 6,
+              "auto_retaliate": true
+            },
+            "lost_radius": 12,
+            "kill_budget_ticks": 200,
+            "loot": [
+              "hot_feather"
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "hot_feather"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "hot_feather"
+              }
+            }
+          },
+          "comment": "scripts/drop tables/scripts/entrana_firebird.rs2:1-10; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:1-13",
+          "advances": false
+        },
+        {
+          "id": "blackarm-withdraw-helm", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_full_helm", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "blackarm-equip-helm", "kind": "equip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "blackarm-withdraw-body", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_chainbody", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "blackarm-equip-body", "kind": "equip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "blackarm-withdraw-legs", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_platelegs", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "blackarm-equip-legs", "kind": "equip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "blackarm-withdraw-shield", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_kiteshield", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "blackarm-equip-shield", "kind": "equip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "blackarm-withdraw-scimitar", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_scimitar", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}
+        },
+        {
+          "id": "blackarm-equip-scimitar", "kind": "equip", "version": 1, "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+          "comment": "Restore the melee kit before the man fight for harralander: content/scripts/drop tables/scripts/man.rs2:2,43-44."
+        },
+        {
+          "id": "blackarm-gerrant",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "gerrant",
+            "anchor": {
+              "tile": [
+                3013,
+                3225,
+                0
+              ],
+              "source": "maps/m47_50.jm2:10003"
+            },
+            "leash": 8,
+            "prefer": [
+              "I want to find out how to catch a lava eel."
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_snail_slime"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "blamish_snail_slime"
+              }
+            }
+          },
+          "comment": "scripts/areas/area_port_sarim/scripts/gerrant.rs2:9-35",
+          "advances": false
+        },
+        {
+          "id": "blackarm-find-harralander", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "man", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "stand": {"tile": [3017, 3238, 0], "source": "content/maps/m47_50.jm2:10008; content/pack/npc.pack:1"}, "lost_radius": 12, "kill_budget_ticks": 1200, "loadout": null, "loot": ["unidentified_harralander"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralandervial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}},
+          "comment": "Citizens drop random herbs: content/scripts/drop tables/scripts/man.rs2:2,43-44; content/scripts/drop tables/scripts/shared_droptables.rs2:18-19."
+        },
+        {
+          "id": "blackarm-identify-harralander", "kind": "interact", "version": 1, "advances": false,
+          "args": {"target": {"held": "unidentified_harralander"}, "op": "Identify"},
+          "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}},
+          "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:10-11; content/scripts/levelup/scripts/levelup_unlocks_herblore.rs2:8."
+        },
+        {
+          "id": "blackarm-buy-vial", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "aemad", "anchor": {"tile": [2613, 3294, 0], "source": "content/maps/m40_51.jm2:10809; content/pack/npc.pack:590"}}, "obj": "vial_water", "qty": 1, "est_gp": 2},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+          "comment": "Full-stock price 2: content/scripts/skill_herblore/configs/brewing/vials.obj:1-12; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-657; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
+          "id": "blackarm-harralander",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "harralander",
+            "target": {
+              "item": "vial_water"
+            },
+            "product": "harralandervial"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "harralandervial"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "harralandervial"
+              }
+            }
+          },
+          "comment": "scripts/skill_herblore/configs/brewing/brew_potion.struct:21-26",
+          "advances": false
+        },
+        {
+          "id": "blackarm-oil",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "blamish_snail_slime",
+            "target": {
+              "item": "harralandervial"
+            },
+            "product": "blamish_oil"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blamish_oil"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "blamish_oil"
+              }
+            }
+          },
+          "comment": "scripts/skill_herblore/configs/brewing/brew_potion.struct:207-213",
+          "advances": false
+        },
+        {
+          "id": "blackarm-rod",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "blamish_oil",
+            "target": {
+              "item": "fishing_rod"
+            },
+            "product": "oily_fishing_rod"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "oily_fishing_rod"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "oily_fishing_rod"
+              }
+            }
+          },
+          "comment": "scripts/quests/quest_hero/scripts/objs/oily_fishing_rod.rs2:4-12",
+          "advances": false
+        },
+        {
+          "id": "blackarm-buy-bait", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "harry", "anchor": {"tile": [2834, 3445, 0], "source": "content/maps/m44_53.jm2:5564; content/pack/npc.pack:576"}}, "obj": "fishing_bait", "qty": 1, "est_gp": 3},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}},
+          "comment": "One bait costs 3 at full stock: content/scripts/skill_fishing/configs/fishing.obj:103-113; content/scripts/areas/area_catherby/configs/catherby.npc:142-145; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
+          "id": "blackarm-fish",
+          "kind": "gather",
+          "version": 1,
+          "args": {
+            "skill": "fishing",
+            "method": "fishing.0_45_152_lavafish.op1",
+            "until": {
+              "obj": "raw_lava_eel",
+              "qty": 1
+            },
+            "anchor": {
+              "tile": [
+                2889,
+                9766,
+                0
+              ],
+              "source": "maps/m45_152.jm2:8924"
+            },
+            "radius": 12
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "raw_lava_eel"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "lava_eel"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "raw_lava_eel"
+              }
+            }
+          },
+          "comment": "scripts/skill_fishing/scripts/fishing_spots/lavafish.rs2:46-67,82-106",
+          "advances": false
+        },
+        {
+          "id": "blackarm-cook",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "raw_lava_eel",
+            "target": {
+              "loc": "range"
+            },
+            "anchor": {
+              "tile": [
+                3019,
+                3237,
+                0
+              ],
+              "source": "maps/m47_50.jm2:7032"
+            },
+            "product": "lava_eel"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "hero",
+                      "is": "in_progress"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "lava_eel"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "lava_eel"
+              }
+            }
+          },
+          "comment": "scripts/skill_cooking/scripts/cooking.rs2:1-15,32-33,74-82; scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:105-112",
+          "advances": false
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "hero:b0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-apply",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "achietties",
+                "anchor": {
+                  "tile": [
+                    2903,
+                    3510,
+                    0
+                  ],
+                  "source": "maps/m45_54.jm2:7437"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm a hero, may I apply to join?",
+                  "I'll start looking for all those things then."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:31-55,65-67",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-katrine",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "katrine",
+                "anchor": {
+                  "tile": [
+                    3186,
+                    3385,
+                    0
+                  ],
+                  "source": "maps/m49_52.jm2:8860"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Is there any way I can get the rank of master thief?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b7"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/katrine.rs2:120-133,170-171",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-grubor-door",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "grubordoor",
+                  "tile": [
+                    2811,
+                    3170,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:7421"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2811,
+                    3170,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:7421"
+                },
+                "dialogue": {
+                  "prefer": [
+                    "Four leaved clover."
+                  ]
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b8"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_blackarm_hq.rs2:1-6; scripts/quests/quest_hero/scripts/npcs/grubor.rs2:5-29",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-trobert",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "trobert",
+                "anchor": {
+                  "tile": [
+                    2806,
+                    3174,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9218"
+                },
+                "leash": 8,
+                "prefer": [
+                  "So can you help me get Scarface Pete's candlesticks?",
+                  "I volunteer to undertake that mission!"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b9"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/trobert.rs2:14-26",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b9",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-buy-grip-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy food before the Grip encounter: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
+            {
+              "id": "blackarm-buy-helm", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "valaine", "anchor": {"tile": [3193, 3361, 1], "source": "content/maps/m49_52.jm2:8873; content/pack/npc.pack:536"}}, "obj": "black_full_helm", "qty": 1, "est_gp": 1372},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_full_helm"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_full_helm"}}},
+              "comment": "Full-stock price 1372: content/scripts/skill_combat/configs/melee/fullhelms.obj:192-195; content/scripts/areas/area_varrock/configs/champions_guild.npc:1-29; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "blackarm-equip-black_full_helm",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "black_full_helm"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_full_helm"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_full_helm"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+            },
+            {
+              "id": "blackarm-buy-platebody", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "horvik_the_armourer", "anchor": {"tile": [3229, 3434, 0], "source": "content/maps/m50_53.jm2:12910; content/pack/npc.pack:549"}}, "obj": "black_platebody", "qty": 1, "est_gp": 3840},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platebody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_platebody"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platebody"}}},
+              "comment": "Full-stock price 3840: content/scripts/skill_combat/configs/melee/platebodies.obj:159-162; content/scripts/areas/area_varrock/configs/varrock.npc:297-329; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "blackarm-equip-black_platebody",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "black_platebody"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_platebody"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_platebody"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+            },
+            {
+              "id": "blackarm-buy-platelegs", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "louie_legs", "anchor": {"tile": [3316, 3175, 0], "source": "content/maps/m51_49.jm2:9003; content/pack/npc.pack:542"}}, "obj": "black_platelegs", "qty": 1, "est_gp": 1920},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_platelegs"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platelegs"}}},
+              "comment": "Full-stock price 1920: content/scripts/skill_combat/configs/melee/platelegs.obj:138-141; content/scripts/areas/area_alkharid/configs/alkharid.npc:264-294; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "blackarm-equip-black_platelegs",
+              "kind": "equip",
+              "version": 1,
+              "args": {
+                "obj": "black_platelegs"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_platelegs"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "worn",
+                  "version": 1,
+                  "args": {
+                    "obj": "black_platelegs"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+            },
+            {
+              "id": "blackarm-garv",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "garv",
+                "anchor": {
+                  "tile": [
+                    2776,
+                    3186,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9184"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b10"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/garv.rs2:39-50",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-grip",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "grip",
+                "anchor": {
+                  "tile": [
+                    2774,
+                    3192,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9183"
+                },
+                "leash": 8,
+                "prefer": [
+                  "So what do my duties involve?",
+                  "Anything I can do now?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b11"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:3-18,20-56",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:b11",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-open-side-door",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "misc_key",
+                "target": {
+                  "loc": "pete_sidedoor"
+                },
+                "anchor": {
+                  "tile": [
+                    2781,
+                    3197,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6335"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3198,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3198,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-48; maps/m43_49.jm2:6335",
+              "advances": false
+            },
+            {
+              "id": "blackarm-give-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "hero-misc-key",
+                "give": [
+                  {
+                    "obj": "misc_key",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    2781,
+                    3198,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6316,6335; scripts/_unpack/225/all.loc:12815-12817"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "misc_key"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "misc_key"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:44-53; scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-48"
+            },
+            {
+              "id": "blackarm-align-side-door",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2781,
+                  3197,
+                  0
+                ],
+                "radius": 0,
+                "source": "maps/m43_49.jm2:6335; scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-40"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "grip_keys",
+                    "radius": 8
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2781,
+                      3197,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-40"
+            },
+            {
+              "id": "blackarm-return-inside",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "pete_sidedoor",
+                  "tile": [
+                    2781,
+                    3197,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6335"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2781,
+                    3197,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6335"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "grip_keys",
+                    "radius": 8
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:37-40",
+              "advances": false
+            },
+            {
+              "id": "blackarm-open-cabinet",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "gripcbshut",
+                  "tile": [
+                    2775,
+                    3196,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6194"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2775,
+                    3196,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6194"
+                },
+                "dialogue": {
+                  "prefer": [
+                    "He won't notice me having a quick look."
+                  ]
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "gripcbopen"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "grip_keys",
+                        "radius": 8
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "gripcbopen"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:9-30",
+              "advances": false
+            },
+            {
+              "id": "blackarm-summon-from-open",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "gripcbopen",
+                  "tile": [
+                    2775,
+                    3196,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6194"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2775,
+                    3196,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:6194"
+                },
+                "dialogue": {
+                  "prefer": [
+                    "He won't notice me having a quick look."
+                  ]
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "grip_keys",
+                        "radius": 8
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "npc_near",
+                      "version": 1,
+                      "args": {
+                        "npc": "grip",
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:14-30",
+              "advances": false
+            },
+            {
+              "id": "blackarm-wait-grip-key",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "ground_item_near",
+                    "version": 1,
+                    "args": {
+                      "obj": "grip_keys",
+                      "radius": 8
+                    }
+                  }
+                },
+                "max_ticks": 1200,
+                "park_on_timeout": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "grip_keys"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "ground_item_near",
+                      "version": 1,
+                      "args": {
+                        "obj": "grip_keys",
+                        "radius": 8
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "ground_item_near",
+                  "version": 1,
+                  "args": {
+                    "obj": "grip_keys",
+                    "radius": 8
+                  }
+                }
+              },
+              "comment": "scripts/drop tables/scripts/grip.rs2:1-10"
+            },
+            {
+              "id": "blackarm-take-grip-key",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "grip_keys"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    2777,
+                    3198,
+                    0
+                  ],
+                  "source": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:24-26"
+                },
+                "radius": 8
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grip_keys"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "grip_keys"
+                  }
+                }
+              },
+              "comment": "scripts/drop tables/scripts/grip.rs2:1-10; scripts/quests/quest_hero/configs/quest_hero.npc:163-164",
+              "advances": false
+            },
+            {
+              "id": "blackarm-unlock-treasure",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "grip_keys",
+                "target": {
+                  "loc": "pete_treasuredoor"
+                },
+                "anchor": {
+                  "tile": [
+                    2764,
+                    3197,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:5913"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "opencandlechest"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "grip's key unlocks the door"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:61-69",
+              "advances": false
+            },
+            {
+              "id": "blackarm-open-candles",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "shutcandlechest",
+                  "tile": [
+                    2766,
+                    3199,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:5981"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2766,
+                    3199,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:5981"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "opencandlechest"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "opencandlechest"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:74-77",
+              "advances": false
+            },
+            {
+              "id": "blackarm-take-candles",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "opencandlechest",
+                  "tile": [
+                    2766,
+                    3199,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:5981"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2766,
+                    3199,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:5981"
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b12"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:79-90",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "hero:b12",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-give-candlestick",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "hero-candlestick",
+                "give": [
+                  {
+                    "obj": "petecandlestick",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    2793,
+                    3188,
+                    0
+                  ],
+                  "source": "maps/m43_49.jm2:9202"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "petecandlestick",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "petecandlestick",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_hero/scripts/locs/brimhaven_scarface_mansion.rs2:79-90; scripts/quests/quest_hero/scripts/hero_journal.rs2:95-107"
+            },
+            {
+              "id": "blackarm-armband",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "katrine",
+                "anchor": {
+                  "tile": [
+                    3186,
+                    3385,
+                    0
+                  ],
+                  "source": "maps/m49_52.jm2:8860"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I have a candlestick now!"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "any": [
+                      "hero:b13"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/katrine.rs2:134-144,161-168",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "hero:b13",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "blackarm-finish",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "achietties",
+                "anchor": {
+                  "tile": [
+                    2903,
+                    3510,
+                    0
+                  ],
+                  "source": "maps/m45_54.jm2:7437"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "hero",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:10-21",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "hero:bdone",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

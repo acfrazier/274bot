@@ -5,9 +5,12 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{JournalEvidence, ProgressPage, QuestProgressRow};
-use script::shim::InteractReq;
-use script_js::wire::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{NativeFactsInput, SnapshotInput},
+    script_js::wire::encode_snapshot_delta_with_native,
+};
 
 const BASE_SCRIPT: &str = r#"
 export const apiVersion = 2;
@@ -88,7 +91,7 @@ fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPag
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -237,17 +240,21 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
                 serde_json::from_slice(&std::fs::read(root.join(&file)).unwrap()).unwrap();
             assert_eq!(document.id.0.as_ref(), entry.id);
             let role = &document.roles[0];
-            let mut stages: Vec<_> = role
-                .sequences
-                .iter()
-                .map(|sequence| sequence.stage.0.as_ref())
-                .collect();
-            stages.sort_unstable_by_key(|stage| {
-                stage
-                    .rsplit_once(':')
-                    .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                    .unwrap_or(u32::MAX)
-            });
+            let mut stages = Vec::new();
+            for role in &document.roles {
+                let mut role_stages: Vec<_> = role
+                    .sequences
+                    .iter()
+                    .map(|sequence| sequence.stage.0.as_ref())
+                    .collect();
+                role_stages.sort_by_key(|stage| {
+                    stage
+                        .rsplit_once(':')
+                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+                        .unwrap_or(u32::MAX)
+                });
+                stages.extend(role_stages);
+            }
             serde_json::json!({
                 "id": entry.id,
                 "display": document.display_name,
@@ -282,7 +289,7 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
             .clone()
     };
     assert_eq!(draft_of("druid"), serde_json::json!(true));
-    assert_eq!(draft_of("cook"), serde_json::json!(false));
+    assert_eq!(draft_of("priest"), serde_json::json!(false));
     iso.join();
 }
 
@@ -363,7 +370,6 @@ fn compat_v1_questlog__quests_journal__contract() {
             colour: Some(0xf8f800),
             acquired: evidence(10),
             closed: evidence(12),
-            pin: None,
         })),
     };
     tick(&iso, 3, Some(&done));

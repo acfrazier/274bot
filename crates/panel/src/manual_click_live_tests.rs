@@ -31,8 +31,6 @@ use nav_planner::WorldState;
 use crate::session::Session;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice};
 
-const LOCAL_GAME_PORT: u16 = 44_594;
-const LOCAL_ASSET_PORT: u16 = 1_080;
 const SCENE_WAIT: Duration = Duration::from_secs(150);
 #[cfg(feature = "js")]
 const WALK_WAIT: Duration = Duration::from_secs(90);
@@ -117,7 +115,7 @@ fn prime_local_cache(cache: &Path) -> Result<(), String> {
     let checksums = client::client::Client::get_jag_checksums_for(
         client::Transport::Tcp,
         "127.0.0.1",
-        LOCAL_ASSET_PORT,
+        host_play::live_ports::http_port(),
     )
     .map_err(str::to_string)?;
     for (index, file) in [
@@ -137,7 +135,7 @@ fn prime_local_cache(cache: &Path) -> Result<(), String> {
             client::Transport::Tcp,
             cache.to_str().ok_or("cache path is not UTF-8")?,
             "127.0.0.1",
-            LOCAL_ASSET_PORT,
+            host_play::live_ports::http_port(),
             file,
             index + 1,
             &checksums,
@@ -285,7 +283,8 @@ fn prepare_session_n(
     count: usize,
 ) -> Result<(Session, String), String> {
     prime_local_cache(&inputs.cache)?;
-    let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
+    let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip())
+        .map_err(|error| error.to_string())?;
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
     session
@@ -295,8 +294,8 @@ fn prepare_session_n(
                 revision: Some("289".into()),
                 host: Some("127.0.0.1".into()),
                 asset_host: Some("127.0.0.1".into()),
-                port: Some(LOCAL_GAME_PORT),
-                http_port: Some(LOCAL_ASSET_PORT),
+                port: Some(host_play::live_ports::game_port()),
+                http_port: Some(host_play::live_ports::http_port()),
                 engine_dir: Some(inputs.engine.clone()),
                 nav_pack: Some(inputs.nav_pack.clone()),
                 cache_dir: Some(inputs.cache.clone()),

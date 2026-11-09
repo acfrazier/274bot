@@ -6,14 +6,15 @@ mod common;
 use api::identity::ExecutionId;
 use api::script_contract::ChildOrigin;
 use api::selected::{ClientRevision, RunKey};
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult, SeatTerminal};
-use script::native::NativePhase;
-use script::shim::InteractReq;
-use script_js::wire::{
-    CombatStyleInput, IsolateBuf, NativeFactsInput, SceneEntityInput, SeatLiveDetails,
-    SeatPageInput, SeatResultValue, SeatStartArgs,
+use script::native::seat_rows::{SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs};
+use script::native::snapshot_source::{
+    CombatStyleInput, NativeFactsInput, SceneEntityInput, SnapshotInput,
 };
+use script::native::NativePhase;
+use script_js::wire::IsolateBuf;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 
@@ -69,7 +70,7 @@ fn spawn(source: &str) -> LoadIsolate {
 fn post_native_seat_page<'a>(
     isolate: &LoadIsolate,
     buffer: &mut IsolateBuf,
-    snapshot: &script_js::wire::SnapshotInput<'_>,
+    snapshot: &SnapshotInput<'_>,
     live: &'a [SeatEntry],
     results: &'a [SeatResult],
     details: &'a [SeatLiveDetails<'a>],

@@ -1,5 +1,29 @@
 //! Profile preparation on the shared worker and vault passphrases.
 
+#[test]
+fn opaque_unlock_error_keeps_its_borrowed_vault_cause() {
+    let error = super::UnlockError::from_vault(vault::VaultError::WrongPassphrase);
+    assert_eq!(error.stage(), super::UnlockStage::Vault);
+    assert!(matches!(
+        error.vault_error(),
+        Some(vault::VaultError::WrongPassphrase)
+    ));
+    assert_eq!(
+        error.to_string(),
+        vault::VaultError::WrongPassphrase.to_string()
+    );
+    assert!(std::error::Error::source(&error).is_some());
+}
+
+#[test]
+fn opaque_unlock_error_keeps_the_operation_message_and_stage() {
+    let error = super::UnlockError::new(super::UnlockStage::Launch, "launch refused".to_owned());
+    assert_eq!(error.stage(), super::UnlockStage::Launch);
+    assert_eq!(error.to_string(), "launch refused");
+    assert!(error.vault_error().is_none());
+    assert!(std::error::Error::source(&error).is_none());
+}
+
 const PROFILE_PREPARATION_CHILD: &str = "FRONTEND_CORE_PROFILE_PREPARATION_TEST_CHILD";
 
 /// The child's exact filter: the full test path that runs the checks.
@@ -80,6 +104,9 @@ fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
 
 #[test]
 fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     if std::env::var_os(PROFILE_PREPARATION_CHILD).is_none() {
         run_child_test(PROFILE_PREPARATION_TEST)
             .unwrap_or_else(|error| panic!("profile preparation test child failed: {error}"));
@@ -110,12 +137,10 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
         "title",
         "versionlist",
         "wordenc",
-        "manifest-289.json",
     );
     let options = host_play::ProfileOptions {
         revision: Some("289".into()),
         cache_dir: Some(cache.clone()),
-        cache_manifest: Some(cache.join("manifest-289.json")),
         unpack_dir: Some(stores.dir().join("unpack")),
         nav_pack: Some(stores.dir().join("missing.navpack")),
         ..Default::default()
@@ -136,8 +161,8 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
         )
         .unwrap();
     let mut preparation = launcher.preparation(289).unwrap();
-    // Cache fill and source attestation are separate concerns. Start at the
-    // real Load stage, but retain submit, admission, and PreparationSteps::step.
+    // Start at the real Load stage, but retain submit, admission, and
+    // PreparationSteps::step.
     // This must fail if that step calls off-worker TemplatePreparation::step.
     preparation.load_fixture = Some(selection);
     let job = preparation.submit().unwrap();

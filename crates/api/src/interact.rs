@@ -908,8 +908,19 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.precondition(snapshot, true) {
             return refuse(snapshot, reason);
         }
+        // An enter-amount prompt opened after `if_close` has no modal root
+        // (`apply_p_countdialog` sets only `dialog_input_open`). The engine
+        // accepts CLOSE_MODAL then: `closeModal` clears the suspended
+        // script's `protect` before it checks the modal state
+        // (`Player.ts:760-766`), so a held click that the prompt blocked
+        // runs again.
         let modals = snapshot.modals();
-        if modals.main == -1 && modals.side == -1 && modals.chat == -1 && modals.tutorial == -1 {
+        if !snapshot.count_dialog_open()
+            && modals.main == -1
+            && modals.side == -1
+            && modals.chat == -1
+            && modals.tutorial == -1
+        {
             return refuse(snapshot, SendReason::NoModalOpen);
         }
         self.dispatch(WireCommand::Close, snapshot.tick() as u64)
@@ -1282,9 +1293,7 @@ impl<'a> Interactions<'a> {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
             WireCommand::PublicMessage { text } => self.driver.send_public_message(text),
-            WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
-                .and_then(|send| self.driver.send_packet(&send))
-                .is_ok(),
+            WireCommand::DoorStep { tile } => self.driver.send_pending_door_step(tile.x, tile.z),
             WireCommand::Drag {
                 component_id,
                 slot,

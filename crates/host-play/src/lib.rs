@@ -12,32 +12,34 @@ pub mod evidence_writer;
 pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
+pub mod live_ports;
 pub mod live_start;
 pub mod local_state;
 pub mod login_readiness;
 pub mod map_bind;
 pub mod map_cache;
 mod map_producer;
-pub mod nav_identity;
+pub mod nav_assets;
 pub mod paired_core;
 pub mod passphrase;
 pub mod profile;
 pub mod progress;
 pub mod public_worlds;
 pub mod quest_pair;
+pub mod saved_data;
 pub mod servers;
+#[cfg(feature = "test-support")]
+pub mod tick_engine_test_support;
 pub mod walk_map;
 pub use client::Transport;
-pub use nav_identity::{
-    bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
-    NavLoadCounters, NavOrigin,
-};
 pub use profile::{
-    parse_profile_args, parse_revision, GameDataStatus, ProfileClass, ProfileOptions,
-    ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep, WorldMembersFact,
-    WorldMembersSource, TEMPLATE_STEP_WAIT,
+    install_resource_root, parse_profile_args, parse_revision, GameDataStatus, NavLoadCounters,
+    ProfileClass, ProfileOptions, ProfileSelection, ServerProfile, TemplatePreparation,
+    TemplateStep, WorldMembersFact, WorldMembersSource, TEMPLATE_STEP_WAIT,
 };
-pub use servers::{proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
+pub use servers::{
+    proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers, ServersError,
+};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
@@ -80,6 +82,7 @@ mod play_bootstrap;
 mod play_login;
 mod play_status;
 mod play_wires;
+pub(crate) mod poison_hold;
 mod resource_view;
 mod rss;
 mod scatter;
@@ -90,6 +93,8 @@ mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
 mod slot_condition;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
@@ -105,8 +110,8 @@ pub use map_cache::{
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
     arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, observe_walk_arm_admission,
-    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath,
-    WalkArm, WalkArms, WalkRoute,
+    step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow,
+    ManualWalkPrereqContext, NoPath, WalkArm, WalkArms, WalkRoute,
 };
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
@@ -653,6 +658,10 @@ mod gather_return_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
+
+#[cfg(test)]
+#[path = "quest_watch_live_tests.rs"]
+mod quest_watch_live_tests;
 
 #[cfg(test)]
 mod nav_arrival_live_tests;

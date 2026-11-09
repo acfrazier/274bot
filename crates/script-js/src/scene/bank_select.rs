@@ -1,9 +1,9 @@
 //! Local selected-bank catalog queries. Reachable selection runs in the native
 //! seat and delegates its route costs to the bounded host bank-pick service.
-use crate::observed;
+use crate::scene::observed;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::WorldTile;
-pub(crate) use script::native_bank::bank_value;
+use script::native_bank::bank_value;
 use script::native_bank::{air_distance_squared, nearest_eligible_bank};
 use serde::Deserialize;
 use serde_json::Value;

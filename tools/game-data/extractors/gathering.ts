@@ -1,12 +1,12 @@
 // M-306 / M-215 gathering family: typed resource methods, rock classes, respawn facts, tools, bait, products and
-// map placements, all joined from the pinned content tree. Unknown constructs become explicit gaps, never guesses.
+// map placements, all joined from the local content tree. Unknown constructs become explicit gaps, never guesses.
 import fs from 'node:fs';
 import path from 'node:path';
-import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
+import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, walkContent, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
-export const GATHERING_SCHEMA = 3;
+export const GATHERING_SCHEMA = 4;
 
 /** Engine `PlayerStat` order (`src/engine/entity/PlayerStat.ts`): a protocol constant, not gathering data. */
 const SKILL = { attack: 0, woodcutting: 8, fishing: 10, mining: 14 } as const;
@@ -25,6 +25,25 @@ export type TargetWire = { kind: 'loc' | 'npc'; id: number; op: number; class: T
 export type YieldWire = { item: number; level: number };
 export type GateWire = { skill: number; level: number };
 export type ToolWire = { item: number; use_gate: GateWire | null; wield_gate: GateWire | null };
+
+export type TickArmKind = 'continuing' | 'ending' | 'none';
+export type TickRollSignal = 'always' | 'sometimes' | 'never';
+export type TickArmToolWire = { item: number; native_arm: number; no_gain: boolean; skill_anim: number };
+export type TickArmWire = {
+    kind: TickArmKind;
+    roll_signal: TickRollSignal;
+    delay_drop: boolean;
+    depletes: boolean;
+    native_arm: number | null;
+    act_min_d: number;
+    act_silent: boolean;
+    no_gain: boolean | null;
+    skill_anim: number | null;
+    roll_anim: number | null;
+    cast_anim: number | null;
+    fletch_anim: number;
+    tool_facts: TickArmToolWire[];
+};
 export type AmountWire = { item: number; count: number };
 export type RequirementWire = { id: string; source: Ref } & ({ kind: 'skill'; skill: number; level: number } | { kind: 'members' });
 export type MethodWire = {
@@ -36,6 +55,7 @@ export type MethodWire = {
     products: Know<YieldWire[]>;
     tools: Know<ToolWire[]>;
     consumes: Know<AmountWire[]>;
+    tick_arm: TickArmWire;
     requirements: Know<RequirementWire[]>;
     /** `known` means the placement rows of this method's resource targets are complete. */
     spots: Know<null>;
@@ -119,7 +139,78 @@ class Entities {
     }
 }
 
-type Ctx = { idx: ContentIndex; entities: Entities };
+type Ctx = { idx: ContentIndex; entities: Entities; revision: number };
+
+type TickArmCore = Omit<TickArmWire, 'fletch_anim' | 'tool_facts'>;
+
+function sequenceId(ctx: Ctx, alias: string): number {
+    const id = ctx.idx.packs.seq.get(alias);
+    if (id === undefined || !Number.isInteger(id) || id <= 0) throw new Error(`pack/seq.pack: missing valid sequence ${alias}`);
+    return id;
+}
+
+function itemAlias(ctx: Ctx, item: number, label: string): string {
+    let found: string | undefined;
+    for (const [alias, id] of ctx.idx.packs.obj) {
+        if (id !== item) continue;
+        if (found !== undefined) throw new Error(`${label}: pack/obj.pack maps item ${item} to multiple aliases`);
+        found = alias;
+    }
+    if (found === undefined) throw new Error(`${label}: pack/obj.pack lacks item ${item}`);
+    return found;
+}
+
+function tickToolFacts(ctx: Ctx, tools: Know<ToolWire[]>, skill: 'woodcutting' | 'mining' | 'fishing'): TickArmToolWire[] {
+    if (skill === 'fishing' || tools.state === 'unknown') return [];
+    const facts = tools.value.map(({ item }) => {
+        const label = `${skill} tick tool ${item}`;
+        const alias = itemAlias(ctx, item, label);
+        const section = ctx.idx.obj.get(alias);
+        const param = (name: string) => {
+            const values = section?.params.get(name);
+            if (values?.length !== 1) throw new Error(`${label}: expected one ${name} parameter`);
+            return values[0]!;
+        };
+        let animation: string;
+        if (skill === 'woodcutting' && ctx.revision === 377) {
+            const struct = ctx.idx.structs.get(param('woodcutting_struct'));
+            const values = struct?.params.get('skill_anim');
+            if (values?.length !== 1) throw new Error(`${label}: expected one skill_anim parameter on the selected woodcutting struct`);
+            animation = values[0]!;
+        } else {
+            animation = param(skill === 'mining' ? 'mining_animation' : 'woodcutting_anim');
+        }
+        const skillAnim = sequenceId(ctx, animation);
+        const nativeArm = skill === 'mining' ? Number(param('mining_rate')) : 3;
+        if (!Number.isInteger(nativeArm) || nativeArm < 1 || nativeArm > 255) {
+            throw new Error(`${label}: invalid native arm ${nativeArm}`);
+        }
+        return {
+            item,
+            native_arm: nativeArm,
+            no_gain: skill === 'mining' && alias === 'rune_pickaxe',
+            skill_anim: skillAnim,
+        };
+    });
+    facts.sort((a, b) => a.item - b.item);
+    if (facts.some((fact, index) => index > 0 && facts[index - 1]!.item === fact.item)) {
+        throw new Error(`${skill}: duplicate tick tool item`);
+    }
+    return facts;
+}
+
+function makeTickArm(
+    ctx: Ctx,
+    core: TickArmCore,
+    tools: Know<ToolWire[]>,
+    skill: 'woodcutting' | 'mining' | 'fishing',
+): TickArmWire {
+    return {
+        ...core,
+        fletch_anim: sequenceId(ctx, 'human_fletching'),
+        tool_facts: tickToolFacts(ctx, tools, skill),
+    };
+}
 
 // ---- statement helpers ---------------------------------------------------------------------------------
 
@@ -206,30 +297,34 @@ function wieldGate(ctx: Ctx, alias: string): { gate: GateWire | null } | { gap: 
     return { gap: gap('wield-handler-unrecognized', header.span) };
 }
 
-/** Best-first tool aliases from the checker proc's `if (... return(X))` chain. */
-function checkerTools(ctx: Ctx, procName: string, condition: RegExp): { aliases: string[]; span: Span; ok: boolean } {
+/** Best-first tool aliases and any strict skill-level gate proven by the checker proc's `if (... return(X))` chain. */
+type CheckerTool = { alias: string; minLevel: number | null };
+
+function checkerTools(ctx: Ctx, procName: string, condition: RegExp): { tools: CheckerTool[]; span: Span; ok: boolean } {
     const block = uniqueBlock(ctx, 'proc', procName);
-    if (!block) return { aliases: [], span: { file: '', first: 0, last: 0 }, ok: false };
+    if (!block) return { tools: [], span: { file: '', first: 0, last: 0 }, ok: false };
     const nodes = parseBody(block.body);
-    const aliases: string[] = [];
+    const tools: CheckerTool[] = [];
     let ok = true;
     for (const node of nodes) {
         if (node.kind === 'if') {
             const match = condition.exec(node.cond);
             const ret = node.then.length === 1 && node.then[0].kind === 'stmt' ? /^return\s*\((\w+)\)$/.exec(node.then[0].text) : null;
-            if (match && ret && ret[1] === match[1] && node.els.length === 0) aliases.push(match[1]);
-            else if (!node.cond.startsWith('$print_mes')) ok = false;
+            if (match && ret && ret[1] === match[1] && node.els.length === 0) {
+                const threshold = match[2] === undefined ? null : Number(match[2]) + 1;
+                tools.push({ alias: match[1], minLevel: threshold });
+            } else if (!node.cond.startsWith('$print_mes')) ok = false;
         }
     }
-    return { aliases, span: blockSpan(block), ok: ok && aliases.length > 0 };
+    return { tools, span: blockSpan(block), ok: ok && tools.length > 0 };
 }
 
-function toolRows(ctx: Ctx, aliases: string[], use: (alias: string) => GateWire | null, sourceGaps: Gap[]): Know<ToolWire[]> {
+function toolRows(ctx: Ctx, tools: CheckerTool[], use: (tool: CheckerTool) => GateWire | null, sourceGaps: Gap[]): Know<ToolWire[]> {
     const gaps = [...sourceGaps];
-    const rows = aliases.map((alias) => {
-        const wield = wieldGate(ctx, alias);
+    const rows = tools.map((tool) => {
+        const wield = wieldGate(ctx, tool.alias);
         if ('gap' in wield) gaps.push(wield.gap);
-        return { item: ctx.entities.id('obj', alias, `tool ${alias}`), use_gate: use(alias), wield_gate: 'gate' in wield ? wield.gate : null };
+        return { item: ctx.entities.id('obj', tool.alias, `tool ${tool.alias}`), use_gate: use(tool), wield_gate: 'gate' in wield ? wield.gate : null };
     });
     return partial(rows, gaps);
 }
@@ -237,18 +332,18 @@ function toolRows(ctx: Ctx, aliases: string[], use: (alias: string) => GateWire 
 function pickaxes(ctx: Ctx): Know<ToolWire[]> {
     const found = checkerTools(ctx, 'pickaxe_checker', /^\$lvl0 >= oc_param\((\w+), levelrequire\) & \(\$obj1 = \1 \| inv_total\(inv, \1\) > 0\)$/);
     if (!found.ok) return unknown('pickaxe-checker-unrecognized', found.span.file ? [spanRef(found.span)] : []);
-    return toolRows(ctx, found.aliases, (alias) => {
-        const level = ctx.idx.obj.get(alias)?.params.get('levelrequire')?.[0];
-        if (level === undefined) throw new Error(`pickaxe ${alias}: missing levelrequire param`);
+    return toolRows(ctx, found.tools, (tool) => {
+        const level = ctx.idx.obj.get(tool.alias)?.params.get('levelrequire')?.[0];
+        if (level === undefined) throw new Error(`pickaxe ${tool.alias}: missing levelrequire param`);
         return { skill: SKILL.mining, level: Number(level) };
     }, []);
 }
 
 function axes(ctx: Ctx): Know<ToolWire[]> {
-    const found = checkerTools(ctx, 'woodcutting_axe_checker', /^\(\$obj1 = (\w+) \| inv_total\(inv, \1\) > 0\)$/);
+    const found = checkerTools(ctx, 'woodcutting_axe_checker', /^\(\$obj1 = (\w+) \| inv_total\(inv, \1\) > 0\)(?: & \$level > (\d+))?$/);
     if (!found.ok) return unknown('axe-checker-unrecognized', found.span.file ? [spanRef(found.span)] : []);
-    // The checker has no level comparison: the Woodcutting use gate is absent, not unknown.
-    return toolRows(ctx, found.aliases, () => null, []);
+    // The strict `$level > N` form requires N+1; a bare item check keeps the legacy null gate.
+    return toolRows(ctx, found.tools, (tool) => tool.minLevel === null ? null : { skill: SKILL.woodcutting, level: tool.minLevel }, []);
 }
 
 // ---- mining (M-215 classification) ------------------------------------------------------------------
@@ -262,11 +357,12 @@ type RockClass = 'resource' | 'depleted' | 'hazard' | 'unclassified';
 type Rock = { alias: string; span: Span; class: RockClass; slot: number | null; label: string | null; gap: Gap | null };
 
 /** What one standard mining label (`get_ore_*`) is proven to do, by exact statement anchors. */
-type MiningLabel = { block: Rs2Block; depletes: boolean; scaledRespawn: boolean; gemRoll: boolean; dropTable: string | null; interceptProc: string | null; crestZone: Span | null; deletes: boolean };
+type MiningLabel = { block: Rs2Block; depletes: boolean; delayDrop: boolean; scaledRespawn: boolean; gemRoll: boolean; dropTable: string | null; interceptProc: string | null; crestZone: Span | null; deletes: boolean };
 
-const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: boolean }> = {
+const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: boolean; delayDrop: boolean }> = {
     get_ore_normal: {
         depletes: true,
+        delayDrop: true,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -278,6 +374,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_fast: {
         depletes: true,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -288,6 +385,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_essence: {
         depletes: false,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1)',
@@ -296,6 +394,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_gem_rock: {
         depletes: true,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -313,12 +412,13 @@ function miningLabel(ctx: Ctx, name: string): MiningLabel | Gap {
     if (!block || !spec) return gap('mining-label-missing');
     const { flat, nodes } = flatten(block);
     const conds = conditions(nodes);
-    if (!spec.anchors.every((anchor) => hasStmt(flat, anchor)) || hasStmt(flat, /^loc_change\(/) !== spec.depletes) return gap('mining-label-shape', blockSpan(block));
+    if (!spec.anchors.every((anchor) => hasStmt(flat, anchor)) || hasStmt(flat, /^loc_change\(/) !== spec.depletes || hasStmt(flat, 'p_delay(0)') !== spec.delayDrop) return gap('mining-label-shape', blockSpan(block));
     const crest = conds.find((cond) => /^inzone\(\^crest_perfect_mine_lower_bound, \^crest_perfect_mine_upper_bound, coord\) = true$/.test(cond));
     const intercept = conds.map((cond) => /~(magnus_intercept_ore)\(/.exec(cond)).find(Boolean);
     return {
         block,
         depletes: spec.depletes,
+        delayDrop: spec.delayDrop,
         scaledRespawn: spec.depletes,
         gemRoll: conds.includes('random($chance) = ^true') && hasStmt(flat, 'def_namedobj $gem = ~mining_gem_table'),
         dropTable: name === 'get_ore_gem_rock' ? 'gem_rock_table' : null,
@@ -342,6 +442,34 @@ function firstSwingLabel(ctx: Ctx, header: { span: Span }): string | null {
     return match ? match[1] : null;
 }
 
+/** Fail closed if the first-swing and continuation handlers stop expressing the reviewed mining tick loop. */
+function miningTickLoop(ctx: Ctx) {
+    const first = uniqueBlock(ctx, 'label', 'mining_firstswing');
+    const continuation = uniqueBlock(ctx, 'label', 'mining_continue');
+    if (!first || !continuation) throw new Error(`${MINING_SCRIPT}: mining tick handlers are missing or duplicated`);
+    const a = flatten(first);
+    const c = flatten(continuation);
+    const rate = '%action_delay = calc(map_clock + $mining_rate)';
+    const animation = 'anim(oc_param($pickaxe, mining_animation), 0)';
+    const valid =
+        hasStmt(a.flat, 'def_int $mining_rate = oc_param($pickaxe, mining_rate)') &&
+        conditions(a.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(a.flat, rate) &&
+        hasStmt(a.flat, 'p_oploc(1)') &&
+        hasStmt(a.flat, animation) &&
+        conditions(a.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(a.flat, 'jump($get_ore)') &&
+        hasStmt(a.flat, 'p_oploc(3)') &&
+        hasStmt(c.flat, 'def_int $mining_rate = oc_param($pickaxe, mining_rate)') &&
+        conditions(c.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(c.flat, rate) &&
+        conditions(c.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(c.flat, animation) &&
+        hasStmt(c.flat, 'jump($get_ore)') &&
+        hasStmt(c.flat, 'p_oploc(3)');
+    if (!valid) throw new Error(`${MINING_SCRIPT}: mining tick handlers no longer match the reviewed loop`);
+}
+
 /** A custom-handled rock whose Mine handler provably yields one dbrow ore: ore group and handler span. */
 type CustomOre = { ore: string; handler: Span };
 
@@ -353,6 +481,52 @@ type MiningModel = {
     /** M-215: custom-handler rocks promoted to resource by their proven ore product. */
     customOre: Map<string, CustomOre>;
 };
+
+function miningTickArm(
+    ctx: Ctx,
+    model: MiningModel,
+    labels: Set<string>,
+    tools: Know<ToolWire[]>,
+): TickArmWire {
+    const facts: MiningLabel[] = [];
+    for (const name of labels) {
+        const label = model.labels.get(name);
+        if (!label || 'code' in label) throw new Error(`${MINING_SCRIPT}: ${name} has no reviewed tick facts`);
+        facts.push(label);
+    }
+    if (facts.length === 0) {
+        return makeTickArm(ctx, {
+            kind: 'none',
+            roll_signal: 'never',
+            delay_drop: false,
+            depletes: false,
+            native_arm: null,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'mining');
+    }
+    const first = facts[0]!;
+    if (facts.some((label) => label.depletes !== first.depletes || label.delayDrop !== first.delayDrop)) {
+        throw new Error(`${MINING_SCRIPT}: one method mixes incompatible tick labels`);
+    }
+    return makeTickArm(ctx, {
+        kind: 'continuing',
+        roll_signal: 'always',
+        delay_drop: first.delayDrop,
+        depletes: first.depletes,
+        native_arm: null,
+        act_min_d: 0,
+        act_silent: false,
+        no_gain: null,
+        skill_anim: null,
+        roll_anim: null,
+        cast_anim: null,
+    }, tools, 'mining');
+}
 
 /** dbrow rock outputs mapped to the ore groups that yield them (M-215 custom-rock join key). */
 function oreOutputs(rows: DbRow[]): Map<string, string[]> {
@@ -568,6 +742,7 @@ function miningGemIds(ctx: Ctx): number[] {
 }
 
 function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Gap, zones: Zones): MiningOutput {
+    miningTickLoop(ctx);
     const dbtable = 'scripts/skill_mining/configs/mine.dbtable';
     for (const column of MINING_COLUMNS) if (!new RegExp(`^column=${column},`, 'm').test(ctx.idx.text(dbtable))) throw new Error(`${dbtable}: missing selected column ${column}`);
     const rows = parseDbRows(MINE_DBROW, ctx.idx.text(MINE_DBROW)).filter((row) => row.table === 'mining_table');
@@ -581,10 +756,42 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
         if (!ore) throw new Error(`${row.name}: missing ore_name`);
         (groups.get(ore) ?? groups.set(ore, []).get(ore)!).push(row);
     }
+    const methodGroups: { id: string; ore: string; rows: DbRow[] }[] = [];
+    for (const [ore, group] of groups) {
+        const variants = new Map<string, { label: string; rocks: Set<string> }>();
+        if (ctx.revision === 377) {
+            for (const row of group) for (const data of row.data.get('rock') ?? []) {
+                const rock = model.rocks.get(data.values[0]);
+                if (rock?.class !== 'resource' || !rock.label) continue;
+                const label = model.labels.get(rock.label);
+                if (!label || 'code' in label) continue;
+                const key = `${label.depletes}:${label.delayDrop}`;
+                const variant = variants.get(key) ?? { label: rock.label, rocks: new Set<string>() };
+                variant.rocks.add(rock.alias);
+                variants.set(key, variant);
+            }
+        }
+        if (variants.size <= 1) {
+            methodGroups.push({ id: `mining.${ore}`, ore, rows: group });
+            continue;
+        }
+        // One tick_arm cannot describe both delayed and immediate yield handlers.
+        // Keep each selected 377 resource, but give incompatible handlers separate methods.
+        let primary = true;
+        for (const variant of variants.values()) {
+            const selected = group.map((row) => {
+                const data = new Map(row.data);
+                data.set('rock', (row.data.get('rock') ?? []).filter((entry) =>
+                    model.rocks.get(entry.values[0])?.class !== 'resource' || variant.rocks.has(entry.values[0])));
+                return { ...row, data };
+            }).filter((row) => row.data.get('rock')!.length > 0);
+            methodGroups.push({ id: `mining.${ore}${primary ? '' : `.${variant.label}`}`, ore, rows: selected });
+            primary = false;
+        }
+    }
     const attached = new Set<string>();
     const methods: MethodWire[] = [];
-    for (const [ore, group] of groups) {
-        const id = `mining.${ore}`;
+    for (const { id, ore, rows: group } of methodGroups) {
         const targets = new Map<string, TargetWire>();
         const targetGaps: Gap[] = [];
         const labels = new Set<string>();
@@ -678,6 +885,7 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
             targets: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : partial([...targets.values()].sort(byTarget), targetGaps),
             products: productGaps.length > 0 && products.state === 'known' ? partial(products.value, productGaps) : products,
             tools: pick,
+            tick_arm: miningTickArm(ctx, model, labels, pick),
             consumes: labels.size === 0 ? unknown('no-mining-handler', group.map((row) => spanRef(row.span))) : partial([], consumeGaps),
             requirements: Number.isNaN(level) ? unknown('rock-level-missing', group.map((row) => spanRef(row.span))) : partial([{ id: `${id}.level`, source: spanRef(line(MINE_DBROW, levelData!.line)), kind: 'skill', skill: SKILL.mining, level }], requirementGaps),
             spots: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : known(null),
@@ -723,7 +931,25 @@ function woodModel(ctx: Ctx): WoodModel | Gap {
     const a = flatten(attempt);
     const l = flatten(logs);
     const c = flatten(cut);
-    const anchored =
+
+    const animation = ctx.revision === 377
+        ? 'anim(struct_param(oc_param($axe, woodcutting_struct), skill_anim), 0)'
+        : 'anim(oc_param($axe, woodcutting_anim), 0)';
+    const timing =
+        conditions(a.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(a.flat, '%action_delay = calc(map_clock + 3)') &&
+        hasStmt(a.flat, 'p_oploc(1)') &&
+        hasStmt(a.flat, animation) &&
+        conditions(a.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(a.flat, '@get_logs($data, $axe)') &&
+        hasStmt(a.flat, 'p_oploc(3)') &&
+        conditions(c.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(c.flat, '%action_delay = calc(map_clock + 3)') &&
+        conditions(c.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(c.flat, animation) &&
+        hasStmt(c.flat, '@get_logs($data, $axe)') &&
+        hasStmt(c.flat, 'p_oploc(3)');
+    const anchored = timing &&
         ['db_find(woodcutting_trees:tree, loc_type)', 'def_namedobj $product = db_getfield($data, woodcutting_trees:product, 0)', 'def_int $level = db_getfield($data, woodcutting_trees:levelrequired, 0)'].every((each) => hasStmt(a.flat, each)) &&
         conditions(a.nodes).includes('stat(woodcutting) < $level') &&
         ['def_int $respawnrate = db_getfield($data, woodcutting_trees:respawnrate, 0)', 'def_int $deplete_chance = 8', 'inv_add(inv, $product, 1)', '$respawnrate = ~scale_by_playercount($respawnrate)', 'loc_change(loc_param(next_loc_stage), $respawnrate)'].every((each) => hasStmt(l.flat, each)) &&
@@ -742,6 +968,37 @@ function woodModel(ctx: Ctx): WoodModel | Gap {
     };
 }
 
+
+function woodcutTickArm(ctx: Ctx, tools: Know<ToolWire[]>, model: WoodModel | Gap, empty: boolean): TickArmWire {
+    if ('code' in model) throw new Error(`${WOODCUT_SCRIPT}: cannot classify tick facts from an unrecognized loop`);
+    return empty
+        ? makeTickArm(ctx, {
+            kind: 'none',
+            roll_signal: 'never',
+            delay_drop: false,
+            depletes: false,
+            native_arm: null,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'woodcutting')
+        : makeTickArm(ctx, {
+            kind: 'continuing',
+            roll_signal: 'always',
+            delay_drop: false,
+            depletes: true,
+            native_arm: 3,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'woodcutting');
+}
 function woodKey(table: string) {
     const suffix = '_tree_table';
     if (!table.endsWith(suffix) || table.length === suffix.length) throw new Error(`${table}: expected wood table key`);
@@ -831,6 +1088,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
         }
         const empty = resources.length === 0;
         const why = 'code' in model ? model : gap('no-resource-target', row.span);
+        const tools = empty ? unknown<ToolWire[]>('no-resource-target', [spanRef(row.span)]) : axeCell;
         methods.push({
             id,
             skill: 'woodcutting',
@@ -838,7 +1096,8 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
             op: empty || !opLabel ? null : { slot, label: opLabel },
             targets: empty ? unknown(why.code, why.sources) : partial([...targets.values()].sort(byTarget), targetGaps),
             products: empty ? unknown(why.code, why.sources) : known([{ item: ctx.entities.id('obj', productAlias, `${id} product`), level }]),
-            tools: empty ? unknown(why.code, why.sources) : axeCell,
+            tools,
+            tick_arm: woodcutTickArm(ctx, tools, model, empty),
             consumes: empty ? unknown(why.code, why.sources) : 'code' in model ? unknown(model.code, model.sources) : partial([], model.deletes ? [gap('inventory-effect', blockSpan(uniqueBlock(ctx, 'label', 'get_logs')!))] : []),
             requirements: empty ? unknown(why.code, why.sources) : partial(requirements, requirementGaps),
             spots: empty ? unknown(why.code, why.sources) : known(null),
@@ -1038,6 +1297,353 @@ const HEMENSTER_FISHING_SCRIPT = 'scripts/quests/quest_fishingcompo/scripts/heme
 const HEMENSTER_COMP_CONSTANTS = 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant';
 const HEMENSTER_NORTH_SPOT = '0_41_53_sinisterfishspot';
 const HEMENSTER_CARP_METHOD = `fishing.${HEMENSTER_NORTH_SPOT}.op1`;
+/**
+ * The published fishing config contains only fishing NPC types. Revision 377
+ * folds those rows into the unpacked all.npc file, so recover the same
+ * population from fishing data markers and the scripts that dispatch them.
+ */
+function fishingNpcSections(ctx: Ctx): Section[] {
+    const all = ctx.idx.npc.all();
+    const canonical = all.filter((section) => section.span.file === FISHING_NPC);
+    if (canonical.length > 0) return canonical;
+
+    const categories = new Set<string>();
+    const aliases = new Set<string>();
+    const questAliases = new Set<string>();
+    for (const [key, headers] of ctx.idx.headers) {
+        const match = /^opnpc[1-5],(.+)$/.exec(key);
+        if (!match) continue;
+        const dispatch = match[1]!;
+        if (headers.some((header) => header.span.file.startsWith(FISHING_SCRIPTS))) {
+            if (dispatch.startsWith('_')) categories.add(dispatch.slice(1));
+            else aliases.add(dispatch);
+        }
+        if (headers.some((header) => header.span.file === HEMENSTER_FISHING_SCRIPT)) questAliases.add(dispatch);
+    }
+    const isFishingSpot = (section: Section) => section.props.get('name')?.some((name) => name.toLowerCase() === 'fishing spot') ?? false;
+    const selected = all.filter((section) => {
+        const category = section.props.get('category')?.[0];
+        return section.params.has('fishing_movement_enum')
+            || section.params.has('whirlpool')
+            || section.params.has('is_whirlpool')
+            || (category !== undefined && categories.has(category))
+            || (isFishingSpot(section) && (aliases.has(section.name) || questAliases.has(section.name)));
+    });
+    if (selected.length === 0) throw new Error(`${FISHING_NPC}: no fishing npc types in content npc configs`);
+    return selected;
+}
+
+
+type FishingTickBlock = { kind: string; name: string };
+type FishingTickSpec = {
+    file: string;
+    attempt: string | null;
+    roll: FishingTickBlock | null;
+    kind: TickArmKind;
+    rollSignal: TickRollSignal;
+    nativeArm: number | null;
+    actMinD: number;
+    actSilent: boolean;
+    castAnim: string | null;
+    rollAnim: string | null;
+};
+
+// Exact method families from the reviewed tick loop table; changed handlers fail closed.
+const FISHING_TICK_SPECS: Readonly<Record<string, FishingTickSpec>> = {
+    'fishing.freshfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/freshfish.rs2`,
+        attempt: 'attempt_fish_trout_salmon',
+        roll: { kind: 'label', name: 'fish_trout_salmon' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.freshfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/freshfish.rs2`,
+        attempt: 'attempt_fish_pike',
+        roll: { kind: 'label', name: 'fish_pike' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2027.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/waterfall.rs2`,
+        attempt: null,
+        roll: { kind: 'oploc3', name: 'loc_2027' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2027.op2': {
+        file: `${FISHING_SCRIPTS}fishing_spots/waterfall.rs2`,
+        attempt: null,
+        roll: { kind: 'oploc4', name: 'loc_2027' },
+        kind: 'continuing',
+        rollSignal: 'sometimes',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2630.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/lavafish_loc.rs2`,
+        attempt: 'attempt_fish_lava_eel_loc',
+        roll: { kind: 'label', name: 'fish_lava_eel_loc' },
+        kind: 'continuing',
+        rollSignal: 'never',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: true,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+    'fishing.0_45_152_lavafish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/lavafish.rs2`,
+        attempt: 'attempt_fish_lava_eel',
+        roll: { kind: 'label', name: 'fish_lava_eel' },
+        kind: 'continuing',
+        rollSignal: 'never',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: true,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+    'fishing.saltfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/saltfish.rs2`,
+        attempt: 'attempt_fish_shrimp',
+        roll: { kind: 'label', name: 'attempt_fish_shrimp' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_smallnet',
+        rollAnim: null,
+    },
+    'fishing.saltfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/saltfish.rs2`,
+        attempt: 'attempt_fish_sardine',
+        roll: { kind: 'label', name: 'attempt_fish_sardine' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.memberfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/memberfish.rs2`,
+        attempt: 'attempt_fish_mackerel',
+        roll: { kind: 'label', name: 'attempt_fish_mackerel' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_largenet',
+        rollAnim: null,
+    },
+    'fishing.memberfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/memberfish.rs2`,
+        attempt: 'attempt_fish_shark',
+        roll: { kind: 'label', name: 'attempt_fish_shark' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_harpoon',
+        rollAnim: 'human_harpoon',
+    },
+    'fishing.rarefish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/rarefish.rs2`,
+        attempt: 'attempt_fish_lobster',
+        roll: { kind: 'label', name: 'attempt_fish_lobster' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_lobster',
+        rollAnim: 'human_lobster',
+    },
+    'fishing.rarefish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/rarefish.rs2`,
+        attempt: 'attempt_fish_swordfish',
+        roll: { kind: 'label', name: 'attempt_fish_swordfish' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_harpoon',
+        rollAnim: 'human_harpoon',
+    },
+    'fishing.category_632.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/tbwt.rs2`,
+        attempt: 'attempt_fish_karambwanji',
+        roll: { kind: 'label', name: 'attempt_fish_karambwanji' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_smallnet',
+        rollAnim: null,
+    },
+    'fishing.category_633.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/tbwt.rs2`,
+        attempt: 'attempt_fish_karambwan',
+        roll: null,
+        kind: 'none',
+        rollSignal: 'never',
+        nativeArm: null,
+        actMinD: 0,
+        actSilent: false,
+        castAnim: 'human_octopus_pot',
+        rollAnim: null,
+    },
+    'fishing.slimeyfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/slimeyfish.rs2`,
+        attempt: 'attempt_fish_slimey_eel',
+        roll: { kind: 'label', name: 'attempt_fish_slimey_eel' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    [HEMENSTER_CARP_METHOD]: {
+        file: HEMENSTER_FISHING_SCRIPT,
+        attempt: 'attempt_fish_hemenster',
+        roll: null,
+        kind: 'none',
+        rollSignal: 'never',
+        nativeArm: null,
+        actMinD: 0,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+};
+
+/** Named 377 entrypoints for the same source-checked fishing loops. */
+const FISHING_TICK_SPECS_377: Readonly<Record<string, FishingTickSpec>> = {
+    'fishing.fishing_spot_2027.op1': {
+        ...FISHING_TICK_SPECS['fishing.loc_2027.op1'],
+        roll: { kind: 'oploc3', name: 'fishing_spot_2027' },
+    },
+    'fishing.fishing_spot_2027.op2': {
+        ...FISHING_TICK_SPECS['fishing.loc_2027.op2'],
+        roll: { kind: 'oploc4', name: 'fishing_spot_2027' },
+    },
+    'fishing.fishing_spot_2630.op1': FISHING_TICK_SPECS['fishing.loc_2630.op1'],
+    'fishing.wild_ladder_middle_inactive.op1': FISHING_TICK_SPECS['fishing.loc_2630.op1'],
+    'fishing.0_43_47_karambwanji.op1': FISHING_TICK_SPECS['fishing.category_632.op1'],
+    'fishing.general_karambwanji.op1': FISHING_TICK_SPECS['fishing.category_632.op1'],
+    'fishing.0_45_48_karambwan.op1': FISHING_TICK_SPECS['fishing.category_633.op1'],
+    'fishing.general_karambwan.op1': FISHING_TICK_SPECS['fishing.category_633.op1'],
+};
+
+function fishingTickArm(ctx: Ctx, id: string, start: Rs2Block): TickArmWire {
+    const spec = (ctx.revision === 377 ? FISHING_TICK_SPECS_377[id] : undefined) ?? FISHING_TICK_SPECS[id];
+    if (!spec) throw new Error(`${id}: no reviewed fishing tick specification`);
+    if (start.span.file !== spec.file) throw new Error(`${id}: fishing entry moved from ${spec.file}`);
+
+    let attempt = start;
+    if (spec.attempt) {
+        if (codeText(start) !== `@${spec.attempt};`) throw new Error(`${id}: fishing entry no longer calls ${spec.attempt}`);
+        const found = uniqueBlock(ctx, 'label', spec.attempt);
+        if (!found || found.span.file !== spec.file) throw new Error(`${id}: missing reviewed attempt ${spec.attempt}`);
+        attempt = found;
+    }
+
+    const attemptShape = flatten(attempt);
+    if (spec.nativeArm === null) {
+        if (hasStmt(attemptShape.flat, /^%action_delay = calc\(map_clock \+ \d+\)$/)) throw new Error(`${id}: unclassified fishing action-delay write`);
+        const oneShotDelay = spec.attempt === 'attempt_fish_karambwan' ? 'p_delay(5)' : id === HEMENSTER_CARP_METHOD ? 'p_delay(4)' : null;
+        if (oneShotDelay && !hasStmt(attemptShape.flat, oneShotDelay)) throw new Error(`${id}: one-shot fishing delay changed`);
+    } else if (!hasStmt(attemptShape.flat, `%action_delay = calc(map_clock + ${spec.nativeArm})`)) {
+        throw new Error(`${id}: fishing native arm changed`);
+    }
+    if (spec.castAnim && !hasStmt(attemptShape.flat, `anim(${spec.castAnim}, 0)`)) throw new Error(`${id}: fishing cast animation changed`);
+
+    if (spec.actSilent) {
+        const silentCondition = '%action_delay = calc(map_clock + 3)';
+        const silentPath = attemptShape.flat.filter(({ path }) => path.some((each) => !each.polarity && each.cond === silentCondition));
+        if (!silentPath.some(({ stmt }) => stmt.text.startsWith('p_op'))
+            || silentPath.some(({ stmt }) => stmt.text.startsWith('anim(') || stmt.text.startsWith('mes('))) {
+            throw new Error(`${id}: lava-eel silent act branch changed`);
+        }
+    }
+
+    if (spec.roll === null) {
+        if (spec.rollSignal !== 'never' || spec.rollAnim !== null) throw new Error(`${id}: one-shot fishing method has a roll signal`);
+    } else {
+        const rollBlock = spec.roll.kind === 'label' && spec.roll.name === spec.attempt
+            ? attempt
+            : uniqueBlock(ctx, spec.roll.kind, spec.roll.name);
+        if (!rollBlock || rollBlock.span.file !== spec.file) throw new Error(`${id}: missing reviewed fishing roll block`);
+        const rollShape = flatten(rollBlock);
+        const d0 = '%action_delay = map_clock';
+        const d0Animations = rollShape.flat.filter(({ stmt, path }) =>
+            stmt.text.startsWith('anim(') && path.some((each) => each.polarity && each.cond === d0));
+        const expectedAnimation = spec.rollAnim ? `anim(${spec.rollAnim}, 0)` : null;
+        const rollAnimation = expectedAnimation && rollShape.flat.find(({ stmt, path }) => stmt.text === expectedAnimation && path.some((each) => each.polarity && each.cond === d0));
+        if (spec.rollSignal === 'always' && !rollAnimation) throw new Error(`${id}: expected roll animation disappeared`);
+        if (spec.rollSignal === 'never' && (spec.rollAnim !== null || d0Animations.length > 0)) throw new Error(`${id}: unexpected animation at the roll step`);
+        if (spec.rollSignal === 'sometimes') {
+            const recast = 'random(5) = 0';
+            const suppressesAnimation = (nodes: Node[]): boolean => nodes.some((node) => {
+                if (node.kind === 'while') return suppressesAnimation(node.body);
+                if (node.kind !== 'if') return false;
+                if (node.cond !== d0) return suppressesAnimation(node.then) || suppressesAnimation(node.els);
+                const [roll, branch, animation] = node.then;
+                return node.then.length === 3
+                    && roll?.kind === 'stmt' && roll.text === '~fish_roll_loc(raw_pike, null, fishing_bait)'
+                    && branch?.kind === 'if' && branch.cond === recast && branch.els.length === 0
+                    && branch.then.length === 2
+                    && branch.then[0]?.kind === 'stmt' && branch.then[0].text === 'p_oploc(2)'
+                    && branch.then[1]?.kind === 'stmt' && branch.then[1].text === 'return'
+                    && animation?.kind === 'stmt' && animation.text === expectedAnimation;
+            });
+            if (!rollAnimation || !suppressesAnimation(rollShape.nodes)) {
+                throw new Error(`${id}: waterfall recast no longer suppresses one roll animation`);
+            }
+        }
+    }
+
+    return makeTickArm(ctx, {
+        kind: spec.kind,
+        roll_signal: spec.rollSignal,
+        delay_drop: false,
+        depletes: false,
+        native_arm: spec.nativeArm,
+        act_min_d: spec.actMinD,
+        act_silent: spec.actSilent,
+        no_gain: false,
+        skill_anim: null,
+        roll_anim: spec.rollAnim ? sequenceId(ctx, spec.rollAnim) : null,
+        cast_anim: spec.castAnim ? sequenceId(ctx, spec.castAnim) : null,
+    }, known<ToolWire[]>([]), 'fishing');
+}
 
 /**
  * Prove the one quest-owned carp case from its exact dispatch, bait choice, catch branch and completion gate.
@@ -1048,7 +1654,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
     const label = npc?.props.get('op1')?.[0];
     const headers = ctx.idx.headers.get(`opnpc1,${HEMENSTER_NORTH_SPOT}`) ?? [];
     const header = headers.length === 1 ? headers[0] : undefined;
-    if (!npc || npc.span.file !== FISHING_NPC || !label || label.toLowerCase() === 'hidden' || !header || header.span.file !== HEMENSTER_FISHING_SCRIPT) return null;
+    if (!npc || !label || label.toLowerCase() === 'hidden' || !header || header.span.file !== HEMENSTER_FISHING_SCRIPT) return null;
 
     const dispatch = ctx.idx.blocks(HEMENSTER_FISHING_SCRIPT).find((block) => block.kind === 'opnpc1' && block.name === HEMENSTER_NORTH_SPOT && block.span.first === header.span.first);
     const sourceBlock = (kind: string, name: string) => {
@@ -1148,6 +1754,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
         products: known([{ item: carp, level }]),
         tools: known([{ item: rod, use_gate: null, wield_gate: null }]),
         consumes: known([{ item: worm, count: 1 }]),
+        tick_arm: fishingTickArm(ctx, HEMENSTER_CARP_METHOD, dispatch),
         requirements: partial([{ id: `${HEMENSTER_CARP_METHOD}.level`, source: spanRef(levelSpan), kind: 'skill', skill: SKILL.fishing, level }], [questGate]),
         spots: known(null),
         forbidden_states: [],
@@ -1157,8 +1764,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
 
 
 function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; movements: MovementWire[]; hazardNpcs: number[] } {
-    const npcs = ctx.idx.npc.all().filter((section) => section.span.file === FISHING_NPC);
-    if (npcs.length === 0) throw new Error(`${FISHING_NPC}: no fishing npc types`);
+    const npcs = fishingNpcSections(ctx);
     const subjects = new Map<string, FishSubject>();
     const loose: LooseWire[] = [];
     const hazardAliases = new Set<string>();
@@ -1266,6 +1872,7 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
                     [...tools].map((alias) => ({ item: ctx.entities.id('obj', alias, `${id} tool`), use_gate: null, wield_gate: null })),
                 ),
                 consumes: partial(bait ? [{ item: ctx.entities.id('obj', bait, `${id} bait`), count: 1 }] : [], effectGaps),
+                tick_arm: fishingTickArm(ctx, id, start),
                 requirements: partial(reqs, requirementGaps),
                 spots: known(null),
                 forbidden_states: [...new Set(closure.forbiddenStates)].sort(),
@@ -1360,10 +1967,10 @@ function summarize(methods: MethodWire[], mining: MiningModel, placements: Place
 /** The pipeline `FamilyDraft` (`{ schema, payload }`) plus a summary for the generator's report. */
 export type GatheringFamily = { schema: number; payload: GatheringFacts; summary: GatheringSummary };
 
-/** Extract the complete gathering family from one pinned content tree. Deterministic: no clocks, no host paths. */
-export function extractGatheringFamily(content: string): GatheringFamily {
+/** Extract the complete gathering family from one local content tree. Deterministic: no clocks, no host paths. */
+export function extractGatheringFamily(content: string, revision = 289): GatheringFamily {
     const idx = indexContent(content);
-    const ctx: Ctx = { idx, entities: new Entities(idx) };
+    const ctx: Ctx = { idx, entities: new Entities(idx), revision };
     const scale = playerScale(ctx);
     const zones = new Zones();
     const wood = extractWoodcutting(ctx, axes(ctx), scale, zones);
@@ -1408,13 +2015,13 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
  * `requirements` and `spots` must be `Known`; `products` may be `Known` or
  * `Partial` whose gap codes are all incidental gem rolls. Anything else
  * refuses the method with its gap code (e.g. `woodcutting.jungle`, karambwan,
- * memberfish on 289). There is no target-gap allowlist: excluded rows never
+ * member-only fishing method). There is no target-gap allowlist: excluded rows never
  * block, they simply do not admit.
  */
 export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
 
 /**
- * One pinned row of the selected core's `gather_resources` slice. Woodcutting
+ * One row of the selected core's `gather_resources` slice. Woodcutting
  * and mining publish one row per resource; fishing publishes one row per
  * `(operation, tools, bait, products)` group. `methods` is the complete set of
  * catalog methods admitted by this option. `aliases` retains pre-group
@@ -1542,13 +2149,14 @@ export function compareCodepoint(a: string, b: string): number {
 }
 
 /**
- * The pinned per-skill option rows the selected core carries so the UI never
- * decodes the family: every method in content order, selectable or refused
- * with its gap code. Fishing groups are keyed from stable item ids and labels
- * must be unique (including refused rows).
+ * The per-skill option rows carried by the selected core so the UI never
+ * decodes the family. Non-fishing methods share the option for their resource
+ * key and retain every method ID. Fishing groups use stable item IDs; their
+ * labels must be unique. Any refused member keeps its group refused.
  */
 export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<number, string>): GatherResourceWire[] {
     const rows: GatherResourceWire[] = [];
+    const resourceRows = new Map<string, GatherResourceWire>();
     for (const method of facts.methods) {
         if (method.skill === 'fishing') continue;
         const gap = gatherMethodGap(method);
@@ -1556,7 +2164,18 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
         const level = gatherMethodLevel(method);
         const selectable = gap === null;
         for (const resource of method.resources) {
-            rows.push({
+            const existing = resourceRows.get(resource);
+            if (existing) {
+                if (existing.skill !== method.skill) throw new Error(`gather_resources: ${resource} belongs to multiple skills`);
+                existing.methods.push(method.id);
+                existing.resources = [...new Set([...existing.resources, ...method.resources])].sort();
+                existing.level = Math.min(existing.level, level);
+                existing.selectable &&= selectable;
+                existing.gap ??= gap;
+                existing.forbidden_states = [...new Set([...existing.forbidden_states, ...method.forbidden_states])].sort();
+                continue;
+            }
+            const row: GatherResourceWire = {
                 skill: method.skill,
                 method: method.id,
                 methods: [method.id],
@@ -1568,7 +2187,9 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
                 selectable,
                 gap,
                 forbidden_states: [...method.forbidden_states],
-            });
+            };
+            rows.push(row);
+            resourceRows.set(resource, row);
         }
     }
 
@@ -1639,11 +2260,8 @@ export type GatherSiteWire = {
     banking_unavailable?: string;
 };
 
-/** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
-export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number; renamed: number; required: number; override_dropped: number };
-export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
-/** `rows` are published; `hidden` are the rows a `drop` override removed (the reachability guard keeps each one unreachable). */
-export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[]; report: GatherSiteReport };
+/** Rows are published; hidden rows are `drop` overrides retained for reachability checks. */
+export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[] };
 
 /** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
 export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
@@ -1665,6 +2283,14 @@ export type SiteOverride = { id: string; cite: string; optional?: true } & (
     | { action: 'name'; name: string; requires: GatherSiteRequirement[]; banking_unavailable?: string }
     | { action: 'drop'; place: string; reason: string }
 );
+
+/** Revision context for curated site overrides; 377 has no proved 274/289 route annotations. */
+export type GatherSitesOptions = { revision?: number; overrides?: readonly SiteOverride[] };
+
+function isSiteOverrideList(value: readonly SiteOverride[] | GatherSitesOptions): value is readonly SiteOverride[] {
+    return Array.isArray(value);
+}
+
 
 const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-106 (zanarisdoor: the entrance needs the Dramen staff worn and a members world)';
 const ZANARIS_REQUIRES: GatherSiteRequirement[] = [{ kind: 'worn', item: 772, name: 'Dramen staff' }];
@@ -1845,18 +2471,21 @@ function readSitePlaces(content: string, banks: GatherSiteBank[]): { places: Sit
     return { places, spelling };
 }
 
-/** `alias -> fishing_movement_enum` plus every fishing NPC alias suffix, read with the shared section parser. */
-function readFishingEnums(content: string): { enumOf: Map<string, string>; suffixes: Set<string> } {
-    const sections = parseSections(FISHING_NPC, fs.readFileSync(path.join(content, FISHING_NPC), 'utf8'));
-    if (sections.length === 0) throw new Error(`gather_sites: ${FISHING_NPC} has no fishing npc types`);
+/** `alias -> fishing_movement_enum` plus fishing NPC alias suffixes from the selected NPC config rows. */
+function readFishingEnums(content: string, fishingAliases: ReadonlySet<string>): { enumOf: Map<string, string>; suffixes: Set<string> } {
+    const hasCanonical = fs.existsSync(path.join(content, FISHING_NPC));
+    const files = hasCanonical ? [FISHING_NPC] : walkContent(content, 'scripts', ['.npc']);
+    const sections = files.flatMap((file) => parseSections(file, fs.readFileSync(path.join(content, file), 'utf8')));
+    const selected = hasCanonical ? sections : sections.filter((section) => fishingAliases.has(section.name));
+    if (selected.length === 0) throw new Error(`gather_sites: ${hasCanonical ? FISHING_NPC : 'npc configs'} has no fishing npc types`);
     const enumOf = new Map<string, string>();
     const suffixes = new Set<string>();
-    for (const section of sections) {
+    for (const section of selected) {
         suffixes.add(section.name.replace(/^\d+_\d+_\d+_/, ''));
         const movement = section.params.get('fishing_movement_enum')?.[0];
         if (movement === undefined) continue;
         const prev = enumOf.get(section.name);
-        if (prev !== undefined && prev !== movement) throw new Error(`gather_sites: ${FISHING_NPC} names ${section.name} twice with different movement enums`);
+        if (prev !== undefined && prev !== movement) throw new Error(`gather_sites: ${section.span.file} names ${section.name} twice with different movement enums`);
         enumOf.set(section.name, movement);
     }
     return { enumOf, suffixes };
@@ -1954,13 +2583,11 @@ function siteBoxOf(tiles: SiteTile[]): SiteBox {
 }
 
 /**
- * The pinned per-skill named-site rows plus the per-skill report, computed
- * from the family, the `gather_resources` rows (a site's keys are exactly the
- * picker values), the content label and fishing-NPC inputs, and the bank
- * catalog. The family wire is untouched: movement boxes are reused, never
- * re-derived. Overrides then name, require or drop published rows by id.
+ * Compute named-site rows from family facts, picker resources, local content and the bank catalog.
+ * Overrides name, require or drop published rows by id.
  */
-export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], overrides: readonly SiteOverride[] = SITE_OVERRIDES): GatherSitesResult {
+export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], options: readonly SiteOverride[] | GatherSitesOptions = SITE_OVERRIDES): GatherSitesResult {
+    const overrides = isSiteOverrideList(options) ? options : options.overrides ?? (options.revision === 377 ? [] : SITE_OVERRIDES);
     const keyMeta = new Map<string, { skill: SkillName; label: string }>();
     for (const row of resources) {
         if (keyMeta.has(row.key)) throw new Error(`gather_sites: duplicate resource key ${row.key}`);
@@ -1997,7 +2624,17 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     }
     const { places, spelling } = readSitePlaces(content, banks);
     const labelPlaces = places.filter((place) => place.src.startsWith('label:'));
-    const { enumOf, suffixes } = readFishingEnums(content);
+    // Every direct name resolves: each method-target fishing NPC whose enum
+    // stem is geographic has a known, non-null movement box and a non-empty
+    // name, and distinct stems humanise to distinct names. This enumerates
+    // method targets, so an NPC with an entirely missing movement row throws.
+    const targetNpcs = new Set<number>();
+    for (const method of facts.methods) {
+        if (method.skill !== 'fishing' || method.targets.state === 'unknown') continue;
+        for (const target of method.targets.value) if (target.kind === 'npc' && target.class === 'resource') targetNpcs.add(target.id);
+    }
+    const fishingAliases = new Set([...targetNpcs].map((npc) => npcAlias.get(npc)).filter((alias): alias is string => alias !== undefined));
+    const { enumOf, suffixes } = readFishingEnums(content, fishingAliases);
     const directCache = new Map<number, DirectName | null>();
     const directNameOf = (npc: number): DirectName | null => {
         const cached = directCache.get(npc);
@@ -2011,15 +2648,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         directCache.set(npc, direct);
         return direct;
     };
-    // Every direct name resolves: each method-target fishing NPC whose enum
-    // stem is geographic has a known, non-null movement box and a non-empty
-    // name, and distinct stems humanise to distinct names. This enumerates
-    // method targets, so an NPC with an entirely missing movement row throws.
-    const targetNpcs = new Set<number>();
-    for (const method of facts.methods) {
-        if (method.skill !== 'fishing' || method.targets.state === 'unknown') continue;
-        for (const target of method.targets.value) if (target.kind === 'npc' && target.class === 'resource') targetNpcs.add(target.id);
-    }
     const resolvedStems = new Map<string, string>();
     for (const npc of [...targetNpcs].sort((a, b) => a - b)) {
         const direct = directNameOf(npc);
@@ -2078,10 +2706,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
     }
     let rows: GatherSiteWire[] = [];
-    const zeroSkill = (): GatherSiteSkillReport => ({ sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
-    const report: GatherSiteReport = { woodcutting: zeroSkill(), mining: zeroSkill(), fishing: zeroSkill() };
-    // Fragment sites (`extra`) by id, so the published count follows the rows that survive overrides.
-    const extraIds = new Set<string>();
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
         const members = new Map<string, SiteTile>();
         for (const [key, tiles] of perKey) {
@@ -2100,9 +2724,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         const drafts: Draft[] = [];
         // Far, underground and sprawl-fragment sites need `minTiles` tiles: a fishing spot is one tile, a tree or rock fragment three.
         const minTiles = skill === 'fishing' ? 1 : 3;
-        let dropped = 0;
-        let direct = 0;
-        let outsideBox = 0;
         const nearestBox = (box: SiteBox, level: number): { place: SitePlace; d: number } | null => {
             let best: { place: SitePlace; d: number } | null = null;
             for (const place of places) {
@@ -2141,11 +2762,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             return best;
         };
-        // The direct name of one site: the one geographic movement-enum name
-        // its NPC spawns carry, each spawn inside its own box on the same
-        // level. Loc placements carry no enum and never borrow a nearby NPC's
-        // name; a spawn outside its own box is counted, not named; two names
-        // in one site throw.
+        // A direct name is the geographic movement-enum name carried by an NPC
+        // spawn inside its own box on the same level. Loc placements have no
+        // enum and never borrow a nearby NPC's name; outside spawns are not
+        // named. Two names in one site throw.
         const directOf = (comp: SiteTile[]): DirectName | null => {
             if (skill !== 'fishing') return null;
             const names = new Map<string, DirectName>();
@@ -2156,7 +2776,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                     if (named === null) continue;
                     const box = movementBox.get(named.npc);
                     if (box?.state !== 'known' || box.value === null || !siteInBox(tile, box.value)) {
-                        outsideBox += 1;
                         continue;
                     }
                     names.set(named.name, named);
@@ -2195,11 +2814,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 keys: ordered.map(([key, count]) => ({ key, count })),
             };
         };
-        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the 4160-6400 special-area band are counted, not offered.
+        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the special-area band are not offered.
         const farSite = (comp: SiteTile[]) => {
             const box = siteBoxOf(comp);
             if (box.maxZ >= SITE_SPECIAL_Z || comp.length < minTiles) {
-                dropped += comp.length;
                 return;
             }
             const bank = nearestBank(box);
@@ -2208,14 +2826,12 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 return;
             }
             const near = nearestLabel(box);
-            if (near === null) dropped += comp.length;
-            else drafts.push(draftOf(comp, near.place, null, true));
+            if (near !== null) drafts.push(draftOf(comp, near.place, null, true));
         };
         // Underground clusters take the nearest label to their surface projection, at any distance.
         const undergroundSite = (comp: SiteTile[]) => {
             const near = nearestLabel(siteNamingBox(siteBoxOf(comp)));
-            if (comp.length < minTiles || near === null) dropped += comp.length;
-            else drafts.push(draftOf(comp, near.place, null, true));
+            if (comp.length >= minTiles && near !== null) drafts.push(draftOf(comp, near.place, null, true));
         };
         const surface: SiteTile[] = [];
         const underground: SiteTile[] = [];
@@ -2232,7 +2848,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                     continue;
                 }
                 const named = directOf(comp);
-                if (named !== null) direct += 1;
                 drafts.push(draftOf(comp, near.place, named, false));
                 continue;
             }
@@ -2250,16 +2865,12 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             for (const { place, pts } of cells.values()) {
                 for (const part of clusterTiles(pts, SITE_GAP)) {
-                    if (part.length < minTiles) {
-                        dropped += part.length;
-                        continue;
-                    }
+                    if (part.length < minTiles) continue;
                     // Only fishing admits a fragment under 3 tiles (rule 3): it is new, so it sorts after every 0.2.0 id.
                     drafts.push(draftOf(part, place, null, part.length < 3));
                 }
             }
             const reachable = far.filter((tile) => tile.z < SITE_SPECIAL_Z);
-            dropped += far.length - reachable.length;
             for (const part of clusterTiles(reachable, SITE_GAP)) farSite(part);
         }
         for (const comp of clusterTiles(underground, SITE_GAP)) undergroundSite(comp);
@@ -2274,7 +2885,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             group.forEach((draft, index) => {
                 const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
                 const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
-                if (draft.extra) extraIds.add(id);
                 rows.push({
                     id, skill, label,
                     region: { min_x: draft.minX, min_z: draft.minZ, max_x: draft.maxX, max_z: draft.maxZ, level: draft.level },
@@ -2283,7 +2893,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 });
             });
         }
-        Object.assign(report[skill], { direct, dropped, outside_box: outsideBox });
     }
     // Overrides name, require or drop published rows by id. Ids are fixed by now, so a drop never renumbers a neighbour.
     const overridden = new Set<string>();
@@ -2328,16 +2937,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     }
     const droppedRows = rows.filter((row) => droppedIds.has(row.id));
     rows = rows.filter((row) => !droppedIds.has(row.id));
-    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
-        const published = rows.filter((row) => row.skill === skill);
-        Object.assign(report[skill], {
-            sites: published.length,
-            extra: published.filter((row) => extraIds.has(row.id)).length,
-            renamed: renames.filter((entry) => entry.row.skill === skill).length,
-            required: published.filter((row) => row.requires.length > 0).length,
-            override_dropped: droppedRows.filter((row) => row.skill === skill).length,
-        });
-    }
     // Sort by place names so plain names precede their bearing siblings.
     rows.sort((a, b) => {
         const aSeparator = a.label.indexOf(' · ');
@@ -2365,7 +2964,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (keyMeta.get(entry.key)?.skill !== row.skill) throw new Error(`gather_sites: ${row.id} offers ${entry.key}, not a ${row.skill} key`);
         }
     }
-    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)), report };
+    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)) };
 }
 
 /**

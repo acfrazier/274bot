@@ -1,6 +1,6 @@
 //! Compiled solve-clue card (`Sherlock`): play, identify, dispatch.
 //!
-//! The clue machine is [`crate::clue`] — the same token / identify / phase /
+//! The clue machine is [`crate::compat::clue`] — the same token / identify / phase /
 //! clock machine the frozen JS wrapper calls through `__rs2b0t_clue`, running
 //! on this slot's pump thread. This module owns no second solver: no
 //! membership table, no trail table, no classify, no phase and no clock of
@@ -11,7 +11,7 @@
 //! One [`Script::tick`] is one wrapper `execute()` iteration:
 //!
 //! * No live session: the `begin` call. A refusal (no held membership, no
-//!   selected pin) leaves the card idle and it asks again next tick; a
+//!   clue facts) leaves the card idle and it asks again next tick; a
 //!   `token` answer starts the session and this tick keeps iterating.
 //! * Live: `next` calls until the machine waits, yields, ends the session or
 //!   enqueues one verb — the one verb per tick the wrapper's own
@@ -59,29 +59,31 @@ use serde_json::{json, Map, Value};
 
 use std::sync::{Arc, LazyLock};
 
-use crate::clue::{Delegation, Outcome};
+use crate::compat::clue::{Delegation, Outcome};
 use api::selected::RunKey;
+use script::card::SettingDef;
 use script::combat::{
     begin_clear_owned_prayers, ClearPrayers, Combat, CombatRequest, CombatTables, Hygiene,
     RaisedPrayers,
 };
+use script::interact::InteractReq;
 use script::native::death::hitpoints_zero;
 use script::native::{
     ActionError, ActionHandle, CompiledCard, ConfigError, HostFrame, Interrupt, NativeOutput,
     NativePhase, NativeTick, PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure,
     ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue,
 };
-use script::shim::{host_control_buttons, InteractReq, ScriptPaint};
-use script::{CompiledId, SettingDef};
+use script::paint::{host_control_buttons, ScriptPaint};
+use script::registry::CompiledId;
 use std::task::Poll;
 use std::time::Duration;
 
 static CLUE_LIFECYCLE: script::native::CardLifecycle = script::native::CardLifecycle {
-    on_stop: crate::clue::on_stop,
-    on_reset: crate::clue::on_reset,
-    on_resume: crate::clue::on_resume,
-    on_pause: crate::clue::on_pause,
-    on_hold: crate::clue::on_hold,
+    on_stop: crate::compat::clue::on_stop,
+    on_reset: crate::compat::clue::on_reset,
+    on_resume: crate::compat::clue::on_resume,
+    on_pause: crate::compat::clue::on_pause,
+    on_hold: crate::compat::clue::on_hold,
 };
 
 /// The canonical compiled card for the JS-backed clue adapter.
@@ -152,15 +154,6 @@ fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     if cx.selected.trails().is_none()
         || cx.selected.talk_key().is_none()
         || cx.selected.trio_givers().is_none()
@@ -184,6 +177,14 @@ fn prepare(
         bag,
         Prepared { tables },
     ))
+}
+#[cfg(test)]
+fn selected_revision(selected: &SelectedGameData) -> api::selected::ClientRevision {
+    match selected.revision() {
+        274 => api::selected::ClientRevision::R274,
+        289 => api::selected::ClientRevision::R289,
+        revision => panic!("unsupported selected game-data revision {revision}"),
+    }
 }
 
 struct Prepared {
@@ -403,10 +404,15 @@ impl Script for Sherlock {
         }
         if let Some((id, request)) = self.pending.take() {
             if let Some(tables) = self.tables.as_ref() {
-                match tick
-                    .actions
-                    .begin::<Combat>((Arc::clone(&request), Arc::clone(tables)), &mut tick.cx)
-                {
+                match tick.actions.begin::<Combat>(
+                    (
+                        Arc::clone(&request),
+                        Arc::clone(tables),
+                        tick.pvp_globals
+                            .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+                    ),
+                    &mut tick.cx,
+                ) {
                     Ok(handle) => {
                         self.fight = Some(Fight::Combat(handle));
                         self.combat_id = Some(id);
@@ -619,6 +625,7 @@ impl Sherlock {
                     value: StatusValue::Integer(i64::from(self.solved)),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
             failure: None,
         });
         output.paint(Arc::new(ScriptPaint {
@@ -643,7 +650,7 @@ impl Sherlock {
         let token = match self.token {
             Some(token) => token,
             None => {
-                let begin = crate::clue::dispatch(selected, &begin_payload(tick.frame()));
+                let begin = crate::compat::clue::dispatch(selected, &begin_payload(tick.frame()));
                 let Some(started) = answered_token(&begin) else {
                     return;
                 };
@@ -677,7 +684,7 @@ impl Sherlock {
         let token = match self.token {
             Some(token) => token,
             None => {
-                let begin = crate::clue::dispatch(selected, &begin_payload(ctx));
+                let begin = crate::compat::clue::dispatch(selected, &begin_payload(ctx));
                 let Some(started) = answered_token(&begin) else {
                     return;
                 };
@@ -710,8 +717,12 @@ impl Sherlock {
             } else {
                 fields.remove("resume");
             }
-            let answer =
-                crate::clue::next_native(selected, &page, death_observed, tick.cx.evidence().tick);
+            let answer = crate::compat::clue::next_native(
+                selected,
+                &page,
+                death_observed,
+                tick.cx.evidence().tick,
+            );
             resume = false;
             let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {
@@ -738,7 +749,7 @@ impl Sherlock {
                 "aborted" => {
                     let reason = answer.get("reason").and_then(Value::as_str).unwrap_or("");
                     self.end(reason);
-                    let bank_failure = reason == crate::clue::BANK_APPROACH_FAILED;
+                    let bank_failure = reason == crate::compat::clue::BANK_APPROACH_FAILED;
                     if reason.starts_with("combat-") || bank_failure {
                         self.blocked = Some(ScriptFailure {
                             code: Arc::from(reason),
@@ -785,7 +796,7 @@ impl Sherlock {
             } else {
                 fields.remove("resume");
             }
-            let answer = crate::clue::dispatch(selected, &page);
+            let answer = crate::compat::clue::dispatch(selected, &page);
             resume = false;
             let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {
@@ -839,10 +850,15 @@ impl Sherlock {
             self.outcome = Some(Outcome::failed(d.id()));
             return;
         };
-        match tick
-            .actions
-            .begin::<Combat>((Arc::new(d.request()), Arc::clone(tables)), &mut tick.cx)
-        {
+        match tick.actions.begin::<Combat>(
+            (
+                Arc::new(d.request()),
+                Arc::clone(tables),
+                tick.pvp_globals
+                    .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+            ),
+            &mut tick.cx,
+        ) {
             Ok(handle) => {
                 self.fight = Some(Fight::Combat(handle));
                 self.combat_id = Some(d.id());
@@ -1091,7 +1107,7 @@ fn loc_operable_here(ctx: &HostFrame<'_>, loc: &api::snapshot::LocView) -> Optio
         || (i64::from(loc.tile.x) - i64::from(x))
             .abs()
             .max((i64::from(loc.tile.z) - i64::from(z)).abs())
-            > i64::from(crate::clue::ARRIVE_RADIUS)
+            > i64::from(crate::compat::clue::ARRIVE_RADIUS)
     {
         return None;
     }
@@ -1396,7 +1412,7 @@ fn answered_token(answer: &Value) -> Option<u64> {
 /// loc, npc and obj verbs keep the identity the machine posted beside them, so
 /// the host matches that row and refuses a stale one.
 fn enqueue(sink: &mut Vec<InteractReq>, _kind: &str, step: &Value) {
-    if let Some(req) = crate::clue::verb_req(step) {
+    if let Some(req) = crate::compat::clue::verb_req(step) {
         sink.push(req);
     }
 }
@@ -1683,11 +1699,14 @@ mod tests {
                     poison_unknown_pulse: None,
                     cure_poison: script::survival::CurePoison::WhenNeeded,
                     walk_danger: None,
+                    wilderness: None,
+                    pvp_globals: None,
                     selected,
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
                     collision: None,
+                    nav: None,
                     hold: self.hold,
                     world_members: api::selected::Truth::Unknown,
                     interacts: Some(Vec::new()),
@@ -1940,7 +1959,7 @@ mod tests {
         ledger: &mut Option<Box<ledger::Ledger>>,
         tick: u64,
     ) -> (ScriptFlow, Vec<InteractReq>) {
-        let pin = selected.selected_pin().expect("selected pin");
+        let revision = selected_revision(selected);
         let evidence = api::quest_progress::EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1956,7 +1975,7 @@ mod tests {
         script::native::with_test_tick(
             host,
             evidence,
-            &pin,
+            revision,
             (
                 Duration::from_millis(tick.saturating_mul(600)),
                 Instant::now(),
@@ -1988,7 +2007,7 @@ mod tests {
             x: tile.0,
             z: tile.1,
             level: tile.2,
-            radius: crate::clue::ARRIVE_RADIUS,
+            radius: crate::compat::clue::ARRIVE_RADIUS,
             compat_tile_intent: false,
             allow_teleports: false,
             allow_wilderness: false,
@@ -1996,6 +2015,8 @@ mod tests {
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }
     }
 
@@ -2026,6 +2047,9 @@ mod tests {
 
     #[test]
     fn next_page_pins_the_machine_keys_over_the_observed_frame() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2146,8 +2170,8 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                (script::shim::HOST_PAUSE_CONTROL_ID, "Pause"),
-                (script::shim::HOST_STOP_CONTROL_ID, "Stop"),
+                (script::paint::HOST_PAUSE_CONTROL_ID, "Pause"),
+                (script::paint::HOST_STOP_CONTROL_ID, "Stop"),
             ]
         );
     }
@@ -2206,6 +2230,9 @@ mod tests {
 
     #[test]
     fn native_clue_walk_latches_one_radius_request_until_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, target) = search_row(&data);
         let mut frame = wounded(&[(held_id, 1)], 10);
@@ -2219,7 +2246,7 @@ mod tests {
         });
         let mut script = Sherlock::default();
         let mut ledger = None;
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
 
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
@@ -2255,11 +2282,14 @@ mod tests {
             1,
             "the live action owns the only route request"
         );
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
     }
 
     #[test]
     fn native_clue_walk_deadline_blocks_with_named_reason_without_reissuing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = wounded(&[(held_id, 1)], 10);
@@ -2273,7 +2303,7 @@ mod tests {
         });
         let mut script = Sherlock::default();
         let mut ledger = None;
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
         let (flow, _) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1000);
@@ -2303,7 +2333,7 @@ mod tests {
             0,
             "timeout cancels the queued walk and never rearms it"
         );
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
     }
 
     #[test]
@@ -2313,6 +2343,7 @@ mod tests {
                 script::native::WalkReceipt {
                     goal: None,
                     request_id: 1,
+                    prereq_allow: None,
                     evidence: api::quest_progress::EvidenceStamp {
                         run: RunKey {
                             slot: 1,
@@ -2338,6 +2369,9 @@ mod tests {
 
     #[test]
     fn native_entrana_search_uses_the_posted_loc_approach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let south = WorldTile {
             x: 2818,
@@ -2399,7 +2433,7 @@ mod tests {
 
         let mut script = Sherlock::default();
         let mut ledger = None;
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
         assert!(interacts.is_empty());
@@ -2419,11 +2453,14 @@ mod tests {
         );
         assert_eq!(request.radius, 1);
         assert_eq!(request.loc_id, Some(350));
-        crate::clue::on_reset();
+        crate::compat::clue::on_reset();
     }
 
     #[test]
     fn a_held_search_row_walks_with_every_walk_option_off() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2443,6 +2480,9 @@ mod tests {
 
     #[test]
     fn nothing_held_is_an_idle_begin_the_next_frame_starts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let mut script = Sherlock::default();
 
@@ -2473,6 +2513,9 @@ mod tests {
 
     #[test]
     fn the_identify_is_the_machines_own_membership_read() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let mut script = Sherlock::default();
 
@@ -2491,6 +2534,9 @@ mod tests {
 
     #[test]
     fn a_none_held_abort_clears_the_token_without_counting() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -2528,6 +2574,9 @@ mod tests {
 
     #[test]
     fn the_finished_collect_counts_and_clears_the_token_in_one_iterate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let casket = casket_row(&data);
         let mut script = Sherlock::default();
@@ -2562,6 +2611,9 @@ mod tests {
 
     #[test]
     fn a_posted_zero_hitpoint_page_freezes_without_ending_the_session() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -2588,6 +2640,9 @@ mod tests {
 
     #[test]
     fn a_supplies_needed_tick_keeps_the_token_and_fetches_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let dig = dig_row(&data);
         let mut script = Sherlock::default();
@@ -2601,11 +2656,13 @@ mod tests {
                 x,
                 z,
                 level,
-                radius: crate::clue::ARRIVE_RADIUS,
+                radius: crate::compat::clue::ARRIVE_RADIUS,
                 compat_tile_intent: false,
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: _,
                 cross: _,
@@ -2626,6 +2683,9 @@ mod tests {
 
     #[test]
     fn the_page_marshals_the_observed_pack_and_scene() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2905,6 +2965,9 @@ mod tests {
 
     #[test]
     fn a_tick_without_a_sink_dispatches_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2923,6 +2986,9 @@ mod tests {
 
     #[test]
     fn a_frozen_frame_yields_instead_of_walking() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2944,6 +3010,9 @@ mod tests {
     /// it at `Steady`, and enqueue maps it onto `ContinueDialog`.
     #[test]
     fn a_posted_continue_dialog_produces_a_continue_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let held_id = talk_row(&data);
         let mut script = Sherlock::default();
@@ -2979,7 +3048,7 @@ mod tests {
     /// and this card's enqueue; the JS ENQUEUED_KINDS table is gone.
     #[test]
     fn unknown_kind_is_not_enqueued_as_a_loc() {
-        assert!(crate::clue::verb_req(&serde_json::json!({
+        assert!(crate::compat::clue::verb_req(&serde_json::json!({
             "kind": "nope",
             "x": 1,
             "z": 2,
@@ -2989,17 +3058,17 @@ mod tests {
         }))
         .is_none());
         assert!(matches!(
-            crate::clue::verb_req(&serde_json::json!({ "kind": "continue" })),
+            crate::compat::clue::verb_req(&serde_json::json!({ "kind": "continue" })),
             Some(InteractReq::ContinueDialog { component_id: None })
         ));
         assert!(matches!(
-            crate::clue::verb_req(
+            crate::compat::clue::verb_req(
                 &serde_json::json!({ "kind": "walk", "x": 1, "z": 2, "level": 0 })
             ),
             Some(InteractReq::Walk { .. })
         ));
         assert!(matches!(
-            crate::clue::verb_req(&serde_json::json!({
+            crate::compat::clue::verb_req(&serde_json::json!({
                 "kind": "walk-near",
                 "x": 1,
                 "z": 2,
@@ -3008,7 +3077,7 @@ mod tests {
             })),
             Some(InteractReq::WalkNear { radius: 1, .. })
         ));
-        assert!(crate::clue::verb_req(&serde_json::json!({
+        assert!(crate::compat::clue::verb_req(&serde_json::json!({
             "kind": "walk-near",
             "x": 1,
             "z": 2,

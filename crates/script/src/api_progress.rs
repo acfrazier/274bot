@@ -1,7 +1,7 @@
 //! Shared host-side wire and output types for API quest progress.
 
 use api::quest_progress::{EvidenceStamp, JournalRead, ProgressFlag};
-use api::selected::{Knowledge, SelectedPin, Truth};
+use api::selected::{Knowledge, Truth};
 use api::snapshot::QuestListStatus;
 use serde::Serialize;
 use std::sync::Arc;
@@ -68,8 +68,7 @@ pub struct QuestProgressRow {
 }
 /// Identity and receipt fields retained for one compatibility journal read.
 ///
-/// `pin` is retained on the host result and is absent after its isolate
-/// projection. The public `Quests.journal` result only exposes `lines`.
+/// The public `Quests.journal` result only exposes `lines`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalEvidence {
     pub quest: Arc<str>,
@@ -78,7 +77,6 @@ pub struct JournalEvidence {
     pub colour: Option<i32>,
     pub acquired: EvidenceStamp,
     pub closed: EvidenceStamp,
-    pub pin: Option<Arc<SelectedPin>>,
 }
 
 impl JournalEvidence {
@@ -90,7 +88,6 @@ impl JournalEvidence {
             colour: read.colour,
             acquired: read.acquired,
             closed: read.closed,
-            pin: Some(Arc::clone(&read.pin)),
         }
     }
 }

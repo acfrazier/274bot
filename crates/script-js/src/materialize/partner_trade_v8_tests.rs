@@ -31,7 +31,7 @@ globalThis.__tradeScreenState = tradeScreenState;
 }
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     install(&mut runtime).unwrap();
     load_trade_shim(&mut runtime);
@@ -50,7 +50,7 @@ fn setup() -> Runtime {
 }
 
 fn post_trade_screen(tick: u64, offer: bool, confirm: bool) {
-    crate::observed::post(tick, |post| {
+    crate::scene::observed::post(tick, |post| {
         post.session(true)
             .trade_offer_open(offer)
             .trade_confirm_open(confirm);
@@ -59,7 +59,7 @@ fn post_trade_screen(tick: u64, offer: bool, confirm: bool) {
 
 #[test]
 fn stable_closed_poll_reads_scene_and_calls_clock_once_per_closed_poll() {
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     post_trade_screen(10, true, false);
     runtime

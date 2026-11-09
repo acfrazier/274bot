@@ -121,8 +121,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         "/rs2b0t/bot/runtime/Settings.js",
         "/rs2b0t/bot/shim/_kernel.js",
     ];
-    let Some(root) =
-        script::ctx::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
+    let Some(root) = api::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
     else {
         return;
     };

@@ -1,5 +1,5 @@
 use super::*;
-use crate::observed::ItemRow;
+use crate::scene::observed::ItemRow;
 use rustyscript::{Module, RuntimeOptions};
 use std::rc::Rc;
 
@@ -113,7 +113,7 @@ fn load_bank_api(runtime: &mut Runtime) {
 }
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();
@@ -138,7 +138,7 @@ fn full_pack() -> Vec<ItemRow> {
 }
 
 fn post(tick: u64, rows: Vec<ItemRow>, size: i32, ready: bool, bank_open: bool) {
-    crate::observed::post(tick, |post| {
+    crate::scene::observed::post(tick, |post| {
         post.ingame(true)
             .inv(rows)
             .inv_size(size)
@@ -170,7 +170,7 @@ fn normal_backpack_rows_have_fast_properties_and_bound_v8_heap() {
         return;
     }
     v8::V8::set_flags_from_string("--allow-natives-syntax");
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     post(1, full_pack(), 28, true, false);
     assert!(
@@ -191,12 +191,12 @@ fn normal_backpack_rows_have_fast_properties_and_bound_v8_heap() {
         growth <= limit,
         "collected V8 heap grew {growth} bytes; limit {limit}"
     );
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 }
 
 #[test]
 fn normal_backpack_is_null_unless_closed_ready_and_28_slots() {
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     post(1, full_pack(), 28, false, false);
     assert!(runtime
@@ -214,7 +214,7 @@ fn normal_backpack_is_null_unless_closed_ready_and_28_slots() {
     assert!(runtime
         .eval::<bool>("JSON.stringify(__rs2b0t_bank_normal_backpack()) === '[]'")
         .unwrap());
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 }
 
 const BANK_FAST_CHILD_ENV: &str = "SCRIPT_BANK_ITEMS_FAST_TEST_CHILD";
@@ -255,7 +255,7 @@ fn post_bank(
     bank_generation: u64,
     snapshot_generation: i64,
 ) {
-    crate::observed::post(tick, |post| {
+    crate::scene::observed::post(tick, |post| {
         post.ingame(true)
             .bank(rows)
             .bank_open(open)
@@ -265,7 +265,7 @@ fn post_bank(
 }
 
 fn post_bank_without_snapshot_generation(tick: u64, rows: Vec<ItemRow>, bank_generation: u64) {
-    crate::observed::post(tick, |post| {
+    crate::scene::observed::post(tick, |post| {
         post.ingame(true)
             .bank(rows)
             .bank_open(true)
@@ -298,7 +298,7 @@ fn bank_288_item_rows_have_fast_properties() {
         return;
     }
     v8::V8::set_flags_from_string("--allow-natives-syntax");
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     post_bank(1, full_bank(), true, 1, 1);
     assert!(
@@ -307,7 +307,7 @@ fn bank_288_item_rows_have_fast_properties() {
             .unwrap(),
         "288 frozen native bank rows have fast properties"
     );
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn bank_288_item_rows_have_bounded_v8_heap() {
         return;
     }
     v8::V8::set_flags_from_string("--allow-natives-syntax");
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     post_bank(1, full_bank(), true, 1, 1);
     assert_eq!(
@@ -345,7 +345,7 @@ fn bank_288_item_rows_have_bounded_v8_heap() {
         growth <= limit,
         "collected V8 heap grew {growth} bytes; limit {limit}"
     );
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 }
 
 /// `Bank.items()` keeps the legacy `noted`/`cert` projection; the client
@@ -354,7 +354,7 @@ fn bank_288_item_rows_have_bounded_v8_heap() {
 /// ids and the legacy snapshot preserves every posted row.
 #[test]
 fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let mut runtime = setup();
     let ops: Rc<[Rc<str>]> = ["Withdraw-1"].map(Rc::from).into();
     let rows = vec![
@@ -502,5 +502,5 @@ fn bank_items_project_open_bank_rows_and_refresh_by_generation() {
              && __ReaderForTest.bankItems() === __closedReaderBankItems",
         )
         .unwrap());
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
 }

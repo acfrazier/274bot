@@ -482,6 +482,35 @@ fn the_confirm_overlay_shows_the_plan_prompt_verbatim() {
     );
 }
 
+#[test]
+fn long_fleet_plan_disclosure_scrolls_without_hiding_confirm_buttons() {
+    let prompt = (0..36)
+        .map(|index| format!("alice: zone {index:02} [zone-{index:02}]"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut app = fleet_app(&["alice"]);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::Start,
+        prompt,
+    });
+
+    let first = text(&draw(&mut app, 80, 24));
+    assert!(first.contains("zone-00"), "{first}");
+    assert!(!first.contains("zone-35"), "{first}");
+    assert!(
+        first.contains("[Run y]") && first.contains("[Cancel n]"),
+        "confirm buttons remain visible: {first}"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::End)), AppAction::None);
+    let last = text(&draw(&mut app, 80, 24));
+    assert!(last.contains("zone-35"), "{last}");
+    assert!(
+        last.contains("[Run y]") && last.contains("[Cancel n]"),
+        "confirm buttons remain visible after scrolling: {last}"
+    );
+}
+
 /// Assign, Assign & restart and Copy settings are unavailable while the
 /// fleet card is each bot's own, and say how to fix it; Start, Stop, Log in
 /// and Log out need no card. Picking a card makes them available.

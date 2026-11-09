@@ -10,10 +10,12 @@ use api::gather_methods::GatherCatalog;
 use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FamilyPreparation};
+use nav_planner::contract::{NavLease, ZoneTableView};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, ReadDir};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const MAX_PATH_BYTES: u64 = 1024 * 1024;
@@ -127,6 +129,7 @@ struct FolderDocument {
 
 #[derive(Debug)]
 pub struct FolderPaths {
+    base_revision: ClientRevision,
     index: ReleaseIndex,
     documents: HashMap<String, FolderDocument>,
     rows: Vec<PathRow>,
@@ -134,11 +137,13 @@ pub struct FolderPaths {
     report: Option<Arc<str>>,
 }
 
-/// Bundled snapshots remain allocation-free and their documents remain static.
+/// The default 289 bundle is allocation-free. Prepared snapshots also carry
+/// process-shared revision-specific bundles with static document bytes.
 #[derive(Clone, Debug, Default)]
 pub enum PathRegistry {
     #[default]
     Bundled,
+    /// A prepared registry, from a folder or another revision's shared bundle.
     Folder(Arc<FolderPaths>),
 }
 
@@ -151,6 +156,74 @@ impl std::ops::Deref for PathRegistry {
 
 pub static BUNDLED_INDEX: LazyLock<ReleaseIndex> =
     LazyLock::new(|| serde_json::from_str(compile::INDEX_JSON).expect("bundled Path index"));
+
+static BUNDLED_377_INDEX: LazyLock<ReleaseIndex> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../paths/377/index.json"))
+        .expect("bundled revision-377 Path index")
+});
+
+pub(super) fn bundled_index_for(revision: ClientRevision) -> &'static ReleaseIndex {
+    match revision {
+        ClientRevision::R377 => &BUNDLED_377_INDEX,
+        ClientRevision::R274 | ClientRevision::R289 => &BUNDLED_INDEX,
+    }
+}
+
+fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]> {
+    if revision != ClientRevision::R377 {
+        return bundled_path(id);
+    }
+    BUNDLED_377_INDEX
+        .paths
+        .iter()
+        .any(|row| {
+            row.id == id
+                && row.unavailable.is_none()
+                && row
+                    .file
+                    .as_deref()
+                    .and_then(|file| file.strip_suffix(".json"))
+                    == Some(id)
+        })
+        .then(|| match id {
+            "cook" => Some(include_bytes!("../../paths/377/cook.json").as_slice()),
+            "imp" => Some(include_bytes!("../../paths/377/imp.json").as_slice()),
+            "doric" => Some(include_bytes!("../../paths/377/doric.json").as_slice()),
+            "sheep" => Some(include_bytes!("../../paths/377/sheep.json").as_slice()),
+            "runemysteries" => {
+                Some(include_bytes!("../../paths/377/runemysteries.json").as_slice())
+            }
+            "romeojuliet" => Some(include_bytes!("../../paths/377/romeojuliet.json").as_slice()),
+            "hetty" => Some(include_bytes!("../../paths/377/hetty.json").as_slice()),
+            "gobdip" => Some(include_bytes!("../../paths/377/gobdip.json").as_slice()),
+            "vampire" => Some(include_bytes!("../../paths/377/vampire.json").as_slice()),
+            "demon" => Some(include_bytes!("../../paths/377/demon.json").as_slice()),
+            "squire" => Some(include_bytes!("../../paths/377/squire.json").as_slice()),
+            _ => None,
+        })
+        .flatten()
+}
+
+fn bundled_for_revision(revision: i32) -> PathRegistry {
+    if revision != 377 {
+        return PathRegistry::Bundled;
+    }
+    static BUNDLE: LazyLock<Arc<FolderPaths>> = LazyLock::new(|| {
+        Arc::new(FolderPaths {
+            base_revision: ClientRevision::R377,
+            index: BUNDLED_377_INDEX.clone(),
+            documents: HashMap::new(),
+            rows: BUNDLED_377_INDEX
+                .paths
+                .iter()
+                .map(|entry| bundled_row_for(ClientRevision::R377, entry))
+                .collect(),
+            diagnostics: Vec::new(),
+            report: None,
+        })
+    });
+    PathRegistry::Folder(Arc::clone(&BUNDLE))
+}
 
 pub fn bundled_path(id: &str) -> Option<&'static [u8]> {
     bundled_in(&BUNDLED_INDEX, id)
@@ -173,10 +246,15 @@ pub(super) fn bundled_in(index: &ReleaseIndex, id: &str) -> bool {
 }
 
 fn bundled_row(entry: &ReleasePath) -> PathRow {
+    bundled_row_for(ClientRevision::R289, entry)
+}
+
+fn bundled_row_for(revision: ClientRevision, entry: &ReleasePath) -> PathRow {
     let display = entry.name.clone().unwrap_or_else(|| {
-        let document: PathDocument =
-            serde_json::from_slice(bundled_path(&entry.id).expect("bundled roster document"))
-                .expect("bundled Path document");
+        let document: PathDocument = serde_json::from_slice(
+            bundled_path_for(revision, &entry.id).expect("bundled roster document"),
+        )
+        .expect("bundled Path document");
         document.display_name
     });
     let mut label = entry
@@ -213,13 +291,25 @@ static STATE: Mutex<State> = Mutex::new(State {
     },
     snapshot: PathRegistry::Bundled,
 });
+static REGISTRY_REVISION: AtomicU64 = AtomicU64::new(0);
 
 pub fn set_source(source: FolderSource) {
     let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
     if state.source != source {
         state.source = source;
         state.snapshot = PathRegistry::Bundled;
+        advance_revision();
     }
+}
+
+/// Version of the published registry and its source settings.
+/// Consumers can poll this without cloning the active snapshot.
+pub fn revision() -> u64 {
+    REGISTRY_REVISION.load(Ordering::Acquire)
+}
+
+fn advance_revision() {
+    REGISTRY_REVISION.fetch_add(1, Ordering::Release);
 }
 pub fn source() -> FolderSource {
     STATE
@@ -246,6 +336,15 @@ pub fn snapshot() -> PathRegistry {
         .unwrap_or_else(|error| error.into_inner())
         .snapshot
         .clone()
+}
+
+/// Capture the active snapshot and its version under the same registry lock.
+pub fn snapshot_with_revision() -> (PathRegistry, u64) {
+    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    (
+        state.snapshot.clone(),
+        REGISTRY_REVISION.load(Ordering::Acquire),
+    )
 }
 
 /// A prepared Path snapshot holds no registry lock and publishes nothing.
@@ -284,6 +383,7 @@ fn commit_prepared(prepared: PreparedRegistry) -> Result<PathRegistry, CompileEr
             .with_detail("Path folder setting changed during Reload; reload again"));
     }
     state.snapshot = registry.clone();
+    advance_revision();
     drop(state);
     for diagnostic in registry.diagnostics() {
         api::host_log!(
@@ -300,25 +400,26 @@ pub fn reload(
     selected: &SelectedGameData,
     worker: &mut FamilyPreparation,
 ) -> Result<PathRegistry, CompileError> {
-    reload_with_catalog(selected, None, worker)
+    reload_with_catalog(selected, None, None, worker)
 }
 
 pub(super) fn reload_with_catalog(
     selected: &SelectedGameData,
     provided: Option<&QuestCatalog>,
+    zones: Option<ZoneTableView<'_>>,
     worker: &mut FamilyPreparation,
 ) -> Result<PathRegistry, CompileError> {
     let source = {
         let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
         if !state.source.enabled {
-            return Ok(PathRegistry::Bundled);
+            return Ok(bundled_for_revision(selected.revision()));
         }
         state.source.clone()
     };
     let mut preparation = if let Some(quests) = provided {
-        RegistryPreparation::from_refs(source, selected, quests)?
+        RegistryPreparation::from_refs(source, selected, quests, zones)?
     } else {
-        RegistryPreparation::from_refs_without_catalog(source, selected)?
+        RegistryPreparation::from_refs_without_catalog(source, selected, zones)?
     };
     let prepared = loop {
         if let Some(prepared) = preparation.step(worker)? {
@@ -347,6 +448,7 @@ impl PathRegistry {
     #[cfg(test)]
     pub(super) fn from_index(index: ReleaseIndex) -> Self {
         Self::Folder(Arc::new(FolderPaths {
+            base_revision: ClientRevision::R289,
             index,
             documents: HashMap::new(),
             rows: Vec::new(),
@@ -369,7 +471,9 @@ impl PathRegistry {
     pub fn path_source(&self, id: &str) -> PathSource {
         match self {
             Self::Bundled => PathSource::Bundled,
-            Self::Folder(folder) => classify_source(id, &folder.index, &folder.documents),
+            Self::Folder(folder) => {
+                classify_source(folder.base_revision, id, &folder.index, &folder.documents)
+            }
         }
     }
     pub fn bytes(&self, id: &str) -> Option<PathBytes> {
@@ -388,7 +492,11 @@ impl PathRegistry {
                 return Some(PathBytes::Folder(Arc::clone(&document.bytes)));
             }
         }
-        bundled_path(id).map(PathBytes::Bundled)
+        let revision = match self {
+            Self::Bundled => ClientRevision::R289,
+            Self::Folder(folder) => folder.base_revision,
+        };
+        bundled_path_for(revision, id).map(PathBytes::Bundled)
     }
     #[cfg(test)]
     pub fn compile(
@@ -407,6 +515,7 @@ impl PathRegistry {
             quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
     }
     pub fn report(&self) -> Option<&Arc<str>> {
@@ -430,13 +539,15 @@ impl PathRegistry {
             .collect()
     }
 
-    pub fn load(
+    pub fn load<'a>(
         source: &FolderSource,
-        selected: &SelectedGameData,
-        quests: &QuestCatalog,
+        selected: &'a SelectedGameData,
+        quests: &'a QuestCatalog,
         worker: &mut FamilyPreparation,
+        zones: Option<ZoneTableView<'a>>,
     ) -> Result<Self, CompileError> {
-        let mut preparation = RegistryPreparation::from_refs(source.clone(), selected, quests)?;
+        let mut preparation =
+            RegistryPreparation::from_refs(source.clone(), selected, quests, zones)?;
         loop {
             if let Some(prepared) = preparation.step(worker)? {
                 return Ok(prepared.registry);
@@ -449,7 +560,7 @@ impl PathRegistry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegistryPreparationPhase {
     BuildQuestCatalog,
-    CheckPin,
+    CheckRevision,
     ScanFolder,
     ReadIndex,
     ParseIndex,
@@ -525,8 +636,11 @@ struct PendingDocument {
 /// reduction unit and retains bounded state for the next call.
 pub struct RegistryPreparation<'a> {
     source: FolderSource,
+    base_revision: ClientRevision,
     selected: SelectedOwner<'a>,
     quests: QuestOwner<'a>,
+    zones: Option<ZoneTableView<'a>>,
+    nav: Option<NavLease>,
     phase: RegistryPreparationPhase,
     registry: Option<PathRegistry>,
     scan_started: bool,
@@ -568,24 +682,30 @@ impl RegistryPreparation<'static> {
         source: FolderSource,
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
+        nav: Option<NavLease>,
     ) -> Result<Self, CompileError> {
         Ok(Self::new(
             source,
             SelectedOwner::Shared(selected),
             QuestOwner::Shared(quests),
+            None,
+            nav,
         ))
     }
 
-    /// Capture an explicit source and defer quest-catalog construction to a
-    /// cooperative step.
+    /// Capture an explicit source, defer quest-catalog construction, and
+    /// retain the optional nav lease for deferred work.
     pub fn from_source_without_catalog(
         source: FolderSource,
         selected: Arc<SelectedGameData>,
+        nav: Option<NavLease>,
     ) -> Result<Self, CompileError> {
         Ok(Self::new(
             source,
             SelectedOwner::Shared(selected),
             QuestOwner::Deferred,
+            None,
+            nav,
         ))
     }
 
@@ -594,13 +714,13 @@ impl RegistryPreparation<'static> {
         selected: Arc<SelectedGameData>,
         quests: Arc<QuestCatalog>,
     ) -> Result<Self, CompileError> {
-        Self::from_source(source(), selected, quests)
+        Self::from_source(source(), selected, quests, None)
     }
 
     /// Capture the process-current folder source and selected owner. No
     /// filesystem I/O or quest-catalog decoding occurs before `step`.
     pub fn from_current(selected: Arc<SelectedGameData>) -> Result<Self, CompileError> {
-        Self::from_source_without_catalog(source(), selected)
+        Self::from_source_without_catalog(source(), selected, None)
     }
 }
 
@@ -609,45 +729,66 @@ impl<'a> RegistryPreparation<'a> {
         source: FolderSource,
         selected: &'a SelectedGameData,
         quests: &'a QuestCatalog,
+        zones: Option<ZoneTableView<'a>>,
     ) -> Result<Self, CompileError> {
         Ok(Self::new(
             source,
             SelectedOwner::Borrowed(selected),
             QuestOwner::Borrowed(quests),
+            zones,
+            None,
         ))
     }
 
     fn from_refs_without_catalog(
         source: FolderSource,
         selected: &'a SelectedGameData,
+        zones: Option<ZoneTableView<'a>>,
     ) -> Result<Self, CompileError> {
         Ok(Self::new(
             source,
             SelectedOwner::Borrowed(selected),
             QuestOwner::Deferred,
+            zones,
+            None,
         ))
     }
 
-    fn new(source: FolderSource, selected: SelectedOwner<'a>, quests: QuestOwner<'a>) -> Self {
+    fn new(
+        source: FolderSource,
+        selected: SelectedOwner<'a>,
+        quests: QuestOwner<'a>,
+        zones: Option<ZoneTableView<'a>>,
+        nav: Option<NavLease>,
+    ) -> Self {
         let source = if source.enabled {
             source
         } else {
             FolderSource::default()
         };
         let enabled = source.enabled;
+        let base_revision = if selected.get().revision() == 377 {
+            ClientRevision::R377
+        } else {
+            ClientRevision::R289
+        };
+        let registry = (!enabled).then(|| bundled_for_revision(selected.get().revision()));
         let phase = if !enabled {
             RegistryPreparationPhase::Complete
         } else if matches!(&quests, QuestOwner::Deferred) {
             RegistryPreparationPhase::BuildQuestCatalog
         } else {
-            RegistryPreparationPhase::CheckPin
+            RegistryPreparationPhase::CheckRevision
         };
         Self {
             source,
+            base_revision,
             selected,
             quests,
+            zones,
+            nav,
             phase,
-            registry: (!enabled).then_some(PathRegistry::Bundled),
+            registry,
             scan_started: false,
             scanned_entries: 0,
             entries: None,
@@ -730,20 +871,12 @@ impl<'a> RegistryPreparation<'a> {
                         CompileError::code("quest-facts").with_detail(format!("{error:?}"))
                     })?;
                 self.quests = QuestOwner::Shared(Arc::new(quests));
-                self.phase = Phase::CheckPin;
+                self.phase = Phase::CheckRevision;
             }
-            Phase::CheckPin => {
-                let revision = self
-                    .selected
-                    .get()
-                    .selected_pin()
-                    .map_err(|error| {
-                        CompileError::code("missing-pin").with_detail(format!("{error:?}"))
-                    })?
-                    .revision;
-                if revision != ClientRevision::R289 {
+            Phase::CheckRevision => {
+                if !matches!(self.selected.get().revision(), 289 | 377) {
                     return Err(CompileError::code("unsupported-revision")
-                        .with_detail("Folder Paths support revision 289 only"));
+                        .with_detail("Folder Paths support revisions 289 and 377 only"));
                 }
                 self.phase = Phase::ScanFolder;
             }
@@ -926,7 +1059,7 @@ impl<'a> RegistryPreparation<'a> {
                 let Some(id) = self.candidate_ids.get(self.candidate_position) else {
                     self.total_documents = Some(self.ordered.len());
                     self.index = Some(ReleaseIndex {
-                        schema: BUNDLED_INDEX.schema,
+                        schema: bundled_index_for(self.base_revision).schema,
                         paths: Vec::with_capacity(MAX_REGISTRY_ROWS),
                     });
                     self.base_index_position = 0;
@@ -939,7 +1072,10 @@ impl<'a> RegistryPreparation<'a> {
                 self.candidate_position += 1;
             }
             Phase::BuildBaseIndex => {
-                let Some(row) = BUNDLED_INDEX.paths.get(self.base_index_position) else {
+                let Some(row) = bundled_index_for(self.base_revision)
+                    .paths
+                    .get(self.base_index_position)
+                else {
                     self.phase = Phase::PrepareDocument;
                     return Ok(None);
                 };
@@ -956,7 +1092,8 @@ impl<'a> RegistryPreparation<'a> {
                         std::mem::take(&mut self.diagnostics).finish(&self.source.folder);
                     self.final_diagnostics = diagnostics;
                     self.diagnostic_count = count;
-                    self.rows = Vec::with_capacity(BUNDLED_INDEX.paths.len());
+                    self.rows =
+                        Vec::with_capacity(bundled_index_for(self.base_revision).paths.len());
                     self.base_row_position = 0;
                     self.phase = Phase::BuildBaseRows;
                     return Ok(None);
@@ -1043,8 +1180,11 @@ impl<'a> RegistryPreparation<'a> {
                 self.phase = Phase::ReadDocument;
             }
             Phase::BuildBaseRows => {
-                if let Some(entry) = BUNDLED_INDEX.paths.get(self.base_row_position) {
-                    self.rows.push(bundled_row(entry));
+                if let Some(entry) = bundled_index_for(self.base_revision)
+                    .paths
+                    .get(self.base_row_position)
+                {
+                    self.rows.push(bundled_row_for(self.base_revision, entry));
                     self.base_row_position += 1;
                 } else {
                     self.phase = Phase::ReduceRows;
@@ -1146,6 +1286,7 @@ impl<'a> RegistryPreparation<'a> {
                 }
             }
             Phase::CompileDocument => {
+                let zones = self.nav.as_ref().and_then(NavLease::zones).or(self.zones);
                 let result = {
                     let pending = self.pending.as_mut().expect("document is selected");
                     let bytes = pending.bytes.as_ref().expect("document bytes were read");
@@ -1161,11 +1302,14 @@ impl<'a> RegistryPreparation<'a> {
                             compile::compile_uncached(
                                 document,
                                 digest,
-                                self.selected.get(),
-                                self.quests.get(),
-                                gathering.clone(),
-                                Some(role.gang),
-                                &operator,
+                                compile::CompileInputs {
+                                    selected: self.selected.get(),
+                                    quests: self.quests.get(),
+                                    gathering: gathering.clone(),
+                                    gang: Some(role.gang),
+                                    operator: &operator,
+                                    zones,
+                                },
                             )
                             .map(|_| ())
                             .map_err(|mut error| {
@@ -1182,11 +1326,14 @@ impl<'a> RegistryPreparation<'a> {
                         compile::compile_uncached(
                             document,
                             digest,
-                            self.selected.get(),
-                            self.quests.get(),
-                            gathering,
-                            None,
-                            &operator,
+                            compile::CompileInputs {
+                                selected: self.selected.get(),
+                                quests: self.quests.get(),
+                                gathering,
+                                gang: None,
+                                operator: &operator,
+                                zones,
+                            },
                         )
                         .map(|_| ())
                     }
@@ -1225,7 +1372,7 @@ impl<'a> RegistryPreparation<'a> {
                     .map(|document| document.display.as_str())
                     .or(entry.name.as_deref())
                     .unwrap_or(&entry.id);
-                let source = classify_source(&entry.id, index, &self.documents);
+                let source = classify_source(self.base_revision, &entry.id, index, &self.documents);
                 self.row_position += 1;
                 if source == PathSource::Bundled && entry.unavailable.is_none() {
                     return Ok(None);
@@ -1262,6 +1409,7 @@ impl<'a> RegistryPreparation<'a> {
                 } else {
                     let index = self.index.take().expect("combined index is prepared");
                     self.registry = Some(PathRegistry::Folder(Arc::new(FolderPaths {
+                        base_revision: self.base_revision,
                         index,
                         documents: std::mem::take(&mut self.documents),
                         rows: std::mem::take(&mut self.rows),
@@ -1366,11 +1514,16 @@ impl<'a> RegistryPreparation<'a> {
 }
 
 fn classify_source(
+    revision: ClientRevision,
     id: &str,
     index: &ReleaseIndex,
     documents: &HashMap<String, FolderDocument>,
 ) -> PathSource {
-    if BUNDLED_INDEX.paths.iter().any(|row| row.id == id) {
+    if bundled_index_for(revision)
+        .paths
+        .iter()
+        .any(|row| row.id == id)
+    {
         if documents.contains_key(id) {
             PathSource::Folder
         } else {
@@ -1541,6 +1694,13 @@ fn document_uses_gathering(document: &PathDocument) -> bool {
 }
 
 #[cfg(test)]
+#[path = "batch2_377_tests.rs"]
+mod batch2_377_tests;
+#[cfg(test)]
+#[path = "journal_377_tests.rs"]
+mod journal_377_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
@@ -1594,6 +1754,216 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn revision_377_bundle_loads_and_compiles_its_own_paths() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            let mut ids = registry.ids();
+            ids.sort();
+            assert_eq!(
+                ids,
+                [
+                    "cook",
+                    "demon",
+                    "doric",
+                    "gobdip",
+                    "hetty",
+                    "imp",
+                    "romeojuliet",
+                    "runemysteries",
+                    "sheep",
+                    "squire",
+                    "vampire"
+                ]
+            );
+            assert!(
+                registry.bytes("dragon").is_none(),
+                "never substitute an unregistered 289 Path"
+            );
+            assert_eq!(registry.path_source("cook"), PathSource::Bundled);
+            let bytes = registry.bytes("cook").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("cook").unwrap());
+            let document: serde_json::Value = serde_json::from_slice(bytes.as_ref()).unwrap();
+            let bin = document["quest"]["acquire"]["acquire:flour"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| step["id"] == "empty-millbase")
+                .unwrap();
+            let config = bin["args"]["target"]["loc"].as_str().unwrap();
+            assert_eq!(
+                selected.loc_by_config(config).unwrap().id,
+                1781,
+                "target the placed millbase, not its visible morph leaf"
+            );
+            for id in ids {
+                let bytes = registry.bytes(&id).unwrap();
+                let compiled = compile::compile_path(
+                    bytes.as_ref(),
+                    &selected,
+                    &quests,
+                    worker,
+                    &crate::local_state::OperatorLoadouts::absent(),
+                    nav.zones(),
+                )
+                .unwrap_or_else(|error| panic!("377 {id} failed to compile: {error:?}"));
+                assert_eq!(compiled.id.0.as_ref(), id.as_str());
+                if id == "cook" {
+                    assert_eq!(compiled.display_name.as_ref(), "Cook's Assistant");
+                    assert_eq!(compiled.colour_complete.0.as_ref(), "cook:2");
+                    assert!(
+                        compiled.progress.rules.is_empty(),
+                        "Cook needs no journal interface"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_imp_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("imp"), PathSource::Bundled);
+            let bytes = registry.bytes("imp").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("imp").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
+            )
+            .unwrap_or_else(|error| panic!("377 Imp Catcher failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "imp");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "imp:2");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_doric_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("doric"), PathSource::Bundled);
+            let bytes = registry.bytes("doric").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("doric").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
+            )
+            .unwrap_or_else(|error| panic!("377 Doric failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "doric");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "doric:100");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_folder_validates_without_adding_289_bundles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let folder = Folder::new();
+            std::fs::write(
+                folder.0.join("cook.json"),
+                bundled_path_for(ClientRevision::R377, "cook").unwrap(),
+            )
+            .unwrap();
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
+            assert_eq!(
+                registry.ids(),
+                [
+                    "cook",
+                    "imp",
+                    "doric",
+                    "sheep",
+                    "runemysteries",
+                    "romeojuliet",
+                    "hetty",
+                    "gobdip",
+                    "vampire",
+                    "demon",
+                    "squire"
+                ]
+            );
+            assert!(
+                registry.diagnostics().is_empty(),
+                "{:?}",
+                registry.diagnostics()
+            );
+            assert_eq!(registry.path_source("cook"), PathSource::Folder);
+            assert!(registry.bytes("dragon").is_none());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
     fn cooperative_registry(
         preparation: &mut RegistryPreparation<'_>,
         worker: &mut FamilyPreparation,
@@ -1622,7 +1992,7 @@ mod tests {
     ) -> crate::preparation::PreparedTask<Result<PreparedRegistry, CompileError>> {
         use crate::preparation::CooperativePreparationStep as Step;
         let mut preparation =
-            RegistryPreparation::from_source_without_catalog(source, selected).unwrap();
+            RegistryPreparation::from_source_without_catalog(source, selected, None).unwrap();
         let mut completed = 0_u32;
         let input = crate::preparation::PreparationInput::new(
             revision,
@@ -1670,6 +2040,9 @@ mod tests {
     /// slice policy; every filesystem read and parse still runs off-pump.
     #[test]
     fn quester_registry_policy_timing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let folder = Folder::new();
         folder.cook("cook", "release policy timing");
         let document = folder.0.join("cook.json");
@@ -1682,11 +2055,15 @@ mod tests {
         )
         .unwrap();
         with_data(move |selected, quests, worker| {
-            let mut preparation =
-                RegistryPreparation::from_source(folder.source(true), selected, Arc::new(quests))
-                    .unwrap();
+            let mut preparation = RegistryPreparation::from_source(
+                folder.source(true),
+                selected,
+                Arc::new(quests),
+                None,
+            )
+            .unwrap();
             let mut maximum = std::time::Duration::ZERO;
-            let mut phase = RegistryPreparationPhase::CheckPin;
+            let mut phase = RegistryPreparationPhase::CheckRevision;
             loop {
                 let current = preparation.phase();
                 let started = std::time::Instant::now();
@@ -1708,6 +2085,9 @@ mod tests {
 
     #[test]
     fn cooperative_reload_matches_filesystem_after_edit_and_keeps_diagnostics() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "before cooperative preparation");
@@ -1723,15 +2103,17 @@ mod tests {
                 source.clone(),
                 Arc::clone(&selected),
                 Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap()),
+                None,
             )
             .unwrap();
-            assert_eq!(preparation.phase(), RegistryPreparationPhase::CheckPin);
+            assert_eq!(preparation.phase(), RegistryPreparationPhase::CheckRevision);
             assert!(preparation.step(worker).unwrap().is_none());
 
             // The source path is captured, while files are read by the staged
             // worker. An edit after construction is therefore observed.
             folder.cook("cook", "edited after cooperative preparation began");
-            let synchronous = PathRegistry::load(&source, &selected, &quests, worker).unwrap();
+            let synchronous =
+                PathRegistry::load(&source, &selected, &quests, worker, None).unwrap();
             let mut phases = std::collections::HashSet::new();
             let prepared = cooperative_registry(&mut preparation, worker, &mut phases);
             let cooperative = prepared.registry();
@@ -1811,10 +2193,14 @@ mod tests {
 
     #[test]
     fn cooperative_reload_fails_closed_at_retained_document_limit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, _worker| {
             let folder = Folder::new();
             let mut preparation =
-                RegistryPreparation::from_refs(folder.source(true), &selected, &quests).unwrap();
+                RegistryPreparation::from_refs(folder.source(true), &selected, &quests, None)
+                    .unwrap();
             preparation.index = Some(BUNDLED_INDEX.clone());
             preparation.retained_document_bytes = MAX_RETAINED_FOLDER_DOCUMENT_BYTES;
             preparation.pending = Some(PendingDocument {
@@ -1847,6 +2233,9 @@ mod tests {
 
     #[test]
     fn cooperative_scan_fails_closed_after_bounded_directory_entries() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             for number in 0..=MAX_FOLDER_ENTRIES {
@@ -1856,6 +2245,7 @@ mod tests {
                 folder.source(true),
                 Arc::clone(&selected),
                 Arc::new(quests),
+                None,
             )
             .unwrap();
 
@@ -1872,6 +2262,9 @@ mod tests {
 
     #[test]
     fn folder_gather_progress_reader_prepares_catalog_during_validation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             let id = "gather-reader-draft";
@@ -1902,7 +2295,7 @@ mod tests {
             .unwrap();
 
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             assert!(
                 registry.bytes(id).is_some(),
                 "folder gather reader was rejected: {:?}",
@@ -1918,11 +2311,14 @@ mod tests {
 
     #[test]
     fn folder_override_replaces_bundled_document_on_start_load() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "edited folder comment");
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             let path = registry
                 .compile("cook", &selected, &quests, worker)
                 .unwrap();
@@ -1935,11 +2331,14 @@ mod tests {
 
     #[test]
     fn folder_draft_is_a_queue_candidate_and_compiles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook-draft", "draft comment");
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             assert!(registry.ids().iter().any(|id| id == "cook-draft"));
             assert_eq!(
                 registry
@@ -1966,6 +2365,9 @@ mod tests {
 
     #[test]
     fn invalid_override_reports_compile_error_and_keeps_other_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "invalid override");
@@ -1977,7 +2379,7 @@ mod tests {
             std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
             folder.cook("cook-draft", "valid draft");
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             let report = registry.report().expect("per-file validation report");
             for expected in ["cook.json", "start", "invalid-args", "not_an_argument"] {
                 assert!(report.contains(expected), "missing {expected}: {report}");
@@ -1997,15 +2399,18 @@ mod tests {
 
     #[test]
     fn reload_observes_edited_document_without_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "first edit");
-            let first = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
+            let first = PathRegistry::load(&folder.source(true), &selected, &quests, worker, None)
                 .unwrap()
                 .compile("cook", &selected, &quests, worker)
                 .unwrap();
             folder.cook("cook", "second edit");
-            let second = PathRegistry::load(&folder.source(true), &selected, &quests, worker)
+            let second = PathRegistry::load(&folder.source(true), &selected, &quests, worker, None)
                 .unwrap()
                 .compile("cook", &selected, &quests, worker)
                 .unwrap();
@@ -2019,12 +2424,16 @@ mod tests {
 
     #[test]
     fn folder_off_ignores_files_and_keeps_bundled_bytes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "ignored comment");
             folder.cook("cook-draft", "ignored draft");
             let registry =
-                PathRegistry::load(&folder.source(false), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(false), &selected, &quests, worker, None)
+                    .unwrap();
             assert!(matches!(registry, PathRegistry::Bundled));
             assert_eq!(
                 std::mem::size_of::<PathRegistry>(),
@@ -2048,6 +2457,9 @@ mod tests {
 
     #[test]
     fn optional_index_orders_drafts_and_preserves_server_unavailable_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("draft-a", "A");
@@ -2057,7 +2469,7 @@ mod tests {
             r#"{"schema":1,"paths":[{"id":"draft-z","file":"draft-z.json"},{"id":"draft-a","file":"draft-a.json"},{"id":"hauntedmine","name":"Haunted Mine","unavailable":"no content"}]}"#
         ).unwrap();
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             let ids = registry.ids();
             assert!(
                 ids.iter().position(|id| id == "draft-z")
@@ -2078,6 +2490,9 @@ mod tests {
 
     #[test]
     fn invalid_draft_stays_unavailable_and_oversized_file_is_bounded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             std::fs::write(folder.0.join("broken.json"), b"not JSON").unwrap();
@@ -2087,7 +2502,7 @@ mod tests {
                 .unwrap();
             folder.cook("valid", "still valid");
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             for (id, code) in [("broken", "invalid-json"), ("huge", "file-too-large")] {
                 let row = registry.rows().iter().find(|row| row.id == id).unwrap();
                 assert_eq!(row.source, PathSource::Draft);
@@ -2123,6 +2538,9 @@ mod tests {
 
     #[test]
     fn folder_diagnostics_are_capped_with_an_omission_summary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             for number in 0..300 {
@@ -2134,7 +2552,7 @@ mod tests {
             }
 
             let registry =
-                PathRegistry::load(&folder.source(true), &selected, &quests, worker).unwrap();
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
             let report = registry.report().unwrap();
             assert_eq!(registry.diagnostics().len(), MAX_DIAGNOSTIC_LINES);
             assert!(
@@ -2237,6 +2655,9 @@ mod tests {
     }
     #[test]
     fn stale_or_cancelled_work_preparation_never_publishes_a_path_snapshot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::identity::{Cancellation, Scope};
         use std::sync::Barrier;
 

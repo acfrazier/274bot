@@ -3,8 +3,8 @@
 //! `WalkExecutor.ts:230`) and walkTo's `WalkOptions`
 //! (`WalkExecutor.ts:113–139, 165–177, 226–245`).
 
-use script::shim::InteractReq;
-use script_js::wire::TileInput;
+use script::interact::InteractReq;
+use script::native::snapshot_source::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -62,6 +62,56 @@ export default class T extends LoopingBot {{
     let ok = iso.probe("__ok").unwrap();
     iso.join();
     (err, ops, ok)
+}
+
+#[test]
+fn public_traversal_preserves_prerequisite_consent_overrides() {
+    for method in ["walkTo", "walkResilient"] {
+        for (options, expected_dialogue, expected_start) in [
+            ("{}", None, None),
+            (
+                "{ allowPrereqDialogue: false, allowQuestStart: false }",
+                Some(false),
+                Some(false),
+            ),
+            (
+                "{ allowPrereqDialogue: false, allowQuestStart: true }",
+                Some(false),
+                Some(true),
+            ),
+            (
+                "{ allowPrereqDialogue: true, allowQuestStart: false }",
+                Some(true),
+                Some(false),
+            ),
+            (
+                "{ allowPrereqDialogue: true, allowQuestStart: true }",
+                Some(true),
+                Some(true),
+            ),
+        ] {
+            let call = format!("Traversal.{method}({{ x: 3222, z: 3240, level: 0 }}, {options})");
+            let (error, operations, arrived) = walk_with_bound(&call);
+            assert_eq!(error, "", "{call}");
+            let walks = world_walks(&operations);
+            let [InteractReq::Walk {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }
+            | InteractReq::WalkNear {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }] = walks.as_slice()
+            else {
+                panic!("expected one public world walk for {call}: {operations:?}");
+            };
+            assert_eq!(*allow_prereq_dialogue, expected_dialogue, "{call}");
+            assert_eq!(*allow_quest_start, expected_start, "{call}");
+            assert_eq!(arrived, true, "{call}");
+        }
+    }
 }
 
 #[test]
@@ -327,7 +377,7 @@ fn walk_to_avoid_zone_rectangles_ride_the_walk_request() {
     match world_walks(&ops).as_slice() {
         [InteractReq::Walk { avoid, .. }] => assert_eq!(
             avoid,
-            &vec![script::shim::InspectAvoidWire::Rect {
+            &vec![script::interact::InspectAvoidWire::Rect {
                 min_x: 2848,
                 max_x: 2880,
                 min_z: 3590,

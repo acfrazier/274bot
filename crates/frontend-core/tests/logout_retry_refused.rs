@@ -196,7 +196,8 @@ fn log_out_stops_a_login_that_keeps_retrying_for_the_single_command_and_the_flee
             .unwrap();
     }
     drop(vault);
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
+        .expect("test script settings are readable");
     driver.session_mut().set_bypass_asset_startup(true);
     driver.session_mut().set_focus_hint(Some("bob"));
     driver

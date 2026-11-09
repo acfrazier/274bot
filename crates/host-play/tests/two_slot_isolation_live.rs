@@ -20,9 +20,9 @@ use serde_json::json;
 use vault::{Profile, ProfileSettings};
 
 use two_slot_isolation::{
-    alcher_row, catalog_ledger, hash_file, near, prepare_alcher, slot_settings,
-    verify_registry_identity, IsolationWitness, Observation, PreparedCard, RecordedState, SlotKind,
-    SlotRecord, FODDER_COUNT, MAGIC_LEVEL, NATURE_COUNT, VARROCK_WEST,
+    alcher_row, catalog_ledger, near, prepare_alcher, slot_settings, verify_registry_identity,
+    IsolationWitness, Observation, PreparedCard, RecordedState, SlotKind, SlotRecord, FODDER_COUNT,
+    MAGIC_LEVEL, NATURE_COUNT, VARROCK_WEST,
 };
 
 const PREP_DEADLINE: Duration = Duration::from_secs(180);
@@ -404,8 +404,14 @@ fn selected_profile(
         revision: Some(revision.to_string()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(if revision == 289 { 44594 } else { 43594 }),
-        http_port: Some(if revision == 289 { 1080 } else { 80 }),
+        port: Some(host_play::live_ports::env_port(
+            "WORLD_GAME_PORT",
+            if revision == 289 { 44594 } else { 43594 },
+        )),
+        http_port: Some(host_play::live_ports::env_port(
+            "WORLD_HTTP_PORT",
+            if revision == 289 { 1080 } else { 80 },
+        )),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("TWO_SLOT_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("TWO_SLOT_ENGINE_DIR").map(PathBuf::from),
@@ -523,8 +529,20 @@ fn run_cell() -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("TWO_SLOT_REVISION must be 274 or 289".into());
     }
-    let nav_pack = PathBuf::from(required("TWO_SLOT_NAV_PACK")?);
-    let root = PathBuf::from(required("TWO_SLOT_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "TWO_SLOT_NAV_PACK",
+        "",
+        "real navigation pack for two-slot isolation live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(root) = api::test_support::local_asset_path(
+        "TWO_SLOT_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for two-slot isolation live proof",
+    ) else {
+        return Ok(());
+    };
     if !root.is_dir() {
         return Err(format!(
             "TWO_SLOT_CATALOG_ROOT is not a directory: {}",
@@ -572,7 +590,6 @@ fn run_cell() -> Result<(), String> {
         pair.0.start_handle = Some(handle.clone());
         pair.1.start_handle = Some(handle);
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
     let (settings_a, settings_b) = {
         let pair = state.lock().unwrap();
         (pair.0.settings.clone(), pair.1.settings.clone())
@@ -583,9 +600,7 @@ fn run_cell() -> Result<(), String> {
             "phase": "identity",
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "catalog_commit": commit,
             "catalog_identity": catalog.identity,
             "catalog_read_only_path": catalog.read_only_path,
@@ -619,6 +634,9 @@ fn run_cell() -> Result<(), String> {
     let mut resume_a = None;
     let mut stop_a = None;
     let mut stop_b = None;
+    // Each slot's fixture logs its scriptless bot out itself; the idle-park
+    // policy keeps it logged out until the operator Login is posted.
+    let mut relog_login_posted = [false; 2];
     let outcome = loop {
         if let Some(error) = play.script_last_error(&names[0]) {
             break Err(format!("script error on {}: {error}", names[0]));
@@ -679,6 +697,14 @@ fn run_cell() -> Result<(), String> {
                 b_latest: pair.1.latest.clone(),
             }
         };
+        for (index, prep) in [snapshot.a_prep, snapshot.b_prep].into_iter().enumerate() {
+            if prep == Prep::WaitRelog && !relog_login_posted[index] {
+                if let Some(arm) = play.arm(&names[index]) {
+                    arm.arm_explicit_login();
+                    relog_login_posted[index] = true;
+                }
+            }
+        }
         let timed_out = Instant::now() >= deadline;
         match phase {
             Phase::Prep => {

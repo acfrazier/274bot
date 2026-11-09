@@ -64,7 +64,7 @@ __rs2b0t_paint_chrome('stateSet', __stateOwner, 'persist', 'before reset');
 "#;
 
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     reset();
     install(&mut runtime).unwrap();

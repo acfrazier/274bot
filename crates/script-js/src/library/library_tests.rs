@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::rs2b0t_registry::{absolute_clean, persist_rs2b0t_root_at, rs2b0t_root_checked_at};
+use crate::library::rs2b0t_registry::{
+    absolute_clean, persist_rs2b0t_root_at, rs2b0t_root_checked_at,
+};
 
 const BOT: &str = "export default class Main extends LoopingBot {\n    override loop() {}\n}\n";
 
@@ -351,7 +353,7 @@ fn catalog_missing_compat_api_export_gets_actionable_start_message() {
     let path = bot_script(&dir, "bot.ts");
     let mut lib = library(&dir);
     let mut card = lib.load(&path).expect("bot loads");
-    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+    card.source = script::card::ScriptSource::Catalog;
 
     let raw = "load: Uncaught SyntaxError: The requested module '../../api/duel/Duel.js' does not provide an export named 'inDuelChallengeArea' at file:///rs2b0t/bot/scripts/bot/DuelArenaLogic.js:1:24";
     let error = lib
@@ -369,7 +371,7 @@ fn catalog_missing_compat_api_export_gets_actionable_start_message() {
     assert!(lib.named_failure_output().contains(raw));
 
     let mut file_card = card.clone();
-    file_card.source = crate::rs2b0t_registry::ScriptSource::File;
+    file_card.source = script::card::ScriptSource::File;
     let file_error = lib
         .record_start_result(
             &file_card,
@@ -385,7 +387,7 @@ fn catalog_missing_compat_api_default_export_keeps_raw_start_message() {
     let path = bot_script(&dir, "bot.ts");
     let mut lib = library(&dir);
     let mut card = lib.load(&path).expect("bot loads");
-    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+    card.source = script::card::ScriptSource::Catalog;
 
     let raw = "load: Uncaught SyntaxError: The requested module '../../api/duel/Duel.js' does not provide an export named 'default' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1";
     let error = lib
@@ -400,7 +402,7 @@ fn catalog_missing_export_from_scripts_sibling_api_keeps_raw_start_message() {
     let path = bot_script(&dir, "bot.ts");
     let mut lib = library(&dir);
     let mut card = lib.load(&path).expect("bot loads");
-    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+    card.source = script::card::ScriptSource::Catalog;
 
     let raw = "load: Uncaught SyntaxError: The requested module '../api/Helper.js' does not provide an export named 'helper' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1";
     let error = lib
@@ -415,7 +417,7 @@ fn unrelated_syntax_and_missing_relative_module_errors_stay_raw() {
     let path = bot_script(&dir, "bot.ts");
     let mut lib = library(&dir);
     let mut card = lib.load(&path).expect("bot loads");
-    card.source = crate::rs2b0t_registry::ScriptSource::Catalog;
+    card.source = script::card::ScriptSource::Catalog;
 
     for raw in [
         "load: Uncaught SyntaxError: Unexpected token '}' at file:///rs2b0t/bot/scripts/bot/bot.js:1:1",
@@ -441,7 +443,7 @@ fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_ca
 
     std::fs::write(&path, bad).unwrap();
     let refresh_error = library
-        .refresh(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .refresh(script::card::ScriptSource::File, "SettingsBot")
         .expect_err("refresh must reject a new unresolved setting spread");
     assert!(
         refresh_error.contains("SettingsBot")
@@ -450,7 +452,7 @@ fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_ca
         "{refresh_error}"
     );
     let retained = library
-        .get(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .get(script::card::ScriptSource::File, "SettingsBot")
         .expect("the old accepted card remains registered");
     assert_eq!(retained.origin, good);
     assert_eq!(retained.sha256, prior_hash);
@@ -469,11 +471,11 @@ fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_ca
         .js
         .clear();
     let ensure_error = library
-        .ensure_js(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .ensure_js(script::card::ScriptSource::File, "SettingsBot")
         .expect_err("ensure_js must reject the same unresolved source");
     assert!(ensure_error.contains("UNKNOWN_SETTING"), "{ensure_error}");
     let retained = library
-        .get(crate::rs2b0t_registry::ScriptSource::File, "SettingsBot")
+        .get(script::card::ScriptSource::File, "SettingsBot")
         .expect("failed ensure_js retains the old accepted card");
     assert_eq!(retained.origin, good);
     assert_eq!(retained.settings_schema, prior_schema);

@@ -29,7 +29,7 @@ const DEFAULT_CHASE_RADIUS_OP: i32 = 13;
 const RESOLVE_CAMP_RADIUS: i32 = 14;
 const RESOLVE_CHASE_RADIUS: i32 = 15;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_gathering_locations", gathering_callback)
 }
 
@@ -444,7 +444,7 @@ globalThis.checkGathering = () => {
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

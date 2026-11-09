@@ -174,15 +174,16 @@ globalThis.__repeatOp = (label, count) => {
 /// The revision 289 selected content (its whirlpool NPCs and cook surfaces), configured on this thread, and an
 /// origin one tile east of one of its ranges.
 fn setup() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected game data");
     let range = data
         .cook_surfaces()
+        .expect("cook surfaces")
         .iter()
         .find(|surface| surface.name == "Range")
         .expect("the selected content places a Range")
         .tile();
-    crate::supply_v2::configure(Some(data));
+    crate::scene::supply_v2::configure(Some(data));
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();
@@ -212,9 +213,9 @@ fn expected_keys() -> String {
             .map(|keys| keys.iter().map(|key| key.as_str()).collect::<Vec<_>>())
             .collect::<Vec<_>>()
     };
-    let wood: Vec<&[CampKey]> = gather_camps::woodcutting_camps().iter().map(|camp| camp.keys).collect();
-    let mining: Vec<&[CampKey]> = gather_camps::mining_camps().iter().map(|camp| camp.keys).collect();
-    let fishing: Vec<&[CampKey]> = gather_camps::fishing_rows().iter().map(|row| row.keys.as_slice()).collect();
+    let wood: Vec<&[CampKey]> = gather_camps::woodcutting_camps().expect("woodcutting camps").iter().map(|camp| camp.keys).collect();
+    let mining: Vec<&[CampKey]> = gather_camps::mining_camps().expect("mining camps").iter().map(|camp| camp.keys).collect();
+    let fishing: Vec<&[CampKey]> = gather_camps::fishing_rows().expect("fishing rows").iter().map(|row| row.keys.as_slice()).collect();
     serde_json::json!({ "wood": keys(&wood), "mining": keys(&mining), "fishing": keys(&fishing) }).to_string()
 }
 
@@ -242,6 +243,9 @@ fn in_child(name: &str, body: impl FnOnce()) {
 
 #[test]
 fn every_table_object_has_fast_properties_from_its_cached_shape() {
+    if !api::test_support::embedded_game_data_available() {
+        return;
+    }
     in_child(SHAPE_TEST_NAME, || {
         let mut runtime = setup();
         runtime.eval::<()>(CHECK).unwrap();
@@ -271,6 +275,9 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
 
 #[test]
 fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing() {
+    if !api::test_support::embedded_game_data_available() {
+        return;
+    }
     let mut runtime = setup();
     runtime.eval::<()>(CHECK).unwrap();
     runtime.eval::<()>("globalThis.__last = null;").unwrap();
@@ -286,12 +293,13 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
     runtime.eval::<()>("globalThis.__repeat(1000); globalThis.__last = null;").unwrap();
     let after_repeat = collected_used_heap(&mut runtime);
     let objects = {
-        let rows = gather_camps::woodcutting_camps().len()
-            + gather_camps::mining_camps().len()
-            + gather_camps::fishing_rows().len();
+        let rows = gather_camps::woodcutting_camps().expect("woodcutting camps").len()
+            + gather_camps::mining_camps().expect("mining camps").len()
+            + gather_camps::fishing_rows().expect("fishing rows").len();
         // Per camp row: the row, its spot, bank stand, resources array, and room for sweep, obstacles, vendor and
         // notes; plus the cook surfaces, the methods with their gear, and the vendors.
-        rows * 8 + cook::FISH_CAMP_COOK_SURFACES.len() * 5 + fishing_gear::FISHING_METHODS.len() * 6 + 16
+        rows * 8 + cook::fish_camp_cook_surfaces().expect("cook surfaces").len() * 5
+            + fishing_gear::fishing_methods().expect("fishing methods").len() * 6 + 16
     };
     // `cold_native_entity_rows_bound_collected_v8_heap_growth` caps collected growth at 4 MiB for 4,096 rows,
     // so each retained object is charged 1 KiB.
@@ -324,6 +332,9 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
 
 #[test]
 fn shapes_exist_only_after_the_first_object_of_a_key_list_is_built() {
+    if !api::test_support::embedded_game_data_available() {
+        return;
+    }
     let mut runtime = setup();
     let count = |runtime: &mut Runtime| {
         let scope = runtime.deno_runtime().handle_scope();
@@ -348,6 +359,9 @@ fn cached_shapes(runtime: &mut Runtime) -> usize {
 /// `{ ...piece, restock: target }` for a piece carrying an index key, a symbol key or an own `__proto__`.
 #[test]
 fn bait_copies_follow_spread_semantics_for_index_symbol_and_proto_keys() {
+    if !api::test_support::embedded_game_data_available() {
+        return;
+    }
     let mut runtime = setup();
     runtime
         .eval::<()>(
@@ -383,6 +397,9 @@ fn bait_copies_follow_spread_semantics_for_index_symbol_and_proto_keys() {
 /// Caller-specific key lists add nothing to the catalog: not a cached shape and not collected heap.
 #[test]
 fn caller_piece_shapes_leave_the_shape_cache_and_the_collected_heap_unchanged() {
+    if !api::test_support::embedded_game_data_available() {
+        return;
+    }
     let mut runtime = setup();
     runtime
         .eval::<()>(

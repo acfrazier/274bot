@@ -333,7 +333,8 @@ def should_skip(kind: str, relative: Path, name: str) -> bool:
             return True
         if len(parts) >= 3 and parts[:3] == ("engine", "data", "players"):
             return True
-        return False
+    if kind == "purged":
+        return name in common
     if kind == "snapshot":
         return name in {".DS_Store", ".git", "__pycache__"}
     if kind == "fixtures":
@@ -716,6 +717,17 @@ class Settings:
         self.catalog = Path(values["NIGHTLY_MAC_CATALOG"]).expanduser().resolve()
         self.engine_a = Path(values["NIGHTLY_MAC_ENGINE_A"]).expanduser().resolve()
         self.engine_q = Path(values["NIGHTLY_MAC_ENGINE_Q"]).expanduser().resolve()
+        self.purged_data = Path(
+            values.get("NIGHTLY_PURGED_DATA_DIR") or str(self.root / "purged-data")
+        ).expanduser()
+        self.game_data_274_engine = (
+            Path(values["NIGHTLY_MAC_GAME_DATA_274_ENGINE"]).expanduser()
+            if values.get("NIGHTLY_MAC_GAME_DATA_274_ENGINE") else None
+        )
+        self.game_data_274_content = (
+            Path(values["NIGHTLY_MAC_GAME_DATA_274_CONTENT"]).expanduser()
+            if values.get("NIGHTLY_MAC_GAME_DATA_274_CONTENT") else None
+        )
         self.quiet_lock = Path(values["NIGHTLY_MAC_QUIET_LOCK"]).expanduser()
         self.isohome = Path(values["NIGHTLY_MAC_ISOHOME"]).expanduser().resolve()
         self.python = values["NIGHTLY_MAC_PYTHON"]
@@ -747,7 +759,7 @@ class Settings:
             (self.engine_a / "start-289.sh", "Engine A start script"),
             (self.engine_q / "engine/package-lock.json", "Engine Q package lock"),
             (self.engine_q / "start-289q.sh", "Engine Q start script"),
-            (self.root / "fixtures/274bot-289-v17.navpack", "nightly nav fixture"),
+            (self.root / "fixtures/274bot-289-v18.navpack", "nightly nav fixture"),
             (self.root / "fixtures/inspect.fb", "nightly inspect fixture"),
             (self.isohome, "isohome helper"),
             (self.vm_tool, "mac_vm.py"),
@@ -763,6 +775,14 @@ class Settings:
             raise NightlyError(f"host Python does not exist: {python_path}")
         if not python_path.is_absolute() and shutil.which(self.python) is None:
             raise NightlyError(f"host Python is not on PATH: {self.python}")
+        if self.purged_data.exists() and not self.purged_data.is_dir():
+            raise NightlyError(f"purged game-data input is not a directory: {self.purged_data}")
+        for path, setting in (
+            (self.game_data_274_engine, "NIGHTLY_MAC_GAME_DATA_274_ENGINE"),
+            (self.game_data_274_content, "NIGHTLY_MAC_GAME_DATA_274_CONTENT"),
+        ):
+            if path is not None and not path.is_dir():
+                raise NightlyError(f"{setting} is not a directory: {path}")
 
 
 class TartVM:
@@ -1236,6 +1256,13 @@ def guest_bootstrap(input_root: Path, guest_root: Path, guest_home: Path) -> Dic
     input_engine_q = input_root / "engine-q"
     copy_guest_input(input_engine_a, guest_root / "engine-pristine")
     copy_guest_input(input_engine_q, guest_root / "engine-q-pristine")
+    input_purged_data = input_root / "purged-data"
+    if input_purged_data.is_dir():
+        copy_guest_input(input_purged_data, guest_root / "purged-data")
+    for name in ("game-data-274-engine", "game-data-274-content"):
+        source = input_root / name
+        if source.is_dir():
+            copy_guest_input(source, guest_root / name)
     input_snapshot = input_root / "nav-snapshot"
     if input_snapshot.is_dir():
         copy_guest_input(input_snapshot, guest_root / "nav-snapshot")
@@ -1266,6 +1293,21 @@ def guest_bootstrap(input_root: Path, guest_root: Path, guest_home: Path) -> Dic
         raise NightlyError(f"Engine Q package-lock.json is missing: {engine_dir}")
     run_command([str(node_bin / "npm"), "ci", "--ignore-scripts"], cwd=engine_dir, env=env)
     run_command([str(node_bin / "npm"), "run", "sqlite:migrate"], cwd=engine_dir, env=env)
+    # The tree copy deliberately excludes node_modules. Install the locked
+    # Engine-TS dependencies needed by the local-data generator in the guest.
+    engine_a_dir = guest_root / "engine-pristine" / "engine"
+    if not (engine_a_dir / "package-lock.json").is_file():
+        raise NightlyError(f"Engine A package-lock.json is missing: {engine_a_dir}")
+    run_command([str(node_bin / "npm"), "ci", "--ignore-scripts"], cwd=engine_a_dir, env=env)
+
+    engine_274_dir = guest_root / "game-data-274-engine"
+    if engine_274_dir.is_dir():
+        if not (engine_274_dir / "package-lock.json").is_file():
+            raise NightlyError(f"revision-274 engine package-lock.json is missing: {engine_274_dir}")
+        run_command([str(node_bin / "npm"), "ci", "--ignore-scripts"], cwd=engine_274_dir, env=env)
+    typescript_runner = engine_a_dir / "node_modules" / ".bin" / "tsx"
+    if not typescript_runner.is_file():
+        raise NightlyError(f"local-data TypeScript runner is missing: {typescript_runner}")
 
     rustc = run_command([str(cargo_home / "bin/rustc"), "+" + RUST_VERSION, "--version"], env=env).stdout.strip()
     cargo = run_command([str(cargo_home / "bin/cargo"), "+" + RUST_VERSION, "--version"], env=env).stdout.strip()
@@ -1276,7 +1318,8 @@ def guest_bootstrap(input_root: Path, guest_root: Path, guest_home: Path) -> Dic
         "python": str(python_path), "python_version": python_version,
         "rustc": rustc, "cargo": cargo, "cargo_home": str(cargo_home),
         "rustup_home": str(rustup_home), "node": node, "node_version": node_version,
-        "npm": npm, "node_bin": str(node_bin), "home": str(home),
+        "npm": npm, "node_bin": str(node_bin),
+        "typescript_runner": str(typescript_runner), "home": str(home),
         "tmp": str(temp_root), "path": path, "isohome": str(isohome),
     }
     tool_manifest = guest_root / "toolchains.json"
@@ -1455,6 +1498,14 @@ class NightlyOrchestrator:
         copy_tree(self.settings.catalog, self.input_root / "catalog", kind="catalog")
         copy_tree(self.settings.engine_a, self.input_root / "engine-a", kind="engine")
         copy_tree(self.settings.engine_q, self.input_root / "engine-q", kind="engine")
+        if self.settings.purged_data.is_dir():
+            copy_tree(self.settings.purged_data, self.input_root / "purged-data", kind="purged")
+        for source, name in (
+            (self.settings.game_data_274_engine, "game-data-274-engine"),
+            (self.settings.game_data_274_content, "game-data-274-content"),
+        ):
+            if source is not None:
+                copy_tree(source, self.input_root / name, kind="engine")
         shutil.copy2(str(self.settings.isohome), str(self.input_root / "isohome"))
         fixture_root = self.settings.root / "fixtures"
         copy_tree(fixture_root, self.input_root / "fixtures", kind="fixtures")
@@ -1494,6 +1545,9 @@ class NightlyOrchestrator:
             "nav_snapshot": str(guest_root / "nav-snapshot"),
             "quiet_lock": f"{GUEST_SHARE}/quiet/MAC-QUIET.lock",
             "outbox": f"{GUEST_SHARE}/results",
+            "purged_data": str(guest_root / "purged-data"),
+            "game_data_274_engine": str(guest_root / "game-data-274-engine"),
+            "game_data_274_content": str(guest_root / "game-data-274-content"),
         }
 
     def sync_quiet_lock(self) -> bool:
@@ -1525,7 +1579,8 @@ class NightlyOrchestrator:
             tools = json.loads(raw)
         except ValueError as error:
             raise NightlyError(f"guest bootstrap returned invalid toolchain metadata: {error}") from error
-        for key in ("python", "cargo_home", "rustup_home", "node_bin", "home", "tmp", "isohome"):
+        for key in ("python", "cargo_home", "rustup_home", "node_bin", "home", "tmp", "isohome",
+                    "typescript_runner"):
             if key not in tools:
                 raise NightlyError(f"guest bootstrap omitted {key}")
         log("guest dependencies ready: " + ", ".join(
@@ -1551,12 +1606,13 @@ class NightlyOrchestrator:
             "NIGHTLY_FRESH_TREES": "1",
             "NIGHTLY_CATALOG": paths["catalog"],
             "NIGHTLY_NAV_SNAPSHOT": paths["nav_snapshot"],
-            "NIGHTLY_NAV_FIXTURE": f"{paths['fixtures']}/274bot-289-v17.navpack",
+            "NIGHTLY_NAV_FIXTURE": f"{paths['fixtures']}/274bot-289-v18.navpack",
             "NIGHTLY_INSPECT_BASELINE": f"{paths['fixtures']}/inspect.fb",
             "NIGHTLY_QUIET_LOCK": paths["quiet_lock"],
             "NIGHTLY_ISOHOME": tools["isohome"],
             "ISOHOME_ROOT": f"{paths['guest_home']}/isohome",
             "NIGHTLY_PYTHON": tools["python"],
+            "BUN_EXECUTABLE": tools["typescript_runner"],
             "NIGHTLY_REVISION": "289",
             "NIGHTLY_ENGINE": "remote" if main else "local",
             "NIGHTLY_ENGINE_HOST": "127.0.0.1",
@@ -1576,8 +1632,13 @@ class NightlyOrchestrator:
             "NIGHTLY_ENGINE_SCRIPT_REVISION": "289" if main else "289q",
             "NIGHTLY_RUN_SUFFIX": "-mac" if main else "-mac-quest",
             "NIGHTLY_NAME_PREFIX": "nm" if main else "nq",
+            "NIGHTLY_PURGED_DATA_DIR": paths["purged_data"],
             "NIGHTLY_PANEL_NAME_PREFIX": "nmp" if main else "nqp",
         }
+        if self.settings.game_data_274_engine is not None:
+            env["NIGHTLY_GAME_DATA_274_ENGINE"] = paths["game_data_274_engine"]
+        if self.settings.game_data_274_content is not None:
+            env["NIGHTLY_GAME_DATA_274_CONTENT"] = paths["game_data_274_content"]
         return env
 
     def guest_command(self, branch: str, job: str, tools: Dict[str, str]) -> List[str]:

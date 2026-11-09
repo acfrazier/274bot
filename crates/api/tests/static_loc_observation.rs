@@ -4,9 +4,13 @@
 
 use api::snapshot::{Family, GameSnapshot, LocLayer, WorldTile};
 use client::client::{Client, ClientConfig};
+use client::config::runtime_377::{
+    CacheFields377, InterfaceFields377, LocFields377, MorphTable377,
+};
 use client::config::LocType;
+use client::config::{Cache, CacheRevision377, VarpType};
 use client::dash3d::ClientPlayer;
-use client::io::ServerProt;
+use client::io::{ClientRevision, ServerProt};
 use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
@@ -277,4 +281,199 @@ fn no_op_loc_churn_does_not_require_a_client_collision_hook() {
         .is_some());
     assert!(!snap.rebuild_family(&c, Family::Loc));
     assert_eq!(snap.scene().collision_flags, before);
+}
+
+fn client_with_multiloc(revision: ClientRevision) -> Client {
+    let cache = Cache {
+        locs: vec![
+            LocType {
+                id: 0,
+                name: "null".into(),
+                width: 1,
+                length: 1,
+                ..Default::default()
+            },
+            LocType {
+                id: 1,
+                name: "Flour bin".into(),
+                width: 1,
+                length: 1,
+                ..Default::default()
+            },
+            LocType {
+                id: 2,
+                name: "Flour bin".into(),
+                op: vec![Some("Empty".into())],
+                width: 3,
+                length: 2,
+                ..Default::default()
+            },
+        ],
+        varps: vec![VarpType::default()],
+        revision_377: Some(Box::new(CacheRevision377 {
+            config: CacheFields377 {
+                locs: vec![
+                    LocFields377 {
+                        morph: Some(MorphTable377 {
+                            varbit: -1,
+                            varp: 0,
+                            targets: vec![1, 2, -1],
+                        }),
+                    },
+                    LocFields377 { morph: None },
+                    LocFields377 { morph: None },
+                ],
+                ..Default::default()
+            },
+            interfaces: InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        })),
+        ..Default::default()
+    };
+    let mut c = Client::from_shared_with_revision(
+        cfg(),
+        Arc::new(cache),
+        Arc::new(Vec::new()),
+        Arc::new(Vec::new()),
+        revision,
+    );
+    c.ingame = true;
+    c.scene_state = 2;
+    c.var = vec![0];
+    c.gens.scene = 1;
+    c.gens.varp = 1;
+    assert!(c.world.add_scenery(
+        0,
+        7,
+        8,
+        0,
+        scene_typecode(0),
+        (1 << 6) + 10,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+    ));
+    c
+}
+
+#[test]
+fn revision_377_multiloc_observes_current_name_actions_and_base_size() {
+    let mut c = client_with_multiloc(ClientRevision::R377);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let empty = ground_named(&snap, 0);
+    assert_eq!(empty.name.as_deref(), Some("Flour bin"));
+    assert!(empty.actions.is_empty());
+    assert_eq!((empty.width, empty.length), (1, 1));
+
+    // Only the varp packet changes. Full rebuild consumes Varp before Loc.
+    c.var[0] = 1;
+    c.gens.varp += 1;
+    snap.rebuild(&c);
+    let full = ground_named(&snap, 0);
+    assert_eq!(
+        full.id, 0,
+        "the interaction retains the placed base typecode"
+    );
+    assert_eq!(full.name.as_deref(), Some("Flour bin"));
+    assert_eq!(full.actions, vec![Some("Empty".into())]);
+    assert_eq!((full.width, full.length), (1, 1));
+    assert_eq!((full.footprint_width, full.footprint_length), (1, 1));
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+
+    c.var[0] = 2;
+    c.gens.varp += 1;
+    assert!(snap.rebuild_family(&c, Family::Loc));
+    let absent = ground_named(&snap, 0);
+    assert_eq!(absent.name, None, "a -1 morph has no displayed target");
+    assert!(absent.actions.is_empty());
+}
+
+#[test]
+fn revision_377_multiloc_and_null_form_preserve_all_base_placement_fields() {
+    let mut c = client_with_multiloc(ClientRevision::R377);
+    let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+    // Fenkenstrain's table has this base/form footprint mismatch.
+    cache.locs[0] = LocType {
+        id: 0,
+        name: "Base table".into(),
+        desc: "Base description".into(),
+        op: vec![Some("Base action".into())],
+        width: 4,
+        length: 2,
+        blockwalk: false,
+        blockrange: false,
+        active: true,
+        forceapproach: 5,
+        anim: 17,
+        mapfunction: 23,
+        mapscene: 29,
+        ..Default::default()
+    };
+    cache.locs[1] = LocType {
+        id: 1,
+        name: "Morphed table".into(),
+        desc: "Form description".into(),
+        op: vec![Some("Search".into())],
+        width: 1,
+        length: 1,
+        blockwalk: true,
+        blockrange: true,
+        active: false,
+        forceapproach: 0,
+        anim: -1,
+        mapfunction: -1,
+        mapscene: -1,
+        ..Default::default()
+    };
+    let mut snap = GameSnapshot::new();
+    for selector in [0, 2] {
+        c.var[0] = selector;
+        c.gens.varp += 1;
+        assert!(snap.rebuild_family(&c, Family::Loc));
+        let loc = ground_named(&snap, 0);
+        assert_eq!(loc.id, 0);
+        assert_eq!((loc.width, loc.length), (4, 2));
+        assert_eq!((loc.footprint_width, loc.footprint_length), (2, 4));
+        assert!(!loc.block_walk);
+        assert!(!loc.block_range);
+        assert!(loc.active);
+        assert_eq!(loc.force_approach, 5);
+        assert_eq!(loc.animation, 17);
+        assert_eq!(loc.map_function, 23);
+        assert_eq!(loc.map_scene, 29);
+        if selector == 0 {
+            assert_eq!(loc.name.as_deref(), Some("Morphed table"));
+            assert_eq!(loc.description.as_deref(), Some("Form description"));
+            assert_eq!(loc.actions, vec![Some("Search".into())]);
+        } else {
+            assert_eq!(loc.name, None);
+            assert_eq!(loc.description, None);
+            assert!(loc.actions.is_empty());
+        }
+    }
+}
+
+#[test]
+fn legacy_loc_views_stay_byte_identical_even_with_morph_metadata() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client_with_multiloc(revision);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        assert_eq!(ground_named(&snap, 0).name.as_deref(), Some("null"));
+        let before = serde_json::to_vec(snap.locs()).unwrap();
+        c.var[0] = 1;
+        c.gens.varp += 1;
+        snap.rebuild(&c);
+        assert_eq!(serde_json::to_vec(snap.locs()).unwrap(), before);
+        assert!(!snap.rebuild_family(&c, Family::Loc));
+    }
 }

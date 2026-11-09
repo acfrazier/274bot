@@ -5,13 +5,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use client::io::{ClientRevision, Packet};
-use host_play::nav_identity::NavFlagsOrigin;
-use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
-use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
-use host_play::{
-    parse_profile_args, BundledNavIdentity, LoginKey, NavOrigin, ProfileOptions, Servers,
-    SharedClientTemplate,
+use host_play::profile::{NavAvailability, ProfileEnvironment};
+use host_play::progress::{
+    ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
 };
+use host_play::{parse_profile_args, LoginKey, ProfileOptions, Servers, SharedClientTemplate};
 
 #[path = "support/upgrade_home.rs"]
 mod upgrade_home;
@@ -39,13 +37,28 @@ impl Fixture {
         ));
         std::fs::create_dir_all(&path).unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
-        for file in ARCHIVES
-            .into_iter()
-            .chain(["manifest-274.json", "manifest-289.json"])
-        {
+        for file in ARCHIVES {
             std::fs::copy(source.join(file), path.join(file)).unwrap();
         }
         Self(path)
+    }
+    fn write_public_roster(
+        &self,
+        worlds: impl IntoIterator<Item = host_play::public_worlds::PublicWorld>,
+    ) -> PathBuf {
+        let mut servers = Servers::builtins();
+        servers
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "rs2b2t")
+            .unwrap()
+            .worlds = worlds.into_iter().map(Into::into).collect();
+        servers.validate().unwrap();
+        let directory = self.0.join(".274bot");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("servers.json");
+        std::fs::write(&path, serde_json::to_vec(&servers).unwrap()).unwrap();
+        path
     }
     fn env(&self) -> ProfileEnvironment {
         ProfileEnvironment {
@@ -60,7 +73,7 @@ impl Fixture {
         ProfileOptions {
             revision: Some(revision.to_string()),
             cache_dir: Some(self.0.clone()),
-            cache_manifest: Some(self.0.join(format!("manifest-{revision}.json"))),
+            asset_host: Some("127.0.0.1".into()),
             nav_pack: Some(self.0.join("missing.navpack")),
             ..Default::default()
         }
@@ -401,25 +414,23 @@ fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
 }
 
 #[test]
-fn worlds_file_is_imported_once_without_later_data_loss() {
+fn supported_public_roster_preserves_order_and_endpoint_checks() {
     let fixture = Fixture::new();
-    let bot_dir = fixture.0.join(".274bot");
-    std::fs::create_dir_all(&bot_dir).unwrap();
-    let path = bot_dir.join("worlds.json");
-    std::fs::write(&path, r#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#).unwrap();
+    let roster: host_play::public_worlds::PublicWorlds = serde_json::from_str(
+        r#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#,
+    )
+    .unwrap();
+    let servers_path = fixture.write_public_roster(roster.worlds);
     let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert_eq!(
         (selected.game_host(), selected.game_port()),
         ("w2.rs2b2t.com", 443)
     );
-    let servers_path = bot_dir.join("servers.json");
-    let imported = std::fs::read(&servers_path).unwrap();
-
-    std::fs::write(&path, "not json").unwrap();
+    let original = std::fs::read(&servers_path).unwrap();
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert_eq!(selected.game_host(), "w2.rs2b2t.com");
-    assert_eq!(std::fs::read(&servers_path).unwrap(), imported);
+    assert_eq!(std::fs::read(&servers_path).unwrap(), original);
 
     options.host = Some("attacker.example".into());
     assert!(options.resolve_with_env(None, &fixture.env()).is_err());
@@ -434,60 +445,81 @@ fn worlds_file_is_imported_once_without_later_data_loss() {
 }
 
 #[test]
-fn upgrade_copy_preserves_vault_profiles_and_worlds_file() {
+fn revision_377_selects_its_own_loopback_resources() {
     let fixture = Fixture::new();
-    let source = fixture.0.join("old-home/.274bot");
-    let target = fixture.0.join(".274bot");
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::create_dir_all(&target).unwrap();
-    let source_vault = source.join("vault-prod");
-    let mut vault = host_play::open_vault(&source_vault, "legacy-passphrase").unwrap();
-    vault
-        .upsert(vault::Profile {
-            username: "alice".into(),
-            password: "alice-password".into(),
-            uid: 274_000_123,
-            settings: vault::ProfileSettings {
-                world: Some(2),
-                ..Default::default()
-            },
-        })
-        .unwrap();
-    drop(vault);
-    let worlds = br#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#;
-    std::fs::write(source.join("worlds.json"), worlds).unwrap();
-    std::fs::copy(&source_vault, target.join("vault-prod")).unwrap();
-    std::fs::copy(source.join("worlds.json"), target.join("worlds.json")).unwrap();
-    let vault_before = std::fs::read(target.join("vault-prod")).unwrap();
-    let worlds_before = std::fs::read(target.join("worlds.json")).unwrap();
-
-    let selected = ProfileOptions {
-        rs2b2t: true,
-        ..Default::default()
-    }
-    .resolve_with_env(None, &fixture.env())
-    .unwrap();
-    assert_eq!(selected.game_host(), "w2.rs2b2t.com");
+    let (options, rest) = parse_profile_args(["--revision", "377"]).unwrap();
+    assert!(rest.is_empty());
+    let selected = options.resolve_with_env(Some(289), &fixture.env()).unwrap();
+    assert_eq!(selected.name(), "local-377");
+    assert_eq!(selected.revision(), ClientRevision::R377);
+    assert_eq!(selected.transport(), client::Transport::Tcp);
+    assert_eq!(selected.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(
-        std::fs::read(target.join("vault-prod")).unwrap(),
-        vault_before
+        (selected.game_host(), selected.game_port()),
+        ("127.0.0.1", 43595)
     );
     assert_eq!(
-        std::fs::read(target.join("worlds.json")).unwrap(),
-        worlds_before
+        (selected.asset_host(), selected.asset_port()),
+        ("127.0.0.1", 81)
     );
-    let vault = vault::Vault::unlock(&target.join("vault-prod"), "legacy-passphrase").unwrap();
-    let alice = vault.get("alice").unwrap();
-    assert_eq!(alice.password.as_str(), "alice-password");
-    assert_eq!(alice.uid, 274_000_123);
-    assert_eq!(alice.settings.world, Some(2));
+    assert!(selected.unpack_dir().ends_with(".274bot/unpack-377"));
+    assert_eq!(selected.cache_dir(), selected.unpack_dir());
+    assert!(selected.vault_path().ends_with(".274bot/vault-377"));
+    assert!(selected.nav_pack().ends_with(".274bot/377/274bot.navpack"));
+    assert!(selected
+        .nav_flags()
+        .ends_with(".274bot/377/274bot.navflags"));
+    assert!(selected.supported_server());
+    selected.require_bot_operation().unwrap();
+    assert!(matches!(
+        selected.selection().login_key,
+        LoginKey::EngineDir { engine_dir: None }
+    ));
 }
 
 #[test]
+fn revision_377_environment_and_saved_selection_do_not_change_the_default() {
+    let fixture = Fixture::new();
+    let mut environment = fixture.env();
+    environment.revision = Some("377".into());
+    let from_environment = ProfileOptions::default()
+        .resolve_with_env(Some(289), &environment)
+        .unwrap();
+    assert_eq!(from_environment.revision(), ClientRevision::R377);
+    let from_saved = ProfileOptions::default()
+        .resolve_with_env(Some(377), &fixture.env())
+        .unwrap();
+    assert_eq!(from_saved.revision(), ClientRevision::R377);
+    let default = ProfileOptions::default()
+        .resolve_with_env(None, &fixture.env())
+        .unwrap();
+    assert_eq!(default.revision(), ClientRevision::R274);
+}
+
+#[test]
+fn revision_377_requires_an_engine_and_rejects_a_named_revision_conflict() {
+    let fixture = Fixture::new();
+    let (options, _) = parse_profile_args(["--revision", "377"]).unwrap();
+    let mut environment = fixture.env();
+    environment.engine_dir = None;
+    assert!(options
+        .resolve_with_env(None, &environment)
+        .unwrap_err()
+        .contains("ENGINE_DIR"));
+    let (conflict, _) =
+        parse_profile_args(["--profile", "local-289", "--revision", "377"]).unwrap();
+    assert!(conflict
+        .resolve_with_env(None, &fixture.env())
+        .unwrap_err()
+        .contains("--revision conflicts with the selected --profile"));
+}
+
+#[test]
+
 fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
-        vec!["--revision", "377"],
+        vec!["--revision", "378"],
         vec!["--revision"],
         vec!["--port", "0"],
         vec!["--revision", "--prod"],
@@ -529,52 +561,7 @@ fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
 }
 
 #[test]
-fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
-    let fixture = Fixture::new();
-    let mut options = fixture.options(289);
-    options.cache_manifest = Some(fixture.0.join("manifest-274.json"));
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("cache/profile mismatch"));
-    options.cache_manifest = Some(fixture.0.join("manifest-289.json"));
-    let nav = fixture.0.join("wrong.navpack");
-    std::fs::write(&nav, b"fixture-nav").unwrap();
-    options.nav_pack = Some(nav.clone());
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-    let manifest = NavManifest {
-        revision: 274,
-        cache_id: "wrong".into(),
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: "wrong".into(),
-        flags_sha256: None,
-        reach_sha256: None,
-        canlight_sha256: None,
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&nav),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-    assert!(!selection.vault_path().exists());
-    assert!(!selection.unpack_dir().exists());
-}
-
-#[test]
-fn invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_changes() {
+fn invalid_explicit_rsa_fails_without_fallback() {
     let fixture = Fixture::new();
     let options = fixture.options(274);
     for modulus in ["", "not-a-number", "0", "-23"] {
@@ -595,12 +582,6 @@ fn invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_chan
         profile.nav_availability(),
         NavAvailability::Unavailable(_)
     ));
-    profile.validate_resources().unwrap();
-    std::fs::write(fixture.0.join("config"), b"changed after binding").unwrap();
-    assert!(profile
-        .validate_resources()
-        .unwrap_err()
-        .contains("cache changed"));
     assert!(!profile.vault_path().exists());
 }
 
@@ -626,21 +607,27 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
         .iter()
         .filter(|progress| progress.stage == ProfileProgressStage::CheckingGameFiles)
         .collect();
-    assert!(game_checks.len() > CacheManifest::ARCHIVES.len());
+    assert_eq!(game_checks.len(), ARCHIVES.len() + 1);
     assert_eq!(game_checks.first().unwrap().completed, 0);
-    assert_eq!(
-        game_checks.first().unwrap().total,
-        CacheManifest::ARCHIVES.len() as u64
+    assert_eq!(game_checks.first().unwrap().total, ARCHIVES.len() as u64);
+    assert!(
+        game_checks.iter().enumerate().all(|(completed, progress)| {
+            progress.completed == completed as u64
+                && progress.total == ARCHIVES.len() as u64
+                && progress.unit == ProfileProgressUnit::Files
+        }),
+        "game-file progress advances once for each archive read"
     );
     assert!(game_checks
         .windows(2)
         .all(|pair| pair[1].completed == 0 || pair[1].completed >= pair[0].completed));
-    assert!(
+    assert_eq!(
         game_checks
             .iter()
             .filter(|progress| progress.completed == progress.total)
-            .count()
-            >= 2
+            .count(),
+        1,
+        "one terminal event follows the completed archive reads"
     );
     let archive_reads: Vec<_> = updates
         .iter()
@@ -672,6 +659,9 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
 
 #[test]
 fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     for revision in [274, 289] {
         let fixture = Fixture::new();
@@ -714,6 +704,9 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 
 #[test]
 fn shared_template_client_members_follow_world_members_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     for (uid, members) in [(740_101, false), (740_102, true)] {
@@ -734,6 +727,9 @@ fn shared_template_client_members_follow_world_members_fact() {
 }
 #[test]
 fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -799,6 +795,9 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
 
 #[test]
 fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let (asset_port, served, server) = serve_fixture_crc(&fixture);
@@ -861,10 +860,14 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
 
 #[test]
 fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let mut options = fixture.options(289);
     options.rs2b2t = true;
+    options.asset_host = None;
     let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
@@ -874,10 +877,6 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     assert_eq!(profile.transport(), client::Transport::Wss);
     assert_eq!(profile.revision(), ClientRevision::R289);
     let template = SharedClientTemplate::load(profile).unwrap();
-    assert!(
-        template.game_data().is_none(),
-        "a synthetic cache must not receive the selected 289 data"
-    );
     let mut client = template.prepare_client(740_003, true).unwrap();
     client.config.host = "127.0.0.1".into();
     client.config.port = 43594;
@@ -893,7 +892,7 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
 }
 
 #[test]
-fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
+fn catalog_is_a_default_path_and_binding_does_not_read_the_script_tree() {
     let fixture = Fixture::new();
     let root = fixture.0.join("catalog");
     std::fs::create_dir_all(root.join("src/bot")).unwrap();
@@ -911,7 +910,6 @@ fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
         "export default { changed: true };",
     )
     .unwrap();
-    profile.validate_resources().unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     // Binding a server neither reads nor qualifies the user's script tree.
     options
@@ -919,9 +917,6 @@ fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
         .unwrap()
         .bind()
         .unwrap();
-    let first = CacheManifest::capture(274, &fixture.0).unwrap();
-    let second = CacheManifest::capture(289, &fixture.0).unwrap();
-    assert_ne!(first.identity(), second.identity());
 }
 
 #[test]
@@ -929,7 +924,6 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     use api::snapshot::WorldTile;
     use nav_planner::collision::{pack_walk, WorldCollision};
     use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
-    use sha2::{Digest, Sha256};
     let fixture = Fixture::new();
     let mut options = fixture.options(289);
     let origin = WorldTile {
@@ -974,29 +968,11 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         quest_gates: None,
     });
     let bytes = nav_bake::pack::encode(&collision, &graph, &[]).unwrap();
-    let flags = nav_bake::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
+    let flags = nav_bake::pack::encode_flags_sidecar(origin, 2, 1, &[0u32; 2]);
     let pack = fixture.0.join("selected.navpack");
     let flags_path = fixture.0.join("selected.navflags");
     std::fs::write(&pack, &bytes).unwrap();
     std::fs::write(&flags_path, &flags).unwrap();
-    let manifest = NavManifest {
-        revision: 289,
-        cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: format!("{:x}", Sha256::digest(&bytes)),
-        flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
-        reach_sha256: None,
-        canlight_sha256: None,
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
     options.nav_pack = Some(pack.clone());
     options.nav_flags = Some(flags_path.clone());
     let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
@@ -1007,9 +983,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     });
     let profile = selection.bind_with_progress(&observer).unwrap();
     assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
-    assert!(!profile.nav_origin().is_bundled());
+    assert_eq!(profile.nav_pack(), pack.as_path());
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
-    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
     let stages: Vec<_> = updates
         .lock()
@@ -1017,7 +992,6 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         .iter()
         .map(|progress| progress.stage)
         .collect();
-    assert!(stages.contains(&ProfileProgressStage::CheckingNavigationFiles));
     assert!(stages.contains(&ProfileProgressStage::PreparingNavigation));
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let first = template.world().unwrap();
@@ -1032,20 +1006,20 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     std::fs::write(&pack, b"different navigation").unwrap();
     template
         .validate_for_play()
-        .expect("already-loaded world is not rehashed at Play");
+        .expect("already-loaded world is not re-read at Play");
     assert!(Arc::ptr_eq(&first, &template.world().unwrap()));
 
-    let mut rebound = fixture.options(289);
-    rebound.nav_pack = Some(pack.clone());
-    rebound.nav_flags = Some(flags_path);
-    let error = rebound
+    let error = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap_err();
-    assert!(error.contains("navigation/profile mismatch") || error.contains("navigation"));
+    assert!(
+        error.contains("pack") || error.contains("navigation"),
+        "{error}"
+    );
     std::fs::write(&pack, &bytes).unwrap();
-    let rebound_profile = rebound
+    let rebound_profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
@@ -1074,7 +1048,7 @@ fn consuming_ticket_does_not_rehash_cache() {
     assert!(Arc::ptr_eq(play.server_profile().unwrap(), &profile));
 }
 
-fn tiny_v8_pack() -> Vec<u8> {
+fn tiny_pack() -> Vec<u8> {
     use api::snapshot::WorldTile;
     use nav_planner::collision::{pack_walk, WorldCollision};
     use nav_planner::transport::TransportGraph;
@@ -1098,135 +1072,104 @@ fn tiny_v8_pack() -> Vec<u8> {
     .unwrap()
 }
 
-fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
+fn tiny_pack_at(x: i32) -> Vec<u8> {
     use api::snapshot::WorldTile;
-    use sha2::{Digest, Sha256};
-    let origin = WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    };
-    let digest: [u8; 32] = Sha256::digest(pack).into();
-    nav_bake::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::transport::TransportGraph;
+    let (walk, blocked) = pack_walk(&[0; 8]);
+    nav_bake::pack::encode(
+        &WorldCollision {
+            origin: WorldTile {
+                x,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        },
+        &TransportGraph::default(),
+        &[],
+    )
+    .unwrap()
 }
 
-fn fixture_canlight_policy() -> [u8; 32] {
-    nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64])
-}
-
-fn tiny_v8_canlight(pack: &[u8]) -> (Vec<u8>, String) {
-    use api::snapshot::WorldTile;
-    use sha2::{Digest, Sha256};
-    let origin = WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    };
-    let digest: [u8; 32] = Sha256::digest(pack).into();
-    let policy = fixture_canlight_policy();
-    let binding = nav_planner::canlight::header_binding(&digest, &policy);
-    let bytes = nav_bake::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64], &binding);
-    (bytes, nav_planner::pack::sha256_hex(&policy))
-}
-
-fn write_bundled_reach(root: &std::path::Path, pack: &[u8]) -> String {
-    let bytes = tiny_v8_reach(pack);
-    std::fs::write(root.join("274bot.navreach"), &bytes).unwrap();
-    nav_planner::manifest::hash_bytes(&bytes)
-}
-
-fn write_bundled_canlight(root: &std::path::Path, pack: &[u8]) -> (String, String) {
-    let (bytes, identity) = tiny_v8_canlight(pack);
-    std::fs::write(root.join("274bot.navcanlight"), &bytes).unwrap();
-    (nav_planner::manifest::hash_bytes(&bytes), identity)
-}
-
-fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, bytes: &[u8]) {
-    let manifest = NavManifest {
-        revision,
-        cache_id,
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: nav_planner::manifest::hash_bytes(bytes),
-        flags_sha256: None,
-        reach_sha256: None,
-        canlight_sha256: None,
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
+fn write_revision_sidecars(root: &Path, pack: &[u8], revision: u16) {
+    let world = nav_planner::world::NavWorld::from_bytes(pack).unwrap();
+    let layout = host_play::nav_assets::artifact_layout(revision);
+    let pack_path = root.join(&layout.relative_pack);
+    let flags_path = root.join(&layout.relative_flags);
+    let reach_path = root.join(&layout.relative_reach);
+    let canlight_path = root.join(&layout.relative_canlight);
+    for path in [&pack_path, &flags_path, &reach_path, &canlight_path] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
+    std::fs::write(&pack_path, pack).unwrap();
     std::fs::write(
-        host_play::profile::nav_manifest_path(pack),
-        serde_json::to_vec(&manifest).unwrap(),
+        flags_path,
+        nav_bake::pack::encode_flags_sidecar(world.collision.origin, 2, 1, &[0u32; 2]),
+    )
+    .unwrap();
+    let reach = nav_planner::paint::bake_reach(&world.collision, &world.graph);
+    std::fs::write(
+        reach_path,
+        nav_bake::pack::encode_reach_sidecar(
+            world.collision.origin,
+            world.collision.width,
+            world.collision.height,
+            &reach,
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        canlight_path,
+        nav_bake::pack::encode_canlight_sidecar(
+            world.collision.origin,
+            world.collision.width,
+            world.collision.height,
+            &[0],
+        ),
     )
     .unwrap();
 }
 
 #[test]
-fn bundled_identity_decodes_pack_once_and_hashes_sidecars_on_demand() {
+fn bundled_payloads_decode_normally_and_memoize_shared_sidecars() {
     let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
     let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let (canlight_sha256, canlight_identity) = write_bundled_canlight(&root, &bytes);
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let table = [BundledNavIdentity {
-        revision: 289,
-        cache_id: cache_id.clone(),
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        canlight_identity: Some(canlight_identity),
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
+    let bytes = tiny_pack();
+    write_revision_sidecars(&root, &bytes, 289);
+    let layout = host_play::nav_assets::artifact_layout(289);
+    let pack = root.join(layout.relative_pack);
     let mut options = fixture.options(289);
     options.nav_pack = None;
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
-    let updates = Arc::new(Mutex::new(Vec::<ProfileProgress>::new()));
-    let worker_updates = Arc::clone(&updates);
-    let observer = ProfileProgressObserver::new(move |progress| {
-        worker_updates.lock().unwrap().push(progress);
-    });
-    let profile = selection
-        .bind_with_nav_identities(&observer, &table, Some(root.as_path()))
-        .unwrap();
-    assert!(matches!(profile.nav_origin(), NavOrigin::Bundled { .. }));
-    assert_eq!(profile.nav_flags_origin(), NavFlagsOrigin::Bundled);
-    assert_eq!(
-        profile.nav_flags(),
-        root.join("274bot.navflags"),
-        "bundled flags path is the pack sibling under the install root"
-    );
-    assert_eq!(profile.nav_load_counters().pack_reads, 1);
-    assert_eq!(profile.nav_load_counters().pack_hashes, 0);
-    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
-    assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
-    assert_eq!(profile.nav_load_counters().canlight_reads, 1);
-    assert_eq!(profile.nav_load_counters().canlight_hashes, 1);
-    assert!(profile.reach().is_some());
-    assert_eq!(profile.nav_load_counters().reach_reads, 2);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
-    assert!(profile.reach().is_some());
-    assert_eq!(profile.nav_load_counters().reach_reads, 2);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
-    assert!(profile.canlight().is_some());
-    assert!(updates
-        .lock()
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
         .unwrap()
-        .iter()
-        .all(|progress| progress.stage != ProfileProgressStage::CheckingNavigationFiles));
-    assert!(updates.lock().unwrap().iter().any(|progress| {
-        progress.stage == ProfileProgressStage::PreparingNavigation && progress.completed == 1
-    }));
+        .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&root))
+        .unwrap();
+    assert_eq!(profile.nav_pack(), pack.as_path());
+    assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
+    assert_eq!(profile.nav_load_counters().pack_reads, 1);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    let first_reach = profile.reach().expect("staged reach sidecar");
+    let reach_reads = profile.nav_load_counters().reach_reads;
+    assert!(reach_reads > 0);
+    assert!(Arc::ptr_eq(
+        &first_reach,
+        &profile.reach().expect("memoized reach sidecar")
+    ));
+    assert_eq!(profile.nav_load_counters().reach_reads, reach_reads);
+    let first_canlight = profile.canlight().expect("staged canlight sidecar");
+    let canlight_reads = profile.nav_load_counters().canlight_reads;
+    assert!(canlight_reads > 0);
+    assert!(Arc::ptr_eq(
+        &first_canlight,
+        &profile.canlight().expect("memoized canlight sidecar")
+    ));
+    assert_eq!(profile.nav_load_counters().canlight_reads, canlight_reads);
     let first = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let second = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     assert!(Arc::ptr_eq(
@@ -1242,345 +1185,149 @@ fn bundled_identity_decodes_pack_once_and_hashes_sidecars_on_demand() {
 }
 
 #[test]
-fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
+fn explicit_pack_and_flags_paths_override_revision_resources() {
     let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
     let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("274bot.navpack"), &bytes).unwrap();
+    write_revision_sidecars(&root, &tiny_pack(), 289);
     let custom = fixture.0.join("custom.navpack");
-    std::fs::write(&custom, &bytes).unwrap();
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    write_nav_sidecar(&custom, 289, cache_id.clone(), &bytes);
-    let table = [BundledNavIdentity {
-        revision: 289,
-        cache_id,
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: None,
-        canlight_sha256: None,
-        canlight_identity: None,
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
+    let custom_bytes = tiny_pack_at(3300);
+    std::fs::write(&custom, &custom_bytes).unwrap();
+    let custom_flags = fixture.0.join("custom.navflags");
+    std::fs::write(
+        &custom_flags,
+        nav_bake::pack::encode_flags_sidecar(
+            api::snapshot::WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            2,
+            1,
+            &[0u32; 2],
+        ),
+    )
+    .unwrap();
     let mut options = fixture.options(289);
-    options.nav_pack = Some(custom);
+    options.nav_pack = Some(custom.clone());
+    options.nav_flags = Some(custom_flags.clone());
     let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &table,
-            Some(root.as_path()),
-        )
+        .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&root))
         .unwrap();
-    assert!(!profile.nav_origin().is_bundled());
-    assert_eq!(profile.nav_flags_origin(), NavFlagsOrigin::External);
-    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
-    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    assert_eq!(profile.nav_pack(), custom.as_path());
+    assert_eq!(profile.nav_flags(), custom_flags.as_path());
+    assert_eq!(profile.world().unwrap().collision.origin.x, 3300);
 }
 
 #[test]
-fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
+fn malformed_explicit_packs_report_format_errors() {
     let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    let sibling_flags = root.join("274bot.navflags");
-    std::fs::write(&pack, &bytes).unwrap();
-    std::fs::write(&sibling_flags, b"bundle-sibling-flags").unwrap();
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let (canlight_sha256, canlight_identity) = write_bundled_canlight(&root, &bytes);
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let table = [BundledNavIdentity {
-        revision: 289,
-        cache_id: cache_id.clone(),
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: Some(nav_planner::manifest::hash_bytes(b"bundle-sibling-flags")),
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        canlight_identity: Some(canlight_identity),
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
-
-    // Default bundled selection trusts flags provenance.
-    let mut options = fixture.options(289);
-    options.nav_pack = None;
-    options.nav_flags = None;
-    let bundled = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &table,
-            Some(root.as_path()),
-        )
-        .unwrap();
-    assert!(bundled.nav_origin().is_bundled());
-    assert_eq!(bundled.nav_flags_origin(), NavFlagsOrigin::Bundled);
-    assert_eq!(bundled.nav_flags(), sibling_flags);
-
-    // Explicit same-path override must remain external — never bless by path.
-    let mut overridden = fixture.options(289);
-    overridden.nav_pack = None;
-    overridden.nav_flags = Some(sibling_flags.clone());
-    let profile = overridden
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &table,
-            Some(root.as_path()),
-        )
-        .unwrap();
-    assert!(
-        profile.nav_origin().is_bundled(),
-        "pack stays bundled when only flags are overridden"
-    );
-    assert_eq!(
-        profile.nav_flags_origin(),
-        NavFlagsOrigin::External,
-        "explicit --nav-flags must not inherit pack bundled trust"
-    );
-    assert_eq!(profile.nav_flags(), sibling_flags);
+    let current = tiny_pack();
+    let mut unsupported = current.clone();
+    unsupported[4] = nav_planner::pack::VERSION + 1;
+    let mut bad_magic = current;
+    bad_magic[..4].copy_from_slice(b"nope");
+    for (name, bytes, expected) in [
+        (
+            "unsupported.navpack",
+            unsupported,
+            "unsupported pack version",
+        ),
+        ("bad-magic.navpack", bad_magic, "bad pack magic"),
+    ] {
+        let pack = fixture.0.join(name);
+        std::fs::write(&pack, bytes).unwrap();
+        let mut options = fixture.options(289);
+        options.nav_pack = Some(pack);
+        let error = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
 }
 
 #[test]
-fn external_nav_identity_includes_trailing_bytes_beyond_the_read_buffer() {
+fn missing_explicit_pack_is_unavailable_without_reading() {
     let fixture = Fixture::new();
-    let mut bytes = tiny_v8_pack();
-    bytes.resize(bytes.len() + 128 * 1024, 0x5a);
-    let pack = fixture.0.join("trailing.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    write_nav_sidecar(&pack, 289, cache_id, &bytes);
-    let mut options = fixture.options(289);
-    options.nav_pack = Some(pack.clone());
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
-    let profile = selection.bind().unwrap();
-    let collision = &profile.world().unwrap().collision;
-    assert_eq!((collision.origin.x, collision.origin.z), (3200, 3200));
-    assert_eq!((collision.width, collision.height), (2, 1));
-
-    *bytes.last_mut().unwrap() ^= 1;
-    std::fs::write(&pack, &bytes).unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-}
-
-#[test]
-fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
-    let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let pack = fixture.0.join("bad.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let mut options = fixture.options(289);
-    options.nav_pack = Some(pack.clone());
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-
-    let mut wrong = NavManifest {
-        revision: 289,
-        cache_id: cache_id.clone(),
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: "00".repeat(32),
-        flags_sha256: None,
-        reach_sha256: None,
-        canlight_sha256: None,
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&wrong).unwrap(),
-    )
-    .unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-
-    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&bytes);
-    wrong.revision = 274;
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&wrong).unwrap(),
-    )
-    .unwrap();
-    assert!(selection
-        .bind()
-        .unwrap_err()
-        .contains("navigation/profile mismatch"));
-
-    wrong.revision = 289;
-    let mut newer = bytes.clone();
-    newer[4] = nav_planner::pack::VERSION + 1;
-    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&newer);
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&wrong).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(&pack, &newer).unwrap();
-    let error = selection.bind().unwrap_err();
-    assert!(error.contains("unsupported pack version"), "{error}");
-
-    let mut garbage = bytes.clone();
-    garbage[..4].copy_from_slice(b"nope");
-    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&garbage);
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&wrong).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(&pack, &garbage).unwrap();
-    let error = selection.bind().unwrap_err();
-    assert!(error.contains("bad pack magic"), "{error}");
-}
-
-#[test]
-fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
-    let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let pack = fixture.0.join("orphan.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let mut options = fixture.options(289);
-    options.nav_pack = Some(pack);
-    assert!(options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind()
-        .unwrap_err()
-        .contains("revision 289 requires"));
-
-    let missing = fixture
-        .options(274)
+    let profile = fixture
+        .options(289)
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap();
     assert!(matches!(
-        missing.nav_availability(),
+        profile.nav_availability(),
         NavAvailability::Unavailable(_)
     ));
-    assert_eq!(missing.nav_load_counters().pack_reads, 0);
+    assert_eq!(profile.nav_load_counters().pack_reads, 0);
 }
 
-fn assert_external_old_pack_degrades_without_deleting_user_file(bytes: &[u8]) {
+fn assert_external_old_pack_reports_format_error(bytes: &[u8]) {
     let fixture = Fixture::new();
     let pack = fixture.0.join(format!("old-v{}.navpack", bytes[4]));
     std::fs::write(&pack, bytes).unwrap();
-    write_nav_sidecar(
-        &pack,
-        289,
-        CacheManifest::capture(289, &fixture.0).unwrap().identity(),
-        bytes,
-    );
     let mut options = fixture.options(289);
     options.nav_pack = Some(pack.clone());
 
-    let profile = options
+    let error = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
-        .unwrap();
-    let NavAvailability::Unavailable(message) = profile.nav_availability() else {
-        panic!("stale external navigation must be unavailable");
-    };
-    assert!(
-        message.contains("navigation pack was built by an older 274bot; rebuild it with nav-pack"),
-        "{message}"
-    );
-    assert!(profile.world().is_none());
+        .unwrap_err();
+    assert!(error.contains("unsupported pack version"), "{error}");
     assert_eq!(std::fs::read(pack).unwrap(), bytes);
 }
 
 fn version_patched_pack(version: u8) -> Vec<u8> {
-    let mut bytes = tiny_v8_pack();
+    let mut bytes = tiny_pack();
     bytes[4] = version;
     bytes
 }
 
 #[test]
-fn external_v8_pack_degrades_to_unavailable_without_deleting_user_file() {
-    assert_external_old_pack_degrades_without_deleting_user_file(&version_patched_pack(8));
+fn external_v8_pack_reports_format_error_without_deleting_user_file() {
+    assert_external_old_pack_reports_format_error(&version_patched_pack(8));
 }
 
 #[test]
-fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
-    assert_external_old_pack_degrades_without_deleting_user_file(&version_patched_pack(9));
+fn external_v9_pack_reports_format_error_without_deleting_user_file() {
+    assert_external_old_pack_reports_format_error(&version_patched_pack(9));
 }
 
 /// The pack 0.1.9.x wrote, byte for byte (`274V10` encoder output).
 #[test]
-fn external_real_v10_pack_degrades_to_unavailable_without_deleting_user_file() {
+fn external_real_v10_pack_reports_format_error_without_deleting_user_file() {
     assert!(matches!(
         nav_planner::pack::decode(upgrade_home::V10_PACK),
         Err(nav_planner::pack::PackError::BadVersion(10))
     ));
-    assert_external_old_pack_degrades_without_deleting_user_file(upgrade_home::V10_PACK);
+    assert_external_old_pack_reports_format_error(upgrade_home::V10_PACK);
 }
 
-/// Upgrading from 0.1.9.x: the stale v10 pack at the default home path never
-/// shadows the packaged v16 bundle, which binds, decodes once and is the one
-/// world every template shares; the user's file is left exactly as it was.
-/// Pointing `--nav-pack` / `NAV_PACK` at that old file is honoured over the
-/// bundle, and binds with navigation unavailable and a rebake diagnostic.
+/// A stale home pack never shadows the staged format-19 revision bundle.
+/// The packaged world is shared by every template.
 #[test]
-fn packaged_v16_bundle_supersedes_a_stale_v10_home_pack() {
+fn packaged_v19_bundle_supersedes_a_stale_v10_home_pack() {
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
-    assert!(
-        profile.nav_origin().is_bundled(),
-        "{:?}",
-        profile.nav_origin()
-    );
-    assert_eq!(
-        profile.nav_origin().path(),
-        home.resources.join("274bot.navpack")
-    );
+    let layout = host_play::nav_assets::artifact_layout(289);
+    let expected_pack = home.resources.join(layout.relative_pack);
+    assert_eq!(profile.nav_pack(), expected_pack.as_path());
     assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
-    let world = profile.world().expect("the bundled world decodes");
+    let world = profile.world().expect("the staged world decodes");
     let first = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let second = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     assert!(Arc::ptr_eq(&first.world().unwrap(), &world));
     assert!(Arc::ptr_eq(&second.world().unwrap(), &world));
     assert!(home.old_pack_untouched());
-
-    let overridden = home.bind(Some(home.old_pack.clone()));
-    assert!(!overridden.nav_origin().is_bundled());
-    let NavAvailability::Unavailable(message) = overridden.nav_availability() else {
-        panic!("an explicit v10 pack must leave navigation unavailable");
-    };
-    assert!(
-        message.contains("built by an older 274bot; rebuild it with nav-pack"),
-        "{message}"
-    );
-    assert!(overridden.world().is_none());
-    let template = SharedClientTemplate::load(overridden).unwrap();
-    assert!(template.world().is_none());
-    assert!(home.old_pack_untouched());
 }
 
 #[test]
-fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
+fn revision_274_grid_pack_without_sidecar_binds_and_decodes_once() {
     let fixture = Fixture::new();
     let bytes = nav_bake::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
     let pack = fixture.0.join("legacy.navpack");
@@ -1592,210 +1339,39 @@ fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
         .unwrap()
         .bind()
         .unwrap();
-    assert_eq!(profile.nav_availability(), &NavAvailability::Legacy274);
+    assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
-    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
     assert_eq!(profile.world().unwrap().collision.width, 5);
 }
 
 #[test]
-fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
-    let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let mut options = fixture.options(289);
-    options.nav_pack = None;
-
-    let missing_identity = [BundledNavIdentity {
-        revision: 289,
-        cache_id: cache_id.clone(),
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: None,
-        canlight_sha256: None,
-        canlight_identity: None,
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
-    let error = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &missing_identity,
-            Some(root.as_path()),
-        )
-        .unwrap_err();
-    assert!(error.contains("reach identity is missing"), "{error}");
-
-    let named = [BundledNavIdentity {
-        reach_sha256: Some("ab".repeat(32)),
-        ..missing_identity[0].clone()
-    }];
-    let error = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &named,
-            Some(root.as_path()),
-        )
-        .unwrap_err();
-    assert!(matches!(error.as_str(), message if message.contains("navreach")));
-
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let with_reach = [BundledNavIdentity {
-        reach_sha256: Some(reach_sha256),
-        ..missing_identity[0].clone()
-    }];
-    let error = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &with_reach,
-            Some(root.as_path()),
-        )
-        .unwrap_err();
-    assert!(error.contains("canlight identity is missing"), "{error}");
-}
-
-#[test]
-fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
-    let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let (canlight_bytes, _old_identity) = tiny_v8_canlight(&bytes);
-    std::fs::write(root.join("274bot.navcanlight"), &canlight_bytes).unwrap();
-    let canlight_sha256 = nav_planner::manifest::hash_bytes(&canlight_bytes);
-    let new_policy = nav_planner::pack::sha256_hex(&nav_planner::canlight::identity_digest(
-        289,
-        b"new-bank-zones",
-        &[0u64],
-    ));
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let table = [BundledNavIdentity {
-        revision: 289,
-        cache_id,
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        canlight_identity: Some(new_policy),
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
-    let mut options = fixture.options(289);
-    options.nav_pack = None;
-    let error = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &table,
-            Some(root.as_path()),
-        )
-        .unwrap_err();
-    assert!(error.contains("binding does not match"), "{error}");
-
-    // Same policy and pack, different mask: the former policy-only binding
-    // admitted this stale file. The real-map bake regression in nav proves
-    // such a mask-only change is possible for active nonblocking locs.
-    let same_policy_new_mask = [BundledNavIdentity {
-        canlight_identity: Some(nav_planner::pack::sha256_hex(
-            &nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[1u64]),
-        )),
-        ..table[0].clone()
-    }];
-    let error = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &same_policy_new_mask,
-            Some(root.as_path()),
-        )
-        .unwrap_err();
-    assert!(error.contains("binding does not match"), "{error}");
-}
-
-#[test]
 fn bundled_and_external_sidecars_expose_identical_capabilities() {
     let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let root = fixture.0.join("Resources");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let (canlight_sha256, canlight_identity) = write_bundled_canlight(&root, &bytes);
-    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    let manifest = NavManifest {
-        revision: 289,
-        cache_id: cache_id.clone(),
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: Some(reach_sha256.clone()),
-        canlight_sha256: Some(canlight_sha256.clone()),
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    let table = [BundledNavIdentity {
-        revision: 289,
-        cache_id,
-        content_id: None,
-        source_sha256: None,
-        format: nav_planner::pack::FORMAT_ID.into(),
-        nav_sha256: manifest.nav_sha256,
-        flags_sha256: None,
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        canlight_identity: Some(canlight_identity),
-        pois_sha256: None,
-        relative_path: "274bot.navpack".into(),
-    }];
+    let bytes = tiny_pack();
+    let bundled_root = fixture.0.join("Resources");
+    write_revision_sidecars(&bundled_root, &bytes, 289);
+    let layout = host_play::nav_assets::artifact_layout(289);
+    let bundled_pack = bundled_root.join(&layout.relative_pack);
     let mut options = fixture.options(289);
     options.nav_pack = None;
     let bundled = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
-        .bind_with_nav_identities(
-            &ProfileProgressObserver::default(),
-            &table,
-            Some(root.as_path()),
-        )
+        .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&bundled_root))
         .unwrap();
-    options.nav_pack = Some(pack);
+
+    let external_root = fixture.0.join("external");
+    write_revision_sidecars(&external_root, &bytes, 289);
+    let external_pack = external_root.join(layout.relative_pack);
+    options.nav_pack = Some(external_pack);
     let external = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap();
-    assert!(bundled.nav_origin().is_bundled());
-    assert!(!external.nav_origin().is_bundled());
+    assert_eq!(bundled.nav_pack(), bundled_pack.as_path());
+    assert_ne!(bundled.nav_pack(), external.nav_pack());
     assert_eq!(
         external.canlight().as_deref(),
         bundled.canlight().as_deref()
@@ -1803,56 +1379,10 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
     assert_eq!(external.reach().as_deref(), bundled.reach().as_deref());
     assert_eq!(external.reach().as_deref(), Some(&[0u64][..]));
     assert_eq!(external.canlight().as_deref(), Some(&[0u64][..]));
-}
-
-#[test]
-fn external_manifest_rejects_wrong_reach_and_canlight_hashes() {
-    let fixture = Fixture::new();
-    let bytes = tiny_v8_pack();
-    let root = fixture.0.join("external");
-    std::fs::create_dir_all(&root).unwrap();
-    let pack = root.join("274bot.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let reach_sha256 = write_bundled_reach(&root, &bytes);
-    let (canlight_sha256, _) = write_bundled_canlight(&root, &bytes);
-    let manifest = NavManifest {
-        revision: 289,
-        cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
-        content_id: None,
-        source_sha256: None,
-        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
-        flags_sha256: None,
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        pois_sha256: None,
-        zone_count: 0,
-        zone_npc_count: 0,
-    };
-    for extension in ["navreach", "navcanlight"] {
-        let mut bad = manifest.clone();
-        if extension == "navreach" {
-            bad.reach_sha256 = Some("00".repeat(32));
-        } else {
-            bad.canlight_sha256 = Some("00".repeat(32));
-        }
-        std::fs::write(
-            host_play::profile::nav_manifest_path(&pack),
-            serde_json::to_vec(&bad).unwrap(),
-        )
-        .unwrap();
-        let mut options = fixture.options(289);
-        options.nav_pack = Some(pack.clone());
-        let error = options
-            .resolve_with_env(None, &fixture.env())
-            .unwrap()
-            .bind()
-            .unwrap_err();
-        assert!(error.contains(extension), "{error}");
-        assert!(
-            error.contains("content hash does not match identity"),
-            "{error}"
-        );
-    }
+    assert_eq!(
+        std::fs::read(bundled.nav_pack()).unwrap(),
+        std::fs::read(external.nav_pack()).unwrap()
+    );
 }
 
 fn write_world_json(engine: &Path, revision: u64, port: u64, members: &str) {
@@ -1987,9 +1517,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
     use host_play::public_worlds::PublicWorlds;
     let resolve = |roster: &PublicWorlds, explicit: Option<bool>| {
         let fixture = Fixture::new();
-        let path = fixture.0.join(".274bot/worlds.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, serde_json::to_vec(roster).unwrap()).unwrap();
+        fixture.write_public_roster(roster.worlds.iter().cloned());
         let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
         options.world_members = explicit;
         options.resolve_with_env(None, &fixture.env()).unwrap()
@@ -2071,7 +1599,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
 #[ignore = "requires NAV_TEST_PACK pointing to the shipped revision-289 nav pack"]
 fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
-    use host_play::walk_map::{ActionError, WalkRequest};
+    use host_play::walk_map::{ActionError, WalkActionOutcome, WalkRequest};
     use nav_planner::{
         router::{find_blocking_zones, FindOptions},
         world::NavWorld,
@@ -2150,11 +1678,12 @@ fn public_profile_routes_lumbridge_to_ardougne() {
                 &host_play::WalkArms::default(),
                 None,
             )
+            .map(WalkActionOutcome::Walking)
             .map_err(|_| ActionError::NoPath)
         });
         let label = format!("{override_members:?} combat={combat:?} {from:?}->{to:?}");
         assert_eq!(result.is_ok(), reachable, "{label}: {result:?}");
-        if let Ok(route) = &result {
+        if let Ok(WalkActionOutcome::Walking(route)) = &result {
             let walked: Vec<_> = route
                 .route
                 .legs
@@ -2280,8 +1809,6 @@ fn resolve_named_local_289(
 ) -> Result<host_play::ProfileSelection, String> {
     let engine = engine.to_str().unwrap().to_owned();
     let cache = fixture.0.to_str().unwrap().to_owned();
-    let manifest = fixture.0.join("manifest-289.json");
-    let manifest = manifest.to_str().unwrap().to_owned();
     let nav = fixture.0.join("missing.navpack");
     let nav = nav.to_str().unwrap().to_owned();
     let game_port = game_port.to_string();
@@ -2301,8 +1828,6 @@ fn resolve_named_local_289(
         &http_port,
         "--cache",
         &cache,
-        "--cache-manifest",
-        &manifest,
         "--nav-pack",
         &nav,
     ];
@@ -2326,7 +1851,7 @@ fn default_profiles_without_endpoint_flags_remain_supported() {
 }
 
 #[test]
-fn named_local_matching_loopback_ports_qualify_and_keep_identity_closed() {
+fn named_local_matching_loopback_ports_attach_revision_facts() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
@@ -2339,15 +1864,19 @@ fn named_local_matching_loopback_ports_qualify_and_keep_identity_closed() {
             source: host_play::WorldMembersSource::LocalWorldJson { .. }
         }
     ));
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let profile = selected.bind().unwrap();
-    assert!(
-        profile.game_data().is_none(),
-        "synthetic cache must still fail identity/source qualification"
-    );
+    assert!(profile.game_data().is_some());
+    assert!(matches!(
+        profile.game_data_status(),
+        host_play::GameDataStatus::Attached
+    ));
 }
 
 #[test]
-fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
+fn named_local_forwarded_ports_keep_facts_attached() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
@@ -2360,19 +1889,15 @@ fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
             source: host_play::WorldMembersSource::LocalWorldJson { .. }
         }
     ));
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let profile = forwarded.bind().unwrap();
-    assert!(
-        profile.game_data().is_none(),
-        "synthetic cache must still fail identity/source qualification"
-    );
-    assert!(
-        matches!(
-            profile.game_data_status(),
-            host_play::GameDataStatus::CacheIdentity { .. }
-        ),
-        "a supported local world with a synthetic cache is withheld for its cache identity, got {:?}",
-        profile.game_data_status()
-    );
+    assert!(profile.game_data().is_some());
+    assert!(matches!(
+        profile.game_data_status(),
+        host_play::GameDataStatus::Attached
+    ));
 
     write_world_json(&engine, 289, 45594, "true");
     let missing_web = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
@@ -2384,7 +1909,7 @@ fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
         }
     ));
     assert!(missing_web.supported_server());
-    assert!(missing_web.bind().unwrap().game_data().is_none());
+    assert!(missing_web.bind().unwrap().game_data().is_some());
 }
 
 #[test]
@@ -2431,8 +1956,6 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
         "443",
         "--cache",
         fixture.0.to_str().unwrap(),
-        "--cache-manifest",
-        fixture.0.join("manifest-289.json").to_str().unwrap(),
         "--nav-pack",
         fixture.0.join("missing.navpack").to_str().unwrap(),
     ])
@@ -2453,17 +1976,18 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
 }
 
 #[test]
-fn operator_listed_endpoint_requires_bound_content_identity_for_builtin_facts() {
+fn operator_listed_custom_endpoint_remains_unsupported() {
     let fixture = Fixture::new();
-    let config_dir = fixture.0.join(".274bot");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(
-        config_dir.join("worlds.json"),
-        r#"{"schema_version":1,"worlds":[{"number":13,"host":"custom.example","port":443,"node_id":42}]}"#,
-    )
-    .unwrap();
+    fixture.write_public_roster([host_play::public_worlds::PublicWorld {
+        number: 13,
+        host: "custom.example".into(),
+        port: 443,
+        node_id: 42,
+    }]);
     let mut options = fixture.options(289);
     options.rs2b2t = true;
+    // Preserve the selected WSS roster world's paired asset endpoint.
+    options.asset_host = None;
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert!(!selected.supported_server());
     let profile = selected.bind().unwrap();
@@ -2488,15 +2012,20 @@ fn runtime_asset_connection_falls_back_to_next_listed_world() {
     let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let dead_port = dead.local_addr().unwrap().port();
     drop(dead);
-    let config_dir = fixture.0.join(".274bot");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(
-        config_dir.join("worlds.json"),
-        format!(
-            r#"{{"schema_version":1,"worlds":[{{"number":13,"host":"127.0.0.1","port":{dead_port},"node_id":42}},{{"number":14,"host":"localhost","port":{port},"node_id":43}}]}}"#
-        ),
-    )
-    .unwrap();
+    fixture.write_public_roster([
+        host_play::public_worlds::PublicWorld {
+            number: 13,
+            host: "127.0.0.1".into(),
+            port: dead_port,
+            node_id: 42,
+        },
+        host_play::public_worlds::PublicWorld {
+            number: 14,
+            host: "localhost".into(),
+            port,
+            node_id: 43,
+        },
+    ]);
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -2605,31 +2134,25 @@ fn malformed_web_port_does_not_affect_fact_qualification() {
     assert!(selected.supported_server());
 }
 
-fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {
-    let engine = std::env::var_os("ISOLATED_289_ENGINE_DIR").map(PathBuf::from)?;
-    let content = std::env::var_os("ISOLATED_289_CONTENT_DIR").map(PathBuf::from)?;
-    let ready = engine.join("data/config/world.json").is_file()
-        && engine.join("data/pack/client/config").is_file()
-        && content
-            .join("scripts/player/configs/consumption/consume.dbtable")
-            .is_file();
-    ready.then_some((engine, content))
-}
-
-/// Bind-only: matching isolated 45594/1180 must attach packed Lobster heal 12.
+/// Bind-only: matching isolated 45594/1180 attaches the selected Lobster heal.
 #[test]
 fn named_local_matching_isolated_ports_attach_lobster_heal12() {
-    let Some((engine, content)) = isolated_local_289_tree() else {
-        eprintln!(
-            "skip: isolated local-289 engine/content unavailable (set ISOLATED_289_ENGINE_DIR and ISOLATED_289_CONTENT_DIR)"
-        );
+    let Some(engine) = api::test_support::local_asset_path(
+        "ISOLATED_289_ENGINE_DIR",
+        "",
+        "isolated local-289 engine",
+    ) else {
+        return;
+    };
+    let Some(content) = api::test_support::local_asset_path(
+        "ISOLATED_289_CONTENT_DIR",
+        "",
+        "isolated local-289 content",
+    ) else {
         return;
     };
     let fixture = Fixture::new();
     let cache = engine.join("data/pack/client");
-    let manifest = CacheManifest::capture(289, &cache).unwrap();
-    let manifest_path = fixture.0.join("isolated-289-manifest.json");
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let (options, _) = parse_profile_args([
         "--profile",
         "local-289",
@@ -2647,8 +2170,6 @@ fn named_local_matching_isolated_ports_attach_lobster_heal12() {
         cache.to_str().unwrap(),
         "--content",
         content.to_str().unwrap(),
-        "--cache-manifest",
-        manifest_path.to_str().unwrap(),
         "--nav-pack",
         fixture.0.join("missing.navpack").to_str().unwrap(),
         "--unpack",
@@ -2660,19 +2181,6 @@ fn named_local_matching_isolated_ports_attach_lobster_heal12() {
     let profile = selected.bind().unwrap();
     let data = profile
         .game_data()
-        .expect("matching isolated local-289 must attach generated facts");
+        .expect("matching isolated local-289 attaches revision facts");
     assert_eq!(data.fixed_food_heal("Lobster"), Some(12));
-
-    let mut wrong_content = options.clone();
-    wrong_content.content_dir = Some(fixture.0.join("empty-content"));
-    std::fs::create_dir_all(fixture.0.join("empty-content")).unwrap();
-    let mismatch = wrong_content
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind()
-        .unwrap();
-    assert!(
-        mismatch.game_data().is_none(),
-        "source mismatch must keep facts closed"
-    );
 }

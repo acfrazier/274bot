@@ -232,11 +232,11 @@ fn apply_pending_store_selections(scope: &mut v8::HandleScope) -> Result<(), Str
     Ok(())
 }
 
-pub(super) fn reset() {
+pub(crate) fn reset() {
     STATE.with(|s| s.borrow_mut().reset_store());
 }
 
-pub(super) fn store_select(key: &str, name: &str) {
+pub(crate) fn store_select(key: &str, name: &str) {
     if key.is_empty() || name.is_empty() {
         return;
     }
@@ -285,7 +285,7 @@ fn object_template(
     }
     Ok(v8::Global::new(scope, template))
 }
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let shapes = {
         let context = runtime.deno_runtime().main_context();
         let mut scope = runtime.deno_runtime().handle_scope();

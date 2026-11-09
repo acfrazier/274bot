@@ -15,9 +15,9 @@ use api::interact::Driver;
 use api::named_banks::NamedBankFacts;
 use api::prot::Out;
 use api::snapshot::GameSnapshot;
+use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 use script::native::HostAction;
 use script::slot::{RunState, SlotScript, StartOutcome, StartPoll};
-use script_js::wire::{NativeFactsInput, SnapshotInput};
 use {script::CompiledTick, script::ScriptCtx, script_js::LoadShape};
 #[derive(Default)]
 struct NullOut;
@@ -330,7 +330,7 @@ impl BankSlot {
     }
 
     fn drain_seat_starts(&mut self) {
-        let (_, legacy, _) = self.slot.drain_host_interacts();
+        let (_, legacy, _) = self.slot.drain_host_interacts(None);
         assert!(
             legacy.is_empty(),
             "bank fixture emitted legacy effects instead of using the native seat"
@@ -397,7 +397,10 @@ pub(crate) fn update_native_snapshot(
         WorldTile { x, z, level }
     }
 
-    fn item(row: &script_js::wire::ItemRowInput<'_>, container: ItemContainer) -> ItemView {
+    fn item(
+        row: &script::native::snapshot_source::ItemRowInput<'_>,
+        container: ItemContainer,
+    ) -> ItemView {
         let action_family = match container {
             ItemContainer::Bank | ItemContainer::BankSide => ItemActionFamily::Component,
             ItemContainer::Inventory | ItemContainer::Equipment => ItemActionFamily::Held,
@@ -423,7 +426,7 @@ pub(crate) fn update_native_snapshot(
         }
     }
 
-    fn loc(row: &script_js::wire::SceneEntityInput<'_>) -> LocView {
+    fn loc(row: &script::native::snapshot_source::SceneEntityInput<'_>) -> LocView {
         LocView {
             typecode: row.id,
             info: 0,
@@ -450,7 +453,7 @@ pub(crate) fn update_native_snapshot(
         }
     }
 
-    fn npc(row: &script_js::wire::SceneEntityInput<'_>) -> NpcView {
+    fn npc(row: &script::native::snapshot_source::SceneEntityInput<'_>) -> NpcView {
         NpcView {
             index: usize::try_from(row.index).unwrap_or_default(),
             r#type: usize::try_from(row.id).ok(),
@@ -685,7 +688,7 @@ pub(crate) fn update_native_snapshot(
 }
 
 fn reach_query_view(
-    reach: script_js::wire::ReachViewInput<'_>,
+    reach: script::native::snapshot_source::ReachViewInput<'_>,
 ) -> Option<api::query::ReachQueryView> {
     reach.available.then(|| api::query::ReachQueryView {
         available: true,

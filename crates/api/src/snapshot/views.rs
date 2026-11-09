@@ -437,6 +437,25 @@ pub struct TradeView {
     pub my_offer_stopped: bool,
     /// An explicit stop-transmit was observed while the counterpart exists.
     pub their_offer_stopped: bool,
+    /// The confirm screen's two lists; `None` unless the confirm screen is the
+    /// open main modal. Boxed so a bot that is not at the confirm screen pays
+    /// one pointer (8 bytes) and no heap.
+    pub confirm: Option<Box<TradeConfirmView>>,
+}
+
+/// What the confirm screen lists. The engine stops the offer containers at the
+/// mutual accept (`trade.rs2:80-86`) and the client empties a stopped
+/// container, so these rows are the only record of the agreed trade from then
+/// on. Rows carry the container of the offer they mirror
+/// ([`ItemContainer::TradeMyOffer`] / [`ItemContainer::TradeTheirOffer`]) and no
+/// actions: the confirm screen offers no item operation.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct TradeConfirmView {
+    /// The local player's offer (`tradeconfirm:inv1`, 3542, or `inv2`, 3538).
+    pub mine: Vec<ItemView>,
+    /// The counterpart's offer (`tradeconfirm:otherinv1`, 3532, or
+    /// `otherinv2`, 3539).
+    pub theirs: Vec<ItemView>,
 }
 
 impl Default for TradeView {
@@ -460,6 +479,7 @@ impl Default for TradeView {
             their_offer_stopped: false,
             my_offer_available: false,
             their_offer_available: false,
+            confirm: None,
         }
     }
 }

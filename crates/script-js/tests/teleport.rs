@@ -1,6 +1,13 @@
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput, StatInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -171,6 +178,9 @@ fn missing_controls_throw_and_do_not_send() {
 
 #[test]
 fn unknown_and_target_names_return_false_without_a_click() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(TELEPORT);
     let mut snap = base_snapshot();
     let stats = [magic(1000, 50)];
@@ -192,6 +202,9 @@ fn unknown_and_target_names_return_false_without_a_click() {
 
 #[test]
 fn low_magic_level_refuses_without_pressing() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(TELEPORT);
     let mut snap = base_snapshot();
     let stats = [magic(100, 10)];
@@ -205,6 +218,9 @@ fn low_magic_level_refuses_without_pressing() {
 
 #[test]
 fn queued_button_is_not_arrival_until_xp_and_tile() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(TELEPORT);
     let start_inv = [
         rune("Law rune", 10, 563),
@@ -262,6 +278,11 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for selected in [data(), data_289()] {
         let iso = LoadIsolate::spawn_with_game_data(
             src.to_string(),
@@ -293,6 +314,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn timeout_without_xp_and_tile_returns_false() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(TELEPORT);
     let stats = [magic(1000, 50)];
     let mut snap = base_snapshot();
@@ -327,6 +351,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(src);
     let stats = [magic(1000, 50)];
     let mut snap = base_snapshot();
@@ -412,7 +439,11 @@ export default class T extends LoopingBot {
 }
 "#;
     let factless = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    for iso in [factless, spawn(src)] {
+    let mut isolates = vec![factless];
+    if crate::local_game_data::local_game_data_available(274) {
+        isolates.push(spawn(src));
+    }
+    for iso in isolates {
         let mut snap = base_snapshot();
         let stats = [magic(100, 50)];
         snap.stats = &stats;

@@ -75,9 +75,9 @@ const RANGED_ABORT_SURVIVAL_TICKS: i64 = 12;
 // Selected R289 data: Protect from Melee requires base Prayer 43.
 const RANGED_ABORT_MIN_PROTECT_LEVEL: i64 = 43;
 
-// Outside every nearby static tree's one-tile hunt range. The fixture's first
-// native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
-const TREE_APPROACH: WorldTile = WorldTile {
+/// Start outside the natural tree's one-tile hunt range. The authored walk
+/// enters that range after the exact HP8 baseline and script Start.
+const TREE_APPROACH_START: WorldTile = WorldTile {
     x: 3110,
     z: 3346,
     level: 0,
@@ -385,9 +385,9 @@ impl Case {
             }
             Self::M4 => world
                 .collision
-                .standable(TREE_APPROACH)
-                .then_some(TREE_APPROACH)
-                .ok_or_else(|| "safe Draynor Manor tree approach is not standable".to_owned()),
+                .standable(TREE_APPROACH_START)
+                .then_some(TREE_APPROACH_START)
+                .ok_or_else(|| "Draynor Manor M4 approach start must be standable".to_owned()),
             Self::R1 | Self::R2 | Self::R3 => ranged_placement(self, world).map(|p| p.spawn),
         }
     }
@@ -1125,11 +1125,13 @@ fn preparation_steps(
             ));
         }
         Case::M3 => steps.push(wear_step(RUNE_SCIMITAR_ID)),
-        Case::M4 => steps.push(cheat_step(
-            "drain Hitpoints to eight before hostile-area teleport",
-            "~stat_drain hitpoints 22 0".to_owned(),
-            Proof::Stat { id: 3, min: 8 },
-        )),
+        Case::M4 => {
+            steps.push(cheat_step(
+                "drain Hitpoints to eight before hostile-area teleport",
+                "~stat_drain hitpoints 22 0".to_owned(),
+                Proof::Stat { id: 3, min: 8 },
+            ));
+        }
         Case::M5 | Case::M5Stop => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
@@ -3060,7 +3062,7 @@ fn ranged_dart_count_steps(
                             .as_i64()
                             .is_some_and(|frame_tick| frame_tick < tick)
                     })
-                    .map(&ammo_count)
+                    .map(ammo_count)
             });
             let after = snapshot_tick.and_then(|tick| {
                 capture
@@ -3074,7 +3076,7 @@ fn ranged_dart_count_steps(
                                 .is_some_and(|frame_tick| frame_tick > tick)
                         })
                     })
-                    .map(&ammo_count)
+                    .map(ammo_count)
             });
             let decrement = before.zip(after).map(|(before, after)| before - after);
             json!({
@@ -8249,13 +8251,17 @@ fn run_case(case: Case) {
     let path = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         let quests = Arc::clone(&quests);
+        let world = Arc::clone(world.as_ref().expect("selected navigation world"));
         move |cap| {
+            let navigation =
+                nav_planner::producer::lease(&world).expect("selected navigation zone catalog");
             compile_path(
                 &compile_source,
                 &selected,
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                navigation.zones(),
             )
         }
     })
@@ -8377,6 +8383,16 @@ fn run_case(case: Case) {
     let mut terminal_error = None;
     let mut abort_observation_end = None;
     loop {
+        let relog_login = state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runner
+            .take_relog_login();
+        if relog_login {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
         }
@@ -8724,6 +8740,9 @@ fn staged_hand_in_close(capture: &CombatCapture) -> usize {
 
 #[test]
 fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut capture = staged_hand_in_capture();
     let completed = capture
         .m1_completion
@@ -8760,8 +8779,10 @@ fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
 
 #[test]
 fn staged_hand_in_rejects_a_close_without_the_completion_scroll_open() {
-    // The only CloseModal must happen while the quest completion scroll is the
-    // open main modal (quests.rs2:42-47; dialogue.rs:760-766,1043-1044).
+    if !api::test_support::game_data_available() {
+        return;
+    } // The only CloseModal must happen while the quest completion scroll is the
+      // open main modal (quests.rs2:42-47; dialogue.rs:760-766,1043-1044).
     let root = completion_scroll_root();
     let mut capture = staged_hand_in_capture();
     let close = staged_hand_in_close(&capture);
@@ -8786,8 +8807,10 @@ fn staged_hand_in_rejects_a_close_without_the_completion_scroll_open() {
 
 #[test]
 fn staged_hand_in_rejects_a_close_before_the_final_talk() {
-    // wizard_mizgog.rs2:1-19,39-52: the completion scroll opens after the
-    // second talk, so a close before it cannot be the hand-in's receipt.
+    if !api::test_support::game_data_available() {
+        return;
+    } // wizard_mizgog.rs2:1-19,39-52: the completion scroll opens after the
+      // second talk, so a close before it cannot be the hand-in's receipt.
     let mut capture = staged_hand_in_capture();
     let close = capture.actions.pop().expect("fixture completion close");
     capture.actions.insert(0, close);
@@ -9517,6 +9540,9 @@ fn magic_no_onset_controls_c_through_f_require_positive_complete_evidence() {
 
 #[test]
 fn magic_no_melee_offensive_prayer_control_h_gates_every_magic_case() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut safe = magic_protection_capture(50, 110, 62);
     for case in [
         Case::MageAuto,
@@ -10542,6 +10568,70 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
 }
 
 #[test]
+fn m4_stages_outside_the_natural_tree_hunt_range() {
+    let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4 * 4 * 3]);
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3108,
+                z: 3345,
+                level: 0,
+            },
+            width: 4,
+            height: 3,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav_planner::transport::TransportGraph::default(),
+        Vec::new(),
+    );
+    assert_eq!(
+        Case::M4.stand(&world).unwrap(),
+        WorldTile {
+            x: 3110,
+            z: 3346,
+            level: 0,
+        }
+    );
+}
+
+#[test]
+fn m4_declares_the_tree_crossing_without_a_poison_fixture() {
+    let scenario = scenario_for(
+        Case::M4,
+        TREE_APPROACH_START,
+        None,
+        Arc::new(Mutex::new(CombatCapture::default())),
+    );
+    assert_eq!(Case::M4.items(), &[("lobster", 4)]);
+    let fixture: script::quester::path::PathDocument = serde_json::from_slice(include_bytes!(
+        "../../script/paths/289/fixtures/combat_unattackable.json"
+    ))
+    .unwrap();
+    let stage = &fixture.roles[0].sequences[0];
+    assert_eq!(stage.cross.len(), 1);
+    assert_eq!(stage.cross[0].id, "nasty_tree@3108,3346,0");
+    assert_eq!(stage.steps[0].args["tile"], json!([3108, 3346, 0]));
+    assert_eq!(stage.steps[0].args["radius"], json!(1));
+    let index = |name| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| step.name == name)
+            .unwrap()
+    };
+    let drain = index("drain Hitpoints to eight before hostile-area teleport");
+    let stand = index("stand at the quest start");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(drain < stand && stand < start);
+}
+
+#[test]
 fn m4_walk_out_oracle_reads_the_captured_walk_target_object() {
     let mut capture = CombatCapture::default();
     capture.actions.push(json!({
@@ -10937,6 +11027,9 @@ fn legacy_caller_wire_rejects_unknown_debug_and_wrong_packets() {
 
 #[test]
 fn modal_close_wire_requires_exact_operation_and_packet() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::io::ClientProt289;
     let root = completion_scroll_root();
     let mut action = json!({
@@ -11432,6 +11525,9 @@ fn ranged_other_player_engagement_is_natural_area_interference() {
 
 #[test]
 fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let spawn = WARLORD_ANCHOR;
     for (case, accepted_distances, out_of_range_distance) in [
@@ -11705,6 +11801,9 @@ fn ranged_stale_attack_oracle_uses_snapshot_clock_and_selected_rate() {
 
 #[test]
 fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::io::ClientProt289;
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let facts = selected_ranged_facts(Case::R3, &selected).unwrap();
@@ -11713,27 +11812,27 @@ fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
     capture.random_events.extend([
         ranged_selected_facts_event(Case::R3, &selected),
         json!({"kind": "RangedProbe", "tick": 12, "mode_varp": 1,
-            "combat_root_id": facts.tab_root_id,
-            "combat_style_buttons": [{"component_id": facts.rapid.button, "mode": 1}]}),
+        "combat_root_id": facts.tab_root_id,
+        "combat_style_buttons": [{"component_id": facts.rapid.button, "mode": 1}]}),
     ]);
     capture.actions.extend([
         json!({"kind": "interaction", "sequence": 1, "snapshot_tick": 10, "tick": 30,
-            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::OPHELD1.id],
-            "request": {"op": "wear", "name": ranged_aliases(Case::R3).0},
-            "snapshot": {"inventory": [{"actions": ["Wield"]}]}}),
+        "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::OPHELD1.id],
+        "request": {"op": "wear", "name": ranged_aliases(Case::R3).0},
+        "snapshot": {"inventory": [{"actions": ["Wield"]}]}}),
         json!({"kind": "interaction", "sequence": 2, "snapshot_tick": 12, "tick": 32,
-            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
-            "request": {"op": "if-button", "component_id": facts.rapid.button}}),
+        "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+        "request": {"op": "if-button", "component_id": facts.rapid.button}}),
         json!({"kind": "interaction", "sequence": 3, "snapshot_tick": 13, "tick": 33,
-            "request": {"op": "npc", "action": "Attack"}}),
+        "request": {"op": "npc", "action": "Attack"}}),
     ]);
     capture.observations.extend([
         json!({"native_tick_edge": true, "snapshot_tick": 11, "host_tick": 31,
-            "equipment": [], "combat_root_id": facts.tab_root_id}),
+        "equipment": [], "combat_root_id": facts.tab_root_id}),
         json!({"native_tick_edge": false, "snapshot_tick": 11, "host_tick": 31,
-            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+        "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
         json!({"native_tick_edge": true, "snapshot_tick": 12, "host_tick": 32,
-            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+        "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
     ]);
     assert!(ranged_style_prep_ok(Case::R3, &capture));
     assert_eq!(ranged_style_timing(&capture)["wear_to_style_ticks"], 2);
@@ -11751,6 +11850,9 @@ fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
 
 #[test]
 fn mage_rune_deltas_count_splashes_and_capture_two_cast_ranges() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let npc = |distance, spot_animation, spot_animation_stamp| {
         json!({
             "type": 477,
@@ -12078,6 +12180,9 @@ fn magic_budget_end_is_invalid_not_a_pass() {
 
 #[test]
 fn manual_magic_has_no_incidental_splash_or_distance_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for case in [Case::MageManualFallback, Case::MageManualNoFallback] {
         let end = if case == Case::MageManualNoFallback {
             "Aborted(Unprotected(NoRunes))"

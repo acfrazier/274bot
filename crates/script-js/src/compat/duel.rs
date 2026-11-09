@@ -15,11 +15,11 @@ use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::compat::walk::Resilient;
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, SceneRow, Tile};
-use crate::walk::Resilient;
+use crate::scene::observed::{self, SceneRow, Tile};
 use script::duel_arena::{duel_name, duel_partner_name};
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 
 /// Frozen `CLUE_DUEL_OPTIONS`: obstacles only.
 const RULES: i32 = 1024;
@@ -940,7 +940,7 @@ impl Travel {
                         .push_back("clue duel partner did not complete the handshake".into());
                     return Some(false);
                 }
-                if crate::event_signal::pending() {
+                if crate::scene::event_signal::pending() {
                     if duel_active(controls) {
                         cx.emit(InteractReq::CloseModal);
                     }
@@ -1041,7 +1041,7 @@ impl Family for Close {
         if !open || !ingame {
             return Begin::Done(false);
         }
-        cx.clock().arm(crate::modals::CLOSE_TIMEOUT_MS);
+        cx.clock().arm(crate::compat::modals::CLOSE_TIMEOUT_MS);
         cx.emit(InteractReq::CloseModal);
         Begin::Run(Self {
             kind: args.kind,
@@ -1165,6 +1165,9 @@ mod tests {
     /// fails the crossing, and closes the duel screen only when one is open.
     #[test]
     fn the_handshake_deadline_closes_only_an_open_duel_screen() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         configure(Some(&data));
         settings(json!({ "clueDuelPartner": "Helper" }).as_object().unwrap());
@@ -1177,11 +1180,11 @@ mod tests {
             });
         };
         for (modal, closed) in [(-1, false), (6575, true), (6412, true)] {
-            crate::walk::tests::reset();
+            crate::compat::walk::tests::reset();
             post(1, -1);
             let mut travel = Travel::clue(CLUE_TILE.x, CLUE_TILE.z, CLUE_TILE.level, 1);
             let mut ops = Vec::new();
-            let mut clock = crate::task_clock::InstantTaskClock::new();
+            let mut clock = crate::scene::task_clock::InstantTaskClock::new();
             assert_eq!(
                 travel.drive(&mut Cx::test(&mut ops, &mut clock, None)),
                 None

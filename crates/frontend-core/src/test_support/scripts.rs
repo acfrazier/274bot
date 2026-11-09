@@ -243,7 +243,9 @@ impl Scripts {
     #[cfg(feature = "js")]
     /// Replace the legacy global per-card store with one at `path` (tests).
     pub fn set_legacy_store(&mut self, path: PathBuf) {
-        self.set_legacy(script::ScriptSettingsStore::at(path));
+        self.set_legacy(
+            script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
+        );
     }
 
     #[cfg(feature = "js")]
@@ -551,7 +553,7 @@ impl TestStore {
     /// The store at `path` (tests).
     pub fn at(path: PathBuf) -> Self {
         Self {
-            store: script::ScriptSettingsStore::at(path),
+            store: script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
         }
     }
 
@@ -604,6 +606,7 @@ impl NativeStatus {
             active_settings: 1,
             pending_settings: None,
             fields: std::sync::Arc::from([]),
+            survival: script::survival::SurvivalReport::default(),
             failure: None,
         }
     }

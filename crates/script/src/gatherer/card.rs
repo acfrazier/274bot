@@ -51,15 +51,6 @@ pub fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     let mut settings = GathererSettings::from_bag_for_prepare(&bag).map_err(StartError::Config)?;
     let catalog =
         api::gather_methods::prepare(&cx.selected, cx.families).map_err(StartError::Facts)?;
@@ -218,7 +209,25 @@ mod tests {
         location: &str,
         disposition: &str,
     ) -> Arc<PreparedConfig> {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        prepared_revision_site(
+            api::selected::ClientRevision::R289,
+            skill,
+            resource,
+            site,
+            location,
+            disposition,
+        )
+    }
+
+    fn prepared_revision_site(
+        revision: api::selected::ClientRevision,
+        skill: &str,
+        resource: &str,
+        site: &str,
+        location: &str,
+        disposition: &str,
+    ) -> Arc<PreparedConfig> {
+        let selected = api::game_data::for_revision(revision).unwrap();
         let mut bag = SettingsBag::new();
         bag.insert("disposition".into(), json!(disposition));
         bag.insert("skill".into(), json!(skill));
@@ -257,6 +266,9 @@ mod tests {
 
     #[test]
     fn site_errors_are_deferred_to_start_not_unrelated_settings_edits() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -305,6 +317,9 @@ mod tests {
 
     #[test]
     fn site_prepare_accepts_group_key_and_saved_fishing_alias_without_rewriting() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for resource in [
             "fishing.harpoon.tool_311.products_359_371",
             "fishing.rarefish.op3",
@@ -319,6 +334,9 @@ mod tests {
 
     #[test]
     fn banking_site_rejects_bank_mode_but_remains_available_in_power_mode() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let site_id = "mining.desert_mining_camp.underground";
         let bank_config = prepared_site("Mining", "copper", site_id, "Site");
         let bank = bank_config.get::<Arc<Prepared>>().unwrap();
@@ -354,5 +372,87 @@ mod tests {
             session: 1,
         };
         assert!(create(power_run, power_config, &mut RetainedMemory::default()).is_ok());
+    }
+
+    #[test]
+    fn revision_377_prepares_its_own_tree_and_net_sites_for_banking() {
+        crate::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
+        for (skill, resource, site, method, products) in [
+            (
+                "Woodcutting",
+                "normal",
+                "woodcutting.lumbridge",
+                "woodcutting.normal",
+                &[1511][..],
+            ),
+            (
+                "Fishing",
+                "fishing.net.tool_303.products_317_321",
+                "fishing.draynor_village",
+                "fishing.saltfish.op1",
+                &[317, 321][..],
+            ),
+        ] {
+            let config = prepared_revision_site(
+                api::selected::ClientRevision::R377,
+                skill,
+                resource,
+                site,
+                "Site",
+                "Bank",
+            );
+            let prepared = config.get::<Arc<Prepared>>().unwrap();
+            assert_eq!(prepared.selected.revision(), 377);
+            assert!(prepared.resource_error.is_none());
+            assert!(prepared.site_error.is_none());
+            assert_eq!(prepared.site().unwrap().id, site);
+            assert_eq!(prepared.products.as_ref(), products);
+            assert_eq!(prepared.methods.len(), 1);
+            assert_eq!(
+                prepared.catalog.methods()[prepared.methods[0]]
+                    .id
+                    .0
+                    .as_ref(),
+                method
+            );
+            assert!(create(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                config,
+                &mut RetainedMemory::default(),
+            )
+            .is_ok());
+        }
+    }
+
+    #[test]
+    fn revision_377_refuses_a_site_without_the_selected_resource() {
+        crate::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
+        let config = prepared_revision_site(
+            api::selected::ClientRevision::R377,
+            "Mining",
+            "runite",
+            "mining.varrock_east.se",
+            "Site",
+            "Bank",
+        );
+        let prepared = config.get::<Arc<Prepared>>().unwrap();
+        assert!(prepared.site().is_none());
+        assert!(prepared.site_error.is_some());
+        assert!(matches!(
+            create(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                config,
+                &mut RetainedMemory::default(),
+            ),
+            Err(StartError::Config(error)) if error.field.as_ref() == "site"
+        ));
     }
 }

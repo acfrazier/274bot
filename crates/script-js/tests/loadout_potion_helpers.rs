@@ -1,5 +1,5 @@
 use client::io::ClientRevision;
-use script_js::wire::{ItemRowInput, SnapshotInput, StatInput};
+use script::native::snapshot_source::{ItemRowInput, SnapshotInput, StatInput};
 use script_js::{LoadIsolate, LoadShape};
 
 fn item(name: &'static str, id: i32, slot: i32, count: i32) -> ItemRowInput<'static> {
@@ -95,7 +95,7 @@ fn snapshot<'a>(
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -124,6 +124,30 @@ fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
 
 #[test]
 fn v2_food_of_uses_fixed_heals_and_requires_selected_cache() {
+    let iso = LoadIsolate::spawn(
+        r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify(api.foodOf({ loadout: { carry: [{ item: 'Lobster' }] }, fallback: 'Trout' }));
+}
+"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(
+        value["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
@@ -153,31 +177,13 @@ export function tick(api) {
         assert_eq!(value["badFallback"]["error"], "invalid-args");
         assert_eq!(value["badCarry"]["error"], "invalid-args");
     }
-    let iso = LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
-export function tick(api) {
-  globalThis.__probe = JSON.stringify(api.foodOf({ loadout: { carry: [{ item: 'Lobster' }] }, fallback: 'Trout' }));
-}
-"#
-        .into(),
-        LoadShape::NativeTick,
-        vec![],
-    )
-    .unwrap();
-    post_base(&iso, 1);
-    iso.on_game_tick(1);
-    let value: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
-    iso.join();
-    assert_eq!(
-        value["error"],
-        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
-    );
 }
 
 #[test]
 fn v2_gear_weapon_supplies_use_hat_first_slots_and_qty_limits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_v2(
         r#"
 export const apiVersion = 2;
@@ -231,6 +237,9 @@ export function tick(api) {
 
 #[test]
 fn v2_range_loadout_uses_selected_darts_on_both_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
@@ -312,6 +321,9 @@ export function tick(api) {
 
 #[test]
 fn v2_boost_and_plans_and_sip_keep_missingness_and_numeric_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_v2(
         r#"
 export const apiVersion = 2;
@@ -406,6 +418,9 @@ export function tick(api) {
 
 #[test]
 fn new_loadout_v2_is_not_a_rustyscript_json_callback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_v2(
         r#"
 export const apiVersion = 2;
@@ -436,6 +451,9 @@ export function tick(api) {
 
 #[test]
 fn example_loadout_potion_v2_ts_runs_all_eight_on_real_inv_stats() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("loadout_potion_v2.ts");

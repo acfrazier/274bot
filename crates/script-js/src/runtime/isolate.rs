@@ -18,11 +18,10 @@ use thread::isolate_main;
 use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
 
 use super::bindings::wire_runtime;
-use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, run_policy_v8, shape};
+use crate::library::shape::LoadShape;
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -100,7 +99,7 @@ const CLIENT_FRAME_ACK_POLL: Duration = Duration::from_millis(100);
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long setup waits for V8 creation and startup evaluation before the
 /// owning isolate handle interrupts it.
-pub(super) const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Validation uses a shorter independent deadline because it is a
 /// throwaway candidate check, not a live Start.
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -147,11 +146,26 @@ const MAX_QUEUED_COMMANDS: usize = 64;
 struct SnapshotMessage {
     bytes: Vec<u8>,
     #[cfg(feature = "memory-profile")]
-    _lease: crate::memory_profile::SnapshotLease,
+    _lease: crate::runtime::memory_profile::SnapshotLease,
 }
-pub use script::interact::QueuedInteract;
+use script::interact::QueuedInteract;
+use script::native::recovery_hints::RecoveryHintsCell;
+use script::native::seat_rows::{HeldWaitFacts, QueuedSeatBatch};
 
-pub use script::native::seat_rows::{HeldWaitFacts, QueuedSeatBatch};
+/// What one dispatched `Tick` command does on the isolate thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TickMode {
+    /// A game tick: record the tick, step every machine, run the script.
+    Full,
+    /// An evidence wake: recheck parked waits against the changed snapshot
+    /// without advancing game-tick listeners, machines or the loop.
+    WaitOnly,
+    /// A seat answer wake: step, resume and settle only the native rows
+    /// whose prompt or terminal the posted seat page changed. `release_floor`
+    /// is the seat result sequence at the last accepted dispatch: only
+    /// terminals the seat published after it may release their awaits.
+    SeatPage { release_floor: u64 },
+}
 
 enum IsolateCmd {
     Tick {
@@ -159,7 +173,7 @@ enum IsolateCmd {
         generation: u64,
         input_identity: u64,
         evidence_sequence: u64,
-        wait_only: bool,
+        mode: TickMode,
     },
     /// One host-owned client main-loop frame; acknowledged after callback dispatch.
     ClientFrame,
@@ -198,7 +212,7 @@ enum IsolateCmd {
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
     Loadouts(Vec<api::loadout::Loadout>),
     /// The slot's recovery hints, which outlive this isolate.
-    RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
+    RecoveryHints(std::sync::Arc<RecoveryHintsCell>),
     /// The owning slot's run-fenced compatibility context.
     RuntimeContext(Arc<script::surface::ScriptRuntimeContext>),
     Pause,
@@ -223,6 +237,19 @@ enum IsolateCmd {
         generation: u64,
     },
     Probe(String, Sender<Result<serde_json::Value, String>>),
+    /// Test seam: hold the isolate thread until the gate opens, after
+    /// telling the caller that the thread reached this command.
+    #[cfg(feature = "test-hooks")]
+    TestBlock {
+        release: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+        entered: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+    },
+    /// Test seam: a command that does nothing.
+    #[cfg(feature = "test-hooks")]
+    TestNoop,
+    /// Test seam: collect V8 garbage and return the isolate's used heap.
+    #[cfg(feature = "test-hooks")]
+    TestCollectHeap(std::sync::mpsc::Sender<usize>),
     /// Isolate teardown. `invoke_hook` is true for operator join and
     /// self-stop; raw Drop sends false so a dying isolate never runs
     /// `onStop` into a dropped rx.
@@ -273,7 +300,7 @@ enum ThreadMsg {
     /// must recreate the isolate; in-place single-flight recovery is unsafe.
     ScriptCut,
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
-    /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
+    /// FlatBuffer `InteractBatch` of [`script::interact::InteractReq`]s
     /// forwarded after the tick's JS finished (parked or not).
     Interact {
         bytes: Vec<u8>,
@@ -285,7 +312,7 @@ enum ThreadMsg {
         bytes: Vec<u8>,
         generation: u64,
         observed_walk_outcome_seq: u64,
-        machine_events: Vec<crate::machine::MachineEvent>,
+        machine_events: Vec<script::native::seat_rows::SeatMachineEvent>,
     },
     IgnoredRandoms(Vec<String>),
     /// The tick whose work has fully finished. `report_errors` is false for
@@ -311,10 +338,10 @@ enum ThreadMsg {
     /// The tick's recorded paint frame. Both ends are this crate in this
     /// process, so the frame crosses as the typed value the recorder built:
     /// no FlatBuffer encode/verify/decode, and every reader shares one frame.
-    Paint(std::sync::Arc<script::shim::ScriptPaint>),
+    Paint(std::sync::Arc<script::paint::ScriptPaint>),
 }
 
-pub(crate) use script::surface::TickOutcome;
+use script::surface::TickOutcome;
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
 /// on Start; the Runtime lives on the thread and is reached through a
@@ -322,7 +349,7 @@ pub(crate) use script::surface::TickOutcome;
 /// observed game-tick edges; stale ticks are skipped.
 pub struct LoadIsolate {
     #[cfg(feature = "memory-profile")]
-    counters: std::sync::Arc<crate::memory_profile::Counters>,
+    counters: std::sync::Arc<crate::runtime::memory_profile::Counters>,
     #[cfg(feature = "memory-profile")]
     last_completed: std::sync::atomic::AtomicU64,
     #[cfg(feature = "memory-profile")]
@@ -331,7 +358,7 @@ pub struct LoadIsolate {
     walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
     /// Rust-only Load journal lease shared with the isolate thread. Native
     /// v2 tick cards and compatibility cards use the same journal adapter.
-    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
+    compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     /// Host-owned identity of forwarded paint frames. Unique per spawn
     /// and bumped on session reset so a stale overlay generation cannot
     /// match a later isolate that advertises the same button id. Shared
@@ -375,7 +402,7 @@ pub struct LoadIsolate {
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<QueuedInteract>>,
     /// Watchdog lifecycle facts are separate from gameplay interactions.
-    lifecycle: Mutex<Vec<script::shim::InteractReq>>,
+    lifecycle: Mutex<Vec<script::interact::InteractReq>>,
     /// Ordered typed seat batches, each retaining its source generation and
     /// one push-time walk outcome stamp for the physical wire batch.
     seat_batches: Mutex<VecDeque<QueuedSeatBatch>>,
@@ -389,9 +416,9 @@ pub struct LoadIsolate {
     /// processed yet, so stale release rows are not exposed before then.
     held_fence: Mutex<Option<u64>>,
     /// The latest paint frame the tick thread forwarded (the
-    /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
+    /// [`script::paint::ScriptPaint`] the recorder built after each tick),
     /// shared with every reader instead of copied per read.
-    paint: Mutex<Option<std::sync::Arc<script::shim::ScriptPaint>>>,
+    paint: Mutex<Option<std::sync::Arc<script::paint::ScriptPaint>>>,
     /// The bot instance's random-ignore list, forwarded by the tick
     /// thread whenever it changes (same source as the old probe path).
     ignored_randoms: Mutex<Vec<String>>,
@@ -412,11 +439,14 @@ pub struct LoadIsolate {
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
     proof: TeardownProof,
+    /// Test seam: the host watchdog never interrupts a slow execution.
+    #[cfg(feature = "test-hooks")]
+    watchdog_suppressed: AtomicBool,
 }
 
 /// ScriptRunner.stop receipt copied off the isolate thread. This is a
 /// single bounded value, independent of the panel's destructive log queue.
-pub use script::surface::ScriptStopReceipt;
+use script::surface::ScriptStopReceipt;
 
 /// Non-blocking isolate boot result. Commands already queue until setup
 /// finishes, so the host never waits on V8 creation on the caller thread.
@@ -425,6 +455,22 @@ pub enum Ready {
     Pending,
     Ready,
     Failed(String),
+}
+
+/// Holds the isolate thread blocked until it drops (test seam).
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub struct ThreadBlock {
+    gate: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+}
+
+#[cfg(feature = "test-hooks")]
+impl Drop for ThreadBlock {
+    fn drop(&mut self) {
+        let (lock, cv) = &*self.gate;
+        *lock.lock().unwrap() = true;
+        cv.notify_all();
+    }
 }
 
 enum SetupMessage {
@@ -851,7 +897,7 @@ impl LoadIsolate {
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
     pub fn validate_prepared_batch(
-        cards: Vec<super::library::PreparedCard>,
+        cards: Vec<crate::library::store::PreparedCard>,
     ) -> Result<ValidationBatch, ValidationError> {
         validation::validate_batch(cards)
     }
@@ -879,13 +925,14 @@ impl LoadIsolate {
         let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
         #[cfg(feature = "memory-profile")]
-        let counters = crate::memory_profile::registered();
+        let counters = crate::runtime::memory_profile::registered();
         #[cfg(feature = "memory-profile")]
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
-        let compat_journal = (shape != LoadShape::Reject)
-            .then(|| std::sync::Arc::new(crate::quest_journal::CompatJournalLease::default()));
+        let compat_journal = (shape != LoadShape::Reject).then(|| {
+            std::sync::Arc::new(crate::compat::quest_journal::CompatJournalLease::default())
+        });
         let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
         let thread_teardown = teardown.clone();
@@ -1008,6 +1055,8 @@ impl LoadIsolate {
             in_flight: Mutex::new(None),
             teardown,
             proof,
+            #[cfg(feature = "test-hooks")]
+            watchdog_suppressed: AtomicBool::new(false),
         })
     }
 
@@ -1034,7 +1083,7 @@ impl LoadIsolate {
         }
         let message = SnapshotMessage {
             #[cfg(feature = "memory-profile")]
-            _lease: crate::memory_profile::SnapshotLease::new(
+            _lease: crate::runtime::memory_profile::SnapshotLease::new(
                 self.counters.clone(),
                 bytes.len(),
                 bytes.capacity(),
@@ -1102,18 +1151,12 @@ impl LoadIsolate {
         Some(self.frame_dispatch.handle())
     }
 
-    /// Deliver one host-owned client-loop frame without queueing another
-    /// frame while the isolate is still handling this one.
-    pub(crate) fn on_client_frame(&mut self) -> bool {
-        self.begin_client_frame()
-            .is_some_and(|dispatch| dispatch.wait_for_ack())
-    }
-
     /// Deliver a client-loop frame through the real BotHost producer in tests.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn test_client_frame(&mut self) -> bool {
-        self.on_client_frame()
+        self.begin_client_frame()
+            .is_some_and(|dispatch| dispatch.wait_for_ack())
     }
 
     /// Post available loadouts before subsequent tick commands.
@@ -1134,7 +1177,7 @@ impl LoadIsolate {
 
     /// Use the slot's frozen `RecoveryHints` for this isolate, so a watchdog
     /// restart finds what the previous run latched.
-    pub fn post_recovery_hints(&self, hints: std::sync::Arc<super::RecoveryHintsCell>) {
+    pub fn post_recovery_hints(&self, hints: std::sync::Arc<RecoveryHintsCell>) {
         self.send(IsolateCmd::RecoveryHints(hints));
     }
 
@@ -1156,7 +1199,7 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
-        self.dispatch_tick(snap_tick, input_identity, 0, false);
+        self.dispatch_tick(snap_tick, input_identity, 0, TickMode::Full);
     }
 
     /// Recheck parked waits against a changed snapshot without advancing
@@ -1169,7 +1212,28 @@ impl LoadIsolate {
         input_identity: u64,
         evidence_sequence: u64,
     ) {
-        self.dispatch_tick(snap_tick, input_identity, evidence_sequence, true);
+        self.dispatch_tick(
+            snap_tick,
+            input_identity,
+            evidence_sequence,
+            TickMode::WaitOnly,
+        );
+    }
+
+    /// Dispatch the page that the host posted for a seat answer: step,
+    /// resume and settle only the native rows that page changed, at the
+    /// latest observed tick, with no tick time or budget advance. Releases
+    /// only the terminals whose seat result sequence is above
+    /// `release_floor`. `false`: the thread is stopped or tearing down, the
+    /// paired page was refused, or the queue is backlogged; nothing was
+    /// queued, so the caller keeps its obligation and retries.
+    pub fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        self.dispatch_tick(
+            snap_tick,
+            input_identity,
+            0,
+            TickMode::SeatPage { release_floor },
+        )
     }
 
     /// Record a producer delta that carries changed evidence.
@@ -1190,15 +1254,15 @@ impl LoadIsolate {
         snap_tick: u64,
         input_identity: u64,
         evidence_sequence: u64,
-        wait_only: bool,
-    ) {
+        mode: TickMode,
+    ) -> bool {
         // Before Ready no tick has started, so none can be over budget.
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
         {
-            return;
+            return false;
         }
         let generation = self
             .work_generation
@@ -1211,12 +1275,20 @@ impl LoadIsolate {
             .snapshot_refused
             .swap(false, std::sync::atomic::Ordering::AcqRel)
             || self.backlogged();
-        self.interrupt_slow_execution(ready);
+        #[cfg(feature = "test-hooks")]
+        let watchdog = !self
+            .watchdog_suppressed
+            .load(std::sync::atomic::Ordering::Acquire);
+        #[cfg(not(feature = "test-hooks"))]
+        let watchdog = true;
+        if watchdog {
+            self.interrupt_slow_execution(ready);
+        }
         if !backlogged {
             *self.in_flight.lock().unwrap() = Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
-            return;
+            return false;
         }
         #[cfg(feature = "memory-profile")]
         self.dispatched
@@ -1226,8 +1298,112 @@ impl LoadIsolate {
             generation,
             input_identity,
             evidence_sequence,
-            wait_only,
+            mode,
+        })
+    }
+
+    /// Stop the host watchdog from interrupting a slow execution, so a slow
+    /// test execution ends on its own.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn suppress_execution_watchdog_for_test(&self) {
+        self.watchdog_suppressed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Queue a seat page dispatch directly, without sampling or arming the
+    /// host watchdog, as [`Self::enqueue_tick_without_watchdog_for_test`]
+    /// does for a game tick.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn enqueue_seat_page_without_watchdog_for_test(&self, snap_tick: u64, release_floor: u64) {
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        self.send(IsolateCmd::Tick {
+            tick: snap_tick,
+            generation,
+            input_identity: 0,
+            evidence_sequence: 0,
+            mode: TickMode::SeatPage { release_floor },
         });
+    }
+
+    /// Block the isolate thread until the returned guard drops. Returns
+    /// after the thread has received the blocking command, so every command
+    /// queued after this call waits behind it.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn block_thread_for_test(&self) -> ThreadBlock {
+        let gate = std::sync::Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let entered = std::sync::Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        self.send(IsolateCmd::TestBlock {
+            release: std::sync::Arc::clone(&gate),
+            entered: std::sync::Arc::clone(&entered),
+        });
+        let (lock, cv) = &*entered;
+        let mut seen = lock.lock().unwrap();
+        while !*seen {
+            let (next, timeout) = cv.wait_timeout(seen, Duration::from_secs(10)).unwrap();
+            seen = next;
+            assert!(
+                !timeout.timed_out(),
+                "the isolate thread never reached the test block"
+            );
+        }
+        ThreadBlock { gate }
+    }
+
+    /// Queue one command that does nothing, to fill the isolate's backlog.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn queue_noop_for_test(&self) {
+        self.send(IsolateCmd::TestNoop);
+    }
+
+    /// Collect V8 garbage on the isolate thread and return its used heap.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn collected_heap_bytes_for_test(&self) -> Result<usize, String> {
+        let (tx, rx) = mpsc::channel();
+        if !self.send(IsolateCmd::TestCollectHeap(tx)) {
+            return Err("heap collection: isolate thread gone".into());
+        }
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|error| format!("heap collection: {error}"))
+    }
+
+    /// The backlog counter that the dispatch check compares with its bound.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn queued_commands_for_test(&self) -> usize {
+        self.queued.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// The `SeatPage` commands that passed the early gate and ran.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn executed_seat_pages_for_test(&self) -> u64 {
+        self.teardown.lock().unwrap().executed_seat_pages
+    }
+
+    /// The producer evidence generation of the posted pages: changed seat
+    /// pages may advance it, the seat page command must not.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn snapshot_evidence_sequence_for_test(&self) -> u64 {
+        self.snapshot_evidence_sequence()
+    }
+
+    /// The isolate thread's machine host: rows with their pass counts and
+    /// budget use, and the settled entries with their seat stamps. A round
+    /// trip through the isolate thread, so it also waits for every command
+    /// queued before it.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn machine_host_for_test(&self) -> serde_json::Value {
+        self.probe("JSON.parse(__rs2b0t_test_machine_host())")
+            .expect("the machine host report")
     }
 
     /// Queue a game tick directly, without sampling or arming the host
@@ -1248,7 +1424,7 @@ impl LoadIsolate {
             generation,
             input_identity: 0,
             evidence_sequence: 0,
-            wait_only: false,
+            mode: TickMode::Full,
         });
     }
 
@@ -1275,7 +1451,9 @@ impl LoadIsolate {
         self.counters.snapshot()
     }
     #[cfg(feature = "memory-profile")]
-    pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
+    pub fn memory_metrics_handle(
+        &self,
+    ) -> std::sync::Arc<crate::runtime::memory_profile::Counters> {
         self.counters.clone()
     }
 
@@ -1576,7 +1754,7 @@ impl LoadIsolate {
 
     /// Diagnostics/tests only: this drops each row's enqueue stamp and MUST NOT
     /// be used for production walking dispatch.
-    pub fn drain_interacts(&self) -> Vec<script::shim::InteractReq> {
+    pub fn drain_interacts(&self) -> Vec<script::interact::InteractReq> {
         self.drain_interacts_stamped()
             .into_iter()
             .map(|queued| queued.req)
@@ -1598,13 +1776,13 @@ impl LoadIsolate {
         self.interacts
             .lock()
             .unwrap()
-            .retain(|queued| !matches!(&queued.req, script::shim::InteractReq::Mouse { .. }));
+            .retain(|queued| !matches!(&queued.req, script::interact::InteractReq::Mouse { .. }));
     }
 
     /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
     /// loop/wait settle, recoveryAnchor replies) from the same FlatBuffer
     /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
-    pub fn drain_lifecycle(&self) -> Vec<script::shim::InteractReq> {
+    pub fn drain_lifecycle(&self) -> Vec<script::interact::InteractReq> {
         self.pump_logs();
         std::mem::take(&mut *self.lifecycle.lock().unwrap())
     }
@@ -1645,6 +1823,33 @@ impl LoadIsolate {
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
         lease.live(generation, now)
+    }
+
+    /// The live compatibility journal read with its transaction identity
+    /// (token and work generation) and its hold's own wall bound (from its
+    /// begin, renewed at its click).
+    pub(crate) fn compat_journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
+        let lease = self.compat_journal.as_ref()?;
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        lease.wait(generation, now)
+    }
+
+    /// The in-isolate owners whose compatibility journal hold has expired at
+    /// `now`: the host's drain drops their queued rows
+    /// ([`crate::quest_journal::CompatJournalLease::expired_owners`]).
+    pub(crate) fn compat_journal_expired_owners(
+        &self,
+        now: Instant,
+    ) -> [Option<api::identity::RequestId>; 2] {
+        let Some(lease) = self.compat_journal.as_ref() else {
+            return [None; 2];
+        };
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        lease.expired_owners(generation, now)
     }
 
     fn revoke_compat_journal(&self) {
@@ -1759,7 +1964,7 @@ impl LoadIsolate {
     /// recorder's frame after every tick that painted, shared, not
     /// copied). `None` when the script has not painted yet. No probe
     /// round-trip — the host reads this every frame.
-    pub fn paint(&self) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
+    pub fn paint(&self) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
         self.pump_logs();
         self.paint.lock().unwrap().clone()
     }
@@ -2182,10 +2387,10 @@ impl Drop for LoadIsolate {
     }
 }
 
-fn discarded_walk_id(req: &script::shim::InteractReq) -> Option<u64> {
+fn discarded_walk_id(req: &script::interact::InteractReq) -> Option<u64> {
     match req {
-        script::shim::InteractReq::Walk { request_id, .. }
-        | script::shim::InteractReq::WalkNear { request_id, .. }
+        script::interact::InteractReq::Walk { request_id, .. }
+        | script::interact::InteractReq::WalkNear { request_id, .. }
             if *request_id != 0 =>
         {
             Some(*request_id)
@@ -2203,13 +2408,13 @@ fn hold_walk_releases(
     reqs: impl IntoIterator<Item = QueuedInteract>,
 ) {
     for queued in reqs {
-        let script::shim::InteractReq::AbortWalk { request_id } = &queued.req else {
+        let script::interact::InteractReq::AbortWalk { request_id } = &queued.req else {
             continue;
         };
         if held.iter().any(|held| {
             matches!(
                 &held.req,
-                script::shim::InteractReq::AbortWalk { request_id: held_id }
+                script::interact::InteractReq::AbortWalk { request_id: held_id }
                     if held_id == request_id
             )
         }) {
@@ -2227,7 +2432,7 @@ mod tests;
 #[cfg(test)]
 mod kept_reconnect_release_tests {
     use super::*;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     #[test]
     fn stale_gameplay_cannot_evict_a_kept_abort_walk_release() {
@@ -2248,6 +2453,8 @@ mod kept_reconnect_release_tests {
                 request_id: id as u64 + 1,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             },
             observed_walk_outcome_seq: 3,
         });

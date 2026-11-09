@@ -442,10 +442,20 @@ impl TuiApp {
                 let run = self.script_run(command);
                 return AppAction::batch(show, run);
             }
-            Command::ScriptStart
-            | Command::ScriptPause
-            | Command::ScriptStop
-            | Command::ScriptParams => return self.script_run(command),
+            Command::ScriptStart => {
+                let quester_selected = self
+                    .script_sel
+                    .as_ref()
+                    .and_then(|selection| selection.compiled_id())
+                    == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+                if quester_selected && self.screen != Screen::Script {
+                    return self.show_screen(Screen::Script);
+                }
+                return self.script_run(command);
+            }
+            Command::ScriptPause | Command::ScriptStop | Command::ScriptParams => {
+                return self.script_run(command);
+            }
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => {
                 return self.script_run(command);
@@ -659,10 +669,19 @@ impl TuiApp {
         }
     }
 
-    /// The Script tab's letters (`SCRIPT_KEYS`). Its Browse, Load and
-    /// catalog popups never get here: they own the keys while open.
+    /// The Script tab's letters (`SCRIPT_KEYS`) and the Quester disclosure's
+    /// vertical scrolling. Browse and Load popups own their keys while open.
     fn script_pane_key(&mut self, key: KeyEvent) -> AppAction {
+        let page = i32::from(self.script_area.height.saturating_sub(12).max(1));
         match key.code {
+            KeyCode::Char('j') if is_text(&key) && self.scroll_quester_start_zones(1) => {
+                AppAction::None
+            }
+            KeyCode::Char('k') if is_text(&key) && self.scroll_quester_start_zones(-1) => {
+                AppAction::None
+            }
+            KeyCode::PageDown if self.scroll_quester_start_zones(page) => AppAction::None,
+            KeyCode::PageUp if self.scroll_quester_start_zones(-page) => AppAction::None,
             KeyCode::Char(c) if is_text(&key) => {
                 script_key_command(c).map_or(AppAction::None, |command| self.run_command(command))
             }
@@ -696,6 +715,7 @@ impl TuiApp {
             &mut self.settings_state,
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+        .pvp_start_fights(&mut self.pvp_start_fights)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
         .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
         .quester_paths(&mut self.quester_paths);
@@ -760,6 +780,7 @@ impl TuiApp {
             SettingsKey::PauseScriptOnManualWalkAbort => {
                 self.pause_script_on_manual_walk_abort_dirty = true;
             }
+            SettingsKey::PvpStartFights(on) => self.pvp_start_fights_request = Some(on),
             SettingsKey::QuesterPathsChanged => {
                 self.quester_paths_dirty = true;
                 return AppAction::DismissPathsNotice;

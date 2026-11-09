@@ -1,8 +1,9 @@
 //! The operator's saved Load order, persisted in the preferences document
 //! as `profile_order`: an object keyed by each profile's vault identity
-//! (its uid, as text) with a sort key per profile. It orders the fleet
-//! members, Load all and every fleet view; Name and Status are view sorts
-//! that never change it.
+//! (its uid, as text) with a sort key per profile. One shared order serves
+//! the Fleet and the Profiles window in both front ends: it orders the
+//! fleet members, Load all, every fleet view and the Profiles list; Name
+//! and Status are view sorts that never change it.
 //!
 //! The stored form is one small member per profile (`"<uid>": <key>`): a
 //! preference value is at most 4,096 bytes, so the preferences service
@@ -14,7 +15,10 @@
 //! range renumbers the order when it is read. A name is never stored: a
 //! rename keeps the profile's identity, so its place follows the vault
 //! whether the rename commits or fails. A profile new to the vault is
-//! appended. A deleted profile's entry is kept, unordered, while its
+//! appended; several created in one sequence since the last reconcile —
+//! an imported batch — append in that creation sequence, so the batch
+//! keeps the order its source file listed, whatever order its writes
+//! settled in. A deleted profile's entry is kept, unordered, while its
 //! deletion is not durable (a failed deletion puts it back in its place),
 //! and removed by the next save once it is. A new profile's uid is above
 //! every uid the order has held, so it never takes a deleted profile's
@@ -53,6 +57,19 @@ pub enum ReorderOp {
     /// Move the marked profiles to the top, in their current relative
     /// order.
     MarkedToTop,
+}
+
+/// The list a staged reorder came from. The Fleet list reorders only while
+/// it shows the saved (Load) order, and its Move marked to top reads the
+/// fleet model's marks. The Profiles list always shows the saved order, so
+/// its moves never depend on the Fleet's temporary view sort, and it has no
+/// marks to move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReorderSurface {
+    /// A Fleet row or rail drag, a TUI move key, Move marked to top.
+    Fleet,
+    /// A Profiles-window row drag.
+    Profiles,
 }
 
 /// The gap between neighbouring sort keys of a seeded or renumbered order.
@@ -181,6 +198,43 @@ impl ProfileOrder {
         self.names.iter().position(|candidate| candidate == name)
     }
 
+    /// Every profile's name and identity, in order. The Profiles list
+    /// renders this directly: no copy, no per-frame allocation.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, ProfileIdentity)> + '_ {
+        self.names
+            .iter()
+            .zip(&self.live)
+            .map(|(name, entry)| (name.as_str(), ProfileIdentity::uid(entry.uid)))
+    }
+
+    /// The place (0 first) of the profile `identity` names, when it is a
+    /// vault profile in this order.
+    pub fn position_of(&self, identity: ProfileIdentity) -> Option<usize> {
+        self.live
+            .iter()
+            .position(|entry| ProfileIdentity::uid(entry.uid) == identity)
+    }
+
+    /// The move a drop of `moving` onto `target` asks for in a list that
+    /// shows this whole order (the Profiles list): after the target when
+    /// the moving profile is above it, else before it. `None` when nothing
+    /// would move (the same profile, or one this order lacks).
+    pub fn drop_op(&self, moving: ProfileIdentity, target: ProfileIdentity) -> Option<ReorderOp> {
+        let from = self.position_of(moving)?;
+        let to = self.position_of(target)?;
+        if from == to {
+            return None;
+        }
+        Some(ReorderOp::Move {
+            moving,
+            to: if from < to {
+                Placement::After(target)
+            } else {
+                Placement::Before(target)
+            },
+        })
+    }
+
     /// Whether an entry the vault lacks is held (its deletion is not
     /// durable yet).
     pub(crate) fn holds_deleted(&self) -> bool {
@@ -195,14 +249,21 @@ impl ProfileOrder {
     /// Make the order hold exactly the vault's profiles (`vault`: uid and
     /// name, in vault order): a stored profile keeps its place under its
     /// current name, and a profile the order lacks is appended (seeded in
-    /// vault order when nothing is stored). An entry the vault lacks stays
+    /// vault order when nothing is stored). Profiles created since the
+    /// last reconcile (`created`: their uids in creation sequence) append
+    /// in that sequence instead, so a batch created in one sequence — an
+    /// import, whose writes the front ends submit in file order — keeps
+    /// that sequence however its writes settled; every other new profile
+    /// keeps vault order after them. An entry the vault lacks stays
     /// stored, unordered, while `pending(uid)` says its deletion is not
-    /// durable, and is dropped otherwise. Report storage changes separately
-    /// from the displayed sequence: a rename needs a view refresh, not a save.
+    /// durable, and is dropped otherwise. Report storage changes
+    /// separately from the displayed sequence: a rename needs a view
+    /// refresh, not a save.
     pub(crate) fn reconcile<'a>(
         &mut self,
         vault: impl Iterator<Item = (i32, &'a str)>,
         pending: impl Fn(i32) -> bool,
+        created: &[i32],
     ) -> Reconciled {
         let mut entries: Vec<Entry> = self.live.drain(..).chain(self.held.drain(..)).collect();
         entries.sort_by_key(|entry| (entry.key, entry.uid));
@@ -225,6 +286,14 @@ impl ProfileOrder {
                 None => dropped = true,
             }
         }
+        // Profiles the order lacked: just-created ones first, in creation
+        // sequence; the rest keep vault order (the sort is stable).
+        profiles.sort_by_key(|(uid, _)| {
+            created
+                .iter()
+                .position(|candidate| candidate == uid)
+                .unwrap_or(usize::MAX)
+        });
         let added = !profiles.is_empty();
         let mut next = live.last().map_or(0, |(entry, _)| entry.key);
         let mut spent = false;
@@ -396,6 +465,7 @@ impl ProfileOrder {
                 .enumerate()
                 .map(|(index, name)| (index as i32 + 1, *name)),
             |_| false,
+            &[],
         );
         order
     }
@@ -438,21 +508,31 @@ mod tests {
         ProfileOrder::of_names_for_test(names)
     }
 
+    /// Process-only state (never per bot): the order projection and one
+    /// staged reorder stay these sizes. The session's created-since-
+    /// reconcile list is one more `Vec` beside them, empty in steady
+    /// state, so expected per-bot RSS / Rust-live / V8 delta is zero.
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn order_projection_keeps_its_process_only_size() {
         assert_eq!(std::mem::size_of::<ProfileOrder>(), 80);
         assert_eq!(std::mem::size_of::<super::Reconciled>(), 2);
+        assert_eq!(std::mem::size_of::<super::ReorderSurface>(), 1);
+        assert!(std::mem::size_of::<super::ReorderOp>() <= 32);
+        assert!(
+            std::mem::size_of::<(super::ReorderOp, super::ReorderSurface)>() <= 40,
+            "one staged reorder per process"
+        );
     }
 
     fn names(order: &ProfileOrder) -> Vec<&str> {
         order.names().iter().map(String::as_str).collect()
     }
 
-    /// Reconcile with `rows`, every deletion durable.
+    /// Reconcile with `rows`, every deletion durable, nothing just created.
     fn sync(order: &mut ProfileOrder, rows: &[(i32, &str)]) -> bool {
         order
-            .reconcile(rows.iter().copied(), |_| false)
+            .reconcile(rows.iter().copied(), |_| false, &[])
             .stored_changed
     }
 
@@ -485,6 +565,78 @@ mod tests {
         );
     }
 
+    /// A seed follows the vault's (alphabetical) order, whatever the uids.
+    /// Profiles created since the last reconcile append in creation
+    /// sequence instead (an import batch keeps its file's order, not the
+    /// alphabetical order its rows are handed over in); other new profiles
+    /// keep vault order after them, and existing places never move.
+    #[test]
+    fn just_created_profiles_append_in_creation_sequence() {
+        let mut saved = ProfileOrder::default();
+        assert!(sync(&mut saved, &[(3, "anna"), (2, "mike"), (1, "zed")]));
+        assert_eq!(names(&saved), ["anna", "mike", "zed"], "vault order seed");
+        let mut saved = order(&["alice", "bob"]);
+        assert!(saved.move_to("bob", "alice", false));
+        // Vault rows arrive alphabetically; zed, mike, anna were created in
+        // that sequence (uids 3, 4, 5), dave (6) was not just created.
+        let rows = [
+            (1, "alice"),
+            (5, "anna"),
+            (2, "bob"),
+            (6, "dave"),
+            (4, "mike"),
+            (3, "zed"),
+        ];
+        assert!(
+            saved
+                .reconcile(rows.iter().copied(), |_| false, &[3, 4, 5])
+                .stored_changed
+        );
+        assert_eq!(
+            names(&saved),
+            ["bob", "alice", "zed", "mike", "anna", "dave"]
+        );
+        keys_ok(&saved);
+    }
+
+    /// The Profiles list's entries and drop: identities ride along, a drop
+    /// downwards lands after its target and upwards before it, and a drop
+    /// on itself (or of a profile the order lacks) asks for nothing.
+    #[test]
+    fn entries_and_drop_op_follow_the_order() {
+        use super::{Placement, ReorderOp};
+        use crate::selection::ProfileIdentity;
+        let saved = order(&["alice", "bob", "carol"]);
+        let entries: Vec<(&str, ProfileIdentity)> = saved.entries().collect();
+        assert_eq!(
+            entries,
+            [
+                ("alice", ProfileIdentity::uid(1)),
+                ("bob", ProfileIdentity::uid(2)),
+                ("carol", ProfileIdentity::uid(3)),
+            ]
+        );
+        let (alice, bob, carol) = (entries[0].1, entries[1].1, entries[2].1);
+        assert_eq!(saved.position_of(bob), Some(1));
+        assert_eq!(
+            saved.drop_op(alice, carol),
+            Some(ReorderOp::Move {
+                moving: alice,
+                to: Placement::After(carol),
+            })
+        );
+        assert_eq!(
+            saved.drop_op(carol, alice),
+            Some(ReorderOp::Move {
+                moving: carol,
+                to: Placement::Before(alice),
+            })
+        );
+        assert_eq!(saved.drop_op(bob, bob), None);
+        assert_eq!(saved.drop_op(ProfileIdentity::uid(99), alice), None);
+        assert_eq!(saved.drop_op(alice, ProfileIdentity::uid(99)), None);
+    }
+
     /// Review R3: a deletion that is not durable keeps the entry stored
     /// and its place for a failed deletion; once durable the entry is
     /// dropped (a write), and a stored value read later drops it too.
@@ -493,7 +645,11 @@ mod tests {
         let mut saved = order(&["alice", "bob", "carol"]);
         assert!(
             !saved
-                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2)
+                .reconcile(
+                    [(1, "alice"), (3, "carol")].into_iter(),
+                    |uid| uid == 2,
+                    &[]
+                )
                 .stored_changed
         );
         assert_eq!(names(&saved), ["alice", "carol"]);
@@ -502,16 +658,22 @@ mod tests {
         // The deletion failed: bob is back in his place.
         assert!(
             !saved
-                .reconcile([(1, "alice"), (2, "bob"), (3, "carol")].into_iter(), |_| {
-                    false
-                })
+                .reconcile(
+                    [(1, "alice"), (2, "bob"), (3, "carol")].into_iter(),
+                    |_| false,
+                    &[]
+                )
                 .stored_changed
         );
         assert_eq!(names(&saved), ["alice", "bob", "carol"]);
         // Deleted again, now durable: dropped, and a write is needed.
         assert!(
             !saved
-                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2)
+                .reconcile(
+                    [(1, "alice"), (3, "carol")].into_iter(),
+                    |uid| uid == 2,
+                    &[]
+                )
                 .stored_changed
         );
         assert!(sync(&mut saved, &[(1, "alice"), (3, "carol")]));
@@ -547,7 +709,11 @@ mod tests {
     #[test]
     fn a_renumber_keeps_a_pending_deletions_place() {
         let mut saved = order(&["a", "b", "c", "d"]);
-        saved.reconcile([(1, "a"), (2, "b"), (4, "d")].into_iter(), |uid| uid == 3);
+        saved.reconcile(
+            [(1, "a"), (2, "b"), (4, "d")].into_iter(),
+            |uid| uid == 3,
+            &[],
+        );
         saved.renumber();
         keys_ok(&saved);
         assert!(!sync(&mut saved, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]));

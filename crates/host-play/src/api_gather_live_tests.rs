@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
-use {script_js::wire::IsolateBuf, script_js::wire::NativeFactsInput};
+use {script::native::snapshot_source::NativeFactsInput, script_js::wire::IsolateBuf};
 
 const LIVE_SOURCE: &str = r#"
 const channel = new BroadcastChannel(__GATHER_CHANNEL__);
@@ -122,7 +122,10 @@ impl Drop for ThrowawayHome {
     }
 }
 
-fn live_options(home: &Path) -> ProfileOptions {
+fn live_options(home: &Path) -> Option<ProfileOptions> {
+    if !api::test_support::game_data_available() {
+        return None;
+    }
     let port = std::env::var("BOT_GAME_PORT")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -131,14 +134,21 @@ fn live_options(home: &Path) -> ProfileOptions {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2080);
-    let nav_pack = PathBuf::from(
-        std::env::var_os("GATHERER_NAV_PACK")
-            .expect("Gather API live proof requires GATHERER_NAV_PACK"),
-    );
-    let engine_dir = PathBuf::from(
-        std::env::var_os("GATHERER_ENGINE_DIR")
-            .expect("Gather API live proof requires GATHERER_ENGINE_DIR"),
-    );
+    let nav_pack = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "local R289 navigation pack for Gather API live proof",
+    )?;
+    let engine_dir = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "local R289 engine content for Gather API live proof",
+    )?;
+    let cache_dir = api::test_support::local_asset_path(
+        "BOT_CACHE_DIR",
+        "",
+        "copied local R289 cache snapshot for Gather API live proof",
+    )?;
     assert!(
         nav_pack.is_absolute() && nav_pack.is_file(),
         "GATHERER_NAV_PACK must be an absolute file path: {}",
@@ -149,7 +159,12 @@ fn live_options(home: &Path) -> ProfileOptions {
         "GATHERER_ENGINE_DIR must be an absolute directory path: {}",
         engine_dir.display()
     );
-    ProfileOptions {
+    assert!(
+        cache_dir.is_absolute() && cache_dir.is_dir(),
+        "BOT_CACHE_DIR must be an absolute directory path: {}",
+        cache_dir.display()
+    );
+    Some(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
@@ -157,14 +172,12 @@ fn live_options(home: &Path) -> ProfileOptions {
         port: Some(port),
         http_port: Some(http_port),
         vault_path: Some(home.join("vault")),
-        cache_dir: Some(PathBuf::from(
-            std::env::var_os("BOT_CACHE_DIR").expect("live proof requires copied BOT_CACHE_DIR"),
-        )),
+        cache_dir: Some(cache_dir),
         unpack_dir: Some(home.join("unpack")),
         nav_pack: Some(nav_pack),
         engine_dir: Some(engine_dir),
         ..ProfileOptions::default()
-    }
+    })
 }
 
 fn tile_from_env() -> WorldTile {
@@ -201,6 +214,7 @@ fn live_frame(
     account: &str,
     tile: WorldTile,
     shared: &Arc<Mutex<LiveSetup>>,
+    arm: &Arc<SlotArm>,
 ) {
     if username != account {
         return;
@@ -251,6 +265,11 @@ fn live_frame(
                 let ifaces = Arc::clone(&client.ifaces);
                 if api::interact::logout(client, &ifaces) {
                     state.phase = SeedPhase::WaitRelog;
+                    // The fixture has no script yet, so the approved
+                    // scriptless policy parks this bot after the logout;
+                    // post the operator's explicit Login before waiting for
+                    // the new session.
+                    arm.arm_explicit_login();
                     Ok(())
                 } else {
                     Err("logout interface unavailable during Gather API setup".into())
@@ -594,7 +613,7 @@ fn foreground_rejection_receipt_rejects_every_wrong_admission() {
 #[test]
 #[ignore = "requires LIVE=1 and local R289 Gatherer fixtures"]
 fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::BrokerWorld;
     assert!(
         std::env::var("LIVE").is_ok_and(|value| value == "1"),
@@ -611,7 +630,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     std::fs::create_dir_all(&evidence_dir).expect("create receipt directory");
     api::hostlog::set_debug(true);
     let home = ThrowawayHome::enter("receipt", &evidence_dir);
-    let options = live_options(&home.path);
+    let Some(options) = live_options(&home.path) else {
+        return;
+    };
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -629,13 +650,24 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let setup = Arc::new(Mutex::new(LiveSetup::default()));
     let frame_setup = Arc::clone(&setup);
     let frame_account = account.clone();
+    // The fixture relogs a scriptless bot before its script starts, so it
+    // owns the arm that posts the operator Login after its own logout.
+    let arm = SlotArm::new(274_279_003, true);
+    let frame_arm = Arc::clone(&arm);
     let mut play = run_with_template(
         template,
         true,
         vec![],
         |_| (None, None),
         move |client, username, _hold| {
-            live_frame(client, username, &frame_account, tile, &frame_setup);
+            live_frame(
+                client,
+                username,
+                &frame_account,
+                tile,
+                &frame_setup,
+                &frame_arm,
+            );
         },
     )
     .expect("start live Play");
@@ -661,7 +693,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
             },
             None,
             None,
-            None,
+            // The Gather account's fixture relogs itself; the receiver keeps
+            // the default arm (it never logs out before its script).
+            (index == 0).then(|| Arc::clone(&arm)),
         )
         .expect("spawn minted live account");
     }
@@ -935,7 +969,10 @@ fn live_quest_progress_complete_cook_through_load_api() {
         std::env::var_os("BOT_EVIDENCE_DIR").expect("progress live evidence directory"),
     );
     let home = ThrowawayHome::enter("progress", &evidence_dir);
-    let template = live_options(&home.path)
+    let Some(options) = live_options(&home.path) else {
+        return;
+    };
+    let template = options
         .resolve(None)
         .expect("resolve local profile")
         .prepare_template()

@@ -1,14 +1,20 @@
 //! Synthetic mini-catalog regressions: bright Start, module-graph load, and
 //! import-remap stamping (no `$RS2B0T` / persisted rs2b0t-path).
+//! Bright Start supplies selected local R289 facts to native callbacks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use script_js::wire::StatInput;
+use script::native::snapshot_source::StatInput;
 use script_js::{JsLibrary, LoadIsolate};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -117,6 +123,11 @@ fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
 
 #[test]
 fn synthetic_bright_catalog_cards_start_without_not_impl() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("selected R289 game data for bright Start");
     let dir = scratch("start");
     let mut lib = register_fixture(&dir);
     let names: Vec<String> = lib
@@ -148,7 +159,6 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
     let loading_bytes = script_js::wire::encode_snapshot(&snap);
     snap.stats = &common::FRESH_STATS;
     let loaded_bytes = script_js::wire::encode_snapshot(&snap);
-    let content = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
 
     for name in &names {
         if let Err(e) = lib.ensure_js(ScriptSource::Catalog, name) {
@@ -178,11 +188,12 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
         };
         let bag = script::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
         for (scene, bytes) in [("pre-stats", &loading_bytes), ("loaded", &loaded_bytes)] {
-            let iso = match LoadIsolate::spawn_with_game_data(
+            let iso = match LoadIsolate::spawn_with_content(
                 card.js.clone(),
                 card.shape,
                 siblings.clone(),
-                content.clone(),
+                Some(Arc::clone(&selected)),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             ) {
                 Ok(iso) => iso,
                 Err(e) => {
@@ -219,7 +230,6 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("register");
-    let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     for name in ["CookBot", "HerbCard"] {
         lib.ensure_js(ScriptSource::Catalog, name)
             .unwrap_or_else(|e| panic!("{name} transpile: {e}"));
@@ -237,11 +247,12 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
             },
         )
         .expect("siblings");
-        let iso = LoadIsolate::spawn_with_game_data(
+        let iso = LoadIsolate::spawn_with_content(
             card.js.clone(),
             card.shape,
             siblings,
-            content.clone(),
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         )
         .expect("spawn");
         iso.probe("true").expect("probe barrier after spawn");
@@ -254,8 +265,7 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
 #[ignore = "requires the frozen ae56ccc95 catalog at RS2B0T"]
 fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     const FROZEN_REVISION: &str = "ae56ccc95ba5681b12f1f66ec2adea14427fe497";
-    let Some(root) =
-        script::ctx::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
+    let Some(root) = api::test_support::local_asset_path("RS2B0T", "", "frozen ae56ccc95 catalog")
     else {
         return;
     };

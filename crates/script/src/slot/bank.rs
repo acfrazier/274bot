@@ -13,10 +13,13 @@ use crate::bank::seat_sort::{Sort, SortArgs};
 use crate::bank::seat_transfer::{
     Transfer, TransferAnswer, TransferArgs, TransferCall, TransferHooks, TransferValue,
 };
+use crate::local_state::SlotState;
 use crate::native::request::NativeKind;
 use crate::native::snapshot_source::BankSelectionInput;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::native_bank::{bank_value, PickKind, SelectedBank};
+use crate::quester::prereq::reach::PrereqOpening;
+use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{ItemView, SnapshotView, WorldTile};
@@ -24,6 +27,15 @@ use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::task::Poll;
 use std::time::Duration;
+
+/// Which bank rows one poll visits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BankPoll {
+    /// Every row: a game tick or an evidence wake.
+    All,
+    /// Only the rows whose answer the seat holds: a seat answer wake.
+    Answered,
+}
 
 #[derive(Default)]
 pub(super) struct BankSeat {
@@ -158,11 +170,21 @@ struct Trip {
 
 enum Job {
     Start(BankSeatArgs),
-    Opening(ActionHandle<Opening>),
+    StartOpening(OpeningArgs),
+    Opening {
+        handle: ActionHandle<Opening>,
+        args: OpeningArgs,
+    },
+    PrereqOpening(PrereqOpening),
     Transfer(ActionHandle<Transfer>),
     ResumeOpening {
         kind: NativeKind,
         handle: ActionHandle<Opening>,
+        args: OpeningArgs,
+    },
+    ResumePrereqOpening {
+        kind: NativeKind,
+        action: PrereqOpening,
     },
     ResumeTransfer {
         kind: NativeKind,
@@ -180,7 +202,7 @@ enum Job {
         deadline: Option<Duration>,
     },
     ReturnWalk {
-        handle: ActionHandle<crate::native::walk::Walk>,
+        walk: PrereqWalk,
         deadline: Duration,
     },
     /// `bankPace`: the evidence accepted at the first poll; settles on the
@@ -517,10 +539,15 @@ impl BankRow {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The bank seat borrows its separate owners and selected facts without another context allocation."
+    )]
     fn poll(
         &mut self,
         actions: &mut NativeActions,
         cx: &mut ActionContext<'_>,
+        slot_state: Option<&SlotState>,
         facts: &Arc<NamedBankFacts>,
         preferences: BankPreferences,
         note: &mut Option<(u64, NoteIntent)>,
@@ -567,21 +594,14 @@ impl BankRow {
                         return Poll::Pending;
                     }
                     if is_opening(request.operation) {
-                        match actions.begin::<Opening>(
-                            OpeningArgs {
-                                request,
-                                facts: Arc::clone(facts),
-                                preferences,
-                                hooks: Arc::clone(&self.hooks),
-                            },
-                            cx,
-                        ) {
-                            Ok(handle) => self.job = Job::Opening(handle),
-                            Err(ActionError::BudgetExhausted | ActionError::Held) => {
-                                return Poll::Ready(Err(ActionError::BudgetExhausted));
-                            }
-                            Err(error) => return Poll::Ready(Err(error)),
-                        }
+                        self.job = Job::StartOpening(OpeningArgs {
+                            request,
+                            facts: Arc::clone(facts),
+                            preferences,
+                            hooks: Arc::clone(&self.hooks),
+                            selection_refused: false,
+                        });
+                        continue;
                     } else {
                         let generation = cx
                             .snapshot()
@@ -611,13 +631,39 @@ impl BankRow {
                     // emission reaches the host's dispatch lane.
                     return Poll::Pending;
                 }
-                Job::ResumeOpening { kind, mut handle } => {
-                    match actions.resume_kept(kind, &mut handle, cx) {
-                        Ok(()) => self.job = Job::Opening(handle),
+                Job::StartOpening(args) => {
+                    if !cx.may_begin_this_tick() {
+                        self.job = Job::StartOpening(args);
+                        return Poll::Pending;
+                    }
+                    match actions.begin::<Opening>(args.clone(), cx) {
+                        Ok(handle) => self.job = Job::Opening { handle, args },
+                        Err(ActionError::BudgetExhausted | ActionError::Held) => {
+                            return Poll::Ready(Err(ActionError::BudgetExhausted));
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                    return Poll::Pending;
+                }
+                Job::ResumeOpening {
+                    kind,
+                    mut handle,
+                    args,
+                } => match actions.resume_kept(kind, &mut handle, cx) {
+                    Ok(()) => self.job = Job::Opening { handle, args },
+                    Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
+                        self.job = Job::ResumeOpening { kind, handle, args };
+                        return Poll::Pending;
+                    }
+                    Err(error) => return Poll::Ready(Err(error)),
+                },
+                Job::ResumePrereqOpening { kind, mut action } => {
+                    match action.resume_after_session(actions, kind, cx) {
+                        Ok(()) => self.job = Job::PrereqOpening(action),
                         Err(
                             ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
                         ) => {
-                            self.job = Job::ResumeOpening { kind, handle };
+                            self.job = Job::ResumePrereqOpening { kind, action };
                             return Poll::Pending;
                         }
                         Err(error) => return Poll::Ready(Err(error)),
@@ -635,9 +681,57 @@ impl BankRow {
                         Err(error) => return Poll::Ready(Err(error)),
                     }
                 }
-                Job::Opening(handle) => match actions.poll(&handle, cx) {
+                Job::Opening { handle, args } => {
+                    let allow = handle
+                        .inspect_in(cx, |opening, cx| opening.prereq_allow(cx))
+                        .flatten();
+                    match actions.poll(&handle, cx) {
+                        Poll::Pending => {
+                            self.job = Job::Opening { handle, args };
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
+                            if let Some(value) = self.after_open(ready) {
+                                return Poll::Ready(Ok(value));
+                            }
+                        }
+                        Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
+                            self.selected_bank = Some(selected);
+                            return Poll::Ready(Ok(bank
+                                .as_ref()
+                                .map(bank_value)
+                                .unwrap_or(Value::Null)));
+                        }
+                        Poll::Ready(Err(ActionError::NeedsStep(gates))) => {
+                            let Some(allow) = allow else {
+                                return Poll::Ready(Err(ActionError::NeedsStep(gates)));
+                            };
+                            match PrereqOpening::resolve_after(
+                                args,
+                                ActionError::NeedsStep(gates),
+                                allow,
+                                cx,
+                            ) {
+                                Ok(action) => {
+                                    self.job = Job::PrereqOpening(action);
+                                    continue;
+                                }
+                                Err((
+                                    args,
+                                    ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
+                                )) => {
+                                    self.job = Job::StartOpening(args.after_prerequisite_refusal());
+                                    continue;
+                                }
+                                Err((_, error)) => return Poll::Ready(Err(error)),
+                            }
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    }
+                }
+                Job::PrereqOpening(mut action) => match action.poll(actions, cx, slot_state) {
                     Poll::Pending => {
-                        self.job = Job::Opening(handle);
+                        self.job = Job::PrereqOpening(action);
                         return Poll::Pending;
                     }
                     Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
@@ -651,6 +745,13 @@ impl BankRow {
                             .as_ref()
                             .map(bank_value)
                             .unwrap_or(Value::Null)));
+                    }
+                    Poll::Ready(Err(
+                        ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
+                    )) => {
+                        self.job =
+                            Job::StartOpening(action.into_args().after_prerequisite_refusal());
+                        continue;
                     }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 },
@@ -748,14 +849,16 @@ impl BankRow {
                         required_after: cx.evidence(),
                         evidence: None,
                         cross: Box::new([]),
+                        avoid: Box::new([]),
                         protect: false,
                         food_guard: false,
+                        cure_guard: false,
                         allow: Default::default(),
                     };
-                    match actions.begin::<crate::native::walk::Walk>(request, cx) {
-                        Ok(handle) => {
+                    match PrereqWalk::begin(request, actions, cx) {
+                        Ok(walk) => {
                             self.job = Job::ReturnWalk {
-                                handle,
+                                walk,
                                 deadline: deadline.unwrap_or_else(|| {
                                     cx.active_now().saturating_add(Duration::from_secs(120))
                                 }),
@@ -770,11 +873,11 @@ impl BankRow {
                         Err(_) => return Poll::Ready(Ok(json!(true))),
                     }
                 }
-                Job::ReturnWalk { handle, deadline } => {
+                Job::ReturnWalk { mut walk, deadline } => {
                     if cx.active_now() >= deadline {
                         return Poll::Ready(Ok(json!(true)));
                     }
-                    match actions.poll(&handle, cx) {
+                    match walk.poll(actions, cx, slot_state) {
                         Poll::Ready(Ok(receipt))
                             if receipt.end == crate::native::WalkEnd::Cancelled =>
                         {
@@ -786,7 +889,7 @@ impl BankRow {
                             };
                         }
                         Poll::Ready(_) => return Poll::Ready(Ok(json!(true))),
-                        Poll::Pending => self.job = Job::ReturnWalk { handle, deadline },
+                        Poll::Pending => self.job = Job::ReturnWalk { walk, deadline },
                     }
                     return Poll::Pending;
                 }
@@ -1034,17 +1137,20 @@ impl Job {
     /// or revalidated on the new session.
     fn held_across_kept_reconnect(self, kind: NativeKind) -> Job {
         match self {
-            Job::Opening(handle) | Job::ResumeOpening { handle, .. } => {
-                Job::ResumeOpening { kind, handle }
+            Job::Opening { handle, args } | Job::ResumeOpening { handle, args, .. } => {
+                Job::ResumeOpening { kind, handle, args }
+            }
+            Job::PrereqOpening(action) | Job::ResumePrereqOpening { action, .. } => {
+                Job::ResumePrereqOpening { kind, action }
             }
             Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
                 Job::ResumeTransfer { kind, handle }
             }
-            Job::ReturnWalk { handle, deadline } => {
-                // The old primitive belongs to the dropped session. Retain
+            Job::ReturnWalk { walk, deadline } => {
+                // The old logical walk belongs to the dropped session. Retain
                 // the trip's return cursor and deadline, then revalidate a
                 // fresh follow.
-                drop(handle);
+                drop(walk);
                 Job::Return {
                     deadline: Some(deadline),
                 }
@@ -1133,7 +1239,7 @@ impl SlotScript {
             .retain(|(id, _)| seat.results().iter().any(|result| result.id == *id));
     }
 
-    pub(super) fn tick_bank(&mut self, ctx: &mut ScriptCtx<'_>) {
+    pub(super) fn tick_bank_scoped(&mut self, ctx: &mut ScriptCtx<'_>, scope: BankPoll) {
         self.stop_cancelled_bank_work();
         let Some(mut bank) = self.bank.take() else {
             return;
@@ -1146,11 +1252,11 @@ impl SlotScript {
             .surface_start
             .as_ref()
             .expect("bank start belongs to Load");
-        let pin = identity
+        let revision = identity
             .game_data
             .as_ref()
-            .and_then(|data| data.selected_pin().ok());
-        let Some(pin) = pin else {
+            .and_then(|data| super::compiled::selected_revision(data).ok());
+        let Some(revision) = revision else {
             let mut rows = std::mem::take(&mut bank.rows);
             for row in rows.drain(..) {
                 self.finish_bank(
@@ -1189,7 +1295,13 @@ impl SlotScript {
         while index < bank.rows.len() {
             let row = &mut bank.rows[index];
             let seat = self.seat.as_mut().expect("admitted bank seat");
-            if let Some(answer) = seat.take_answer(row.id) {
+            let answer = seat.take_answer(row.id);
+            if scope == BankPoll::Answered && answer.is_none() {
+                // A seat answer wake polls only the consumer of the answer.
+                index += 1;
+                continue;
+            }
+            if let Some(answer) = answer {
                 let value = crate::channel::decode(&answer.answer);
                 let mut hooks = row.hooks.lock().unwrap_or_else(|error| error.into_inner());
                 hooks.pending = None;
@@ -1201,11 +1313,17 @@ impl SlotScript {
             }
             let result = {
                 let mut memory = retained.lock().unwrap_or_else(|error| error.into_inner());
-                let mut cx =
-                    compiled::frame_context(ctx, run, &pin, &mut memory, &mut self.native_runtime);
+                let mut cx = compiled::frame_context(
+                    ctx,
+                    run,
+                    revision,
+                    &mut memory,
+                    &mut self.native_runtime,
+                );
                 row.poll(
                     &mut actions,
                     &mut cx,
+                    self.local_state.as_deref(),
                     &facts,
                     preferences,
                     &mut bank.note,
@@ -1214,7 +1332,11 @@ impl SlotScript {
             };
             if matches!(
                 row.job,
-                Job::Opening(_) | Job::Transfer(_) | Job::ReturnWalk { .. } | Job::Sort(_)
+                Job::Opening { .. }
+                    | Job::PrereqOpening(_)
+                    | Job::Transfer(_)
+                    | Job::ReturnWalk { .. }
+                    | Job::Sort(_)
             ) {
                 bank.action_owner = Some(row.id);
             } else if bank.action_owner == Some(row.id) {
@@ -1226,10 +1348,20 @@ impl SlotScript {
                         |(selected, generation)| (selected, generation, row.runtime_generation),
                     );
                 let id = row.id;
+                let family = row.family;
                 bank.rows.remove(index);
                 if bank.action_owner == Some(id) {
                     bank.action_owner = None;
                 }
+                // The typed result the seat publishes for this request: the
+                // live cell's record of what a close or a deposit answered.
+                api::host_log!(
+                    api::hostlog::Category::Echo,
+                    api::hostlog::Level::Debug,
+                    "bank-terminal request={} family={family} tick={} result={result:?}",
+                    id.get(),
+                    ctx.tick,
+                );
                 self.finish_bank(id, result, selection, &mut bank);
                 continue;
             }
@@ -1339,6 +1471,20 @@ impl SlotScript {
                     .complete(id, true);
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl SlotScript {
+    /// The bank rows no poll has started yet (still `Job::Start`).
+    pub(super) fn unstarted_bank_rows_for_test(&self) -> Vec<RequestId> {
+        self.bank.as_ref().map_or_else(Vec::new, |bank| {
+            bank.rows
+                .iter()
+                .filter(|row| matches!(row.job, Job::Start(_)))
+                .map(|row| row.id)
+                .collect()
+        })
     }
 }
 

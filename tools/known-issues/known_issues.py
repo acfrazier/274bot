@@ -14,9 +14,9 @@ an ``[[item.earlier]]`` table whose ``until`` is the first release with the new
 wording. Never edit the ``### Known issues`` / ``### Not in this release``
 blocks in ``CHANGELOG.md`` by hand; regenerate them instead:
 
-    python3 tools/known-issues/known_issues.py render --release 0.2.7
-    python3 tools/known-issues/known_issues.py check --release 0.2.7
-    python3 tools/known-issues/known_issues.py carried --release 0.2.7
+    python3 tools/known-issues/known_issues.py render --release 0.2.8
+    python3 tools/known-issues/known_issues.py check --release 0.2.8
+    python3 tools/known-issues/known_issues.py carried --release 0.2.8
 
 ``render`` prints both blocks in CHANGELOG style (80-column wrap,
 ``- **Area:** text`` bullets for known issues). ``check`` diffs those blocks
@@ -50,7 +50,8 @@ if sys.version_info < REQUIRED_PYTHON:
 
 KNOWN_ISSUE = "known-issue"
 NOT_IN_RELEASE = "not-in-release"
-KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE)
+DEFERRED = "deferred"
+KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE, DEFERRED)
 SEVERITIES = ("critical", "high", "medium", "low")
 WIDTH = 80
 

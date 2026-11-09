@@ -100,6 +100,7 @@ fn poll_row(
         row.poll(
             native.actions,
             &mut native.cx,
+            None,
             &facts,
             preferences,
             &mut note,
@@ -538,6 +539,7 @@ fn poll_row_in_session(
         row.poll(
             native.actions,
             &mut native.cx,
+            None,
             &facts,
             preferences,
             &mut note,

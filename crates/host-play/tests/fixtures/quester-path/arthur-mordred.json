@@ -1,0 +1,10 @@
+{
+  "stage": "arthur:3",
+  "stand": [2769, 3403, 2],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["arthur:4"],
+  "mode": "stage"
+}

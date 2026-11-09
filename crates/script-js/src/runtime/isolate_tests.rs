@@ -72,7 +72,7 @@ fn startup_non_yielding_module_has_bounded_join() {
         return;
     }
     run_exact_child(
-        "isolate::tests::startup_non_yielding_module_has_bounded_join",
+        "runtime::isolate::tests::startup_non_yielding_module_has_bounded_join",
         CHILD,
     );
 }
@@ -84,22 +84,22 @@ fn validate_non_yielding_module_is_bounded() {
         let baseline = live_runtime_count();
         for attempt in 1..=3 {
             let started = Instant::now();
-            let card = super::super::library::PreparedCard {
-                card: super::super::library::JsCard {
+            let card = crate::library::store::PreparedCard {
+                card: crate::library::store::JsCard {
                     name: "runaway".into(),
                     path: "runaway.ts".into(),
                     shape: LoadShape::NativeTick,
                     origin: "while (true) {}".into(),
                     js: "while (true) {}".into(),
-                    kind: crate::rs2b0t_registry::ScriptKind::NativeTick,
-                    source: crate::rs2b0t_registry::ScriptSource::File,
+                    kind: script::card::ScriptKind::NativeTick,
+                    source: script::card::ScriptSource::File,
                     sha256: String::new(),
                     description: String::new(),
                     category: String::new(),
                     tags: Vec::new(),
                     settings_schema: Vec::new(),
                     unloadable: None,
-                    api_family: super::super::ApiFamily::Unversioned,
+                    api_family: crate::library::shape::ApiFamily::Unversioned,
                 },
                 siblings: Vec::new(),
                 fingerprint: String::new(),
@@ -138,7 +138,7 @@ fn validate_non_yielding_module_is_bounded() {
         return;
     }
     run_exact_child(
-        "isolate::tests::validate_non_yielding_module_is_bounded",
+        "runtime::isolate::tests::validate_non_yielding_module_is_bounded",
         CHILD,
     );
 }
@@ -211,7 +211,7 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
         return;
     }
     run_exact_child(
-        "isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
+        "runtime::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
         CHILD,
     );
 }
@@ -252,7 +252,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
     }
 
     run_exact_child(
-        "isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
+        "runtime::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
         CHILD,
     );
 }
@@ -272,7 +272,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
         generation: 0,
         input_identity: 0,
         evidence_sequence: 0,
-        wait_only: false,
+        mode: TickMode::Full,
     }));
     assert_eq!(
         iso.probe("globalThis.n || 0").unwrap(),
@@ -285,7 +285,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
 
 #[test]
 fn shim_prelude_defines_globals_for_compat_fixture() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
@@ -307,15 +307,15 @@ fn shim_prelude_defines_globals_for_compat_fixture() {
 
 #[test]
 fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
     assert!(!runtime
         .deno_runtime()
         .v8_isolate()
         .is_execution_terminating());
 
-    let failed = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    let failed = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         {
             let scope = &mut runtime.deno_runtime().handle_scope();
             let poison = rustyscript::deno_core::v8::Object::new(scope);
@@ -329,7 +329,7 @@ fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
         .v8_isolate()
         .is_execution_terminating());
 
-    let undefined = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    let undefined = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         scope
             .get_continuation_preserved_embedder_data()
@@ -344,7 +344,7 @@ fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
 
 #[test]
 fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let report: serde_json::Value = runtime
@@ -435,7 +435,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key {
+            script::interact::InteractReq::Key {
                 down: true,
                 key,
                 ..
@@ -446,7 +446,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key {
+            script::interact::InteractReq::Key {
                 down: false,
                 key,
                 ..
@@ -462,7 +462,7 @@ loop() {
     assert!(
         stale
             .iter()
-            .all(|req| !matches!(req, script::shim::InteractReq::Key { .. })),
+            .all(|req| !matches!(req, script::interact::InteractReq::Key { .. })),
         "stale generation must not deliver keys: {stale:?}"
     );
     iso.join();
@@ -492,7 +492,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 x,
                 y,
@@ -503,14 +503,16 @@ loop() {
         "{reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. })),
+        reqs.iter().any(|req| matches!(
+            req,
+            script::interact::InteractReq::Mouse { down: false, .. }
+        )),
         "{reqs:?}"
     );
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            script::interact::InteractReq::Key { down: true, key, .. } if key == "2"
         )),
         "{reqs:?}"
     );
@@ -522,7 +524,7 @@ loop() {
     assert!(
         stale
             .iter()
-            .all(|req| !matches!(req, script::shim::InteractReq::Mouse { .. })),
+            .all(|req| !matches!(req, script::interact::InteractReq::Mouse { .. })),
         "stale generation must not deliver mouse: {stale:?}"
     );
     iso.join();
@@ -550,7 +552,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity: 42,
                 ..
@@ -590,7 +592,7 @@ async loop() {
     assert!(
         first.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity: 42,
                 ..
@@ -608,7 +610,7 @@ async loop() {
     assert!(
         second.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity: 42,
                 ..
@@ -646,7 +648,7 @@ async loop() {
     let first = iso.drain_interacts();
     assert!(first.iter().any(|req| matches!(
         req,
-        script::shim::InteractReq::Mouse {
+        script::interact::InteractReq::Mouse {
             down: true,
             identity: 42,
             ..
@@ -661,7 +663,7 @@ async loop() {
     assert!(
         second.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity: 42,
                 ..
@@ -674,7 +676,7 @@ async loop() {
 
 #[test]
 fn mouse_gesture_identity_overflow_fails_closed() {
-    let mouse = |down| script::shim::InteractReq::Mouse {
+    let mouse = |down| script::interact::InteractReq::Mouse {
         down,
         x: 10.0,
         y: 10.0,
@@ -684,17 +686,19 @@ fn mouse_gesture_identity_overflow_fails_closed() {
     let mut gestures = MouseGestureIdentities::default();
     let mut downs: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(true)).collect();
     stamp_mouse_gesture_identities(&mut downs, 7, &mut gestures);
-    assert!(downs
-        .iter()
-        .all(|req| matches!(req, script::shim::InteractReq::Mouse { identity: 7, .. })));
+    assert!(downs.iter().all(|req| matches!(
+        req,
+        script::interact::InteractReq::Mouse { identity: 7, .. }
+    )));
     assert!(gestures.pairs.is_empty());
     assert_eq!(gestures.unpairable, 33);
 
     let mut ups: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(false)).collect();
     stamp_mouse_gesture_identities(&mut ups, 7, &mut gestures);
-    assert!(ups
-        .iter()
-        .all(|req| matches!(req, script::shim::InteractReq::Mouse { identity: 0, .. })));
+    assert!(ups.iter().all(|req| matches!(
+        req,
+        script::interact::InteractReq::Mouse { identity: 0, .. }
+    )));
     assert_eq!(gestures.unpairable, 0);
 }
 
@@ -731,14 +735,14 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            script::interact::InteractReq::Key { down: true, key, .. } if key == "2"
         )),
         "sibling key dropped: {reqs:?}"
     );
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 x,
                 y,
@@ -749,8 +753,10 @@ loop() {
         "valid center down dropped: {reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. })),
+        reqs.iter().any(|req| matches!(
+            req,
+            script::interact::InteractReq::Mouse { down: false, .. }
+        )),
         "valid center up dropped: {reqs:?}"
     );
     iso.join();
@@ -759,7 +765,7 @@ loop() {
 /// One posted tick whose only event-relevant fact is a prayer xp table:
 /// an `xp` above the previous tick's value is one `SkillXp` event.
 fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
-    let stats = [crate::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 5,
         name: "prayer",
         xp,
@@ -772,8 +778,8 @@ fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
     crate::wire::encode_snapshot(&input)
 }
 
-fn xp_event(skill: i32) -> crate::events::NativeEvent {
-    crate::events::NativeEvent::SkillXp {
+fn xp_event(skill: i32) -> crate::scene::events::NativeEvent {
+    crate::scene::events::NativeEvent::SkillXp {
         skill,
         name: format!("skill{skill}"),
         xp: skill,
@@ -855,7 +861,7 @@ export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; 
 /// in order, so the newest are the ones still worth running.
 #[test]
 fn compat_event_queue_is_capped_and_keeps_the_newest_events() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     let first: Vec<_> = (0..300).map(xp_event).collect();
     dispatch_native_events(&mut runtime, &first).unwrap();
@@ -1118,14 +1124,14 @@ export function tick(api) {
     let snapshot = crate::wire::tests::empty_input(1);
     iso.post_snapshot(crate::wire::encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput::default(),
+        script::native::snapshot_source::NativeFactsInput::default(),
     ));
     machine_tick(&iso, 1);
     let reqs = iso.drain_interacts();
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Held { name, action, .. }
+            script::interact::InteractReq::Held { name, action, .. }
                 if name == "Bones" && action == "Bury"
         )),
         "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; lifecycle={:?}",
@@ -1135,8 +1141,8 @@ export function tick(api) {
     iso.join();
 }
 
-fn if_button(id: i32) -> script::shim::InteractReq {
-    script::shim::InteractReq::IfButton { component_id: id }
+fn if_button(id: i32) -> script::interact::InteractReq {
+    script::interact::InteractReq::IfButton { component_id: id }
 }
 
 fn spawn_machine_card(body: &str) -> LoadIsolate {
@@ -1824,7 +1830,8 @@ fn exercise_bank_sync_prompt(
             .iter()
             .flat_map(|batch| &batch.machine_events)
             .any(|event| {
-                event.id == id && event.kind == crate::machine::MachineEventKind::Failed
+                event.id == id
+                    && event.kind == script::native::seat_rows::SeatMachineEventKind::Failed
             }),
         "{family}/{member} throw must fail the row: {thrown_batches:?}"
     );
@@ -2323,8 +2330,13 @@ fn a_synchronous_kick_does_not_run_unrelated_microtasks() {
 
 #[test]
 fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
-    use crate::wire::{IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
+    use {
+        crate::wire::IsolateBuf,
+        script::native::snapshot_source::{
+            MainModalTextsInput, NativeFactsInput, QuestStatusInput,
+        },
+    };
 
     let iso = LoadIsolate::spawn(
         r#"export const apiVersion = 2;
@@ -2402,20 +2414,307 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     iso.join();
 }
 
+/// N1 of `HOLD-MODEL-AB` on the production queue (findings F1 and F2 of its
+/// review). The real `JsSurfaceFactory` spawns the isolate with the slot's
+/// execution identity (`spawn_with_content(.., Some(execution))`, the path of
+/// `LoadIsolate::spawn_with_execution`), so the isolate sends its tick output
+/// as seat batches, and the slot's own `drain_host_interacts`, the host's one
+/// drain, takes them.
+fn journal_slot(source: &str) -> script::SlotScript {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(1);
+    let (shape, family) = crate::resolve_api_family(source).expect("an API v2 card");
+    slot.bind_surface_factory(std::sync::Arc::new(
+        crate::surface::JsSurfaceFactory::default(),
+    ));
+    slot.start_surface(script::surface::SurfaceStart {
+        card: std::sync::Arc::new(crate::surface::JsStartCard {
+            card_name: "test".into(),
+            source: source.into(),
+            shape,
+            siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
+            family: Some(family),
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: std::sync::Arc::default(),
+        loadouts: std::sync::Arc::default(),
+        wilderness_rules: std::sync::Arc::default(),
+    })
+    .expect("start the JS surface");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match slot.poll_start() {
+            script::StartPoll::Settled(outcome) => {
+                assert_eq!(outcome, script::StartOutcome::Ready);
+                break;
+            }
+            script::StartPoll::Pending => {
+                assert!(Instant::now() < deadline, "the JS surface start stalled");
+            }
+            script::StartPoll::NotOwed => panic!("the JS surface start is not owed"),
+        }
+        std::thread::yield_now();
+    }
+    slot.on_is_up(true);
+    slot
+}
+
+/// Post the quest tab and the main-modal pair of `root` through the slot,
+/// then run the isolate's tick to its end.
+fn post_journal_page(slot: &mut script::SlotScript, tick: u64, root: i32, texts: &[String]) {
+    use script::native::snapshot_source::{
+        MainModalTextsInput, NativeFactsInput, QuestStatusInput,
+    };
+
+    let rows = [QuestStatusInput {
+        name: "Cook's Assistant",
+        status: "notStarted",
+        component_id: Some(1234),
+    }];
+    let mut snapshot = crate::wire::tests::empty_input(tick);
+    snapshot.ingame = true;
+    snapshot.scene_state = 2;
+    snapshot.side_tab = 2;
+    snapshot.main_modal_id = root;
+    let facts = NativeFactsInput {
+        quest_statuses: Some(&rows),
+        main_modal_texts: Some(MainModalTextsInput { root, texts }),
+        ..Default::default()
+    };
+    assert!(slot.post_snapshot_delta(&snapshot, facts, false));
+    slot.with_surface_run_for_test(|run| run.on_game_tick_at(tick, 0))
+        .expect("active JS surface");
+    slot.probe("true").expect("the tick ends");
+}
+
+/// The process stalls past the whole hold (a suspended or sleeping machine):
+/// the read's begin and hold bound move `by` into the past.
+fn stall_journal_hold(slot: &mut script::SlotScript, by: Duration) {
+    slot.with_surface_run_for_test(|run| {
+        run.as_any_mut()
+            .downcast_mut::<crate::surface::JsSurfaceRun>()
+            .expect("the JS surface run")
+            .isolate_for_test()
+            .compat_journal
+            .as_ref()
+            .expect("the compat lease")
+            .backdate(by);
+    })
+    .expect("active JS surface");
+}
+
+/// The rows that wait in the isolate's seat-batch queue, with their identity
+/// (request, lineage, mirror owner). The queue is restored unchanged.
+fn queued_seat_rows(
+    slot: &mut script::SlotScript,
+) -> Vec<(
+    script::interact::InteractReq,
+    Option<api::identity::RequestId>,
+    Option<api::identity::RequestId>,
+)> {
+    slot.with_surface_run_for_test(|run| {
+        let batches = run.drain_seat_batches();
+        let rows = batches
+            .iter()
+            .flat_map(|queued| &queued.batch.reqs)
+            .map(|row| (row.request.clone(), row.lineage, row.mirror_owner))
+            .collect();
+        run.restore_seat_batches(batches);
+        rows
+    })
+    .expect("active JS surface")
+}
+
+fn drain_host(slot: &mut script::SlotScript) -> Vec<script::interact::InteractReq> {
+    slot.drain_host_interacts(None)
+        .1
+        .into_iter()
+        .map(|queued| queued.req)
+        .collect()
+}
+
+fn journal_out(slot: &mut script::SlotScript) -> String {
+    slot.probe("JSON.stringify(globalThis.__out)")
+        .expect("probe the read's result")
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+const AWAITED_JOURNAL_READ: &str = r#"export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+  globalThis.__begin = begin;
+  if (begin.ok) globalThis.__out = await api.questJournalRun(begin.value);
+}"#;
+
+/// More than the read's 10 s hold bound.
+const STALL_PAST_THE_HOLD: Duration = Duration::from_secs(11);
+
+/// F1: the journal machine renews its hold at its click and queues the click
+/// in a seat batch; the process then stalls past the renewed bound before the
+/// host's drain. The drain drops the click, and the read fails with
+/// `modal-timeout` at its next step (its own timeout; the script's retry
+/// applies).
+#[test]
+fn production_queue_drops_a_journal_click_whose_hold_expired_before_the_drain() {
+    let click = script::interact::InteractReq::IfButton { component_id: 1234 };
+    let mut slot = journal_slot(AWAITED_JOURNAL_READ);
+    post_journal_page(&mut slot, 1, -1, &[]);
+    assert_eq!(slot.probe("globalThis.__begin.ok").unwrap(), true);
+    assert!(
+        queued_seat_rows(&mut slot)
+            .iter()
+            .any(|(request, _, owner)| *request == click && owner.is_some()),
+        "the click waits in a seat batch with the read's machine row as owner"
+    );
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    let dropped = slot.slot_metrics().dropped;
+    let delivered = drain_host(&mut slot);
+    assert!(
+        !delivered.contains(&click),
+        "the click under an expired hold is not dispatched: {delivered:?}"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    post_journal_page(&mut slot, 2, -1, &[]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    assert!(!drain_host(&mut slot).contains(&click));
+    slot.stop();
+}
+
+/// F1, when the read's next step comes first: the stall outlasts the hold,
+/// the read fails with `modal-timeout` and clears its lease, and only then
+/// does the host drain. The click is still stale and is dropped.
+#[test]
+fn production_queue_drops_a_journal_click_whose_read_failed_before_the_drain() {
+    let click = script::interact::InteractReq::IfButton { component_id: 1234 };
+    let mut slot = journal_slot(AWAITED_JOURNAL_READ);
+    post_journal_page(&mut slot, 1, -1, &[]);
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    post_journal_page(&mut slot, 2, -1, &[]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    assert!(queued_seat_rows(&mut slot)
+        .iter()
+        .any(|(request, ..)| *request == click));
+    let dropped = slot.slot_metrics().dropped;
+    let delivered = drain_host(&mut slot);
+    assert!(
+        !delivered.contains(&click),
+        "the click of a read that failed by expiry is not dispatched: {delivered:?}"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    slot.stop();
+}
+
+/// F2: identity, not equality. One script starts a journal read without
+/// awaiting it, and on a later tick calls `Modals.close()`. On that tick the
+/// journal machine queues its own close before the user tick queues the
+/// other family's close: two equal `CloseModal` rows, with different owners.
+/// After the stall, the drain drops the journal's close and keeps the other
+/// one. A closed dispatch (Pause) carries the drained batch back to the
+/// queue, which shows the kept row's identity; after Resume the drain
+/// delivers that one close.
+#[test]
+fn production_queue_drops_only_the_journal_close_of_an_expired_hold() {
+    use script::interact::InteractReq;
+
+    let mut slot = journal_slot(
+        r#"import { Modals } from '../../api/ui/widgets/Modals.js';
+export const apiVersion = 2;
+export function tick(api) {
+  if (!globalThis.__started) {
+    globalThis.__started = true;
+    const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+    globalThis.__begin = begin;
+    if (begin.ok) api.questJournalRun(begin.value).then(out => globalThis.__out = out);
+    return;
+  }
+  if (!globalThis.__closed) {
+    globalThis.__closed = true;
+    Modals.close();
+  }
+}"#,
+    );
+    let click = InteractReq::IfButton { component_id: 1234 };
+    post_journal_page(&mut slot, 1, -1, &[]);
+    let journal = queued_seat_rows(&mut slot)
+        .into_iter()
+        .find(|(request, ..)| *request == click)
+        .and_then(|(_, _, owner)| owner)
+        .expect("the click's seat row names the read's machine row");
+    // A click under its live hold goes out.
+    assert!(drain_host(&mut slot).contains(&click));
+    post_journal_page(&mut slot, 2, 77, &["@dre@The Cook's Quest".into()]);
+    let closes = |slot: &mut script::SlotScript| {
+        queued_seat_rows(slot)
+            .into_iter()
+            .filter(|(request, ..)| *request == InteractReq::CloseModal)
+            .map(|(_, lineage, owner)| (lineage, owner))
+            .collect::<Vec<_>>()
+    };
+    let queued = closes(&mut slot);
+    assert_eq!(queued.len(), 2, "two closes wait: {queued:?}");
+    assert_eq!(queued[0].1, Some(journal), "the journal's close is first");
+    assert_ne!(
+        queued[1].1,
+        Some(journal),
+        "the other close has another owner"
+    );
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    let dropped = slot.slot_metrics().dropped;
+    slot.pause();
+    let _ = slot.drain_host_interacts(None);
+    assert_eq!(
+        closes(&mut slot),
+        [queued[1]],
+        "the journal's stale close is dropped, the other family's close is kept"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    slot.resume();
+    let delivered = drain_host(&mut slot);
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|request| **request == InteractReq::CloseModal)
+            .count(),
+        1,
+        "one close goes out: {delivered:?}"
+    );
+    post_journal_page(&mut slot, 3, 77, &["@dre@The Cook's Quest".into()]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    slot.stop();
+}
+
 fn post_execution_seat_page<'a>(
     isolate: &LoadIsolate,
     buffer: &mut crate::wire::IsolateBuf,
     tick: u64,
     live: &'a [script::native::seat::SeatEntry],
     results: &'a [script::native::seat::SeatResult],
-    details: &'a [crate::wire::SeatLiveDetails<'a>],
+    details: &'a [script::native::seat_rows::SeatLiveDetails<'a>],
     api_progress: Option<&'a script::api_progress::ProgressPage>,
 ) {
-    let page = crate::wire::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let page = script::native::seat_rows::SeatPageInput::new(live, results, details, 0)
+        .expect("valid seat page");
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             api_progress,
             seat_page: Some(page),
             ..Default::default()
@@ -2447,10 +2746,10 @@ fn post_bank_prompt_page(
         decisions_consumed,
         prompt: Some(sequence.get()),
     }];
-    let details = [crate::wire::SeatLiveDetails {
+    let details = [script::native::seat_rows::SeatLiveDetails {
         id,
         phase: script::native::NativePhase::Waiting,
-        prompt: Some(crate::wire::SeatPromptInput {
+        prompt: Some(script::native::seat_rows::SeatPromptInput {
             sequence,
             point,
             args: &args,
@@ -2465,17 +2764,18 @@ fn post_execution_gather_page<'a>(
     tick: u64,
     live: &'a [script::native::seat::SeatEntry],
     results: &'a [script::native::seat::SeatResult],
-    details: &'a [crate::wire::SeatLiveDetails<'a>],
+    details: &'a [script::native::seat_rows::SeatLiveDetails<'a>],
     (gather, terminal): (
         Option<&'a script::api_gather::GatherPage>,
         Option<&'a script::api_gather::GatherEnd>,
     ),
 ) {
-    let page = crate::wire::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let page = script::native::seat_rows::SeatPageInput::new(live, results, details, 0)
+        .expect("valid seat page");
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             api_gather: gather,
             api_gather_outcome: terminal,
             seat_page: Some(page),
@@ -2488,13 +2788,13 @@ fn post_execution_gather_page<'a>(
 
 #[test]
 fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
-    use crate::machine::MachineEventKind;
-    use crate::wire::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use api::identity::ExecutionId;
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
     use script::api_progress::ProgressPage;
     use script::native::request::NativeKind;
+    use script::native::seat_rows::SeatMachineEventKind;
+    use script::native::seat_rows::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use script::native::{seat::SeatTerminal, NativePhase};
 
     fn assert_root_loop_settled(rows: &[SeatInteractDecoded]) {
@@ -2504,7 +2804,7 @@ fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
                 [SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::LoopSettled,
+                    request: script::interact::InteractReq::LoopSettled,
                 }]
             ),
             "a synchronous v2 tick reports one root loop settlement: {rows:?}"
@@ -2572,12 +2872,12 @@ export function tick(api) {
                 SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::LoopSettled,
+                    request: script::interact::InteractReq::LoopSettled,
                 },
                 SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::WaitEnqueued,
+                    request: script::interact::InteractReq::WaitEnqueued,
                 }
             ]
         ),
@@ -2662,7 +2962,7 @@ export function tick(api) {
             batch
                 .machine_events
                 .iter()
-                .any(|event| event.id == id && event.kind == MachineEventKind::Done)
+                .any(|event| event.id == id && event.kind == SeatMachineEventKind::Done)
         }),
         "local terminal is published against the admitted native owner"
     );
@@ -2738,12 +3038,12 @@ export function tick(api) {
 
 #[test]
 fn execution_owned_gather_promise_waits_for_typed_terminal_after_seat_done() {
-    use crate::wire::SeatLiveDetails;
     use api::identity::{ExecutionId, RequestId};
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
     use script::api_gather::{GatherCounts, GatherEnd, GatherPage, GatherPhase};
     use script::native::request::NativeKind;
+    use script::native::seat_rows::SeatLiveDetails;
     use script::native::{seat::SeatTerminal, NativePhase};
 
     let source = r#"
@@ -2880,10 +3180,10 @@ export function tick(api) {
 
 #[test]
 fn execution_owned_v8_caps_rows_and_reserves_controls() {
-    use crate::wire::MAX_SEAT_GAMEPLAY_ROWS;
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
+    use script::native::seat_rows::MAX_SEAT_GAMEPLAY_ROWS;
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
@@ -2907,7 +3207,7 @@ export function tick() {
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
     let no_results: [script::native::seat::SeatResult; 0] = [];
-    let no_details: [crate::wire::SeatLiveDetails<'_>; 0] = [];
+    let no_details: [script::native::seat_rows::SeatLiveDetails<'_>; 0] = [];
     let mut buffer = crate::wire::IsolateBuf::new();
     post_execution_seat_page(
         &isolate,
@@ -2968,7 +3268,7 @@ export function tick() {
 fn execution_owned_reset_restates_parked_waits_on_the_seat_lane() {
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
@@ -2992,7 +3292,7 @@ export function tick() {
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
     let no_results: [script::native::seat::SeatResult; 0] = [];
-    let no_details: [crate::wire::SeatLiveDetails<'_>; 0] = [];
+    let no_details: [script::native::seat_rows::SeatLiveDetails<'_>; 0] = [];
     let mut buffer = crate::wire::IsolateBuf::new();
     post_execution_seat_page(
         &isolate,
@@ -3043,7 +3343,7 @@ export function tick() {
 fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let execution = ExecutionId::first(RunKey {
         slot: 16,
@@ -3086,12 +3386,15 @@ fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
 
 #[test]
 fn execution_owned_inspect_ack_uses_the_seat_lane() {
-    use crate::wire::{
-        IsolateBuf, NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
-    };
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
+    use {
+        crate::wire::IsolateBuf,
+        script::native::snapshot_source::{
+            NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
+        },
+    };
 
     let execution = ExecutionId::first(RunKey {
         slot: 17,
@@ -3142,9 +3445,9 @@ fn execution_owned_inspect_ack_uses_the_seat_lane() {
 /// frames. `body` is what each frame records after its title and status
 /// row.
 fn paint_runtime(body: &str) -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
     let source = format!(
         r#"
 import {{ Paint }} from '../../paint/Paint.js';
@@ -3161,7 +3464,7 @@ globalThis.__frames = (n) => {{
 export function tick() {{}}
 "#
     );
-    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(
             runtime,
             &source,
@@ -3180,9 +3483,9 @@ export function tick() {{}}
     runtime
 }
 fn script_activity_runtime() -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
     let source = r#"
 import { ScriptActivity } from '../../runtime/ScriptActivity.js';
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
@@ -3215,7 +3518,7 @@ globalThis.__repeatRuntimeHandles = (count) => {
 };
 export default class RuntimeShapeProbe extends LoopingBot {}
 "#;
-    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(
             runtime,
             source,
@@ -3377,3 +3680,6 @@ fn paint_controls_helper_keeps_collected_v8_heap_flat() {
          (hint rows {hint_growth}, slack {SLACK})"
     );
 }
+
+#[path = "isolate_seat_page_tests.rs"]
+mod seat_page;

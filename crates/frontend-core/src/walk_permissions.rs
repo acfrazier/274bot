@@ -42,6 +42,8 @@ pub struct WalkGlobals {
     allow_bank_fetch: bool,
     allow_danger_zones: bool,
     survivable_routing: bool,
+    allow_prereq_dialogue: bool,
+    allow_quest_start: bool,
 }
 
 impl Default for WalkGlobals {
@@ -52,6 +54,8 @@ impl Default for WalkGlobals {
             allow_bank_fetch: false,
             allow_danger_zones: false,
             survivable_routing: true,
+            allow_prereq_dialogue: true,
+            allow_quest_start: true,
         }
     }
 }
@@ -63,6 +67,8 @@ impl WalkGlobals {
         allow_bank_fetch: bool,
         allow_danger_zones: bool,
         survivable_routing: bool,
+        allow_prereq_dialogue: bool,
+        allow_quest_start: bool,
     ) -> Self {
         Self {
             allow_teleports,
@@ -70,6 +76,8 @@ impl WalkGlobals {
             allow_bank_fetch,
             allow_danger_zones,
             survivable_routing,
+            allow_prereq_dialogue,
+            allow_quest_start,
         }
     }
 
@@ -80,6 +88,8 @@ impl WalkGlobals {
             globals.allow_bank_fetch,
             globals.allow_danger_zones,
             globals.survivable_routing,
+            globals.allow_prereq_dialogue,
+            globals.allow_quest_start,
         )
     }
 
@@ -90,6 +100,8 @@ impl WalkGlobals {
             allow_bank_fetch: self.allow_bank_fetch,
             allow_danger_zones: self.allow_danger_zones,
             survivable_routing: self.survivable_routing,
+            allow_prereq_dialogue: self.allow_prereq_dialogue,
+            allow_quest_start: self.allow_quest_start,
         }
     }
 
@@ -108,6 +120,12 @@ impl WalkGlobals {
     pub const fn survivable_routing(self) -> bool {
         self.survivable_routing
     }
+    pub const fn allow_prereq_dialogue(self) -> bool {
+        self.allow_prereq_dialogue
+    }
+    pub const fn allow_quest_start(self) -> bool {
+        self.allow_quest_start
+    }
 
     pub const fn fail_closed() -> Self {
         Self {
@@ -116,6 +134,8 @@ impl WalkGlobals {
             allow_bank_fetch: false,
             allow_danger_zones: false,
             survivable_routing: false,
+            allow_prereq_dialogue: false,
+            allow_quest_start: false,
         }
     }
 
@@ -160,11 +180,11 @@ impl WalkGlobals {
 pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
 /// The explanatory copy for the `When survivable` danger-routing level.
-pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host applies the active survivability policy to danger routes. Scripts and the map control can still override.";
+pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "Checks a death-probability upper bound of 1% for the whole route, without eating, prayer or escape. Named danger zones still count in the check. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Explanatory copy while the middle level is held behind the unavailable
 /// runtime net.
-pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never; this setting does not change route admission. Global, one-walk, and script overrides still apply.";
+pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never. This setting does not change route admission. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Return only copy that matches the currently active runtime gate.
 pub const fn survivable_routing_tooltip() -> &'static str {
@@ -180,7 +200,7 @@ pub const SURVIVABLE_ROUTING_NOTICE: &str =
     "Danger routing now has three levels and defaults to 'When survivable'.";
 
 /// Migration notice while the middle level is held behind the runtime net.
-pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing now has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet; its effective level is Never and it does not change route admission. Global, one-walk, and script overrides still apply. rs2b0t-compatible scripts keep rs2b0t's own behaviour.";
+pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet. Its effective level is Never. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Return a migration notice that reflects whether the held level is usable.
 pub const fn survivable_routing_notice() -> &'static str {
@@ -192,7 +212,7 @@ pub const fn survivable_routing_notice() -> &'static str {
 }
 
 /// Warning shown for the global Always override and in place of the one-shot control.
-pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled.";
+pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled. Walks proceed without the survival check. The model's death-probability bound is information only.";
 
 /// Label for the single-admission danger-zone control.
 pub const DANGER_THIS_WALK_LABEL: &str = "Route through danger zones";
@@ -240,6 +260,17 @@ pub const GLOBAL_PERMISSION_LABELS: [(&str, &str); 4] = [
     ("allow_bank_fetch", "allow bank fetch"),
     ("allow_danger_zones", "Danger routing"),
 ];
+
+/// Shared labels for the durable prerequisite grants: preference id, label.
+pub const PREREQ_PERMISSION_LABELS: [(&str, &str); 2] = [
+    ("allow_prereq_dialogue", "Allow dialogue steps on walks"),
+    ("allow_quest_start", "Allow starting quests on walks"),
+];
+
+/// How the prerequisite grants compose: the global switch or the script's
+/// own grant allows the step on a walk, and only a per-request Forbid
+/// narrows it.
+pub const PREREQ_SCOPE_NOTE: &str = "Dialogue and quest-start grants are additive: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.";
 
 /// One durable read of all global walk permissions and their notice acknowledgements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -323,6 +354,10 @@ impl WalkGlobalsView {
             "allow_teleports" | "allowTeleports" => Some(self.globals.allow_teleports),
             "allow_wilderness" | "allowWilderness" => Some(self.globals.allow_wilderness),
             "allow_danger_zones" | "allowDangerZones" => Some(self.globals.allow_danger_zones),
+            "allow_prereq_dialogue" | "allowPrereqDialogue" => {
+                Some(self.globals.allow_prereq_dialogue)
+            }
+            "allow_quest_start" | "allowQuestStart" => Some(self.globals.allow_quest_start),
             _ => None,
         }
     }
@@ -418,6 +453,8 @@ mod tests {
                 allow_bank_fetch: true,
                 allow_danger_zones: true,
                 survivable_routing: false,
+                allow_prereq_dialogue: true,
+                allow_quest_start: true,
             }
         );
         assert_eq!(view.danger_level(), DangerLevel::Always);
@@ -429,6 +466,10 @@ mod tests {
         assert_eq!(view.permission_enabled("allowWilderness"), Some(true));
         assert_eq!(view.permission_enabled("allow_danger_zones"), Some(true));
         assert_eq!(view.permission_enabled("allowDangerZones"), Some(true));
+        assert_eq!(view.permission_enabled("allow_prereq_dialogue"), Some(true));
+        assert_eq!(view.permission_enabled("allowPrereqDialogue"), Some(true));
+        assert_eq!(view.permission_enabled("allow_quest_start"), Some(true));
+        assert_eq!(view.permission_enabled("allowQuestStart"), Some(true));
         assert_eq!(view.permission_enabled("allow_bank_fetch"), None);
         assert_eq!(view.permission_enabled("allowBankFetch"), None);
         assert_eq!(view.permission_enabled("unrelated"), None);
@@ -445,6 +486,14 @@ mod tests {
             migrated.globals.effective_danger_level(),
             DangerLevel::Never
         );
+        assert!(
+            migrated.globals.allow_prereq_dialogue,
+            "an old file without the prereq keys keeps dialogue steps on"
+        );
+        assert!(
+            migrated.globals.allow_quest_start,
+            "an old file without the prereq keys keeps quest starts on"
+        );
         assert!(migrated.script_scope_notice_ack);
         assert!(!migrated.survivable_routing_notice_ack);
 
@@ -452,8 +501,55 @@ mod tests {
         let malformed = WalkGlobalsView::read(store.prefs());
         assert_eq!(malformed.globals, WalkGlobals::fail_closed());
         assert!(!malformed.globals.survivable_routing);
+        assert!(!malformed.globals.allow_prereq_dialogue);
+        assert!(!malformed.globals.allow_quest_start);
         assert!(!malformed.script_scope_notice_ack);
         assert!(!malformed.survivable_routing_notice_ack);
+    }
+
+    #[test]
+    fn prereq_grants_default_on_and_round_trip_through_the_nav_object() {
+        let store = TempStore::new("prereq");
+        let defaults = WalkGlobalsView::read(store.prefs());
+        assert!(defaults.globals.allow_prereq_dialogue);
+        assert!(defaults.globals.allow_quest_start);
+
+        crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
+            store.prefs(),
+            crate::NavPreference::AllowPrereqDialogue,
+            false,
+        ))
+        .unwrap();
+        crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
+            store.prefs(),
+            crate::NavPreference::AllowQuestStart,
+            false,
+        ))
+        .unwrap();
+        let denied = WalkGlobalsView::read(store.prefs());
+        assert!(!denied.globals.allow_prereq_dialogue);
+        assert!(!denied.globals.allow_quest_start);
+        let persisted =
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
+                .unwrap();
+        assert_eq!(persisted["nav"]["allow_prereq_dialogue"], false);
+        assert_eq!(persisted["nav"]["allow_quest_start"], false);
+
+        crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
+            store.prefs(),
+            crate::NavPreference::AllowPrereqDialogue,
+            true,
+        ))
+        .unwrap();
+        crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
+            store.prefs(),
+            crate::NavPreference::AllowQuestStart,
+            true,
+        ))
+        .unwrap();
+        let allowed = WalkGlobalsView::read(store.prefs());
+        assert!(allowed.globals.allow_prereq_dialogue);
+        assert!(allowed.globals.allow_quest_start);
     }
 
     #[test]
@@ -552,8 +648,9 @@ mod tests {
             super::survivable_routing_tooltip(),
             super::survivable_routing_notice(),
         ] {
-            assert!(!copy.contains("eating"));
-            assert!(!copy.contains("praying"));
+            assert!(copy.contains("upper bound of 1%"));
+            assert!(copy.contains("without eating, prayer or escape"));
+            assert!(copy.contains("proceed without this check"));
             assert!(!copy.contains("turn back"));
             assert!(!copy.contains("rebake"));
             assert!(!copy.contains("274V17"));

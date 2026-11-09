@@ -68,7 +68,6 @@ pub mod reach_route;
 pub mod registry;
 
 pub mod settings_store;
-pub mod shim;
 pub mod shop_open;
 pub mod slot;
 /// Sealed external-script authority and shared server-ordered host input.
@@ -102,12 +101,12 @@ pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, Compile
 
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
-    parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
+    parameter_rows, setting_visible, ScriptSettingsError, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
 pub use slot::StartLoadError;
 pub use slot::{
-    CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,
-    StartOutcome, StartPoll,
+    CompiledDelivery, InteractionWait, RunState, ScriptLifecycleReceipt, ScriptTerminalState,
+    SlotScript, StartOutcome, StartPoll,
 };
 pub use watchdog::{
     ProgressWatchdog, RestartReason, ScriptProgress, Tile as WatchdogTile, WatchdogAction,

@@ -4,9 +4,16 @@
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 #[test]
 fn bank_picker_import_links_and_awaits_host_selection() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;
@@ -80,7 +87,7 @@ export default class Probe extends LoopingBot {
                     tick,
                     sequence: tick,
                 },
-                selected: SelectedBank {
+                outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                     bank_index: 1,
                     access_tile: WorldTile {
                         x: 3200,
@@ -89,7 +96,7 @@ export default class Probe extends LoopingBot {
                     },
                     kind: PickKind::Reachable,
                     access: None,
-                },
+                }),
             },
         );
         slot.tick_from_input(tick, &snapshot, Default::default());
@@ -113,6 +120,9 @@ export default class Probe extends LoopingBot {
 
 #[test]
 fn bank_v2_selection_publishes_the_typed_seat_result() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;
@@ -187,7 +197,7 @@ export function tick(api) {
                 tick: 2,
                 sequence: 2,
             },
-            selected: SelectedBank {
+            outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index: 1,
                 access_tile: WorldTile {
                     x: 3200,
@@ -196,7 +206,7 @@ export function tick(api) {
                 },
                 kind: PickKind::Reachable,
                 access: None,
-            },
+            }),
         },
     );
     snapshot.tick = 2;
@@ -231,6 +241,9 @@ export function tick(api) {
 
 #[test]
 fn bank_v2_replacement_supersedes_the_waiter_and_rejects_its_late_publication() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;
@@ -320,7 +333,7 @@ export function tick(api) {
                         tick,
                         sequence: tick,
                     },
-                    selected: SelectedBank {
+                    outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                         bank_index: index,
                         access_tile: WorldTile {
                             x: 3200,
@@ -329,7 +342,7 @@ export function tick(api) {
                         },
                         kind: PickKind::Reachable,
                         access: None,
-                    },
+                    }),
                 },
             );
         };

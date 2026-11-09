@@ -79,12 +79,23 @@ unchanged, while a present empty vector clears it.
 `QuestStatusView`, `MakeProductView`, `ToggleControlsView`, plus
 `WorldTile`/`LocalTile` and `ItemDefView`/`LocDefView` (from `api::obj_names`).
 
+`TradeView` carries the offer screen's two offers and the side pack. At the
+mutual accept the engine stops those containers (`trade.rs2:80-86`) and the
+client empties them, so `my_offer_stopped` and `their_offer_stopped` are set
+and the offers read as empty. The trade is then only on the confirm screen:
+`TradeView::confirm` holds its two lists (`tradeconfirm:inv1` 3542 or `inv2`
+3538 for the local offer, `otherinv1` 3532 or `otherinv2` 3539 for the
+counterpart's) while the confirm screen is the open main modal, and is `None`
+otherwise. It costs a bot one pointer (8 bytes) and no heap off that screen.
+
 `SnapshotView::in_combat()` reports the local combat flag and current target
 as `CombatView` (`in_combat`, `target`); it is unready without a local player.
 
 `PlayerView.headicons` carries the client's appearance bitmask unchanged for
-local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,
-and magic.
+local and remote players on 274/289 only. Bits 3, 4, and 5 denote protect
+melee, missiles, and magic. That legacy bitmask claim does not extend to 377:
+on 377 `PlayerView.headicons` is 0, and the snapshot does not expose separate
+client `pk_icon_377`/`prayer_icon_377` fields (or any other headicon field).
 
 `NpcView` retains the packed NPC type id; matching
 `SelectedGameData::npc_name(id).headicon` is the optional headicon fact

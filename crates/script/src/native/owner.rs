@@ -10,8 +10,18 @@ pub(crate) struct Owner {
     pub id: NonZeroU64,
     revoked: AtomicBool,
     quiet: AtomicU64,
+    /// The live modal-wait lease: the owner waits for the page its own
+    /// interaction opens, and the host holds its auto-run press meanwhile.
+    modal_wait: AtomicU64,
     walk: AtomicU64,
     interaction: AtomicU64,
+    /// The host discarded `interaction` without dispatching it: a held tick,
+    /// a seat refusal or a session reset dropped its queued action
+    /// ([`super::ledger::HostAction`] custody). No receipt will come for it.
+    interaction_unsent: AtomicBool,
+    /// The same for `walk`: the host discarded the queued walk before it armed
+    /// the route, so no walk receipt will come.
+    walk_unsent: AtomicBool,
     batch: [AtomicU64; 5],
     batch_first: AtomicU64,
     batch_accepted: AtomicU8,
@@ -24,8 +34,11 @@ impl Owner {
             id,
             revoked: AtomicBool::new(false),
             quiet: AtomicU64::new(0),
+            modal_wait: AtomicU64::new(0),
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
+            interaction_unsent: AtomicBool::new(false),
+            walk_unsent: AtomicBool::new(false),
             batch: std::array::from_fn(|_| AtomicU64::new(0)),
             batch_first: AtomicU64::new(0),
             batch_accepted: AtomicU8::new(0),
@@ -39,6 +52,7 @@ impl Owner {
     pub fn revoke(&self) {
         self.revoked.store(true, Ordering::Release);
         self.quiet.store(0, Ordering::Release);
+        self.modal_wait.store(0, Ordering::Release);
         self.walk.store(0, Ordering::Release);
         self.interaction.store(0, Ordering::Release);
         for slot in &self.batch {
@@ -64,7 +78,36 @@ impl Owner {
         self.live() && self.quiet.load(Ordering::Acquire) == request.get()
     }
 
+    /// A newer wait replaces an older one of the same owner.
+    pub fn set_modal_wait(&self, lease: NonZeroU64) -> bool {
+        if !self.live() {
+            return false;
+        }
+        self.modal_wait.store(lease.get(), Ordering::Release);
+        // A revocation that raced the store wins.
+        if !self.live() {
+            self.modal_wait.store(0, Ordering::Release);
+            return false;
+        }
+        true
+    }
+
+    pub fn release_modal_wait(&self, lease: NonZeroU64) {
+        let _ =
+            self.modal_wait
+                .compare_exchange(lease.get(), 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    /// The live modal-wait lease id, if any.
+    pub fn modal_wait(&self) -> Option<NonZeroU64> {
+        if !self.live() {
+            return None;
+        }
+        NonZeroU64::new(self.modal_wait.load(Ordering::Acquire))
+    }
+
     pub fn set_walk(&self, request: NonZeroU64) {
+        self.walk_unsent.store(false, Ordering::Release);
         self.walk.store(request.get(), Ordering::Release);
     }
 
@@ -85,7 +128,39 @@ impl Owner {
     }
 
     pub fn set_interaction(&self, request: NonZeroU64) {
+        self.interaction_unsent.store(false, Ordering::Release);
         self.interaction.store(request.get(), Ordering::Release);
+    }
+
+    /// The host dropped `request` from its custody without dispatching it.
+    /// Only the owner's current single interaction or current walk is marked:
+    /// a cancelled or superseded request is already not queued
+    /// ([`Self::interaction_queued`]). Request ids are unique within the
+    /// ledger, so the id names which of the two it is.
+    pub fn note_unsent(&self, request: NonZeroU64) {
+        if self.interaction.load(Ordering::Acquire) == request.get() {
+            self.interaction_unsent.store(true, Ordering::Release);
+        } else if self.walk.load(Ordering::Acquire) == request.get() {
+            self.walk_unsent.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether `request` is this live owner's current walk and the host
+    /// discarded it before it armed the route.
+    pub fn walk_unsent(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self.walk.load(Ordering::Acquire) == request.get()
+            && self.walk_unsent.load(Ordering::Acquire)
+    }
+
+    /// Whether `request` is this live owner's current single interaction and
+    /// the host has not discarded it. A cancelled request (`cancel_interaction`
+    /// cleared it) or a superseded one (`set_interaction` replaced it) is not
+    /// queued, whatever happens later to its dropped action's custody.
+    pub fn interaction_queued(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self.interaction.load(Ordering::Acquire) == request.get()
+            && !self.interaction_unsent.load(Ordering::Acquire)
     }
 
     pub fn cancel_interaction(&self, request: NonZeroU64) {

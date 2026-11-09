@@ -1,7 +1,7 @@
 //! COMPAT-FINISH-029 ClientAdapter census contracts and removals.
 
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     ChatLineInput, ChatOptionInput, ClientAdapterFactsInput, CollisionViewInput, ItemRowInput,
     MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NpcBoxInput,
     ProjectionSceneInput, PuzzleBoardInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,

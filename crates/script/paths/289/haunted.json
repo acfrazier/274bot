@@ -1,0 +1,147 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "haunted",
+  "display_name": "Ernest the Chicken",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 4,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": { "closet": { "boxes": [[3108, 3366, 3112, 3368, 0]], "source": "content/maps/m48_52.jm2:2344-2346,2408-2410,2472-2474,2536-2538,2600-2602,6998-7000,7022-7023,7063-7065,7124-7125,7187-7190" } },
+    "tools": ["obj:iron_mace", "obj:cabbage", "obj:spade", "obj:closet_key", "obj:fish_food", "obj:poison", "obj:poisoned_fish_food", "obj:pressure_gauge", "obj:rubber_tube", "obj:oil_can"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:haunted",
+    "progress": {
+      "colour": { "not_started": "haunted:0", "in_progress": "haunted:1", "complete": "haunted:3" },
+      "rules": [
+        { "stage": "haunted:2", "all": ["i've spoken to dr oddenstein"], "any": [], "not": [], "varp": 2 },
+        { "stage": "haunted:1", "all": ["i need to find", "he went into"], "any": [], "not": [], "varp": 1 }
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "haunted:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "pick-food", "kind": "interact", "version": 1, "advances": false,
+          "args": { "target": { "loc": "cabbage" }, "op": "Pick", "anchor": { "tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756; content/pack/loc.pack:1162" }, "radius": 12, "wait_if_missing": true, "until": { "obj": "cabbage", "qty": 16 }, "settle_ms": 180000 },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 16 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 16 } } },
+          "comment": "Pick food before entering the manor. The patch gives cabbage and replenishes after 70 ticks; each cabbage heals one hitpoint: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+        }, {
+          "id": "start-veronica", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "veronica", "anchor": { "tile": [3110, 3330, 0], "source": "content/maps/m48_52.jm2:9447; content/pack/npc.pack:286" }, "leash": 8, "prefer": ["Aha, sounds like a quest. I'll help."] },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "haunted", "any": ["haunted:1"] } } },
+          "comment": "Veronica starts the quest on the help answer: content/scripts/areas/area_draynor/scripts/veronica.rs2:8-19; journal: content/scripts/quests/quest_haunted/scripts/haunted_journal.rs2:5-8."
+        }]
+      },
+      {
+        "stage": "haunted:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "ask-oddenstein", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "professor_oddenstein", "anchor": { "tile": [3110, 3367, 2], "source": "content/maps/m48_52.jm2:9461; content/pack/npc.pack:287" }, "leash": 8, "prefer": ["I'm looking for a guy called Ernest.", "Change him back this instant!"] },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "haunted", "any": ["haunted:2"] } } },
+          "comment": "Ask about Ernest and demand his return. The professor sets stage 2: content/scripts/areas/area_draynor/scripts/professor_oddenstein.rs2:21-31,46-56."
+        }]
+      },
+      {
+        "stage": "haunted:2", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "steps": [
+          {
+            "id": "take-spade", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "spade" }, "op": "Take", "anchor": { "tile": [3120, 3359, 0], "source": "content/maps/m48_52.jm2:9473; content/pack/obj.pack:953" }, "radius": 2, "wait_if_missing": true },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "closet_key" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "spade" } } },
+            "comment": "The manor supplies the spade. The compost heap requires it: content/maps/m48_52.jm2:9473; content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:16-26."
+          },
+          {
+            "id": "dig-key", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "spade", "target": { "loc": "hauntedcompostheap" }, "anchor": { "tile": [3084, 3360, 0], "source": "content/maps/m48_52.jm2:5870; content/pack/loc.pack:153" }, "radius": 3, "product": "closet_key" },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "closet_key" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "closet_key" } } },
+            "comment": "Use the spade to find the closet key: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:16-29."
+          },
+          {
+            "id": "unlock-closet", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "closet_key", "target": { "loc": "closet_door" }, "anchor": { "tile": [3107, 3367, 0], "source": "content/maps/m48_52.jm2:6960; content/pack/loc.pack:132" }, "radius": 2 },
+            "skip_if": { "Any": [ { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "closet" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } } ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "closet" } } },
+            "comment": "The key toggles the door and moves the player inside. Wait for the inside tile rather than the earlier door message: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:31-46; content/scripts/doors/scripts/open_and_close_doors.rs2:43-62."
+          },
+          {
+            "id": "fight-closet-skeleton", "kind": "combat", "version": 1, "advances": false,
+            "args": { "target": { "npc": "skeleton_unarmed", "not_targeting_others": true, "pick": "nearest" }, "stand": { "tile": [3110, 3367, 0], "source": "content/maps/m48_52.jm2:9448; content/pack/npc.pack:91" }, "area": { "box": [3108, 3366, 3112, 3368, 0], "source": "content/maps/m48_52.jm2:6998-7000,7022-7023,7063-7065,7124-7125,7187-7190" }, "lost_radius": 8, "kill_budget_ticks": 240, "tactic": { "kind": "open", "style": "melee", "engage_radius": 5, "auto_retaliate": true } },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } },
+            "settle": { "All": [] },
+            "comment": "The level-25 skeleton spawns beside the tube and hunts weak players: content/maps/m48_52.jm2:9448,9472; content/scripts/_unpack/225/all.npc:2222-2240; content/scripts/_unpack/225/all.hunt:37-45."
+          },
+          {
+            "id": "take-tube", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "rubber_tube" }, "op": "Take", "anchor": { "tile": [3111, 3367, 0], "source": "content/maps/m48_52.jm2:9472; content/pack/obj.pack:277" }, "radius": 2, "wait_if_missing": true },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } },
+            "comment": "Take the tube from its manor ground spawn: content/maps/m48_52.jm2:9472; the professor needs it: content/scripts/areas/area_draynor/scripts/professor_oddenstein.rs2:55-60."
+          },
+          {
+            "id": "take-poison", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "poison" }, "op": "Take", "anchor": { "tile": [3097, 3366, 0], "source": "content/maps/m48_52.jm2:9471; content/pack/obj.pack:274" }, "radius": 2, "wait_if_missing": true },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poison" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poisoned_fish_food" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["then die and float to the surface"], "clear": [] } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poison" } } },
+            "comment": "Take poison from its ground spawn for the fish food: content/maps/m48_52.jm2:9471; content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:69-79."
+          },
+          {
+            "id": "take-fish-food", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "fish_food" }, "op": "Take", "anchor": { "tile": [3108, 3356, 1], "source": "content/maps/m48_52.jm2:9477; content/pack/obj.pack:273" }, "radius": 2, "wait_if_missing": true },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "fish_food" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poisoned_fish_food" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["then die and float to the surface"], "clear": [] } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "fish_food" } } },
+            "comment": "Take fish food from its ground spawn: content/maps/m48_52.jm2:9477; content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:69-79."
+          },
+          {
+            "id": "poison-food", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "poison", "target": { "item": "fish_food" }, "product": "poisoned_fish_food" },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poisoned_fish_food" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["then die and float to the surface"], "clear": [] } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "poisoned_fish_food" } } },
+            "comment": "The item-on-item operation consumes poison and food and produces poisoned food: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:69-79."
+          },
+          {
+            "id": "poison-fountain", "kind": "use_on", "version": 1, "advances": false,
+            "args": { "item": "poisoned_fish_food", "target": { "loc": "hauntedfountain" }, "anchor": { "tile": [3087, 3334, 0], "source": "content/maps/m48_52.jm2:5983; content/pack/loc.pack:154" }, "radius": 3 },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } }, { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["then die and float to the surface"], "clear": [] } } } ] },
+            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["then die and float to the surface"] } } },
+            "comment": "The food is consumed and fish die after engine delays: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:81-93."
+          },
+          {
+            "id": "take-gauge", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "hauntedfountain" }, "op": "Search", "anchor": { "tile": [3087, 3334, 0], "source": "content/maps/m48_52.jm2:5983; content/pack/loc.pack:154" }, "radius": 3 },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pressure_gauge" } } },
+            "comment": "Search the poisoned fountain for the gauge: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:48-67."
+          },
+          {
+            "id": "finish-with-all-parts", "kind": "talk", "version": 1, "advances": true,
+            "args": { "npc": "professor_oddenstein", "anchor": { "tile": [3110, 3367, 2], "source": "content/maps/m48_52.jm2:9461; content/pack/npc.pack:287" }, "leash": 8, "prefer": [], "gap_ticks": 3 },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "oil_can" } } } },
+            "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "haunted", "is": "complete" } } },
+            "comment": "The professor consumes all three parts and completes the quest. The longest quiet delay is p_delay(2), or three ticks: content/scripts/areas/area_draynor/scripts/professor_oddenstein.rs2:58-82."
+          }
+        ]
+      },
+      { "stage": "haunted:3", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

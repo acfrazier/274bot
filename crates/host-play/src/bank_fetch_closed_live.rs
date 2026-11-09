@@ -551,6 +551,7 @@ fn pump_frame(
         map_members,
         None,
         false,
+        Some(world),
     ));
     guard.tile = Some([here.0, here.1, here.2]);
     guard.held_coins = count(snapshot.inventory(), COINS);

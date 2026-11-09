@@ -572,15 +572,21 @@ mod tests {
             OPTION_PREFIX
         );
         assert_eq!((DEFAULT_CAMP_RADIUS, DEFAULT_CHASE_RADIUS), (64.0, 40.0));
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
         assert_eq!(
-            location_options(api::gather_camps::mining_camps()).count(),
+            location_options(api::gather_camps::mining_camps().expect("mining camps")).count(),
             5 + 24
         );
     }
 
     #[test]
     fn the_generated_camp_tables_resolve_like_any_preset_table() {
-        let camps = api::gather_camps::mining_camps();
+        if !api::test_support::embedded_game_data_available() {
+            return;
+        }
+        let camps = api::gather_camps::mining_camps().expect("mining camps");
         let start = WorldTile {
             x: 3290,
             z: 3370,

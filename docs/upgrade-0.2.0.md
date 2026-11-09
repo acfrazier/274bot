@@ -1,8 +1,34 @@
-# Upgrading to 0.2.0 Beta 1
+# Upgrading 274bot
 
-From 0.1.9.1. One section per breaking change; everything else keeps working.
+## Saved data in 0.2.9
 
-## Server profiles
+Version 0.2.9 reads formats used by 0.2.8 and 0.2.9.
+A file with a supported format loads even if an older release wrote it.
+There is no writer-release marker.
+Formats that need an upgrade from before 0.2.8 no longer load.
+Supported 0.2.8 settings remain supported.
+
+Before normal startup, the application checks preferences, script settings,
+loadouts, all account hints and server settings, including normally lazy stores.
+The panel and TUI show every refused path and ask once whether to move the files
+aside. Yes moves each file to a sibling named `<name>.pre-0.2.8`, with a numbered
+suffix if needed. Existing backups are never overwritten. Startup then treats
+the original paths as absent. No quits without changing any file.
+
+The vault is checked after decryption at unlock. If its format is unsupported,
+the same choice appears then. Yes moves it aside and returns to empty-vault
+setup. No leaves it unchanged and quits.
+
+Noninteractive live, smoke and agent runs do not ask or move files.
+The `host-play` command is always noninteractive for this decision.
+These runs quit with a typed error that names each refused file.
+Ordinary malformed-file errors are not classified as old formats.
+
+## Changes from 0.1.9.1 to 0.2.0 Beta 1
+
+The following sections describe that older release, not the 0.2.9 format policy.
+
+### Server profiles
 
 `--profile NAME` now picks an entry from `~/.274bot/servers.json`, created on
 first use with `local-274`, `local-289` and `rs2b2t`. `--rs2b2t` selects the
@@ -14,7 +40,7 @@ A valid `~/.274bot/worlds.json` is imported once into the `rs2b2t` roster;
 after that, edit `servers.json` (later changes to `worlds.json` are ignored).
 `--user` creates missing accounts with a fresh random game password.
 
-## Vault passphrase
+### Vault passphrase
 
 `BOT_VAULT_PASS` and `--vault-pass` were removed: anything on the command line
 or in the environment is visible to other users. `host-play` and `tui-play`
@@ -30,20 +56,20 @@ A first run of `tui-play` with no `--user` now stops with "vault has no
 profiles" instead of seeding a `test` profile; pass `--user NAME` to create
 the first one.
 
-## Navigation packs
+### Navigation packs
 
 The pack format is now v16. Packs you baked yourself with 0.1.9.1 or earlier
 are refused with a message to rebake them with
 `nav-pack`. The bundled pack is rebuilt for you.
 
-## Local engines
+### Local engines
 
 The bot no longer guesses where a local game engine is. Give it with
 `--engine`, the `ENGINE_DIR` environment variable, or the profile's
 `login_key.engine_dir` in `servers.json`; without one, a local profile stops
 with a message saying how to set it. Public (rs2b2t) profiles need nothing.
 
-## Graphics
+### Graphics
 
 On Windows the panel tries Vulkan first and falls back to Direct3D 12.
 Windows and macOS prefer the power-saving GPU. From 0.2.5, the Linux

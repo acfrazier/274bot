@@ -928,7 +928,9 @@ fn check_no_error_logs(logs: &[TimedLog]) -> Result<(), String> {
 }
 
 fn bank_sort_result(receipt: &mut Receipt) -> Result<(), String> {
-    if !api::quest_junk::QUEST_JUNK.iter().any(|entry| {
+    let junk =
+        api::quest_junk::quest_junk().map_err(|error| format!("quest-junk catalog: {error:?}"))?;
+    if !junk.iter().any(|entry| {
         entry.id == QUEST_RED_BEAD && entry.name == "Red bead" && entry.quest == "Imp Catcher"
     }) {
         return Err("red bead seed is not present in the generated quest-junk catalog".into());

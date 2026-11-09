@@ -179,7 +179,7 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     #[cfg(feature = "js")]
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     #[cfg(not(feature = "js"))]
     let scripts = Scripts::new();
@@ -371,6 +371,12 @@ impl Fixture {
 
 #[test]
 fn newer_native_edit_keeps_the_copy_drafts_assignment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("copy-draft-assignment", &["alice", "bob"]);
     let id = script::CompiledId("Gatherer");
     assert!(f
@@ -1013,6 +1019,12 @@ fn discard_recovers_hidden_card_drafts_without_cancelling_an_accepted_save() {
 
 #[test]
 fn unknown_resource_save_survives_and_radius_remains_editable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("unknown-resource-radius", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let selection = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
@@ -1180,7 +1192,7 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 
 #[test]
 fn browse_card_list_includes_compiled_cards() {
-    let f = native_fixture("compiled-card-list", &["alice"]);
+    let f = fixture("compiled-card-list", &["alice"]);
     let cards: Vec<_> = f.scripts.browse_cards().collect();
     #[cfg(feature = "js")]
     {
@@ -1236,6 +1248,12 @@ fn prepare_grinch(
 
 #[test]
 fn grinch_defaults_and_radius_use_the_real_compiled_schema_and_preparer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let f = native_fixture("grinch-defaults", &["alice"]);
     let id = script::CompiledId("Grinch");
     let compiled_id = CompiledCardId::from_script(id);
@@ -1325,6 +1343,12 @@ fn grinch_defaults_and_radius_use_the_real_compiled_schema_and_preparer() {
 
 #[test]
 fn grinch_mask_ids_survive_the_shared_panel_tui_settings_editor_path() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("grinch-mask-settings", &["alice"]);
     let id = script::CompiledId("Grinch");
     let compiled_id = CompiledCardId::from_script(id);
@@ -1745,6 +1769,12 @@ fn scenario_start_script_waits_for_copy_confirmation() {
 #[cfg(feature = "js")]
 #[test]
 fn compiled_scenario_start_script_holds_without_failing_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use host_play::live_start::{
         fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
     };
@@ -1798,6 +1828,12 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_compiled_scenario_start_script_holds_without_failing_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use host_play::live_start::{
         fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
     };
@@ -2539,6 +2575,12 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("bulk-selection", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     f.assign_compiled("alice", id);
@@ -2637,6 +2679,12 @@ fn queued_gatherer_copy(test: &str) -> Fixture {
 
 #[test]
 fn queued_native_copy_waits_for_durable_apply() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = queued_gatherer_copy("queued-native-copy-durable");
     let id = script::CompiledId("Gatherer");
     let place = f.scripts.start_queue_place("bob").unwrap();
@@ -2713,6 +2761,12 @@ fn queued_native_copy_waits_for_durable_apply() {
 
 #[test]
 fn failed_queued_native_copy_releases_start_on_pre_copy_bag() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = queued_gatherer_copy("queued-native-copy-failure");
     let id = script::CompiledId("Gatherer");
     let before = f
@@ -2746,6 +2800,12 @@ fn failed_queued_native_copy_releases_start_on_pre_copy_bag() {
 
 #[test]
 fn cancelling_a_new_prompt_does_not_release_an_accepted_native_copy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = queued_gatherer_copy("queued-native-copy-overlap");
     let id = script::CompiledId("Gatherer");
     let place = f.scripts.start_queue_place("bob").unwrap();
@@ -2873,15 +2933,17 @@ fn gatherer_settings_record(
 
 #[cfg(feature = "js")]
 #[test]
-fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
+fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_schema() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
-    for entry in [
-        None,
-        Some(json!({})),
-        Some(json!({"schema_version": 1, "values": {}})),
-    ] {
+    for entry in [None, Some(json!({"schema_version": 1, "values": {}}))] {
         let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
         row.settings.script_settings.remove(&key);
         if let Some(entry) = entry {
@@ -2897,7 +2959,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             f.scripts
                 .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id))
         else {
-            panic!("legacy Sherlock settings stay usable without a schema bump");
+            panic!("current Sherlock settings stay usable without a schema bump");
         };
         assert_eq!(version, 1);
         let bag = f
@@ -2906,10 +2968,11 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .unwrap();
         for key in ["allow_teleports", "allow_wilderness", "allow_danger_zones"] {
             assert!(fields.iter().any(|field| field.id() == key));
-            assert_eq!(bag[key], false, "missing legacy permission defaults off");
+            assert_eq!(bag[key], false, "missing permissions default off");
         }
     }
     for entry in [
+        json!({}),
         json!({"schema_version": 2, "values": {"future": 9}}),
         json!({"schema_version": 1, "values": null}),
     ] {
@@ -2921,6 +2984,8 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
+        let vault_path = f.dir.join("vault");
+        let saved_bytes = std::fs::read(&vault_path).unwrap();
         assert!(matches!(
             f.scripts
                 .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id)),
@@ -2939,10 +3004,19 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
                 Map::new()
             )
             .is_err());
-        assert_eq!(
-            f.saved_bag("alice", &key),
-            Some(entry.as_object().unwrap().clone())
-        );
+        f.core.flush_writes();
+        assert_eq!(std::fs::read(&vault_path).unwrap(), saved_bytes);
+        if entry.as_object().unwrap().is_empty() {
+            assert!(matches!(
+                Vault::unlock(&vault_path, "test-passphrase-01"),
+                Err(vault::VaultError::UnsupportedSavedFormat { path }) if path == vault_path,
+            ));
+        } else {
+            assert_eq!(
+                f.saved_bag("alice", &key),
+                Some(entry.as_object().unwrap().clone())
+            );
+        }
     }
     assert!(matches!(
         f.scripts.compiled_schema(
@@ -2957,6 +3031,12 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
 #[cfg(feature = "js")]
 #[test]
 fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-invalid", &["alice"]);
     let previous = f.card("previous.ts", LOOPING);
     f.assign("alice", &previous);
@@ -3002,6 +3082,12 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_invalid_preparation_keeps_assignment_and_durable_settings() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-invalid", &["alice"]);
     let previous = script::CompiledId("Grinch");
     f.assign_compiled("alice", previous);
@@ -3045,6 +3131,12 @@ fn native_gatherer_invalid_preparation_keeps_assignment_and_durable_settings() {
 }
 #[test]
 fn gatherer_radius_round_trips_through_profile_save_and_load() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("gatherer-radius-profile", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
@@ -3089,6 +3181,12 @@ fn gatherer_radius_round_trips_through_profile_save_and_load() {
 
 #[test]
 fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("gatherer-radius-legacy", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
@@ -3135,6 +3233,12 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
 #[cfg(feature = "js")]
 #[test]
 fn native_settings_wait_for_durability_and_remain_per_account() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-durable", &["alice", "bob"]);
     start_sherlock(&mut f, "alice");
     start_sherlock(&mut f, "bob");
@@ -3211,6 +3315,12 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_settings_wait_for_durability_and_remain_per_account() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-durable", &["alice", "bob"]);
     start_gatherer(&mut f, "alice");
     start_gatherer(&mut f, "bob");
@@ -3304,6 +3414,12 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
 #[cfg(feature = "js")]
 #[test]
 fn native_settings_reply_loses_to_profile_recreation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-stale-preparation", &["alice"]);
     start_sherlock(&mut f, "alice");
     let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
@@ -3344,6 +3460,12 @@ fn native_settings_reply_loses_to_profile_recreation() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_settings_reply_loses_to_profile_recreation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-stale-preparation", &["alice"]);
     start_gatherer(&mut f, "alice");
     let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
@@ -3377,6 +3499,9 @@ fn native_settings_reply_loses_to_profile_recreation() {
 #[cfg(feature = "js")]
 #[test]
 fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for restart in [false, true] {
         let mut f = native_fixture("native-form-control-race", &["alice"]);
         start_sherlock(&mut f, "alice");
@@ -3419,6 +3544,9 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
     for restart in [false, true] {
@@ -3473,6 +3601,9 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
 #[cfg(feature = "js")]
 #[test]
 fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for writer in ["assignment", "ready", "loaded"] {
         let mut f = native_fixture("native-draft-isolation", &["alice"]);
         let id = script::CompiledId("Sherlock");
@@ -3527,6 +3658,9 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_unrelated_writes_never_persist_invalid_drafts_or_poison_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[cfg(feature = "js")]
     let writers = ["assignment", "ready", "loaded"];
     #[cfg(not(feature = "js"))]
@@ -3588,6 +3722,9 @@ fn native_gatherer_unrelated_writes_never_persist_invalid_drafts_or_poison_start
 #[cfg(feature = "js")]
 #[test]
 fn valid_native_draft_survives_unrelated_writes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for writer in ["assignment", "ready", "loaded"] {
         let mut f = native_fixture("native-valid-draft", &["alice"]);
         let id = script::CompiledId("Sherlock");
@@ -3661,6 +3798,9 @@ fn valid_native_draft_survives_unrelated_writes() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_valid_draft_survives_unrelated_writes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[cfg(feature = "js")]
     let writers = ["assignment", "ready", "loaded"];
     #[cfg(not(feature = "js"))]
@@ -3737,6 +3877,12 @@ fn native_gatherer_valid_draft_survives_unrelated_writes() {
 #[cfg(feature = "js")]
 #[test]
 fn profile_partner_delivery_survives_unrelated_write() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-partner-unrelated", &["alice"]);
     start_sherlock(&mut f, "alice");
     let run = f.core.play().unwrap().script_native_run("alice");
@@ -3771,6 +3917,12 @@ fn profile_partner_delivery_survives_unrelated_write() {
 #[cfg(feature = "js")]
 #[test]
 fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
     start_sherlock(&mut f, "alice");
     let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
@@ -3799,6 +3951,12 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
     start_gatherer(&mut f, "alice");
     let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
@@ -3838,6 +3996,12 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
 #[cfg(feature = "js")]
 #[test]
 fn durable_native_reply_never_configures_a_replacement_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-stale-durable", &["alice"]);
     start_sherlock(&mut f, "alice");
     let old = f.core.play().unwrap().script_native_run("alice").unwrap();
@@ -3886,6 +4050,12 @@ fn durable_native_reply_never_configures_a_replacement_run() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn durable_native_reply_never_configures_a_replacement_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-stale-durable", &["alice"]);
     start_gatherer(&mut f, "alice");
     let old = f.core.play().unwrap().script_native_run("alice").unwrap();
@@ -3938,6 +4108,12 @@ fn durable_native_reply_never_configures_a_replacement_run() {
 #[cfg(feature = "js")]
 #[test]
 fn deleting_a_profile_cancels_its_unsettled_native_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-start-removal", &["alice"]);
     f.scripts
         .start_sel(
@@ -3966,6 +4142,12 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_profile_deletion_cancels_unsettled_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-start-removal", &["alice"]);
     f.scripts
         .start_sel(
@@ -3994,6 +4176,12 @@ fn native_gatherer_profile_deletion_cancels_unsettled_start() {
 #[cfg(feature = "js")]
 #[test]
 fn native_bulk_reports_and_preserves_each_account_partner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-bulk", &["alice", "bob"]);
     start_sherlock(&mut f, "alice");
     start_sherlock(&mut f, "bob");
@@ -4107,6 +4295,12 @@ fn failed_native_copy_does_not_assign_an_unassigned_bot() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn failed_native_gatherer_copy_does_not_assign_an_unassigned_bot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("native-copy-no-assign", &["alice", "bob"]);
     let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
@@ -4282,6 +4476,12 @@ fn wait_core_state(f: &mut Fixture, name: &str, want: ScriptRunState) {
 
 #[test]
 fn restart_prompt_skips_stopped_profile_at_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-click-stopped");
     let starts_before = start_accepted(&f, "alice");
     f.core.play().unwrap().script_stop("alice");
@@ -4302,6 +4502,12 @@ fn restart_prompt_skips_stopped_profile_at_click() {
 
 #[test]
 fn restart_prompt_skips_run_that_ends_after_click_check() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-click-run-ended");
     let starts_before = start_accepted(&f, "alice");
 
@@ -4333,6 +4539,12 @@ fn restart_prompt_skips_run_that_ends_after_click_check() {
 
 #[test]
 fn restart_prompt_skips_logout_latch_at_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-click-logout");
     let starts_before = start_accepted(&f, "alice");
     f.core.logout("alice");
@@ -4352,6 +4564,12 @@ fn restart_prompt_skips_logout_latch_at_click() {
 #[cfg(feature = "js")]
 #[test]
 fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
@@ -4385,6 +4603,12 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
@@ -4417,6 +4641,12 @@ fn native_gatherer_restart_prompt_skips_reassigned_profile_without_reassigning_o
 
 #[test]
 fn restart_badge_clears_after_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-badge-stop");
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
@@ -4434,6 +4664,12 @@ fn restart_badge_clears_after_stop() {
 
 #[test]
 fn restart_badge_clears_after_logout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-badge-logout");
     f.core.logout("alice");
 
@@ -4446,6 +4682,12 @@ fn restart_badge_clears_after_logout() {
 #[cfg(feature = "js")]
 #[test]
 fn restart_badge_clears_after_assignment_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-badge-reassigned");
     assert!(f.scripts.persist_assignment(
         &mut f.core,
@@ -4463,6 +4705,12 @@ fn restart_badge_clears_after_assignment_changes() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_restart_badge_clears_after_assignment_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = single_gatherer_restart_prompt("restart-badge-reassigned");
     assert!(f.scripts.persist_assignment(
         &mut f.core,
@@ -4479,6 +4727,12 @@ fn native_gatherer_restart_badge_clears_after_assignment_changes() {
 
 #[test]
 fn gatherer_sync_prompts_merge_and_later_suppresses_until_settings_change() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = gatherer_fishing_fleet("gatherer-sync-merge-later");
     sync_gatherer_skill(&mut f, "Mining");
     sync_gatherer_skill(&mut f, "Woodcutting");
@@ -4502,6 +4756,12 @@ fn gatherer_sync_prompts_merge_and_later_suppresses_until_settings_change() {
 
 #[test]
 fn restarting_a_merged_prompt_twice_starts_each_profile_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = gatherer_fishing_fleet("gatherer-sync-double-restart");
     sync_gatherer_skill(&mut f, "Mining");
     sync_gatherer_skill(&mut f, "Woodcutting");
@@ -4534,6 +4794,12 @@ fn restarting_a_merged_prompt_twice_starts_each_profile_once() {
 
 #[test]
 fn single_restart_required_setting_prompts_and_restarts_its_profile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("gatherer-single-restart", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let selection = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
@@ -4600,6 +4866,12 @@ fn single_restart_required_setting_prompts_and_restarts_its_profile() {
 
 #[test]
 fn gatherer_sync_restart_confirms_only_the_three_changed_profiles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = gatherer_fishing_fleet("gatherer-sync-restart");
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
@@ -4653,6 +4925,12 @@ fn gatherer_sync_restart_confirms_only_the_three_changed_profiles() {
 
 #[test]
 fn gatherer_sync_later_keeps_fishing_runs_and_restart_badges() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = gatherer_fishing_fleet("gatherer-sync-later");
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
@@ -4687,6 +4965,12 @@ fn gatherer_sync_later_keeps_fishing_runs_and_restart_badges() {
 
 #[test]
 fn live_applied_gatherer_sync_does_not_offer_a_restart() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = gatherer_fishing_fleet("gatherer-sync-live-applied");
     let id = script::CompiledId("Gatherer");
     let initial_generations = ["alice", "bob", "carol"].map(|name| f.generation(name));
@@ -4829,6 +5113,12 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-click", &name_refs);
@@ -4927,6 +5217,12 @@ fn stop_all_cancels_queued_starts() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_stop_all_cancels_queued_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-stop", &name_refs);
@@ -5047,6 +5343,12 @@ fn remove_while_queued_does_not_start_stale_work() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_reassign_while_queued_does_not_start_stale_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-reassign", &name_refs);
@@ -5143,6 +5445,9 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (scenario, reason) in [
         ("reassigned", "reassigned"),
         ("removed", "removed"),
@@ -5247,6 +5552,12 @@ fn logout_while_queued_does_not_start_stale_work() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_remove_while_queued_does_not_start_stale_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-remove", &name_refs);
@@ -5294,6 +5605,12 @@ fn native_remove_while_queued_does_not_start_stale_work() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_logout_while_queued_does_not_start_stale_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-logout", &name_refs);
@@ -5369,6 +5686,12 @@ fn single_start_of_a_queued_member_is_immediate() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_single_start_of_a_queued_member_dispatches_before_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-single", &name_refs);
@@ -5948,6 +6271,12 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_marked_start_removed_member_is_named_and_never_dispatched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("pace-marked-remove", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
@@ -6022,6 +6351,12 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_start_all_while_a_marked_batch_waits_joins_its_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-marked", &name_refs);
@@ -6196,6 +6531,12 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_logout_while_waiting_after_a_second_start_all_is_reported() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-logout", &name_refs);
@@ -6265,6 +6606,12 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_stop_on_marked_rows_stops_preparation_and_cancels_queued_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("pace-stop-marked", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
@@ -6368,6 +6715,12 @@ fn a_ready_js_settings_save_is_admitted_and_written_under_a_work_outage() {
 /// preparation staged the row, and only the writer afterwards.
 #[test]
 fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = native_fixture("frozen-native-save", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
