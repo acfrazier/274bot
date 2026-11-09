@@ -1098,11 +1098,12 @@ mod tests {
         observe(
             empty_input(1),
             facts(
-                terminal(4, 99, true, "", &[]),
+                // Any id but A's: the shared token counter is process-wide, so a fixed id can collide.
+                terminal(4, a.wrapping_add(1), true, "", &[]),
                 RouteInspectTerminalInput::default(),
                 0,
                 0,
-                99,
+                a.wrapping_add(1),
                 0,
                 0,
             ),

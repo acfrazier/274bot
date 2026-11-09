@@ -92,6 +92,9 @@ fn quest_junk_rows_have_fast_properties_and_bound_v8_heap() {
 
 #[test]
 fn oversized_banked_lists_are_rejected_before_any_callback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut runtime = setup();
     let rejected: bool = runtime
         .eval(

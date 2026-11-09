@@ -153,6 +153,9 @@ fn in_child(env: &str, name: &str, body: impl FnOnce()) {
 
 #[test]
 fn catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     in_child(CHILD_ENV, TEST_NAME, || {
         let mut runtime = setup();
         let baseline = collected_used_heap(&mut runtime);
@@ -201,6 +204,9 @@ fn catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded() {
 /// received must not change the catalog.
 #[test]
 fn catalog_ignores_script_mutation_of_the_record_array() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     in_child(MUTATION_CHILD_ENV, MUTATION_TEST_NAME, || {
         let mut runtime = setup();
         let rows = runtime
@@ -232,6 +238,9 @@ fn catalog_ignores_script_mutation_of_the_record_array() {
 /// that a script put on `Array.prototype` cannot drop a row.
 #[test]
 fn catalog_rebuild_ignores_an_array_prototype_setter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     in_child(SETTER_CHILD_ENV, SETTER_TEST_NAME, || {
         let mut runtime = setup();
         let rows = runtime
@@ -267,6 +276,9 @@ fn catalog_rebuild_ignores_an_array_prototype_setter() {
 /// error from `obj-catalog`, not an `undefined` entry in `items`.
 #[test]
 fn catalog_rejects_a_rewritten_row_id() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     in_child(REWRITTEN_ID_CHILD_ENV, REWRITTEN_ID_TEST_NAME, || {
         let mut runtime = setup();
         let rows = runtime

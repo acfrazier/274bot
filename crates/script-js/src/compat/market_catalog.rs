@@ -551,6 +551,9 @@ mod tests {
 
     #[test]
     fn market_index_cold_build_has_bounded_process_allocation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         if std::env::var_os(COLD_CHILD_ENV).is_none() {
             let output =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -665,6 +668,9 @@ mod tests {
     }
     #[test]
     fn resolve_by_name_matches_exact_names_aliases_and_synonyms() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let index = market_index(&data);
         let resolve = |query, exact_only| resolve_by_name(&index, query, exact_only);
