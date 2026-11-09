@@ -319,6 +319,161 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Alfred Grimhand's Barcrawl",
         profile: TestProfile::Base40,
     },
+    QuestFixtureProfile {
+        quest: "fortress",
+        display: "Black Knight's Fortress",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "haunted",
+        display: "Ernest the Chicken",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "fishingcompo",
+        display: "Fishing Contest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "zanaris",
+        display: "Lost City",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "tree",
+        display: "Tree Gnome Village",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "scorpcatcher",
+        display: "Scorpion Catcher",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "itgronigen",
+        display: "Observatory Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "grail",
+        display: "Holy Grail",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "itwatchtower",
+        display: "Watch Tower",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "biohazard",
+        display: "Biohazard",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "murder",
+        display: "Murder Mystery",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "ball",
+        display: "Witch's House",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "chompybird",
+        display: "Big Chompy Bird Hunting",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mcannon",
+        display: "Dwarf Cannon",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "crest",
+        display: "Family Crest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "arena",
+        display: "Fight Arena",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "grandtree",
+        display: "The Grand Tree",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "zombiequeen",
+        display: "Shilo Village",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "tbwt",
+        display: "Tai Bwo Wannai Trio",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "druidspirit",
+        display: "Nature Spirit",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "routequest",
+        display: "In Search of the Myreque",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "troll",
+        display: "Troll Stronghold",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "eadgar",
+        display: "Eadgar's Ruse",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "troll_love",
+        display: "Troll Romance",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "misc",
+        display: "Throne of Miscellania",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "waterfall",
+        display: "Waterfall Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "sheepherder",
+        display: "Sheep Herder",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "regicide",
+        display: "Regicide",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mortton",
+        display: "Shades of Mortton",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "viking",
+        display: "The Fremennik Trials",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mm",
+        display: "Monkey Madness",
+        profile: TestProfile::Base40,
+    },
 ];
 
 pub fn fixture_profile(quest: &str) -> Result<TestProfile, String> {
