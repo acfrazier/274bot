@@ -299,6 +299,9 @@ fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
 
 #[test]
 fn journal_only_reads_exact_quest_and_waits_for_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     read_journal(&mut slot, 30, "cOoK's Assistant");

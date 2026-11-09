@@ -929,6 +929,9 @@ mod tests {
     }
     #[test]
     fn buy_by_id_uses_exact_id_and_waits_for_each_matching_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let before_client = client_with_shop_rows(true, &[(5, 1), (4, 2), (4, 3)], &[]);
         let before = snapshot(&before_client, vec![item(995, "Coins", 10)], Vec::new());
         let rows: Vec<_> = before
@@ -1049,6 +1052,9 @@ mod tests {
 
     #[test]
     fn buy_by_id_rounds_a_positive_fraction_up() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let before_client = client_with_shop_rows(true, &[(4, 2)], &[]);
         let before = snapshot(&before_client, vec![item(995, "Coins", 10)], Vec::new());
         let mut ledger = None;
@@ -1091,6 +1097,9 @@ mod tests {
 
     #[test]
     fn buy_by_id_stops_at_the_first_depleted_exact_id_row() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop_rows(true, &[(5, 1), (4, 0), (4, 3)], &[]);
         let snapshot = snapshot(&client, vec![item(995, "Coins", 10)], Vec::new());
         let mut ledger = None;

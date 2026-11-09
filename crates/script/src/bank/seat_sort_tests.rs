@@ -109,6 +109,9 @@ fn result(poll: Poll<Result<Value, ActionError>>) -> Value {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__sortbank__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Idle results: the bank must be open and its item table loaded.
     let mut ledger = None;
     let mut closed = GameSnapshot::new();
@@ -211,6 +214,9 @@ fn compat_v1_bank__sortbank__contract() {
 
 #[test]
 fn sort_presses_the_arrange_button_and_falls_back_to_swaps_when_it_never_sticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A rotation: one insert beats four swaps, so the plan asks for insert
     // mode while the varp says swap.
     let names = ["Copper ore", "Tin ore", "Iron ore", "Silver ore", "Coal"];
@@ -258,6 +264,9 @@ fn sort_presses_the_arrange_button_and_falls_back_to_swaps_when_it_never_sticks(
 
 #[test]
 fn sort_restores_the_original_arrange_mode() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Insert mode set, but the plan uses swaps (two rows): the sort selects
     // swap, then puts insert back.
     let unsorted = bank(

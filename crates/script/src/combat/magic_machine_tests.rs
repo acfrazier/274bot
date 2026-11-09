@@ -1053,6 +1053,9 @@ fn spend_npc_cast_runes(scene: &mut Scene) {
 
 #[test]
 fn npc_cast_requires_selected_spell_and_enough_runes_before_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = npc_cast_scene(false);
     let mut runtime = npc_cast_runtime();
     let request = npc_cast_request(&scene);
@@ -1075,6 +1078,9 @@ fn npc_cast_requires_selected_spell_and_enough_runes_before_dispatch() {
 
 #[test]
 fn npc_cast_dispatch_requires_later_rune_or_exact_target_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = npc_cast_scene(true);
     let (mut runtime, handle) = begin_npc_cast(&scene);
     assert!(matches!(
@@ -1125,6 +1131,9 @@ fn npc_cast_dispatch_requires_later_rune_or_exact_target_evidence() {
 
 #[test]
 fn npc_cast_reports_consumed_runes_after_target_despawns() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = npc_cast_scene(true);
     let (mut runtime, handle) = begin_npc_cast(&scene);
     assert!(matches!(
@@ -1147,6 +1156,9 @@ fn npc_cast_reports_consumed_runes_after_target_despawns() {
 
 #[test]
 fn npc_cast_uses_target_impact_or_splash_and_rejection_before_rune_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut impact_scene = npc_cast_scene(true);
     let (mut impact_runtime, impact_handle) = begin_npc_cast(&impact_scene);
     assert!(matches!(
@@ -1211,6 +1223,9 @@ fn npc_cast_uses_target_impact_or_splash_and_rejection_before_rune_success() {
 
 #[test]
 fn npc_cast_times_out_without_content_confirmation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = npc_cast_scene(true);
     let (mut runtime, handle) = begin_npc_cast(&scene);
     assert!(matches!(

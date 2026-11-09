@@ -149,6 +149,9 @@ fn start_task(row: &mut BankRow, snapshot: &GameSnapshot, request: BankSeatArgs)
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__bankpace__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = closed(Vec::new());
     let mut ledger = None;
     let mut pace = row(BankSeatArgs::new(BankSeatOperation::Pace));
@@ -186,6 +189,9 @@ fn compat_v1_bank__bankpace__contract() {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__bank_backpackready__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let before = vec![pack(1511, "Logs", 1, 0), pack(995, "Coins", 25, 3)];
     let posted = vec![side(1511, "Logs", 1, 0), side(995, "Coins", 25, 3)];
     let expected = vec![
@@ -307,6 +313,9 @@ fn backpack_expectations_compare_like_upstream_same_backpack() {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__withdrawcoins__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let coins = |need: i64| {
         let mut request = with_log(BankSeatArgs::new(BankSeatOperation::WithdrawCoins));
         request.item_name = Some("Coins".into());
@@ -425,6 +434,9 @@ fn compat_v1_bank__withdrawcoins__contract() {
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bank__purgepackatbank__contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let purge = |keep: &[&str]| {
         let mut request = with_log(BankSeatArgs::new(BankSeatOperation::PurgePack));
         request.keep_names = keep.iter().map(|name| (*name).to_owned()).collect();
@@ -553,6 +565,9 @@ fn poll_row_in_session(
 /// progress through the closed-bank round, not an invented empty result.
 #[test]
 fn a_kept_reconnect_holds_sort_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = open(
         Vec::new(),
         vec![
@@ -603,6 +618,9 @@ fn a_kept_reconnect_holds_sort_progress() {
 /// observed ticks instead of ending.
 #[test]
 fn a_kept_reconnect_holds_a_pause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = closed(Vec::new());
     let mut ledger = None;
     let mut pace = row(BankSeatArgs::new(BankSeatOperation::Pace));
