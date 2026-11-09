@@ -7,7 +7,7 @@
     { "id": "romeojuliet", "file": "romeojuliet.json", "status": "qualified" },
     { "id": "imp", "file": "imp.json", "status": "qualified" },
     { "id": "vampire", "file": "vampire.json", "status": "qualified" },
-    { "id": "doric", "file": "doric.json", "status": "draft" },
+    { "id": "doric", "file": "doric.json", "status": "qualified" },
     { "id": "gobdip", "file": "gobdip.json", "status": "draft" },
     { "id": "hetty", "file": "hetty.json", "status": "draft" },
     { "id": "prince", "file": "prince.json", "status": "draft" },
