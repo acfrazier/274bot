@@ -19,7 +19,7 @@
     { "id": "priestperil", "file": "priestperil.json", "status": "draft" },
     { "id": "cog", "file": "cog.json", "status": "draft" },
     { "id": "drunkmonk", "file": "drunkmonk.json", "status": "draft" },
-    { "id": "hazeelcult", "file": "hazeelcult.json", "status": "draft" },
+    { "id": "hazeelcult", "file": "hazeelcult.json", "status": "qualified" },
     { "id": "elena", "file": "elena.json", "status": "draft" },
     { "id": "druid", "file": "druid.json", "status": "draft" },
     { "id": "fluffs", "file": "fluffs.json", "status": "draft" },
