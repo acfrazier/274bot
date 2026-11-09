@@ -2554,7 +2554,13 @@ impl GatherSlot {
     }
 
     fn observe_reprovision_bank(&mut self, observation: &Observation) -> Result<(), String> {
-        if !self.is_real_content_death_reprovision() || !self.snapshot.bank_loaded() {
+        // A slot with no prepared Gatherer settings has no deposit set to account
+        // against; its frame oracle settles a deposited item against the bank
+        // increase it left behind (`UnsettledItem::bank_before`).
+        if !self.is_real_content_death_reprovision()
+            || !self.snapshot.bank_loaded()
+            || self.bank_config.is_none()
+        {
             return Ok(());
         }
         let session = self.snapshot.bank_session_generation();
@@ -4814,37 +4820,6 @@ impl GatherSlot {
                     self.witness.death_first_recovery_post_drop_gathers =
                         Some(self.witness.post_drop_gathers);
                 }
-            }
-            if self.status_claims_bank_close(status) {
-                self.witness.bank_closed_observed = true;
-            }
-            if event == "bank selected" {
-                self.witness.bank_selected = true;
-                if self.case == LiveCase::PowerToBank {
-                    let completed = self
-                        .witness
-                        .confirmed_drops
-                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
-                        >= self.witness.power_to_bank_edit_slots;
-                    if !self.witness.power_to_bank_edit_requested
-                        || !self.witness.power_to_bank_applied
-                        || !completed
-                    {
-                        return Err(format!(
-                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
-                            self.witness
-                        ));
-                    }
-                }
-            }
-            if event == "withdrawal confirmed" {
-                self.witness.bank_withdrawal_confirmed = true;
-            }
-            if self.case == LiveCase::FishBait
-                && event == "withdrawal confirmed"
-                && integer_field(status, "bait") == Some(3)
-            {
-                self.witness.bait_exact = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
@@ -9181,11 +9156,21 @@ mod bank_conservation_tests {
     #[test]
     fn bank_close_boundary_credits_a_verified_bank_receipt() {
         let mut slot = open_bank_slot(&[]);
+        slot.snapshot.seed_ingame(2);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(vec![]), vec![]);
         slot.observe_running(None, slot.capture()).unwrap();
         slot.apply_status(&bank_close_status("Draynor; Validate"))
             .unwrap();
         let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
         assert!(receipt.deposit_verified);
+        // The status text alone is not closure evidence; the decoded modal going
+        // from open to closed is.
+        assert!(!slot.witness.bank_closed_observed);
+        slot.snapshot
+            .seed_bank_observation(-1, 2, Some(vec![]), vec![]);
+        slot.apply_status(&bank_close_status("Draynor; Validate"))
+            .unwrap();
         assert!(slot.witness.bank_closed_observed);
     }
 
