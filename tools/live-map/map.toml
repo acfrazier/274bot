@@ -60,6 +60,19 @@ cells = [
   "script.seat-slot-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib slot::",
 ]
 
+# The named walk destinations are planner data exposed to the compatibility walk through the
+# nav contract facade; the walking witness and the contract tests read them.
+[[cover]]
+globs = [
+  "crates/nav-planner/src/contract/destinations.rs",
+  "crates/nav-planner/src/walk_destinations.rs",
+]
+cells = [
+  "compat_v1_walking_probeable|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} RS2B0T=${CATALOG_ROOT:?} COMPAT_W2_PRODUCT_COMMIT=$(git rev-parse HEAD) LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test compat_v1_walking_live -- --ignored --exact compat_v1_walking_probeable --nocapture --test-threads=1",
+  "compat.v1-walking-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_walking",
+  "nav-planner.contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib contract::",
+]
+
 # Test-only fixture field in the scenario proof module.
 [[cover]]
 globs = ["crates/scenario/src/proof.rs"]
