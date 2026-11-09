@@ -4563,11 +4563,7 @@ fn the_old_priestperil_journal_row_cannot_witness_an_in_progress_stage() {
     // The old row: the completed-quest rule alone.
     let old = &journal.rules[..1];
     assert_eq!(
-        old[0]
-            .all
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<&str>>(),
+        old[0].all.iter().map(AsRef::as_ref).collect::<Vec<&str>>(),
         [
             "i brought drezel fifty rune essences and the contaminants",
             "for all of my help with an ancient holy weapon to fight",
