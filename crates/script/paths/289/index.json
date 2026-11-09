@@ -5,7 +5,7 @@
     { "id": "sheep", "file": "sheep.json", "status": "qualified" },
     { "id": "runemysteries", "file": "runemysteries.json", "status": "qualified" },
     { "id": "romeojuliet", "file": "romeojuliet.json", "status": "qualified" },
-    { "id": "imp", "file": "imp.json", "status": "draft" },
+    { "id": "imp", "file": "imp.json", "status": "qualified" },
     { "id": "vampire", "file": "vampire.json", "status": "draft" },
     { "id": "doric", "file": "doric.json", "status": "draft" },
     { "id": "gobdip", "file": "gobdip.json", "status": "draft" },
