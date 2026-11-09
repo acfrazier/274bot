@@ -67,6 +67,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   kill without the drop, up to a limit of 281 kills, instead of stopping. This
   fixes Doric's Quest stopping after the first iron ore. The step still fails
   at the limit and reports the last combat result.
+- Quester guides can answer a numeric count dialog (`answer_count`) and press
+  an interface button once it is shown (`if_button`), so a guide can play
+  content such as Death Plateau's dice game.
 
 ### Memory diagnostics
 

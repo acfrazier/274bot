@@ -8,7 +8,7 @@ Schema 3 is the only accepted document version. `PATH_SCHEMA` is `3` (`crates/sc
 
 1. Change the top-level `"schema"` value from `2` to `3`.
 2. Add `"$schema": "../path.schema.json"` to every file in `crates/script/paths/289/`, or the matching relative path in another guide directory.
-3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, and `thieve`. Use `true` when the server changes quest progress, and `false` when it does not. Default-class kinds may omit the key, which compiles as `false`.
+3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, `answer_count`, and `if_button`. Use `true` when the server changes quest progress, and `false` when it does not. Default-class kinds may omit the key, which compiles as `false`.
 
 The compiler rejects a missing `advances` on an Explicit kind with `advances-undeclared` (`crates/script/src/quester/compile.rs:1714-1719`), and a direct progress fact in `settle` without `advances: true` with `settle-needs-advance` (`crates/script/src/quester/compile.rs:1720-1729`). A direct progress fact is any of `stage_in`, `flag`, or `quest_colour`, matched through the handler's `ProgressRead` class (`crates/script/src/quester/compile.rs:1806-1815`). A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it (`crates/script/src/quester/families/s2.rs:57-62`, `crates/script/src/quester/families/mod.rs:849-854`).
 
