@@ -1921,11 +1921,11 @@ mod tests {
                 "survival".into(),
                 super::super::path::QuestLoadoutDocument {
                     worn: [
-                        ("hat", "Bronze full helm"),
-                        ("torso", "Bronze platebody"),
-                        ("legs", "Bronze platelegs"),
-                        ("lefthand", "Bronze kiteshield"),
-                        ("righthand", "Bronze sword"),
+                        ("hat", "bronze_full_helm"),
+                        ("torso", "bronze_platebody"),
+                        ("legs", "bronze_platelegs"),
+                        ("lefthand", "bronze_kiteshield"),
+                        ("righthand", "bronze_sword"),
                     ]
                     .into_iter()
                     .map(|(slot, name)| (slot.into(), name.into()))
@@ -2142,15 +2142,15 @@ mod tests {
         let (mut path, quests, mut snapshot) = survival_fixture_with_gear(true, true);
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let equipment = [
-            (0, "Bronze full helm"),
-            (4, "Bronze platebody"),
-            (7, "Bronze platelegs"),
-            (5, "Bronze kiteshield"),
-            (3, "Bronze sword"),
+            (0, "bronze_full_helm"),
+            (4, "bronze_platebody"),
+            (7, "bronze_platelegs"),
+            (5, "bronze_kiteshield"),
+            (3, "bronze_sword"),
         ]
         .map(|(slot, name)| {
             let item = selected.resolve_item_name(name).unwrap();
-            (slot, item.id, name)
+            (slot, item.id, item.name.as_deref().unwrap())
         });
         let food = selected.item_by_alias("lobster").unwrap();
         let food_name = food.name.as_deref().unwrap();
