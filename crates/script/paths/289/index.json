@@ -3,7 +3,7 @@
   "paths": [
     { "id": "cook", "file": "cook.json", "status": "qualified" },
     { "id": "sheep", "file": "sheep.json", "status": "qualified" },
-    { "id": "runemysteries", "file": "runemysteries.json", "status": "draft" },
+    { "id": "runemysteries", "file": "runemysteries.json", "status": "qualified" },
     { "id": "romeojuliet", "file": "romeojuliet.json", "status": "draft" },
     { "id": "imp", "file": "imp.json", "status": "draft" },
     { "id": "vampire", "file": "vampire.json", "status": "draft" },
