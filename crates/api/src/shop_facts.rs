@@ -1108,8 +1108,16 @@ mod tests {
             shop("fishingshop", "gerrant"),
             shop("fishingshop2", "harry"),
         ];
-        let npc_names = catalog.npc_names().expect("npc names");
-        let joined = join_vendor_keepers(npc_names, &fixture);
+        // Real content names these two keepers "Gerrant" and "Harry". Give both the
+        // shared display name the shops list, so the join must tell them apart by
+        // config, not by name.
+        let mut npc_names = catalog.npc_names().expect("npc names").clone();
+        for row in &mut npc_names.rows {
+            if row.config == "gerrant" || row.config == "harry" {
+                row.display = Some("Shop keeper".to_string());
+            }
+        }
+        let joined = join_vendor_keepers(&npc_names, &fixture);
         assert_eq!(joined.len(), 2);
         assert_eq!(joined[0].name, joined[1].name);
         assert_ne!(joined[0].id, joined[1].id);
