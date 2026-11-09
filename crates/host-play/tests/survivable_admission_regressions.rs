@@ -208,7 +208,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             globals.effective_danger_level()
         );
     }
-    // Explicit overrides still proceed; Forbid beats a script grant.
+    // Explicit overrides still proceed.
     let globals = WalkGlobals::default();
     let script = WalkPermissions {
         allow_danger_zones: true,
@@ -230,7 +230,13 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         globals.risk_policy(WalkPermissions::default(), allow),
         RiskPolicy::Proceed
     );
-    assert_eq!(globals.risk_policy(script, forbid), RiskPolicy::Avoid);
+    // A walk-level Forbid never narrows a script grant: the danger setting has
+    // no exception.
+    assert_eq!(globals.risk_policy(script, forbid), RiskPolicy::Proceed);
+    assert_eq!(
+        globals.risk_policy(WalkPermissions::default(), forbid),
+        RiskPolicy::Avoid
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 

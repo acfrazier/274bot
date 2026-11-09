@@ -51,9 +51,9 @@ impl QuesterStartZones {
     /// The shared operator-facing explanation for this frozen disclosure.
     pub fn notice(&self) -> &'static str {
         if self.is_empty() {
-            "No danger zones are declared. Quester walks avoid every danger zone."
+            "No danger zones are declared. Quester walks avoid danger zones unless the global Danger routing setting is on."
         } else {
-            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
+            "The guide asks to cross these zones. The request lets the walk cross any danger zone. The food guard is armed for the whole walk; protection runs only where a step requests it. The global Danger routing setting, when on, lets every walk cross danger zones."
         }
     }
 
@@ -841,7 +841,7 @@ mod tests {
         assert!(preview(&cache).is_empty());
         assert_eq!(
             preview(&cache).notice(),
-            "No danger zones are declared. Quester walks avoid every danger zone."
+            "No danger zones are declared. Quester walks avoid danger zones unless the global Danger routing setting is on."
         );
 
         let mut arthur = bag(&["arthur"]);
@@ -850,7 +850,7 @@ mod tests {
         assert!(!preview(&cache).is_empty());
         assert_eq!(
             preview(&cache).notice(),
-            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
+            "The guide asks to cross these zones. The request lets the walk cross any danger zone. The food guard is armed for the whole walk; protection runs only where a step requests it. The global Danger routing setting, when on, lets every walk cross danger zones."
         );
         assert!(cache.settings_match(identity, 2));
         assert!(

@@ -2227,10 +2227,11 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
     }
 }
 
-/// An empty declared stage overrides a global danger grant. The old inherited
-/// walk crosses this only route, but the stage's empty grant set avoids it.
+/// The global danger setting has no exception. A walk option `Forbid` (what an
+/// empty Quester stage once set) no longer avoids a globally allowed zone: the
+/// only route crosses the undeclared zone, and the walk takes it.
 #[test]
-fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
+fn global_override_beats_a_walk_forbid_on_an_undeclared_zone() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -2243,27 +2244,31 @@ fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
     globals.set_danger_level(crate::DangerLevel::Always);
     let script = script::native::WalkPermissions::default();
 
-    let inherited = script::native::WalkOptions::default();
-    assert!(!globals.enforces_risk(script, inherited));
-    assert_eq!(globals.risk_policy(script, inherited), RiskPolicy::Proceed);
-    let old_route_options = globals.manual_options(false);
-    assert!(matches!(
-        real_search(&world, from, to, old_route_options, &state, &[]),
-        crate::RouteOutcome::Routed(_)
-    ));
+    for bit in [
+        script::native::WalkBit::Inherit,
+        script::native::WalkBit::Forbid,
+    ] {
+        let walk = script::native::WalkOptions {
+            allow_danger_zones: bit,
+            ..Default::default()
+        };
+        assert!(!globals.enforces_risk(script, walk));
+        assert_eq!(globals.risk_policy(script, walk), RiskPolicy::Proceed);
+        let options = globals.manual_options(false);
+        assert!(options.zones.is_all());
+        assert!(matches!(
+            real_search(&world, from, to, options, &state, &[]),
+            crate::RouteOutcome::Routed(_)
+        ));
+    }
 
-    let empty_stage = script::native::WalkOptions {
-        allow_danger_zones: script::native::WalkBit::Forbid,
-        ..Default::default()
-    };
-    assert!(globals.enforces_risk(script, empty_stage));
-    assert_eq!(globals.risk_policy(script, empty_stage), RiskPolicy::Avoid);
-    let no_zone_exemptions = nav_planner::router::FindOptions {
-        zones: ZoneExempt::NONE,
-        ..old_route_options
-    };
+    // With the override off and no request, the same route is refused.
+    let mut off = crate::WalkGlobals::default();
+    off.set_danger_level(crate::DangerLevel::Never);
+    let options = off.manual_options(false);
+    assert!(!options.zones.is_all());
     assert!(matches!(
-        real_search(&world, from, to, no_zone_exemptions, &state, &[]),
+        real_search(&world, from, to, options, &state, &[]),
         crate::RouteOutcome::NoPath
     ));
 }
@@ -2605,9 +2610,8 @@ fn real_squire_walk(
 /// The headed Knight's Sword stall (DIAG-SURVIVABLE-POISON): squire's own
 /// `ice-walk-1-entry` step from the ice-dungeon ladder, then the rest of the
 /// ice chain from each previous stand, all with Unknown poison.
-/// `ice-walk-1-entry` (radius-1 stand inside a hobgoblin zone) and
-/// `ice-walk-3-to-hobgoblins` (six pirates fill the 8-key cap; the
-/// hobgoblin destination is unnamed) are admitted only by the endpoint grant.
+/// Every step names its crossings, so each walk is a script request: the router
+/// may cross any zone, and the survival check judges the whole route.
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison() {

@@ -2042,6 +2042,7 @@ pub(super) fn queue_native_bank_pick_scoped(
                 ..input.request.options
             },
             session_permissions,
+            false,
         )
         .0,
         request_id,

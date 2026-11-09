@@ -1783,9 +1783,6 @@ impl WalkToArgs {
         if let Some(reason) = avoid_refusal(&self.avoid_zones) {
             return Some(reason);
         }
-        if self.cross_zones.len() > 8 {
-            return Some("crossZones: more than 8 zone ids".into());
-        }
         if self.policy.allow_teleport_ids > 0 || self.policy.deny_teleport_ids > 0 {
             return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter".into());
         }

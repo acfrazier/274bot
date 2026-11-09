@@ -1780,7 +1780,7 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     });
     assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
     assert!(
-        rig.text.contains("Start accepts only these zones."),
+        rig.text.contains("The guide asks to cross these zones."),
         "{}",
         rig.text
     );

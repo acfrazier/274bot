@@ -3167,7 +3167,7 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 }
 
 #[test]
-fn native_cross_exemption_is_scoped_to_one_walk() {
+fn native_cross_request_is_scoped_to_one_walk() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3197,8 +3197,8 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         let bot = &navs["alice"];
         let grants = bot.requested_route.expect("first native route request").5;
         assert!(
-            !grants.is_all(),
-            "the first route receives a named, not global, grant"
+            grants.is_all(),
+            "a walk that asks to cross receives permission for any zone"
         );
         let assessment = bot.assessment.as_ref().expect("first route assessment");
         assert!(bot.risk_refusal.is_none());
@@ -3236,7 +3236,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     rig.observe_with_here(2, goal);
     assert_eq!(rig.shared.lock().results.len(), 1);
-    rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
+    rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Inherit;
 
     let origin = WorldTile {
         x: 0,
@@ -3249,14 +3249,14 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     assert!(
         rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
             .route_work_pending()),
-        "the planner completes the second, explicitly forbidden request"
+        "the planner completes the second request, which asks for no crossing"
     );
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
         assert!(
             !bot.has_route(),
-            "the second request does not inherit the first request's named grant"
+            "the second request does not inherit the first request's crossing permission"
         );
         assert!(bot.native_walk_failure.is_some());
         assert!(
@@ -3272,7 +3272,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 }
 
 #[test]
-fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3283,7 +3283,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
         (false, WalkBit::Forbid, false),
         (true, WalkBit::Inherit, true),
         (true, WalkBit::Allow, true),
-        (true, WalkBit::Forbid, false),
+        (true, WalkBit::Forbid, true),
     ] {
         // With no inherited grant the original router cannot cross this
         // barrier. Holding assessment authority off does not widen routing.
@@ -3306,6 +3306,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                 "alice",
                 rig.shared.lock().options,
                 None,
+                false,
             )
             .0
             .allow_bank_fetch,
@@ -4049,6 +4050,7 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
             "alice",
             script::native::WalkOptions::default(),
             Some(current),
+            false,
         )
         .0;
         assert_eq!(
@@ -4196,7 +4198,7 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
 }
 
 #[test]
-fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+fn native_protect_alone_does_not_grant_danger_and_unknown_cross_still_refuses() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -4218,9 +4220,11 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
     for names in [
         vec![Arc::from("unknown-danger-zone")],
-        (2..11)
-            .map(|x| Arc::from(format!("test-barrier@{x},0,0")))
-            .collect(),
+        // One unknown name among others still refuses the whole request.
+        vec![
+            Arc::from("test-barrier@2,0,0"),
+            Arc::from("unknown-danger-zone"),
+        ],
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
@@ -4485,22 +4489,33 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         "crossZones: unknown zone \"no-such-zone\""
     );
 
-    let too_many = crate::script_runtime::ScriptRouteExclusions {
-        cross: (0..9).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
+    // The list has no length limit; any non-empty list grants every zone.
+    let many = crate::script_runtime::ScriptRouteExclusions {
+        cross: (0..12).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
         ..Default::default()
     };
-    assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            too_many,
-        )
-        .unwrap_err(),
-        "crossZones: more than 8 zone names"
-    );
+    let (options, _) = crate::script_runtime::resolve_route_exclusions(
+        nav_planner::router::FindOptions::default(),
+        &world,
+        from,
+        from,
+        &state,
+        many,
+    )
+    .unwrap();
+    assert!(options.zones.is_all());
+
+    let none = crate::script_runtime::ScriptRouteExclusions::default();
+    let (options, _) = crate::script_runtime::resolve_route_exclusions(
+        nav_planner::router::FindOptions::default(),
+        &world,
+        from,
+        from,
+        &state,
+        none,
+    )
+    .unwrap();
+    assert_eq!(options.zones, nav_planner::zones::ZoneExempt::NONE);
 }
 
 #[test]
@@ -6861,12 +6876,12 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn first_native_crossing_with_explicit_forbid_keeps_a_bounded_poison_hold() {
+    fn first_native_crossing_with_a_named_request_keeps_a_bounded_poison_hold() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut rig = rig(Some(Arc::new(ice_world())), false);
-        rig.shared.lock().options.allow_danger_zones = WalkBit::Forbid;
+        rig.shared.lock().cross_first = vec![Arc::from("ice@120,0,0")];
         observed_loadout(&mut rig.snapshot);
         rig.shared.lock().target = Some(tile(120));
         rig.observe(1);

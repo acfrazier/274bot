@@ -35,23 +35,53 @@ impl DangerLevel {
         }
     }
 
-    fn risk_policy(self, script: WalkPermissions, walk: WalkOptions) -> RiskPolicy {
-        if walk.allow_danger_zones == WalkBit::Forbid {
-            return RiskPolicy::Avoid;
-        }
-
-        if walk
-            .allow_danger_zones
-            .resolve(self == Self::Always, script.allow_danger_zones)
-        {
-            return RiskPolicy::Proceed;
-        }
-
-        match self {
-            Self::Never | Self::Always => RiskPolicy::Avoid,
-            Self::WhenSurvivable => RiskPolicy::Inherit,
+    /// The one danger decision: `permitted = global override || script request`.
+    ///
+    /// - The global override is the `Always` level. It has no exception.
+    /// - A script requests through its card setting, a walk option `Allow`, or
+    ///   a named crossing (`crossing_requested`: a Quester stage or step
+    ///   `cross`, or a compat `crossZones`).
+    ///
+    /// A permitted walk may cross any zone. Its admission mode is `Proceed`
+    /// (the walk goes, the bound is logged) for the override, a card setting
+    /// or an `Allow` option, and `Avoid` for a named crossing alone: the
+    /// survival check (death bound) stays enforced. Without permission the
+    /// held middle level reads `Inherit`; otherwise `Avoid`.
+    /// A walk option `Forbid` never narrows danger permission.
+    pub fn decide(
+        self,
+        script: WalkPermissions,
+        walk: WalkOptions,
+        crossing_requested: bool,
+    ) -> DangerDecision {
+        let requested = script.allow_danger_zones || walk.allow_danger_zones == WalkBit::Allow;
+        let proceeds = self == Self::Always || requested;
+        let policy = if proceeds {
+            RiskPolicy::Proceed
+        } else if crossing_requested {
+            RiskPolicy::Avoid
+        } else if self == Self::WhenSurvivable {
+            RiskPolicy::Inherit
+        } else {
+            RiskPolicy::Avoid
+        };
+        DangerDecision {
+            permitted: proceeds || crossing_requested,
+            policy,
+            enforce: NET_AVAILABLE || requested || crossing_requested,
         }
     }
+}
+
+/// The outcome of [`WalkGlobals::danger_decision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DangerDecision {
+    /// The router may cross any danger zone on this walk.
+    pub permitted: bool,
+    /// How admission judges the walk.
+    pub policy: RiskPolicy,
+    /// Whether the admission verdict has authority.
+    pub enforce: bool,
 }
 
 /// Durable global grants published by either frontend.
@@ -133,9 +163,20 @@ impl WalkGlobals {
         };
     }
 
-    /// Resolve script and walk overrides without modifying scoped named grants.
+    /// The one danger decision for a walk, at the effective global level.
+    pub fn danger_decision(
+        self,
+        script: WalkPermissions,
+        walk: WalkOptions,
+        crossing_requested: bool,
+    ) -> DangerDecision {
+        self.effective_danger_level()
+            .decide(script, walk, crossing_requested)
+    }
+
+    /// The admission mode of a walk with no named crossing.
     pub fn risk_policy(self, script: WalkPermissions, walk: WalkOptions) -> RiskPolicy {
-        self.effective_danger_level().risk_policy(script, walk)
+        self.danger_decision(script, walk, false).policy
     }
 
     /// Resolve additive global, script and request grants; only a
@@ -162,11 +203,11 @@ impl WalkGlobals {
             quest_start: self.allow_quest_start,
         }
     }
-    /// Resolve verdict authority separately from router grants. While held,
-    /// inherited requests retain precisely the router's pre-S2b outcome;
-    /// explicit script and per-walk overrides still use the admission seam.
+    /// Whether the verdict has authority. While held, a walk with no danger
+    /// request retains precisely the router's pre-S2b outcome; a card or walk
+    /// request and a named crossing use the admission seam.
     pub fn enforces_risk(self, script: WalkPermissions, walk: WalkOptions) -> bool {
-        NET_AVAILABLE || script.allow_danger_zones || walk.allow_danger_zones != WalkBit::Inherit
+        self.danger_decision(script, walk, false).enforce
     }
 
     /// Manual WalkTo has no script grant. Its danger control is one admission only.
@@ -185,15 +226,15 @@ impl WalkGlobals {
     }
 
     fn native_options(self, script: WalkPermissions, walk: WalkOptions) -> FindOptions {
-        let policy = self.risk_policy(script, walk);
-        self.native_options_with_policy(script, walk, policy)
+        let decision = self.danger_decision(script, walk, false);
+        self.native_options_with_decision(script, walk, decision)
     }
 
-    fn native_options_with_policy(
+    fn native_options_with_decision(
         self,
         script: WalkPermissions,
         walk: WalkOptions,
-        policy: RiskPolicy,
+        decision: DangerDecision,
     ) -> FindOptions {
         FindOptions {
             allow_teleports: walk
@@ -204,7 +245,7 @@ impl WalkGlobals {
                 .resolve(self.allow_wilderness, script.allow_wilderness),
             // Native supply preparation belongs to the card's Provisioner, not BankBudget.
             allow_bank_fetch: false,
-            zones: if policy == RiskPolicy::Proceed {
+            zones: if decision.permitted {
                 ZoneExempt::all()
             } else {
                 ZoneExempt::NONE
@@ -244,11 +285,14 @@ pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mu
 /// Resolve native search options and risk policy from the cached durable view.
 /// Callback-scoped permissions override the per-bot mirror. Otherwise, the
 /// mirror is the fallback. Load API Gather values come from the slot lock.
+/// `crossing_requested` is true when the request names zones to cross (a
+/// Quester stage or step `cross`).
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
     session_permissions: Option<script::native::WalkPermissions>,
+    crossing_requested: bool,
 ) -> (FindOptions, RiskPolicy, bool) {
     let mut all = navs.lock().unwrap();
     let mut bot = all.get_mut(name);
@@ -261,7 +305,7 @@ pub(crate) fn native_admission(
     let script = session_permissions
         .or_else(|| bot.as_deref().and_then(|bot| bot.native_permissions))
         .unwrap_or_default();
-    resolve_native_admission(globals, script, walk)
+    resolve_native_admission(globals, script, walk, crossing_requested)
 }
 
 /// Capture effective prerequisite consent for one native admission.
@@ -315,12 +359,13 @@ fn resolve_native_admission(
     globals: WalkGlobals,
     script: WalkPermissions,
     walk: WalkOptions,
+    crossing_requested: bool,
 ) -> (FindOptions, RiskPolicy, bool) {
-    let policy = globals.risk_policy(script, walk);
+    let decision = globals.danger_decision(script, walk, crossing_requested);
     (
-        globals.native_options_with_policy(script, walk, policy),
-        policy,
-        globals.enforces_risk(script, walk),
+        globals.native_options_with_decision(script, walk, decision),
+        decision.policy,
+        decision.enforce,
     )
 }
 
@@ -366,6 +411,7 @@ impl<'a> SelectionDangerQuery<'a> {
                 self.name,
                 WalkOptions::default(),
                 self.session_permissions,
+                false,
             );
             if options.zones.is_all() {
                 return SelectionDanger::Allowed;
@@ -956,12 +1002,13 @@ mod tests {
             "alice",
             WalkOptions::default(),
             Some(WalkPermissions::default()),
+            false,
         );
         assert_eq!(current_policy, RiskPolicy::Avoid);
         assert!(!current_options.zones.is_all());
 
         let (fallback_options, fallback_policy, _) =
-            native_admission(&navs, "alice", WalkOptions::default(), None);
+            native_admission(&navs, "alice", WalkOptions::default(), None, false);
         assert_eq!(fallback_policy, RiskPolicy::Proceed);
         assert!(fallback_options.zones.is_all());
     }
@@ -1015,7 +1062,13 @@ mod tests {
                 );
                 assert_eq!(opts.allow_teleports, expected);
                 assert_eq!(opts.allow_wilderness, expected);
-                assert_eq!(opts.zones.is_all(), expected);
+                // Forbid narrows teleports and Wilderness, never danger zones.
+                let danger = if bit == WalkBit::Forbid {
+                    inherited
+                } else {
+                    expected
+                };
+                assert_eq!(opts.zones.is_all(), danger);
                 assert!(!opts.allow_bank_fetch);
             }
             for (request, expected) in [
@@ -1392,7 +1445,7 @@ mod tests {
         let native_navs = Arc::clone(&navs);
         let (native, policy, _) = completes_before_release(&mut held, move || {
             measured_walk_call("native_admission", || {
-                native_admission(&native_navs, "alice", WalkOptions::default(), None)
+                native_admission(&native_navs, "alice", WalkOptions::default(), None, false)
             })
         });
         assert_eq!(policy, RiskPolicy::Avoid);
@@ -1475,7 +1528,7 @@ mod tests {
                 }),
             );
             let (native, policy, _) =
-                native_admission(&navs, "alice", WalkOptions::default(), None);
+                native_admission(&navs, "alice", WalkOptions::default(), None, false);
             assert_eq!(
                 policy,
                 if enabled {
@@ -1608,9 +1661,9 @@ mod tests {
                         allow_danger_zones: walk_bit,
                         ..WalkOptions::default()
                     };
-                    let expected = if walk_bit == WalkBit::Forbid {
-                        RiskPolicy::Avoid
-                    } else if walk_bit.resolve(effective_level == DangerLevel::Always, script_grant)
+                    let expected = if effective_level == DangerLevel::Always
+                        || script_grant
+                        || walk_bit == WalkBit::Allow
                     {
                         RiskPolicy::Proceed
                     } else {
@@ -1646,21 +1699,121 @@ mod tests {
                         allow_danger_zones: walk_bit,
                         ..WalkOptions::default()
                     };
-                    let expected = match (level, script_grant, walk_bit) {
-                        (_, _, WalkBit::Forbid) => RiskPolicy::Avoid,
-                        (_, _, WalkBit::Allow) | (_, true, WalkBit::Inherit) => RiskPolicy::Proceed,
-                        (DangerLevel::Never, false, WalkBit::Inherit) => RiskPolicy::Avoid,
-                        (DangerLevel::WhenSurvivable, false, WalkBit::Inherit) => {
+                    for crossing in [false, true] {
+                        let decision = level.decide(script, walk, crossing);
+                        let override_or_option = level == DangerLevel::Always
+                            || script_grant
+                            || walk_bit == WalkBit::Allow;
+                        let expected = if override_or_option {
+                            RiskPolicy::Proceed
+                        } else if crossing || level == DangerLevel::Never {
+                            RiskPolicy::Avoid
+                        } else {
                             RiskPolicy::Inherit
-                        }
-                        (DangerLevel::Always, false, WalkBit::Inherit) => RiskPolicy::Proceed,
-                    };
-                    assert_eq!(
-                        level.risk_policy(script, walk),
-                        expected,
-                        "level={level:?}, script={script_grant}, walk={walk_bit:?}"
-                    );
+                        };
+                        let context = format!(
+                            "level={level:?}, script={script_grant}, walk={walk_bit:?}, crossing={crossing}"
+                        );
+                        assert_eq!(decision.policy, expected, "{context}");
+                        assert_eq!(
+                            decision.permitted,
+                            override_or_option || crossing,
+                            "{context}"
+                        );
+                    }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn global_override_permits_every_walk_with_no_request() {
+        // The same decision serves a Quester walk, a native script walk and a
+        // compat walk: none of them needs a request when the override is on.
+        let mut globals = WalkGlobals::fail_closed();
+        globals.set_danger_level(DangerLevel::Always);
+        for script in [
+            WalkPermissions::default(),
+            WalkPermissions {
+                allow_danger_zones: true,
+                ..Default::default()
+            },
+        ] {
+            for bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+                let walk = WalkOptions {
+                    allow_danger_zones: bit,
+                    ..WalkOptions::default()
+                };
+                let decision = globals.danger_decision(script, walk, false);
+                assert!(decision.permitted, "script={script:?}, walk={bit:?}");
+                assert_eq!(decision.policy, RiskPolicy::Proceed);
+                assert!(resolve_native_admission(globals, script, walk, false)
+                    .0
+                    .zones
+                    .is_all());
+            }
+        }
+    }
+
+    #[test]
+    fn a_script_request_permits_the_walk_when_the_override_is_off() {
+        let mut globals = WalkGlobals::fail_closed();
+        globals.set_danger_level(DangerLevel::Never);
+        // A named crossing (Quester stage or step `cross`, compat `crossZones`).
+        let crossing =
+            globals.danger_decision(WalkPermissions::default(), WalkOptions::default(), true);
+        assert!(crossing.permitted);
+        // A named crossing keeps the survival check.
+        assert_eq!(crossing.policy, RiskPolicy::Avoid);
+        assert!(crossing.enforce);
+        let (options, policy, enforce) = resolve_native_admission(
+            globals,
+            WalkPermissions::default(),
+            WalkOptions::default(),
+            true,
+        );
+        assert!(options.zones.is_all());
+        assert_eq!((policy, enforce), (RiskPolicy::Avoid, true));
+        // A native script's card setting and its walk option.
+        let card = WalkPermissions {
+            allow_danger_zones: true,
+            ..Default::default()
+        };
+        assert!(
+            globals
+                .danger_decision(card, WalkOptions::default(), false)
+                .permitted
+        );
+        let option = WalkOptions {
+            allow_danger_zones: WalkBit::Allow,
+            ..Default::default()
+        };
+        assert!(
+            globals
+                .danger_decision(WalkPermissions::default(), option, false)
+                .permitted
+        );
+    }
+
+    #[test]
+    fn no_override_and_no_request_refuses_danger_zones() {
+        for level in [DangerLevel::Never, DangerLevel::WhenSurvivable] {
+            let mut globals = WalkGlobals::fail_closed();
+            globals.set_danger_level(level);
+            for bit in [WalkBit::Inherit, WalkBit::Forbid] {
+                let walk = WalkOptions {
+                    allow_danger_zones: bit,
+                    ..WalkOptions::default()
+                };
+                let decision = globals.danger_decision(WalkPermissions::default(), walk, false);
+                assert!(!decision.permitted, "level={level:?}, walk={bit:?}");
+                assert_eq!(decision.policy, RiskPolicy::Avoid);
+                assert!(
+                    resolve_native_admission(globals, WalkPermissions::default(), walk, false)
+                        .0
+                        .zones
+                        == ZoneExempt::NONE
+                );
             }
         }
     }
@@ -1710,15 +1863,26 @@ mod held_gate_tests {
             let mut globals = WalkGlobals::default();
             globals.set_danger_level(level);
             assert!(!globals.enforces_risk(WalkPermissions::default(), WalkOptions::default()));
-            for bit in [WalkBit::Allow, WalkBit::Forbid] {
-                assert!(globals.enforces_risk(
-                    WalkPermissions::default(),
-                    WalkOptions {
-                        allow_danger_zones: bit,
-                        ..Default::default()
-                    },
-                ));
-            }
+            assert!(globals.enforces_risk(
+                WalkPermissions::default(),
+                WalkOptions {
+                    allow_danger_zones: WalkBit::Allow,
+                    ..Default::default()
+                },
+            ));
+            // A Forbid has no danger effect: the walk stays inherited.
+            assert!(!globals.enforces_risk(
+                WalkPermissions::default(),
+                WalkOptions {
+                    allow_danger_zones: WalkBit::Forbid,
+                    ..Default::default()
+                },
+            ));
+            assert!(
+                globals
+                    .danger_decision(WalkPermissions::default(), WalkOptions::default(), true)
+                    .enforce
+            );
             assert!(globals.enforces_risk(
                 WalkPermissions {
                     allow_danger_zones: true,
@@ -1736,12 +1900,12 @@ mod held_gate_tests {
             ("bob".to_owned(), super::super::NavBot::default()),
         ])));
         assert!(!navs.lock().unwrap()["alice"].runtime_gate_logged);
-        native_admission(&navs, "alice", WalkOptions::default(), None);
+        native_admission(&navs, "alice", WalkOptions::default(), None, false);
         assert!(navs.lock().unwrap()["alice"].runtime_gate_logged);
         assert!(!navs.lock().unwrap()["bob"].runtime_gate_logged);
         for _ in 0..3 {
             compiled_options(&navs, "alice", FindOptions::default());
-            native_admission(&navs, "alice", WalkOptions::default(), None);
+            native_admission(&navs, "alice", WalkOptions::default(), None, false);
             let mut all = navs.lock().unwrap();
             log_runtime_net_gate(
                 "alice",

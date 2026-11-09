@@ -265,9 +265,8 @@ pub struct SequenceDocument {
     pub recovery_entry: Option<FactKey>,
     #[serde(default)]
     pub order: SequenceOrder,
-    /// Stable navigation identities the stage may cross.
+    /// Stable navigation identities the stage asks to cross.
     #[serde(default)]
-    #[cfg_attr(feature = "path-schema", schemars(length(max = 8)))]
     pub cross: Vec<RequiredZoneDocument>,
     pub steps: Vec<StepDocument>,
 }
