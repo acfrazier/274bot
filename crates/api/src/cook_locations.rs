@@ -2,7 +2,6 @@
 //! kinds and the pairing constants, generated from the local game-data sources;
 //! the placed surfaces themselves are selected content.
 
-use crate::selected::embedded_table;
 use crate::selected::FactError;
 use crate::snapshot::WorldTile;
 use serde::Deserialize;
@@ -110,12 +109,26 @@ pub enum CookRole {
 
 /// The curated fish-camp cook surfaces, in table order.
 pub fn fish_camp_cook_surfaces() -> Result<&'static [FishCookSurface], FactError> {
-    embedded_table!(generated::FISH_CAMP_COOK_SURFACES)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::FISH_CAMP_COOK_SURFACES)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// The curated fish-camp cook plans, in table order.
 pub fn fish_camp_cook_plans() -> Result<&'static [FishCampCookPlan], FactError> {
-    embedded_table!(generated::FISH_CAMP_COOK_PLANS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::FISH_CAMP_COOK_PLANS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// Frozen `cookSurfaceForFishCamp` (`data/cookingRanges.ts:169-181`) as an index into
@@ -172,19 +185,47 @@ pub struct CookSurfaceFacts {
 }
 
 pub fn cook_camps() -> Result<&'static [CookCamp], FactError> {
-    embedded_table!(generated::COOK_CAMPS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::COOK_CAMPS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 pub fn default_obstacles() -> Result<&'static [&'static str], FactError> {
-    embedded_table!(generated::DEFAULT_OBSTACLES)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::DEFAULT_OBSTACLES)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 pub fn max_surface_cheb() -> Result<i32, FactError> {
-    embedded_table!(generated::MAX_SURFACE_CHEB)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::MAX_SURFACE_CHEB)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 pub fn derived_arrive_radius() -> Result<i32, FactError> {
-    embedded_table!(generated::DERIVED_ARRIVE_RADIUS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::DERIVED_ARRIVE_RADIUS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 #[cfg(test)]

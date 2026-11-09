@@ -172,7 +172,7 @@ pub struct ScriptStartHandle {
     world: Option<Arc<nav_planner::world::NavWorld>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     #[cfg(feature = "js")]
-    wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
+    wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
     /// connection, whose Starts post no operator rows.

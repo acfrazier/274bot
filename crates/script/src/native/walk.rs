@@ -7,7 +7,7 @@ use super::{
 use api::selected::QuestGate;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
-use nav_planner::walk_destinations::{WalkDestination, WALK_DESTINATIONS};
+use nav_planner::contract::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;

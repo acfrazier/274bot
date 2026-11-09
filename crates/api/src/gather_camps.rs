@@ -13,7 +13,7 @@
 //! [`fishing_rows`].
 
 use crate::cook_locations::{self, fish_camp_cook_surface_index, CookRole, FishCookSurface};
-use crate::selected::{embedded_table, FactError};
+use crate::selected::FactError;
 use crate::snapshot::WorldTile;
 use std::sync::LazyLock;
 
@@ -152,22 +152,50 @@ mod generated {
 
 /// Woodcutting camps in table order (`WOODCUTTING_LOCATIONS`, `woodcuttingLocations.ts:63-170`).
 pub fn woodcutting_camps() -> Result<&'static [GatherCamp], FactError> {
-    embedded_table!(generated::WOODCUTTING_CAMPS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::WOODCUTTING_CAMPS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// Mining camps in name order (`MINING_LOCATIONS`, `miningLocations.ts:61-279`).
 pub fn mining_camps() -> Result<&'static [GatherCamp], FactError> {
-    embedded_table!(generated::MINING_CAMPS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::MINING_CAMPS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// Fishing camps before `withCampCook`, in table order (`FISHING_LOCATIONS`, `fishingLocations.ts`).
 pub fn fishing_camps() -> Result<&'static [GatherCamp], FactError> {
-    embedded_table!(generated::FISHING_CAMPS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::FISHING_CAMPS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// The Shilo water vendor (`SHILO_WATER_VENDOR`, `fishingLocations.ts:4`).
 pub fn shilo_water_vendor() -> Result<&'static WaterVendor, FactError> {
-    embedded_table!(&generated::SHILO_WATER_VENDOR)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(&generated::SHILO_WATER_VENDOR)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// `MINING_LOCATION_OPTION_LABELS`: only camps with a combat recommendation, in table order, each as

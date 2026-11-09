@@ -109,7 +109,7 @@ impl BankSlot {
             game_data: Some(game_data),
             named_banks,
             loadouts: Arc::<[api::loadout::Loadout]>::from([]),
-            wilderness_rules: std::sync::Arc::default(),
+            wilderness_rules: script::surface::no_wilderness(),
         })
         .expect("start test SlotScript");
 

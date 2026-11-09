@@ -57,7 +57,7 @@ fn test_surface_start(
         game_data: None,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
         loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
-        wilderness_rules: std::sync::Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     }
 }
 

@@ -1331,6 +1331,5 @@ fn nearest_cooking_range<'s>(
 }
 
 #[cfg(test)]
-mod tests {
-    include!("gather_catalog_v8_tests.rs");
-}
+#[path = "gather_catalog_v8_tests.rs"]
+mod tests;

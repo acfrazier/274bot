@@ -181,23 +181,6 @@ pub(crate) fn local_game_data_unavailable() -> FactError {
     FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
 }
 
-/// A compiled catalog table, or the local-game-data refusal when the build embeds none. The table
-/// expression names a `generated` module that exists only with the data, so the other branch never
-/// compiles it.
-macro_rules! embedded_table {
-    ($table:expr) => {{
-        #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
-        {
-            Ok($table)
-        }
-        #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
-        {
-            Err($crate::selected::local_game_data_unavailable())
-        }
-    }};
-}
-pub(crate) use embedded_table;
-
 /// Process-local identity of one operator run, stamped with the session it
 /// currently executes in; `slot` comes from Play's worker lifetime owner only.
 /// Intentionally not deserializable or persistable. The typed projections

@@ -11443,7 +11443,7 @@ mod route_quest_provider_tests {
             game_data: Some(selected),
             named_banks: Arc::default(),
             loadouts: Arc::default(),
-            wilderness_rules: Arc::default(),
+            wilderness_rules: script::surface::no_wilderness(),
         })
         .expect("start the real compatibility surface owner");
         factory

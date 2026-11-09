@@ -99,7 +99,7 @@ fn stub_surface_start() -> crate::surface::SurfaceStart {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_rules: std::sync::Arc::default(),
+        wilderness_rules: crate::surface::no_wilderness(),
     }
 }
 

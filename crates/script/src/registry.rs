@@ -514,7 +514,7 @@ mod tests {
                 game_data: None,
                 named_banks: Arc::default(),
                 loadouts: Arc::default(),
-                wilderness_rules: std::sync::Arc::default(),
+                wilderness_rules: crate::surface::no_wilderness(),
             })
             .unwrap();
         factory

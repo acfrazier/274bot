@@ -2755,15 +2755,8 @@ pub(crate) mod tests {
 
     #[test]
     fn walk_verify_and_probe_dest_ignore_caller_budgets_below_node_budget_for_long_route() {
-        use nav_planner::collision::{pack_walk, WorldCollision};
-        use nav_planner::router::{self, FindOptions, NODE_BUDGET};
-        use nav_planner::transport::TransportGraph;
-        use nav_planner::WorldState;
-
-        const WIDTH: usize = 768;
-        const HEIGHT: usize = 768;
-        const WALL_X: usize = WIDTH / 2;
-        const { assert!(300_000 < NODE_BUDGET) };
+        // The planner half of this test is `host-play/tests/compat_walk_route_budget.rs`, on a 768-tile-wide map.
+        const LONG_ROUTE_X: i32 = 767;
         reset();
         let from = WorldTile {
             x: 0,
@@ -2771,7 +2764,7 @@ pub(crate) mod tests {
             level: 0,
         };
         let to = WorldTile {
-            x: WIDTH as i32 - 1,
+            x: LONG_ROUTE_X,
             z: 0,
             level: 0,
         };
@@ -2872,52 +2865,11 @@ pub(crate) mod tests {
         assert_eq!(request_from, from);
         assert_eq!(request_to, to);
 
-        let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
-        for z in 0..HEIGHT - 1 {
-            flags[z * WIDTH + WALL_X] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
-        }
-        let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: from,
-            width: WIDTH,
-            height: HEIGHT,
-            walk,
-            blocked,
-            flags: None,
-        };
-        let graph = TransportGraph::default();
-        let options = FindOptions {
-            allow_teleports: *allow_teleports,
-            allow_wilderness: *allow_wilderness,
-            allow_bank_fetch: *allow_bank_fetch,
-            ..FindOptions::default()
-        };
-        let state = WorldState::empty();
+        // The planner half takes exactly these options (`FindOptions` of the router test).
         assert_eq!(
-            router::find_with_avoid_bounded(
-                &collision,
-                &graph,
-                request_from,
-                request_to,
-                options,
-                &state,
-                &[],
-                300_000,
-            ),
-            Err(router::RouteError::BudgetExhausted),
-            "the map requires more than the upstream 300,000 expansion count"
+            (*allow_teleports, *allow_wilderness, *allow_bank_fetch),
+            (false, true, false)
         );
-        let routed = router::find_with_avoid(
-            &collision,
-            &graph,
-            request_from,
-            request_to,
-            options,
-            &state,
-            &[],
-        )
-        .expect("the default router budget reaches the long-route destination");
-        assert_eq!(routed.dest, request_to);
     }
 
     /// Drive a row's (0,0) to (10,0) ladder with walk `radius` through every

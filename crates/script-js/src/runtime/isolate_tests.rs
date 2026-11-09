@@ -2424,9 +2424,7 @@ fn journal_slot(source: &str) -> script::SlotScript {
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(1);
     let (shape, family) = crate::resolve_api_family(source).expect("an API v2 card");
-    slot.bind_surface_factory(std::sync::Arc::new(
-        crate::surface::JsSurfaceFactory::default(),
-    ));
+    slot.bind_surface_factory(std::sync::Arc::new(crate::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: std::sync::Arc::new(crate::surface::JsStartCard {
             card_name: "test".into(),
@@ -2439,7 +2437,7 @@ fn journal_slot(source: &str) -> script::SlotScript {
         game_data: None,
         named_banks: std::sync::Arc::default(),
         loadouts: std::sync::Arc::default(),
-        wilderness_rules: std::sync::Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("start the JS surface");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -3472,7 +3470,7 @@ export function tick() {{}}
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -3526,7 +3524,7 @@ export default class RuntimeShapeProbe extends LoopingBot {}
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             None,
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

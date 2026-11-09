@@ -6,7 +6,7 @@
 //! `script::fishing_gear`.
 
 use crate::game_data::SelectedGameData;
-use crate::selected::{embedded_table, FactError};
+use crate::selected::FactError;
 use crate::snapshot::WorldTile;
 
 /// One gear piece a method needs (`FishingGearPiece`, `fishingMethods.ts:1-8`): held count to fish, and the
@@ -53,22 +53,50 @@ mod generated {
 
 /// `FISHING_METHODS` in table order (`fishingMethods.ts:20-82`).
 pub fn fishing_methods() -> Result<&'static [FishingMethod], FactError> {
-    embedded_table!(generated::FISHING_METHODS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::FISHING_METHODS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// The pinned `WHIRLPOOL_IDS` (`fishingMethods.ts`); the runtime ids come from [`whirlpool_ids`].
 pub fn pinned_whirlpool_ids() -> Result<&'static [i32], FactError> {
-    embedded_table!(generated::WHIRLPOOL_IDS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::WHIRLPOOL_IDS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// `FISHING_SHOP_COSTS` in table order (`ToolAcquire.ts`).
 pub fn fishing_shop_costs() -> Result<&'static [(&'static str, i32)], FactError> {
-    embedded_table!(generated::FISHING_SHOP_COSTS)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::FISHING_SHOP_COSTS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// `GERRANT_ONLY_FISHING`: the lowercase item names only Gerrant stocks (`ToolAcquire.ts`).
 pub fn gerrant_only_fishing() -> Result<&'static [&'static str], FactError> {
-    embedded_table!(generated::GERRANT_ONLY_FISHING)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::GERRANT_ONLY_FISHING)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 /// The two fishing gear shops.
@@ -91,12 +119,34 @@ pub struct FishingTables {
     pub gerrant: &'static FishingVendor,
 }
 
+fn harry_vendor() -> Result<&'static FishingVendor, FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(&generated::HARRY_VENDOR)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
+}
+
+fn gerrant_vendor() -> Result<&'static FishingVendor, FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(&generated::GERRANT_VENDOR)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
+}
+
 /// The vendor tables, or the refusal of a build without local game data.
 pub fn fishing_tables() -> Result<FishingTables, FactError> {
     Ok(FishingTables {
         gerrant_only: gerrant_only_fishing()?,
-        harry: embedded_table!(&generated::HARRY_VENDOR)?,
-        gerrant: embedded_table!(&generated::GERRANT_VENDOR)?,
+        harry: harry_vendor()?,
+        gerrant: gerrant_vendor()?,
     })
 }
 

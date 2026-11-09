@@ -4,7 +4,7 @@
 //! compiled by this crate's build script. The table is an immutable process-wide static; the bank family's
 //! `findQuestJunk` reads it.
 
-use crate::selected::{embedded_table, FactError};
+use crate::selected::FactError;
 
 /// One quest-junk row (`QuestJunkEntry`, `bankQuestJunk.ts:3-7`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,14 @@ mod generated {
 
 /// Every quest-junk row in the upstream table's order.
 pub fn quest_junk() -> Result<&'static [QuestJunkEntry], FactError> {
-    embedded_table!(generated::QUEST_JUNK)
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::QUEST_JUNK)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(crate::selected::local_game_data_unavailable())
+    }
 }
 
 #[cfg(test)]

@@ -174,6 +174,5 @@ fn materialize<'s>(
 }
 
 #[cfg(test)]
-mod tests {
-    include!("walk_destinations_v8_tests.rs");
-}
+#[path = "walk_destinations_v8_tests.rs"]
+mod tests;

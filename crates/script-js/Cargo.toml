@@ -14,7 +14,6 @@ memory-profile = []
 
 [dependencies]
 api = { path = "../api" }
-nav-planner = { path = "../nav-planner" }
 # JavaScript parsing for import scans and TS -> JS stripping of catalog sources.
 deno_ast = { version = "=0.49.0", features = ["transpiling"] }
 deno_core = { version = "=0.355.0" }
@@ -42,6 +41,7 @@ libc = "0.2"
 api = { path = "../api", features = ["test-support"] }
 allocation-counter = "0.8.1"
 client = { workspace = true }
+nav-planner = { path = "../nav-planner" }
 script = { path = "../script", default-features = false, features = ["test-hooks"] }
 script-js = { path = ".", default-features = false, features = ["test-hooks"] }
 # The checked model of the auto-run hold; the compat lease conformance test

@@ -318,7 +318,7 @@ pub struct Play {
     world: Option<Arc<NavWorld>>,
     /// Shared wilderness rules from the loaded pack.
     #[cfg(feature = "js")]
-    wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
+    wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
     /// Per-slot control wake ends: [`SlotWake::wake`] kicks a parked slot
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.

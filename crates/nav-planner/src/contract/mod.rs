@@ -20,6 +20,7 @@ use crate::world::NavWorld;
 
 mod arrival;
 mod collision;
+mod destinations;
 mod envelope;
 mod reachability;
 mod route;
@@ -28,6 +29,7 @@ mod zones;
 
 pub use arrival::ArrivalSpec;
 pub use collision::CollisionView;
+pub use destinations::{WalkDestination, WALK_DESTINATIONS};
 pub use envelope::{
     BoundRouteRequest, RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase,
     RouteRequest, RouteService,

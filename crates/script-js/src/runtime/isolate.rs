@@ -721,7 +721,7 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+        wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
         Self::spawn_with_content_and_state(
@@ -745,7 +745,7 @@ impl GameplayFactory {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+        wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
@@ -782,7 +782,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::default(),
+            script::surface::no_wilderness(),
             None,
             None,
         )
@@ -793,7 +793,7 @@ impl LoadIsolate {
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
-        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+        wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
     ) -> Result<Self, LoadIsolateError> {
         Self::spawn_inner(
             js,
@@ -823,7 +823,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             Some(execution),
             None,
         )
@@ -844,7 +844,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             None,
             None,
         )
@@ -866,7 +866,7 @@ impl LoadIsolate {
             siblings,
             game_data,
             named_banks,
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             None,
             None,
         )
@@ -888,7 +888,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(nav_planner::transport::WildernessRules::default()),
+            script::surface::no_wilderness(),
             None,
             Some(local_state),
         )
@@ -913,7 +913,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-        wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+        wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<Self, LoadIsolateError> {

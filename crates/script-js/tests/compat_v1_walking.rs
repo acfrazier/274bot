@@ -1,6 +1,5 @@
 //! Compat v1 walking table and map helper contracts.
 
-use nav_planner::transport::{WildernessRules, WildernessZone};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -117,6 +116,25 @@ fn compat_v1_walking__inessmine__contract() {
     );
 }
 
+/// The wilderness seam as the host would answer it for one zone (x 100..=110, z 200..=239, level
+/// `(z - 200) / 8 + 1`, 0 outside); the real formula is `nav_planner::transport::WildernessRules`'s,
+/// tested in the planner and through the host's adapter.
+#[derive(Debug)]
+struct OneZone;
+
+impl script::surface::WildernessLevels for OneZone {
+    fn level(&self, tile: api::snapshot::WorldTile) -> i32 {
+        if (100..=110).contains(&tile.x)
+            && (200..=239).contains(&tile.z)
+            && (0..=3).contains(&tile.level)
+        {
+            (tile.z - 200) / 8 + 1
+        } else {
+            0
+        }
+    }
+}
+
 #[test]
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_walking__wildernesslevelat__contract() {
@@ -126,19 +144,7 @@ fn compat_v1_walking__wildernesslevelat__contract() {
             "globalThis.__levels = [wildernessLevelAt({ x: 100, z: 200, level: 0 }), wildernessLevelAt({ x: 110, z: 239, level: 3 }), wildernessLevelAt({ x: 100, z: 240, level: 0 }), wildernessLevelAt({ x: 111, z: 200, level: 0 }), wildernessLevelAt({ x: 100, z: 200, level: 4 })];"
         )
     );
-    let rules = Arc::new(WildernessRules {
-        zones: vec![WildernessZone {
-            x1: 100,
-            z1: 200,
-            x2: 110,
-            z2: 239,
-            level1: 0,
-            level2: 3,
-            origin_z: 200,
-        }],
-        divisor: 8,
-        offset: 1,
-    });
+    let rules: Arc<dyn script::surface::WildernessLevels> = Arc::new(OneZone);
     let iso =
         LoadIsolate::spawn_with_wilderness_rules(source, LoadShape::CompatClass, vec![], rules)
             .unwrap();

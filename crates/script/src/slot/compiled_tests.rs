@@ -988,7 +988,7 @@ fn invalid_gatherer_settings_leave_no_runnable_instance() {
             game_data: None,
             named_banks: Arc::default(),
             loadouts: Arc::default(),
-            wilderness_rules: std::sync::Arc::default(),
+            wilderness_rules: crate::surface::no_wilderness(),
         })
         .is_err());
 }
@@ -2706,7 +2706,7 @@ mod api_gather_seat {
             game_data: data.then(selected),
             named_banks: Arc::default(),
             loadouts: Arc::default(),
-            wilderness_rules: std::sync::Arc::default(),
+            wilderness_rules: crate::surface::no_wilderness(),
         })
         .unwrap();
         factory

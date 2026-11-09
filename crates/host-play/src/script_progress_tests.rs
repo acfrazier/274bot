@@ -898,7 +898,7 @@ fn compat_journal_read_to_read_hand_off_takes_a_fresh_hold() {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_rules: Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("start the compatibility surface");
     let run = factory.last_run().expect("stub surface run");

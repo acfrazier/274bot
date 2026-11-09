@@ -1363,7 +1363,7 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
-        wilderness_rules: std::sync::Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("the surface starts");
     factory

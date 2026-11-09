@@ -208,7 +208,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+    wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,

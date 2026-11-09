@@ -58,6 +58,28 @@ pub trait SurfaceCard: Any + Send + Sync + std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// The wilderness level of a tile (content `~wilderness_level`), for synchronous read-only
+/// queries from a surface. The host supplies one shared instance per Play; a start holds only
+/// an `Arc` to it and a query allocates nothing.
+pub trait WildernessLevels: Send + Sync + std::fmt::Debug {
+    /// The level at `tile`: 0 outside every wilderness zone.
+    fn level(&self, tile: api::snapshot::WorldTile) -> i32;
+}
+
+#[derive(Debug)]
+struct NoWilderness;
+
+impl WildernessLevels for NoWilderness {
+    fn level(&self, _: api::snapshot::WorldTile) -> i32 {
+        0
+    }
+}
+
+/// A source with no wilderness zone: every tile is level 0.
+pub fn no_wilderness() -> Arc<dyn WildernessLevels> {
+    Arc::new(NoWilderness)
+}
+
 /// Shared values that the slot retains when it restarts a run.
 ///
 /// Cloning this value clones its six `Arc`s. It does not copy their contents.
@@ -71,8 +93,8 @@ pub struct SurfaceStart {
     pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Immutable named-bank facts for this start.
     pub named_banks: Arc<api::named_banks::NamedBankFacts>,
-    /// Shared wilderness rules for synchronous read-only queries.
-    pub wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
+    /// Shared wilderness levels for synchronous read-only queries.
+    pub wilderness_rules: Arc<dyn WildernessLevels>,
     /// Shared loadouts for this start.
     pub loadouts: Arc<[api::loadout::Loadout]>,
 }

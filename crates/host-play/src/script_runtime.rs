@@ -215,7 +215,7 @@ pub(super) fn js_surface_start(
         game_data,
         named_banks,
         loadouts,
-        Arc::default(),
+        script::surface::no_wilderness(),
     )
 }
 
@@ -226,7 +226,7 @@ pub(super) fn js_surface_start_with_wilderness_rules(
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     loadouts: Arc<[api::loadout::Loadout]>,
-    wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
+    wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
 ) -> script::surface::SurfaceStart {
     let card: Arc<dyn script::surface::SurfaceCard> = card;
     script::surface::SurfaceStart {

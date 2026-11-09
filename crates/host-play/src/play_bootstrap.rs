@@ -21,6 +21,23 @@ use super::{
     SlotInput,
 };
 
+/// The loaded pack's wilderness zones, read through the seam a script surface queries. Built once
+/// per Play; a start and a query only clone or borrow its `Arc`.
+#[derive(Debug)]
+struct PackWilderness(Arc<nav_planner::transport::WildernessRules>);
+
+impl script::surface::WildernessLevels for PackWilderness {
+    fn level(&self, tile: WorldTile) -> i32 {
+        self.0.level(tile)
+    }
+}
+
+fn wilderness_levels_of(world: Option<&NavWorld>) -> Arc<dyn script::surface::WildernessLevels> {
+    world.map_or_else(script::surface::no_wilderness, |world| {
+        Arc::new(PackWilderness(world.wilderness_rules()))
+    })
+}
+
 /// Mint a login password accepted by the game protocol.
 pub fn mint_game_password() -> String {
     const ALPHABET: &[u8; 36] = b"abcdefghijklmnopqrstuvwxyz0123456789";
@@ -355,10 +372,8 @@ impl SharedClientTemplate {
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.clone()
     }
-    pub fn wilderness_rules(&self) -> Arc<nav_planner::transport::WildernessRules> {
-        self.world
-            .as_deref()
-            .map_or_else(Arc::default, NavWorld::wilderness_rules)
+    pub fn wilderness_rules(&self) -> Arc<dyn script::surface::WildernessLevels> {
+        wilderness_levels_of(self.world.as_deref())
     }
 
     /// Return the consuming handoff required by [`run_prepared_template`].
@@ -509,9 +524,7 @@ impl Play {
         let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
         let world = NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new);
-        let wilderness_rules = world
-            .as_deref()
-            .map_or_else(Arc::default, NavWorld::wilderness_rules);
+        let wilderness_rules = wilderness_levels_of(world.as_deref());
         Self::assemble(
             PlayConnection::Direct(options.clone()),
             None,
@@ -546,7 +559,7 @@ impl Play {
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
         world: Option<Arc<NavWorld>>,
-        wilderness_rules: Arc<nav_planner::transport::WildernessRules>,
+        wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
     ) -> Play {
         // Only the js Start path reads the rules.
         #[cfg(not(feature = "js"))]
@@ -944,5 +957,50 @@ mod template_revision_tests {
             };
             assert!(error.contains("revision 377"), "{error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod wilderness_seam_tests {
+    use super::*;
+    use nav_planner::transport::{WildernessRules, WildernessZone};
+    use script::surface::WildernessLevels;
+
+    #[test]
+    fn the_seam_answers_with_the_pack_rules_and_no_pack_is_level_zero() {
+        let rules = Arc::new(WildernessRules {
+            zones: vec![WildernessZone {
+                x1: 100,
+                z1: 200,
+                x2: 110,
+                z2: 239,
+                level1: 0,
+                level2: 3,
+                origin_z: 200,
+            }],
+            divisor: 8,
+            offset: 1,
+        });
+        let seam = PackWilderness(Arc::clone(&rules));
+        for (x, z) in [(100, 200), (110, 239), (100, 240), (111, 200)] {
+            let tile = WorldTile { x, z, level: 0 };
+            assert_eq!(seam.level(tile), rules.level(tile), "({x}, {z})");
+        }
+        assert_eq!(
+            seam.level(WorldTile {
+                x: 110,
+                z: 239,
+                level: 0
+            }),
+            5
+        );
+        assert_eq!(
+            wilderness_levels_of(None).level(WorldTile {
+                x: 110,
+                z: 239,
+                level: 0
+            }),
+            0
+        );
     }
 }

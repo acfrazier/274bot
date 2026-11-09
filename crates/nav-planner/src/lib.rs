@@ -29,7 +29,6 @@ pub mod router;
 pub mod test_support;
 pub mod tile;
 pub mod transport;
-pub mod walk_destinations;
 pub mod world;
 pub mod world_state;
 pub mod zones;

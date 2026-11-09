@@ -187,7 +187,7 @@ pub(super) fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    wilderness_rules: std::sync::Arc<nav_planner::transport::WildernessRules>,
+    wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
     runtime_handle: tokio::runtime::Handle,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,

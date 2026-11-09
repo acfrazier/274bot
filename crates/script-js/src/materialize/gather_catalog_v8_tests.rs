@@ -1,7 +1,8 @@
 use super::*;
 use rustyscript::RuntimeOptions;
 
-const SHAPE_TEST_NAME: &str = "gather_catalog_v8::tests::every_table_object_has_fast_properties_from_its_cached_shape";
+const SHAPE_TEST_NAME: &str =
+    "gather_catalog_v8::tests::every_table_object_has_fast_properties_from_its_cached_shape";
 const CHILD_ENV: &str = "SCRIPT_GATHER_CATALOG_SHAPE_TEST_CHILD";
 
 const SETUP: &str = r#"
@@ -175,7 +176,8 @@ globalThis.__repeatOp = (label, count) => {
 /// origin one tile east of one of its ranges.
 fn setup() -> Runtime {
     crate::runtime::platform::bootstrap_test_v8_platform();
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected game data");
+    let data =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected game data");
     let range = data
         .cook_surfaces()
         .expect("cook surfaces")
@@ -213,24 +215,41 @@ fn expected_keys() -> String {
             .map(|keys| keys.iter().map(|key| key.as_str()).collect::<Vec<_>>())
             .collect::<Vec<_>>()
     };
-    let wood: Vec<&[CampKey]> = gather_camps::woodcutting_camps().expect("woodcutting camps").iter().map(|camp| camp.keys).collect();
-    let mining: Vec<&[CampKey]> = gather_camps::mining_camps().expect("mining camps").iter().map(|camp| camp.keys).collect();
-    let fishing: Vec<&[CampKey]> = gather_camps::fishing_rows().expect("fishing rows").iter().map(|row| row.keys.as_slice()).collect();
-    serde_json::json!({ "wood": keys(&wood), "mining": keys(&mining), "fishing": keys(&fishing) }).to_string()
+    let wood: Vec<&[CampKey]> = gather_camps::woodcutting_camps()
+        .expect("woodcutting camps")
+        .iter()
+        .map(|camp| camp.keys)
+        .collect();
+    let mining: Vec<&[CampKey]> = gather_camps::mining_camps()
+        .expect("mining camps")
+        .iter()
+        .map(|camp| camp.keys)
+        .collect();
+    let fishing: Vec<&[CampKey]> = gather_camps::fishing_rows()
+        .expect("fishing rows")
+        .iter()
+        .map(|row| row.keys.as_slice())
+        .collect();
+    serde_json::json!({ "wood": keys(&wood), "mining": keys(&mining), "fishing": keys(&fishing) })
+        .to_string()
 }
 
 /// A fast-property check needs `%HasFastProperties`, which is a process-wide V8 flag, so the check runs in its
 /// own child process.
 fn in_child(name: &str, body: impl FnOnce()) {
     if std::env::var_os(CHILD_ENV).is_none() {
-        let output = std::process::Command::new(std::env::current_exe().expect("unit-test executable path"))
-            .args(["--exact", name, "--nocapture"])
-            .env(CHILD_ENV, "1")
-            .output()
-            .expect("run isolated V8-native-syntax test");
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("unit-test executable path"))
+                .args(["--exact", name, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("run isolated V8-native-syntax test");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "isolated V8 test failed\nstdout: {stdout}\nstderr: {stderr}");
+        assert!(
+            output.status.success(),
+            "isolated V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
         assert!(
             stdout.contains(&format!("test {name} ... ok")) && stdout.contains("1 passed"),
             "isolated test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
@@ -256,16 +275,25 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
         assert!(runtime.eval::<bool>("__check(__expected)").unwrap());
         let shapes = {
             let scope = runtime.deno_runtime().handle_scope();
-            let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+            let cache = scope
+                .get_slot::<Shared>()
+                .cloned()
+                .expect("catalog installed");
             let count = cache.borrow().shapes.len();
             count
         };
         assert!(shapes >= 10, "shapes are cached per own-key list: {shapes}");
-        assert!(shapes < 64, "the shape cache stays bounded by the table schema: {shapes}");
+        assert!(
+            shapes < 64,
+            "the shape cache stays bounded by the table schema: {shapes}"
+        );
         assert!(runtime.eval::<bool>("__check(__expected)").unwrap());
         let again = {
             let scope = runtime.deno_runtime().handle_scope();
-            let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+            let cache = scope
+                .get_slot::<Shared>()
+                .cloned()
+                .expect("catalog installed");
             let count = cache.borrow().shapes.len();
             count
         };
@@ -290,16 +318,28 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
         .eval::<()>("globalThis.__repeat(1); globalThis.__last = null;")
         .unwrap();
     let populated = collected_used_heap(&mut runtime);
-    runtime.eval::<()>("globalThis.__repeat(1000); globalThis.__last = null;").unwrap();
+    runtime
+        .eval::<()>("globalThis.__repeat(1000); globalThis.__last = null;")
+        .unwrap();
     let after_repeat = collected_used_heap(&mut runtime);
     let objects = {
-        let rows = gather_camps::woodcutting_camps().expect("woodcutting camps").len()
+        let rows = gather_camps::woodcutting_camps()
+            .expect("woodcutting camps")
+            .len()
             + gather_camps::mining_camps().expect("mining camps").len()
             + gather_camps::fishing_rows().expect("fishing rows").len();
         // Per camp row: the row, its spot, bank stand, resources array, and room for sweep, obstacles, vendor and
         // notes; plus the cook surfaces, the methods with their gear, and the vendors.
-        rows * 8 + cook::fish_camp_cook_surfaces().expect("cook surfaces").len() * 5
-            + fishing_gear::fishing_methods().expect("fishing methods").len() * 6 + 16
+        rows * 8
+            + cook::fish_camp_cook_surfaces()
+                .expect("cook surfaces")
+                .len()
+                * 5
+            + fishing_gear::fishing_methods()
+                .expect("fishing methods")
+                .len()
+                * 6
+            + 16
     };
     // `cold_native_entity_rows_bound_collected_v8_heap_growth` caps collected growth at 4 MiB for 4,096 rows,
     // so each retained object is charged 1 KiB.
@@ -309,7 +349,10 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
         "Gather catalog collected V8 heap: objects<={objects} baseline={baseline} populated={populated} \
          after_repeat={after_repeat} growth={growth} limit={limit}"
     );
-    assert!(growth <= limit, "the tables grew collected V8 used heap by {growth} bytes; limit {limit}");
+    assert!(
+        growth <= limit,
+        "the tables grew collected V8 used heap by {growth} bytes; limit {limit}"
+    );
     assert!(
         after_repeat.saturating_sub(populated) <= 64 * 1024,
         "1,000 repeat reads grew collected V8 used heap from {populated} to {after_repeat}: a table is not returned by identity"
@@ -318,15 +361,32 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
     // way, which is not retained rows), 1,000 more calls leave the collected heap where it was.
     let labels: Vec<String> = runtime.eval("__labels()").unwrap();
     // The 14 tables, the 17 members from `MINING_LABEL` to `SHOPABLE_MISSING`, the 2 cook members, and 5 variants.
-    assert_eq!(labels.len(), 38, "every dispatch operation has an exercise: {labels:?}");
+    assert_eq!(
+        labels.len(),
+        38,
+        "every dispatch operation has an exercise: {labels:?}"
+    );
     for label in labels {
-        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;")).unwrap();
+        runtime
+            .eval::<()>(&format!(
+                "globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;"
+            ))
+            .unwrap();
         let before = collected_used_heap(&mut runtime);
-        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;")).unwrap();
+        runtime
+            .eval::<()>(&format!(
+                "globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;"
+            ))
+            .unwrap();
         let after = collected_used_heap(&mut runtime);
         let grown = after.saturating_sub(before);
-        println!("Gather catalog op {label}: before={before} after={after} growth_after_1000={grown}");
-        assert!(grown <= 16 * 1024, "{label}: 1,000 calls grew collected V8 used heap by {grown} bytes");
+        println!(
+            "Gather catalog op {label}: before={before} after={after} growth_after_1000={grown}"
+        );
+        assert!(
+            grown <= 16 * 1024,
+            "{label}: 1,000 calls grew collected V8 used heap by {grown} bytes"
+        );
     }
 }
 
@@ -338,20 +398,30 @@ fn shapes_exist_only_after_the_first_object_of_a_key_list_is_built() {
     let mut runtime = setup();
     let count = |runtime: &mut Runtime| {
         let scope = runtime.deno_runtime().handle_scope();
-        let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+        let cache = scope
+            .get_slot::<Shared>()
+            .cloned()
+            .expect("catalog installed");
         let count = cache.borrow().shapes.len();
         count
     };
     assert_eq!(count(&mut runtime), 0);
     runtime.eval::<()>("__g(4, __Tile)").unwrap();
-    assert_eq!(count(&mut runtime), 2, "method rows and gear pieces: one template each");
+    assert_eq!(
+        count(&mut runtime),
+        2,
+        "method rows and gear pieces: one template each"
+    );
     runtime.eval::<()>("__g(4, __Tile)").unwrap();
     assert_eq!(count(&mut runtime), 2);
 }
 
 fn cached_shapes(runtime: &mut Runtime) -> usize {
     let scope = runtime.deno_runtime().handle_scope();
-    let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+    let cache = scope
+        .get_slot::<Shared>()
+        .cloned()
+        .expect("catalog installed");
     let count = cache.borrow().shapes.len();
     count
 }
@@ -419,13 +489,30 @@ globalThis.__last = null;
         )
         .unwrap_or_else(|error| panic!("{error}"));
     let shapes = cached_shapes(&mut runtime);
-    runtime.eval::<()>("__shaped(500); globalThis.__last = null;").unwrap();
-    assert_eq!(cached_shapes(&mut runtime), shapes, "500 distinct caller key lists added a cached shape");
+    runtime
+        .eval::<()>("__shaped(500); globalThis.__last = null;")
+        .unwrap();
+    assert_eq!(
+        cached_shapes(&mut runtime),
+        shapes,
+        "500 distinct caller key lists added a cached shape"
+    );
     let before = collected_used_heap(&mut runtime);
-    runtime.eval::<()>("__shaped(2000); globalThis.__last = null;").unwrap();
+    runtime
+        .eval::<()>("__shaped(2000); globalThis.__last = null;")
+        .unwrap();
     let after = collected_used_heap(&mut runtime);
     let grown = after.saturating_sub(before);
-    println!("Gather catalog 2000 distinct caller shapes: before={before} after={after} growth={grown}");
-    assert_eq!(cached_shapes(&mut runtime), shapes, "2,000 more distinct caller key lists added a cached shape");
-    assert!(grown <= 64 * 1024, "2,000 distinct caller key lists grew collected V8 used heap by {grown} bytes");
+    println!(
+        "Gather catalog 2000 distinct caller shapes: before={before} after={after} growth={grown}"
+    );
+    assert_eq!(
+        cached_shapes(&mut runtime),
+        shapes,
+        "2,000 more distinct caller key lists added a cached shape"
+    );
+    assert!(
+        grown <= 64 * 1024,
+        "2,000 distinct caller key lists grew collected V8 used heap by {grown} bytes"
+    );
 }
