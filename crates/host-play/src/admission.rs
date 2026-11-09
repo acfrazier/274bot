@@ -12,7 +12,6 @@ use crate::walk_plan::RoutePath;
 use api::condition::PoisonState;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
-use nav_planner::contract::BoundZoneKey;
 use nav_planner::producer;
 use nav_planner::router::{AvoidRect, FindOptions, Route};
 use nav_planner::world::NavWorld;
@@ -104,17 +103,16 @@ pub struct RouteAdmission {
     pub assessment: Option<Arc<RouteAssessment>>,
     pub refusal: Option<WalkRefusal>,
     pub blocked: Box<[ZoneKey]>,
-    pub tried: u8,
 }
 
-/// Strict/endpoint search, one witness diagnosis, at most one named retry.
+/// Strict/endpoint search and one witness diagnosis; there is no retry.
 /// The closures reuse each owner's existing area/live-loc/bank search; all
 /// hard authority stays in `options`, `state` and the caller's frozen avoids.
 pub(crate) fn route(
     world: &NavWorld,
     admission: &Admission,
     options: FindOptions,
-    mut search: impl FnMut(FindOptions) -> crate::RouteOutcome,
+    search: impl FnOnce(FindOptions) -> crate::RouteOutcome,
     witness: impl FnOnce() -> Option<Vec<ZoneKey>>,
 ) -> RouteAdmission {
     if admission.escape.is_some_and(escape_live) {
@@ -123,42 +121,26 @@ pub(crate) fn route(
             assessment: None,
             refusal: Some(WalkRefusal::EscapeInProgress),
             blocked: Box::new([]),
-            tried: 0,
         };
     }
     let options = FindOptions {
-        zones: if admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
+        zones: if admission.policy == RiskPolicy::Proceed {
             ZoneExempt::all()
         } else {
             options.zones
         },
         ..options
     };
-    let mut outcome = search(options);
-    let mut tried = 0;
+    let outcome = search(options);
     let blocked = if matches!(
         &outcome,
         crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
-    ) && !admission.compat_v1
-        && admission.policy != RiskPolicy::Proceed
+    ) && admission.policy != RiskPolicy::Proceed
     {
         witness().unwrap_or_default()
     } else {
         Vec::new()
     };
-    if matches!(
-        &outcome,
-        crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
-    ) && admission.policy == RiskPolicy::Inherit
-        && witness_admissible(world, &admission.input, &blocked)
-    {
-        if let Ok(zones) = ZoneExempt::named(&blocked).and_then(|named| options.zones.union(named))
-        {
-            tried = 1;
-            let retry = search(FindOptions { zones, ..options });
-            outcome = retry;
-        }
-    }
     let route = match &outcome {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             Some(route)
@@ -179,7 +161,10 @@ pub(crate) fn route(
                 Some(verdict_refusal(assessment.verdict))
             }
             None if !blocked.is_empty() || admission.policy == RiskPolicy::Inherit => {
-                Some(WalkRefusal::NoRouteWithinBounds { tried, last: None })
+                Some(WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None,
+                })
             }
             _ => None,
         },
@@ -197,7 +182,6 @@ pub(crate) fn route(
         assessment,
         refusal,
         blocked: blocked.into_boxed_slice(),
-        tried,
     }
 }
 
@@ -432,20 +416,13 @@ fn assess_view(
             admission,
         );
     };
-    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
-        return unknown_assessment(
-            UnknownWhy::NavIdentity,
-            "Route assessment unknown: navigation grant identity unavailable",
-            admission,
-        );
-    };
     let assessment = risk::assess(
         route,
         &Estimate {
             zones: Some(zones),
             wilderness,
             multiway,
-            grants: Some(risk::Grants::request(named, wilderness)),
+            permitted: admission.grants != ZoneExempt::NONE,
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
@@ -496,7 +473,7 @@ fn permits_view(
     admission: &Admission,
     assessment: &RouteAssessment,
 ) -> bool {
-    if !admission.enforce || admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
+    if !admission.enforce || admission.policy == RiskPolicy::Proceed {
         return true;
     }
     // A failed or unavailable assessment (for example `Unknown(Overflow)`)
@@ -553,20 +530,13 @@ where
             admission,
         );
     };
-    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
-        return unknown_assessment(
-            UnknownWhy::NavIdentity,
-            "Route assessment unknown: navigation grant identity unavailable",
-            admission,
-        );
-    };
     let assessment = risk::assess_cooperative(
         route,
         &Estimate {
             zones: Some(zones),
             wilderness,
             multiway,
-            grants: Some(risk::Grants::request(named, wilderness)),
+            permitted: admission.grants != ZoneExempt::NONE,
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
@@ -592,38 +562,6 @@ where
     U: Future<Output = ()> + Send,
 {
     permits_view(route, world, admission, assessment)
-}
-
-/// Check every member of a witness group for supported combat facts.
-/// The full route assessment, not this filter, decides whether damage is safe.
-/// Each raw witness key is bound to the world's zone view (the identity its
-/// lease serves) and judged through the facade kind view.
-pub fn witness_admissible(world: &NavWorld, _input: &RiskInput, keys: &[ZoneKey]) -> bool {
-    if keys.is_empty() || keys.len() > 8 {
-        return false;
-    }
-    let (Ok(Some(zones)), Some(tables)) = (producer::zones_view(world), tables(world)) else {
-        return false;
-    };
-    let acceptable = |bound: BoundZoneKey| {
-        zones.zone(bound).is_ok_and(|zone| {
-            let kind = tables.risks.zone_kind(zone.kind());
-            kind.unknown_for().is_none()
-        })
-    };
-    keys.iter().all(|&key| {
-        let Ok(bound) = producer::bind_key(zones, key) else {
-            return false;
-        };
-        match key {
-            ZoneKey::Zone(_) => acceptable(bound),
-            // An empty group refuses; every member must be acceptable.
-            ZoneKey::Group(_) => producer::group_members(zones, bound).is_ok_and(|members| {
-                let mut members = members.peekable();
-                members.peek().is_some() && members.all(acceptable)
-            }),
-        }
-    })
 }
 
 pub fn fresh(assessment: &RouteAssessment, input: RiskInput) -> bool {
@@ -730,8 +668,7 @@ pub(crate) fn publish(
         .requested_route
         .map_or(route.destination(), |request| request.0);
     if permits_view(route, world, &admission, assessment) {
-        let enforced =
-            admission.enforce && !admission.compat_v1 && admission.policy != RiskPolicy::Proceed;
+        let enforced = admission.enforce && admission.policy != RiskPolicy::Proceed;
         if let risk::PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test {
             if enforced
                 && bot

@@ -24434,7 +24434,8 @@ fn walk_dest(
         false,
         true,
         true,
-        nav_planner::zones::ZoneExempt::NONE,
+        // A compat v1 script counts as the global danger override: all zones.
+        nav_planner::zones::ZoneExempt::all(),
     ))
 }
 

@@ -76,12 +76,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   at the limit and reports the last combat result.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
-  not. A guide asks for the crossings it needs with `cross`; a walk that a
-  declaration covers may cross danger zones even when the global setting is
-  off, and keeps its food guard. The limit of eight zones
-  per route is gone: a guide can declare any number. Start still lists the
-  zones a guide declares. A walk option that forbids danger zones no longer
-  overrides the global setting.
+  not, and the walk goes: the survival check is shown for information only.
+  Your choice is not overridden. With it off, a guide can still ask for the
+  crossings it needs with `cross`, and a walk that a declaration covers may
+  cross any danger zone, but the survival check applies: the walk is refused
+  when its route has more than a 1% chance of death. This holds for every
+  script that asks to cross, not only for Quester. Scripts that run under the
+  rs2b0t compatibility framework behave as if the global setting is on, as
+  before. Every walk that is allowed to cross danger zones keeps its food
+  guard (compatibility scripts have none, as before). The limit of eight
+  zones per route is gone: a guide can declare any number. Start still lists
+  the zones a guide declares. A walk option that forbids danger zones no
+  longer overrides the global setting.
 - The Tribal Totem door lock no longer stops with a budget error when a dial
   click follows another click in the same game tick. The click waits for the
   next tick.

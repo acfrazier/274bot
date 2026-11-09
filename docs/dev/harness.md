@@ -322,7 +322,9 @@ no cure gate. The tree uses ordinary melee crush damage, not poison.
 The authored approach targets `3108,3346,0` with radius one. Its stage declares
 `nasty_tree@3108,3346,0` in `cross`, because this test deliberately enters the
 tree's hunt range. The declaration is the guide's request to cross danger
-zones on that walk (the global setting off); it does not change poison facts.
+zones on that walk (the global setting off). Survival admission still checks
+that walk's route against the 1% death bound; the declaration does not change
+poison facts.
 The harness compiles the Path against the selected navigation world's zone
 catalog, so the compiler validates that declaration before account creation.
 The bot must perform the approach after Start, observe the unattackable

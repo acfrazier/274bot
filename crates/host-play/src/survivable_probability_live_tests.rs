@@ -690,7 +690,7 @@ fn poison_start(
                         zones: Some(zones),
                         wilderness,
                         multiway,
-                        grants: None,
+                        permitted: false,
                         risks,
                         combat,
                         allow: Default::default(),

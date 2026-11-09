@@ -97,10 +97,13 @@ card value does not change it. With the setting off, a walk that no declaration
 covers avoids danger zones, and a route whose only path crosses one is refused.
 
 A walk that a declaration covers may cross any danger zone, not only the declared
-ones. The food guard is armed for the whole walk when a route uses a declared
-crossing. Protection runs only where a step requests it. A permitted walk
-proceeds like a walk under the global setting: the survival model's bound is
-logged, and the walk's own food guard, protection and escape stay on.
+ones. The food guard is armed for the whole walk on every permitted danger
+crossing, whether the permission is the global setting or a declaration.
+Protection runs only where a step requests it. The two sources are judged
+differently. With the global setting on, the walk goes and the survival model's
+bound is informational. With the setting off and a declaration, survival
+admission checks the walk's route: it is refused when the chance of death is
+above 1%, whichever zones it crosses.
 
 ## Steps
 

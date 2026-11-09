@@ -1852,8 +1852,12 @@ the same permission to every walk with no request.
 Host walking returns the estimate through the same admission seam for native,
 v2 and manual callers. The decision is `permitted = global override || script
 request`. The global level `Always`, a script's card setting, a walk-local
-Allow and a non-empty `cross` all permit the walk, and a permitted walk is
-Proceed. A walk-local Forbid has no danger effect. Hard
+Allow and a non-empty `cross` all permit the walk. With the global override
+(or compat v1, which counts as the override) the walk is Proceed and the bound
+is informational. With only a script request the walk is enforced Avoid: the
+1% death bound applies to its route, judged on the route and not on zone names.
+Every permitted native crossing arms the walk's food guard; a compat v1 walk
+gets none. A walk-local Forbid has no danger effect. Hard
 teleport/wilderness/avoid/quest authority is never broadened.
 
 `WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed

@@ -28,7 +28,7 @@ pub use input::*;
 use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
     assess, assess_cooperative, candidate_cost, eat_line, estimated_floor, replay, Estimate,
-    Grants, PoisonTest, ReplayResult,
+    PoisonTest, ReplayResult,
 };
 use std::future::Future;
 use std::sync::Arc;
