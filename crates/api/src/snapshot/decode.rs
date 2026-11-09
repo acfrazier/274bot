@@ -2,6 +2,151 @@ use super::*;
 
 #[path = "npc_377.rs"]
 mod npc_377;
+use client::client::MiniMenuAction;
+
+/// Borrow the current minimenu's structured operation and target identities.
+/// This reads only the published entry prefix and retains no per-tick state.
+pub fn menu_entries(client: &Client) -> impl Iterator<Item = MenuEntryView> + '_ {
+    let count = usize::try_from(client.menu_num_entries)
+        .unwrap_or(0)
+        .min(client.menu_action.len())
+        .min(client.menu_param_a.len())
+        .min(client.menu_param_b.len())
+        .min(client.menu_param_c.len());
+    (0..count).map(move |index| {
+        let raw_action = client.menu_action[index];
+        let priority = raw_action >= MiniMenuAction::_PRIORITY;
+        let action = if priority {
+            raw_action - MiniMenuAction::_PRIORITY
+        } else {
+            raw_action
+        };
+        let operation = match action {
+            MiniMenuAction::CANCEL => MenuOperation::Cancel,
+            MiniMenuAction::WALK => MenuOperation::Walk,
+            MiniMenuAction::OP_LOC1 => MenuOperation::LocOption(1),
+            MiniMenuAction::OP_LOC2 => MenuOperation::LocOption(2),
+            MiniMenuAction::OP_LOC3 => MenuOperation::LocOption(3),
+            MiniMenuAction::OP_LOC4 => MenuOperation::LocOption(4),
+            MiniMenuAction::OP_LOC5 => MenuOperation::LocOption(5),
+            MiniMenuAction::OP_LOC6 => MenuOperation::LocExamine,
+            MiniMenuAction::TGT_LOC => MenuOperation::LocTarget,
+            MiniMenuAction::USEHELD_ONLOC => MenuOperation::UseItemOnLoc,
+            MiniMenuAction::OP_NPC1 => MenuOperation::NpcOption(1),
+            MiniMenuAction::OP_NPC2 => MenuOperation::NpcOption(2),
+            MiniMenuAction::OP_NPC3 => MenuOperation::NpcOption(3),
+            MiniMenuAction::OP_NPC4 => MenuOperation::NpcOption(4),
+            MiniMenuAction::OP_NPC5 => MenuOperation::NpcOption(5),
+            MiniMenuAction::OP_NPC6 => MenuOperation::NpcExamine,
+            MiniMenuAction::TGT_NPC => MenuOperation::NpcTarget,
+            MiniMenuAction::USEHELD_ONNPC => MenuOperation::UseItemOnNpc,
+            MiniMenuAction::OP_OBJ1 => MenuOperation::GroundItemOption(1),
+            MiniMenuAction::OP_OBJ2 => MenuOperation::GroundItemOption(2),
+            MiniMenuAction::OP_OBJ3 => MenuOperation::GroundItemOption(3),
+            MiniMenuAction::OP_OBJ4 => MenuOperation::GroundItemOption(4),
+            MiniMenuAction::OP_OBJ5 => MenuOperation::GroundItemOption(5),
+            MiniMenuAction::OP_OBJ6 => MenuOperation::GroundItemExamine,
+            MiniMenuAction::TGT_OBJ => MenuOperation::GroundItemTarget,
+            MiniMenuAction::USEHELD_ONOBJ => MenuOperation::UseItemOnGroundItem,
+            MiniMenuAction::OP_PLAYER1 => MenuOperation::PlayerOption(1),
+            MiniMenuAction::OP_PLAYER2 => MenuOperation::PlayerOption(2),
+            MiniMenuAction::OP_PLAYER3 => MenuOperation::PlayerOption(3),
+            MiniMenuAction::OP_PLAYER4 => MenuOperation::PlayerOption(4),
+            MiniMenuAction::OP_PLAYER5 => MenuOperation::PlayerOption(5),
+            MiniMenuAction::ACCEPT_DUELREQ => MenuOperation::AcceptDuelRequest,
+            MiniMenuAction::ACCEPT_TRADEREQ => MenuOperation::AcceptTradeRequest,
+            MiniMenuAction::TGT_PLAYER => MenuOperation::PlayerTarget,
+            MiniMenuAction::USEHELD_ONPLAYER => MenuOperation::UseItemOnPlayer,
+            MiniMenuAction::OP_HELD1 => MenuOperation::InventoryOption(1),
+            MiniMenuAction::OP_HELD2 => MenuOperation::InventoryOption(2),
+            MiniMenuAction::OP_HELD3 => MenuOperation::InventoryOption(3),
+            MiniMenuAction::OP_HELD4 => MenuOperation::InventoryOption(4),
+            MiniMenuAction::OP_HELD5 => MenuOperation::InventoryOption(5),
+            MiniMenuAction::OP_HELD6 => MenuOperation::InventoryExamine,
+            MiniMenuAction::TGT_HELD => MenuOperation::InventoryTarget,
+            MiniMenuAction::USEHELD_ONHELD => MenuOperation::UseItemOnInventory,
+            MiniMenuAction::INV_BUTTON1 => MenuOperation::InventoryButton(1),
+            MiniMenuAction::INV_BUTTON2 => MenuOperation::InventoryButton(2),
+            MiniMenuAction::INV_BUTTON3 => MenuOperation::InventoryButton(3),
+            MiniMenuAction::INV_BUTTON4 => MenuOperation::InventoryButton(4),
+            MiniMenuAction::INV_BUTTON5 => MenuOperation::InventoryButton(5),
+            MiniMenuAction::IF_BUTTON => MenuOperation::InterfaceButton,
+            MiniMenuAction::TGT_BUTTON => MenuOperation::TargetButton,
+            MiniMenuAction::CLOSE_BUTTON => MenuOperation::CloseButton,
+            MiniMenuAction::TOGGLE_BUTTON => MenuOperation::ToggleButton,
+            MiniMenuAction::SELECT_BUTTON => MenuOperation::SelectButton,
+            MiniMenuAction::PAUSE_BUTTON => MenuOperation::PauseButton,
+            MiniMenuAction::USEHELD_START => MenuOperation::UseHeldStart,
+            MiniMenuAction::ABUSE_REPORT => MenuOperation::ReportAbuse,
+            MiniMenuAction::FRIENDLIST_ADD => MenuOperation::FriendListAdd,
+            MiniMenuAction::IGNORELIST_ADD => MenuOperation::IgnoreListAdd,
+            MiniMenuAction::FRIENDLIST_DEL => MenuOperation::FriendListDelete,
+            MiniMenuAction::IGNORELIST_DEL => MenuOperation::IgnoreListDelete,
+            MiniMenuAction::MESSAGE_PRIVATE => MenuOperation::PrivateMessage,
+            other => MenuOperation::Unknown(other),
+        };
+        let a = client.menu_param_a[index];
+        let b = client.menu_param_b[index];
+        let c = client.menu_param_c[index];
+        let target = match operation {
+            MenuOperation::NpcOption(_)
+            | MenuOperation::NpcExamine
+            | MenuOperation::NpcTarget
+            | MenuOperation::UseItemOnNpc => MenuTargetView::Npc {
+                index: a,
+                type_id: usize::try_from(a)
+                    .ok()
+                    .and_then(|index| client.npc.get(index))
+                    .and_then(|npc| npc.as_ref())
+                    .and_then(|npc| npc.r#type)
+                    .and_then(|type_id| i32::try_from(type_id).ok()),
+            },
+            MenuOperation::PlayerOption(_)
+            | MenuOperation::AcceptDuelRequest
+            | MenuOperation::AcceptTradeRequest
+            | MenuOperation::PlayerTarget
+            | MenuOperation::UseItemOnPlayer => MenuTargetView::Player { index: a },
+            MenuOperation::LocOption(_)
+            | MenuOperation::LocExamine
+            | MenuOperation::LocTarget
+            | MenuOperation::UseItemOnLoc => MenuTargetView::Loc {
+                typecode: a,
+                x: b,
+                z: c,
+            },
+            MenuOperation::GroundItemOption(_)
+            | MenuOperation::GroundItemExamine
+            | MenuOperation::GroundItemTarget
+            | MenuOperation::UseItemOnGroundItem => {
+                MenuTargetView::GroundItem { id: a, x: b, z: c }
+            }
+            MenuOperation::InventoryOption(_)
+            | MenuOperation::InventoryExamine
+            | MenuOperation::InventoryTarget
+            | MenuOperation::UseItemOnInventory
+            | MenuOperation::InventoryButton(_)
+            | MenuOperation::UseHeldStart => MenuTargetView::InventoryItem {
+                id: a,
+                slot: b,
+                component_id: c,
+            },
+            MenuOperation::InterfaceButton
+            | MenuOperation::TargetButton
+            | MenuOperation::CloseButton
+            | MenuOperation::ToggleButton
+            | MenuOperation::SelectButton
+            | MenuOperation::PauseButton => MenuTargetView::Component { id: c },
+            MenuOperation::Walk => MenuTargetView::CursorPosition { x: b, y: c },
+            MenuOperation::Cancel => MenuTargetView::None,
+            _ => MenuTargetView::Raw([a, b, c]),
+        };
+        MenuEntryView {
+            operation,
+            target,
+            priority,
+        }
+    })
+}
 
 impl NpcView {
     fn from_slot(

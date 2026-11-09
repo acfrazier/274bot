@@ -4,8 +4,8 @@
 
 use api::obj_names::ObjNames;
 use api::snapshot::{
-    ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WidgetRoot, WidgetView,
-    WorldTile,
+    ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, MenuOperation,
+    MenuTargetSelector, WidgetRoot, WidgetView, WorldTile,
 };
 use nav_planner::arrival::arrived;
 use nav_planner::tile::{chebyshev, Tile};
@@ -90,6 +90,12 @@ pub enum Proof {
         min_z: i32,
         max_z: i32,
         level: i32,
+    },
+    /// A structured operation/target is present in the current menu while an
+    /// `ObserveMenu` step is armed. Snapshot-only checks fail closed.
+    MenuHasEntry {
+        operation: MenuOperation,
+        target: MenuTargetSelector,
     },
     /// `arrived_ring(x, z, level, min..=max)`: on the level, Chebyshev
     /// `min..=max` from the tile — where a File card's own walk from a
@@ -413,6 +419,9 @@ impl Proof {
                 max_z,
                 level,
             } => format!("visited_within({min_x}..={max_x},{min_z}..={max_z},{level})"),
+            Proof::MenuHasEntry { operation, target } => {
+                format!("menu_has_entry({operation:?},{target:?})")
+            }
             Proof::ArrivedRing {
                 x,
                 z,
@@ -916,6 +925,7 @@ impl Proof {
                     .is_some_and(|loc| loc_action_matches(loc, action));
                 has == *present
             }
+            Proof::MenuHasEntry { .. } => false,
             Proof::LoggedOut => !snap.ingame(),
             Proof::IngameScene2 => snap.ingame() && snap.scene_state() == 2,
             Proof::RenderViewReady {

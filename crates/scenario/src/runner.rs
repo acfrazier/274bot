@@ -1185,7 +1185,7 @@ impl ScenarioRunner {
                         .relog_session
                         .is_some_and(|session| client.gens.session != session);
             }
-            let arm_holds = self.holds(arm);
+            let arm_holds = self.holds_with_client(arm, client);
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
                 Err(message) => {
@@ -1313,7 +1313,9 @@ impl ScenarioRunner {
                 ));
             }
         }
-        if matches!(self.phase, Phase::Proving) && self.holds(self.scenario.proof) {
+        if matches!(self.phase, Phase::Proving)
+            && self.holds_with_client(self.scenario.proof, client)
+        {
             self.finish_pass();
         }
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
@@ -1539,6 +1541,36 @@ impl ScenarioRunner {
                 self.fresh_xp_baseline,
             ),
         }
+    }
+
+    /// Whether the current or just-completed step requested menu observation.
+    fn menu_observation_armed(&self) -> bool {
+        match self.phase {
+            Phase::Running => matches!(self.current_step().kind, StepKind::ObserveMenu),
+            Phase::Proving => self
+                .scenario
+                .steps
+                .last()
+                .is_some_and(|step| matches!(step.kind, StepKind::ObserveMenu)),
+            _ => false,
+        }
+    }
+
+    /// Menu proofs require the named observation step and read the current
+    /// client menu directly. The `None` request stays on the allocation-free
+    /// path for every non-menu proof and every unarmed tick.
+    fn holds_with_client(&self, proof: Proof, client: &Client) -> bool {
+        let query = match (self.menu_observation_armed(), proof) {
+            (true, Proof::MenuHasEntry { operation, target }) => {
+                Some(api::snapshot::MenuEntryQuery { operation, target })
+            }
+            _ => None,
+        };
+        let menu_holds = api::query::menu_has_entry(client, query);
+        if matches!(proof, Proof::MenuHasEntry { .. }) {
+            return menu_holds;
+        }
+        self.holds(proof)
     }
 
     /// Restart the style watch's budget at each completed pre-style trip and
@@ -2149,7 +2181,8 @@ impl ScenarioRunner {
             | StepKind::ObserveStallCombat { .. }
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
-            | StepKind::ObserveRandomEvent { .. } => Ok(()),
+            | StepKind::ObserveRandomEvent { .. }
+            | StepKind::ObserveMenu => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {

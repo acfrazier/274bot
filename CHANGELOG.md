@@ -3,6 +3,13 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Next — Unreleased
+
+### Scenario runner
+
+- `ObserveMenu` checks exact menu operations and structured targets without
+  sending input; the unarmed observer path allocates nothing.
+
 ## [0.2.9] — Unreleased
 
 ### Breaking changes

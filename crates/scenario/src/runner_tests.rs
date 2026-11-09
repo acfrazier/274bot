@@ -1,5 +1,6 @@
 use super::*;
-use client::client::{Client, ClientConfig};
+use client::client::MiniMenuAction;
+use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ComponentType, IfTypeMut};
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
@@ -64,6 +65,68 @@ fn stat_scenario(min: i32, budget: u32) -> Scenario {
         companions: vec![],
         settings: ScenarioSettings::default(),
     }
+}
+
+#[test]
+fn observe_menu_is_armed_typed_and_never_sends() {
+    let menu_proof = Proof::MenuHasEntry {
+        operation: api::snapshot::MenuOperation::NpcOption(1),
+        target: api::snapshot::MenuTargetSelector::NpcType(0),
+    };
+    let mut scenario = stat_scenario(0, 2);
+    scenario.steps[0] = Step {
+        name: "observe Hans Talk-to",
+        kind: StepKind::ObserveMenu,
+        wait: Wait {
+            arm: menu_proof,
+            budget_ticks: 2,
+        },
+    };
+    scenario.proof = menu_proof;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.npc[7] = Some(Box::new(ClientNpc {
+        r#type: Some(0),
+        ..ClientNpc::default()
+    }));
+    client.menu_num_entries = 1;
+    client.menu_action[0] = MiniMenuAction::OP_NPC1;
+    client.menu_param_a[0] = 7;
+
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(
+        client.out.pos, 0,
+        "ObserveMenu must not send a client action"
+    );
+
+    let mut scenario = stat_scenario(0, 2);
+    scenario.steps[0] = Step {
+        name: "menu proof without observer request",
+        kind: StepKind::Shot {
+            label: "not-a-menu-observer",
+        },
+        wait: Wait {
+            arm: menu_proof,
+            budget_ticks: 2,
+        },
+    };
+    scenario.proof = menu_proof;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.npc[7] = Some(Box::new(ClientNpc {
+        r#type: Some(0),
+        ..ClientNpc::default()
+    }));
+    client.menu_num_entries = 1;
+    client.menu_action[0] = MiniMenuAction::OP_NPC1;
+    client.menu_param_a[0] = 7;
+
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+    assert_eq!(client.out.pos, 0);
 }
 
 #[test]

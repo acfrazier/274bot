@@ -77,6 +77,191 @@ pub enum Family {
     Controls,
     Menu,
 }
+/// A typed minimenu operation. Option numbers are one-based, matching the
+/// cache-declared action slots rather than the client’s wire opcodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum MenuOperation {
+    Cancel,
+    Walk,
+    LocOption(u8),
+    LocExamine,
+    LocTarget,
+    UseItemOnLoc,
+    NpcOption(u8),
+    NpcExamine,
+    NpcTarget,
+    UseItemOnNpc,
+    GroundItemOption(u8),
+    GroundItemExamine,
+    GroundItemTarget,
+    UseItemOnGroundItem,
+    PlayerOption(u8),
+    AcceptDuelRequest,
+    AcceptTradeRequest,
+    PlayerTarget,
+    UseItemOnPlayer,
+    InventoryOption(u8),
+    InventoryExamine,
+    InventoryTarget,
+    UseItemOnInventory,
+    InventoryButton(u8),
+    InterfaceButton,
+    TargetButton,
+    CloseButton,
+    ToggleButton,
+    SelectButton,
+    PauseButton,
+    UseHeldStart,
+    ReportAbuse,
+    FriendListAdd,
+    IgnoreListAdd,
+    FriendListDelete,
+    IgnoreListDelete,
+    PrivateMessage,
+    Unknown(i32),
+}
+
+/// The target identity carried by one current client minimenu entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum MenuTargetView {
+    Npc {
+        index: i32,
+        type_id: Option<i32>,
+    },
+    Player {
+        index: i32,
+    },
+    Loc {
+        typecode: i32,
+        x: i32,
+        z: i32,
+    },
+    GroundItem {
+        id: i32,
+        x: i32,
+        z: i32,
+    },
+    InventoryItem {
+        id: i32,
+        slot: i32,
+        component_id: i32,
+    },
+    Component {
+        id: i32,
+    },
+    CursorPosition {
+        x: i32,
+        y: i32,
+    },
+    None,
+    Raw([i32; 3]),
+}
+
+/// One read-only, allocation-free view of a current minimenu entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MenuEntryView {
+    pub operation: MenuOperation,
+    pub target: MenuTargetView,
+    pub priority: bool,
+}
+
+/// Stable target identity selector for a structured menu-entry query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuTargetSelector {
+    NpcType(i32),
+    NpcIndex(i32),
+    PlayerIndex(i32),
+    Loc {
+        typecode: i32,
+        x: i32,
+        z: i32,
+    },
+    GroundItem {
+        id: i32,
+        x: i32,
+        z: i32,
+    },
+    InventoryItem {
+        id: i32,
+        slot: i32,
+        component_id: i32,
+    },
+    Component(i32),
+    CursorPosition {
+        x: i32,
+        y: i32,
+    },
+    NoTarget,
+    Raw([i32; 3]),
+}
+
+/// Exact typed operation and target selector for an observation request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MenuEntryQuery {
+    pub operation: MenuOperation,
+    pub target: MenuTargetSelector,
+}
+
+impl MenuEntryQuery {
+    pub fn matches(self, entry: MenuEntryView) -> bool {
+        self.operation == entry.operation && self.target.matches(entry.target)
+    }
+}
+
+impl MenuTargetSelector {
+    fn matches(self, target: MenuTargetView) -> bool {
+        match (self, target) {
+            (
+                Self::NpcType(expected),
+                MenuTargetView::Npc {
+                    type_id: Some(actual),
+                    ..
+                },
+            ) => expected == actual,
+            (Self::NpcIndex(expected), MenuTargetView::Npc { index, .. }) => expected == index,
+            (Self::PlayerIndex(expected), MenuTargetView::Player { index }) => expected == index,
+            (
+                Self::Loc {
+                    typecode: expected_typecode,
+                    x: expected_x,
+                    z: expected_z,
+                },
+                MenuTargetView::Loc { typecode, x, z },
+            ) => (expected_typecode, expected_x, expected_z) == (typecode, x, z),
+            (
+                Self::GroundItem {
+                    id: expected_id,
+                    x: expected_x,
+                    z: expected_z,
+                },
+                MenuTargetView::GroundItem { id, x, z },
+            ) => (expected_id, expected_x, expected_z) == (id, x, z),
+            (
+                Self::InventoryItem {
+                    id: expected_id,
+                    slot: expected_slot,
+                    component_id: expected_component_id,
+                },
+                MenuTargetView::InventoryItem {
+                    id,
+                    slot,
+                    component_id,
+                },
+            ) => (expected_id, expected_slot, expected_component_id) == (id, slot, component_id),
+            (Self::Component(expected), MenuTargetView::Component { id }) => expected == id,
+            (
+                Self::CursorPosition {
+                    x: expected_x,
+                    y: expected_y,
+                },
+                MenuTargetView::CursorPosition { x, y },
+            ) => (expected_x, expected_y) == (x, y),
+            (Self::NoTarget, MenuTargetView::None) => true,
+            (Self::Raw(expected), MenuTargetView::Raw(actual)) => expected == actual,
+            _ => false,
+        }
+    }
+}
 
 /// The kind of entity an actor is facing (`ActorTargetView::kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
