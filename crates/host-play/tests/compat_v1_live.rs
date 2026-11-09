@@ -53,7 +53,6 @@ struct Receipt {
 struct LiveSession<'a> {
     _isolated: script::IsolatedEnv,
     account: String,
-    password: String,
     play: Play,
     state: Arc<Mutex<FrameState>>,
     receipt: &'a mut Receipt,
@@ -71,7 +70,6 @@ struct FrameState {
     next_command: Option<String>,
     next_mainland_hop: bool,
     next_logout: bool,
-    next_login: Option<(String, String)>,
     next_seed_at: Option<(i32, i32, i32)>,
     next_side_tab: Option<i32>,
     commands: Vec<String>,
@@ -87,7 +85,6 @@ impl FrameState {
             next_seed_at: None,
             next_mainland_hop: false,
             next_logout: false,
-            next_login: None,
             next_side_tab: None,
             commands: Vec::new(),
             error: None,
@@ -96,12 +93,6 @@ impl FrameState {
 
     fn frame(&mut self, client: &mut Client, held: bool) {
         self.snapshot.rebuild(client);
-        if let Some((username, password)) = self.next_login.take() {
-            if !interact::login(client, &username, &password, false) {
-                self.error = Some("Engine L refused the generated account login".into());
-            }
-            return;
-        }
         if held {
             return;
         }
@@ -359,7 +350,6 @@ fn session<'a>(cell: &str, receipt: &'a mut Receipt) -> Result<LiveSession<'a>, 
     Ok(LiveSession {
         _isolated: isolated,
         account: account.clone(),
-        password: password.clone(),
         play,
         state,
         receipt,
@@ -477,19 +467,24 @@ fn request_logout(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
     Ok(())
 }
 
+/// Log the generated account in again through the host. The host parks a bot with no script after
+/// a logout nobody asked it for (the test's own client logout reads as a server logout), so an
+/// explicit login intent is what lifts that park; a raw client login would leave the slot parked
+/// and its frame hold closed.
 fn request_login(session: &LiveSession<'_>) -> Result<(), String> {
-    let credentials = (session.account.clone(), session.password.clone());
-    let mut frame = lock_state(&session.state);
+    let frame = lock_state(&session.state);
     if let Some(error) = &frame.error {
         return Err(error.clone());
     }
     if frame.snapshot.ingame() {
         return Err("the generated account is still in game before login".into());
     }
-    if frame.next_login.is_some() {
-        return Err("a live login request is already pending".into());
-    }
-    frame.next_login = Some(credentials);
+    drop(frame);
+    let arm = session
+        .play
+        .arm(&session.account)
+        .ok_or("the generated account has no slot arm")?;
+    arm.arm_explicit_login();
     Ok(())
 }
 

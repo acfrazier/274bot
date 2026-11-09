@@ -723,6 +723,16 @@ fn start_fixture(cell: Cell) -> (script::IsolatedEnv, Play, String, Arc<Mutex<Fi
     (isolated, play, account.clone(), state)
 }
 
+/// The fixture logs its account out to re-seed the tutorial, and the host parks a bot with no
+/// script after a logout nobody asked it for. An explicit login intent lifts that park.
+fn lift_logout_park(play: &Play, account: &str) {
+    if let Some(arm) = play.arm(account) {
+        if arm.login_latch_reason().is_some() {
+            arm.arm_explicit_login();
+        }
+    }
+}
+
 fn wait_for(
     play: &Play,
     account: &str,
@@ -738,6 +748,9 @@ fn wait_for(
         }
         if condition(play, &state) {
             return;
+        }
+        if state.prep == PrepPhase::WaitRelog {
+            lift_logout_park(play, account);
         }
         assert!(
             Instant::now() < deadline,

@@ -565,11 +565,13 @@ fn start_trade_pair() -> (
         )
         .expect("spawn fresh paired Trade account");
     }
-    wait_for_trade_prep(&state);
+    wait_for_trade_prep(&play, &state);
     (isolated, play, names, state)
 }
 
-fn wait_for_trade_prep(state: &Mutex<Vec<TradeSlot>>) {
+/// Each slot logs its account out to re-seed the tutorial, and the host parks a bot with no script
+/// after a logout nobody asked it for. An explicit login intent lifts that park.
+fn wait_for_trade_prep(play: &Play, state: &Mutex<Vec<TradeSlot>>) {
     let deadline = Instant::now() + PREP_DEADLINE;
     loop {
         let slots = state.lock().unwrap_or_else(|error| error.into_inner());
@@ -581,6 +583,13 @@ fn wait_for_trade_prep(state: &Mutex<Vec<TradeSlot>>) {
         }
         if slots.iter().all(|slot| slot.ready) {
             return;
+        }
+        for slot in slots.iter().filter(|slot| slot.prep == Prep::WaitRelog) {
+            if let Some(arm) = play.arm(&slot.account) {
+                if arm.login_latch_reason().is_some() {
+                    arm.arm_explicit_login();
+                }
+            }
         }
         assert!(
             Instant::now() < deadline,
