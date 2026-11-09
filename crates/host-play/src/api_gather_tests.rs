@@ -2134,6 +2134,7 @@ fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
             .lock()
             .unwrap()
             .api_gather_walk_permissions(),
+        false,
     )
     .0;
     let allowed_options = crate::walk_permissions::native_admission(
@@ -2141,6 +2142,7 @@ fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
         SLOT,
         script::native::WalkOptions::default(),
         allowed.slot().lock().unwrap().api_gather_walk_permissions(),
+        false,
     )
     .0;
 

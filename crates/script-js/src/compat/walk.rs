@@ -1618,9 +1618,6 @@ impl Family for WalkResilient {
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
             return Begin::Refuse(reason);
         }
-        if opts.cross_zones.len() > 8 {
-            return Begin::Refuse("crossZones: more than 8 zone ids".into());
-        }
         if interrupted(_cx) {
             return Begin::Done(false);
         }

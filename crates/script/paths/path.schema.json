@@ -5181,8 +5181,7 @@
           "items": {
             "$ref": "#/$defs/RequiredZoneDocument"
           },
-          "description": "Stable navigation identities the stage may cross.",
-          "maxItems": 8,
+          "description": "Stable navigation identities the stage asks to cross.",
           "default": []
         },
         "steps": {

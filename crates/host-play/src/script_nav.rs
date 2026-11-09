@@ -5468,27 +5468,22 @@ pub(crate) fn resolve_route_exclusions(
     }) {
         return Err("avoidZones: a rectangle with inverted bounds or a level off 0-3".to_string());
     }
-    if exclusions.cross.len() > 8 {
-        return Err("crossZones: more than 8 zone names".to_string());
-    }
-    let mut keys = Vec::with_capacity(exclusions.cross.len());
+    // Every name must resolve against the pack's catalog. A non-empty list is
+    // the script's request for danger permission on this walk: the router may
+    // then cross any zone. The list has no length limit.
     for name in &exclusions.cross {
         let Some(table) = zones else {
             return Err(format!(
                 "crossZones: zone catalog unavailable (legacy grid pack); cannot resolve {name:?}"
             ));
         };
-        let Some(key) = table.resolve(name) else {
+        if table.resolve(name).is_none() {
             return Err(format!("crossZones: unknown zone {name:?}"));
-        };
-        keys.push(key);
+        }
     }
-    let named = ZoneExempt::named(&keys)
-        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
-    opts.zones = opts
-        .zones
-        .union(named)
-        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
+    if !exclusions.cross.is_empty() {
+        opts.zones = ZoneExempt::all();
+    }
     Ok((opts, exclusions))
 }
 
@@ -5593,6 +5588,7 @@ impl ScriptWalkArm {
             &self.name,
             request.options,
             session_permissions,
+            !request.cross.is_empty(),
         );
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
@@ -5628,7 +5624,7 @@ impl ScriptWalkArm {
             let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
             crate::admission::Admission {
                 policy,
-                enforce: enforce || !request.cross.is_empty(),
+                enforce,
                 grants: options.zones,
                 allow: request.allow,
                 input,
@@ -5793,6 +5789,7 @@ impl ScriptWalkArm {
             &self.name,
             request.options,
             session_permissions,
+            !request.cross.is_empty(),
         );
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
@@ -5822,7 +5819,7 @@ impl ScriptWalkArm {
         }
         let admission = crate::admission::Admission {
             policy,
-            enforce: enforce || !request.cross.is_empty(),
+            enforce,
             grants: options.zones,
             allow: request.allow,
             input: crate::admission::capture(
@@ -6359,6 +6356,9 @@ impl ScriptWalkArm {
                     .flatten()
             })
         };
+        // Zones the host already granted (global override or card setting),
+        // before this walk's named crossings are resolved.
+        let zones_before_request = opts.zones;
         let mut state = self.state.take();
         if state
             .as_ref()
@@ -6545,7 +6545,9 @@ impl ScriptWalkArm {
                         .flatten()
                 })
                 .unwrap_or_else(|| crate::admission::Admission {
-                    policy: if bot.compat_v1 || opts.zones.is_all() {
+                    // A named crossing alone (no global override, card or
+                    // option permission) keeps the survival check.
+                    policy: if bot.compat_v1 || zones_before_request.is_all() {
                         script::native::RiskPolicy::Proceed
                     } else {
                         script::native::RiskPolicy::Avoid
@@ -7477,10 +7479,12 @@ impl NavBot {
         };
         options.allow_teleports = script::native::WalkBit::from(Some(key.2));
         options.allow_wilderness = script::native::WalkBit::from(Some(key.3));
+        // Only a permission is carried. The named crossings travel in `cross`.
         options.allow_danger_zones = match admission.policy {
-            script::native::RiskPolicy::Inherit => script::native::WalkBit::Inherit,
             script::native::RiskPolicy::Proceed => script::native::WalkBit::Allow,
-            script::native::RiskPolicy::Avoid => script::native::WalkBit::Forbid,
+            script::native::RiskPolicy::Inherit | script::native::RiskPolicy::Avoid => {
+                script::native::WalkBit::Inherit
+            }
         };
         let exclusions = self.requested_exclusions.clone();
         let (avoid, cross) = exclusions.as_ref().map_or_else(

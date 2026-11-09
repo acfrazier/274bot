@@ -1975,7 +1975,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             "{width}x{height}: {shown}"
         );
         assert!(
-            shown.contains("Start accepts only these zones."),
+            shown.contains("The guide asks to cross these zones."),
             "{width}x{height}: {shown}"
         );
         assert!(
@@ -2121,7 +2121,7 @@ fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, hei
         "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
     );
     assert!(
-        shown.contains("Start accepts only these zones."),
+        shown.contains("The guide asks to cross these zones."),
         "{width}x{height}: the shared Start notice is shown: {shown}"
     );
     assert!(
@@ -2234,7 +2234,7 @@ fn palette_start_opens_quester_zone_scope_before_start() {
             "{width}x{height}: {shown}"
         );
         assert!(
-            shown.contains("Start accepts only these zones."),
+            shown.contains("The guide asks to cross these zones."),
             "{width}x{height}: {shown}"
         );
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");

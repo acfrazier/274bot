@@ -67,6 +67,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   kill without the drop, up to a limit of 281 kills, instead of stopping. This
   fixes Doric's Quest stopping after the first iron ore. The step still fails
   at the limit and reports the last combat result.
+- The global Danger routing setting applies to every walk again, including
+  Quester. With it on, every Quester walk may cross danger zones, declared or
+  not. A guide asks for the crossings it needs with `cross`; a walk that a
+  declaration covers may cross danger zones even when the global setting is
+  off, and keeps its survival check and food guard. The limit of eight zones
+  per route is gone: a guide can declare any number. Start still lists the
+  zones a guide declares. A walk option that forbids danger zones no longer
+  overrides the global setting.
 
 ### Memory diagnostics
 
@@ -709,14 +717,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   before Start. Selecting a card in Browse closes Browse, and Start will not
   run Quester while Browse hides that list. The TUI palette opens that section
   first; the user must select Start after reviewing the zones.
-- The Quester card no longer offers the blanket `Allow danger zones` setting.
-  The old saved value still loads, but it no longer affects Quester routes.
-  The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use
-  `cross` to declare stage and step zones. A declared crossing arms the food
-  guard for the walk. Protect stays active only on steps that request it.
-  Even a Quester scope with no grants avoids every danger zone, even when the
-  global setting allows danger routing. Desert Rescue declares the same zones
-  for both walks to the captain.
+- The Quester card has no `Allow danger zones` setting. The old saved value
+  still loads, but it has no effect. The harness no longer offers
+  `QUESTER_ALLOW_DANGER_ZONES`. Guides use `cross` to declare the zones that
+  a stage or step needs; a declared crossing arms the food guard for the walk.
+  Protect stays active only on steps that request it. Desert Rescue declares
+  the same zones for both walks to the captain.
 - Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
   Use `cross` to declare the danger zones that a step may cross.
 - The quest campaign harness can now seed an exact authored account, run a
