@@ -853,7 +853,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            qualified_only.unqualified_warning(), None,
+            qualified_only.unqualified_warning(),
+            None,
             "nothing unqualified runs, so nothing to warn about"
         );
     }
