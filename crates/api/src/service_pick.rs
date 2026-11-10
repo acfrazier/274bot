@@ -217,6 +217,9 @@ mod tests {
 
     #[test]
     fn keeper_candidates_borrow_access_and_apply_stock_membership_and_access_gates() {
+        if !crate::test_support::embedded_game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = crate::game_data::for_revision(revision).expect("selected content");
             let keeper = shop_facts::keepers(&data)
