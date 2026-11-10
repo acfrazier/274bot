@@ -37,14 +37,18 @@ fn crossing_observation(snapshot: &GameSnapshot) -> Value {
     })
 }
 
-fn default_crossing_start(snapshot: &GameSnapshot) -> Result<Value, String> {
+fn default_crossing_start(
+    snapshot: &GameSnapshot,
+    hitpoints: i32,
+    defence: i32,
+) -> Result<Value, String> {
     if snapshot.tile() != Some((2778, 3401, 0)) {
         return Err(format!(
             "unexpected keep crossing start: {:?}",
             snapshot.tile()
         ));
     }
-    for (index, expected) in [(1, 1), (3, 10)] {
+    for (index, expected) in [(1, defence), (3, hitpoints)] {
         let stat = snapshot
             .stats()
             .iter()
@@ -63,15 +67,106 @@ fn default_crossing_start(snapshot: &GameSnapshot) -> Result<Value, String> {
         return Err("the default crossing cell must not seed items or equipment".into());
     }
     Ok(
-        json!({"cell": "Merlin declared keep stairs", "seed": ["setvar arthur 3", "~clearinv", "tele 0 2778 3401", "minme", "~clearinv worn"],
-        "blanket_danger": false, "world_speed_command": false,
+        json!({"cell": "Merlin keep stairs", "hitpoints": hitpoints, "defence": defence,
+        "seed": ["setvar arthur 3", "~clearinv", "tele 0 2778 3401", "minme", "~clearinv worn"],
+        "quester_card_blanket_danger": false, "world_speed_command": false,
         "observed": crossing_observation(snapshot)}),
     )
 }
 
+/// Request only: the guide declares the crossing, the global setting is off, so
+/// survival admission enforces the 1% bound. The player has Hitpoints 99 and
+/// Defence 99, so the route passes the bound and the walk is admitted.
 #[test]
 #[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
 fn merlin_declared_keep_stairs() {
+    run_keep_stairs(false, Fixture::new(99, 99), false);
+}
+
+/// Request only, with a player whose route fails the bound (Hitpoints 99,
+/// Defence 1: about 5.8% chance of death). The declaration does not skip the
+/// 1% bound: the walk is refused and names the bound.
+#[test]
+#[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
+fn merlin_declared_keep_stairs_refused_by_the_bound() {
+    run_keep_stairs(false, Fixture::new(99, 1), true);
+}
+
+/// The global Danger routing setting overrides everything, Quester included:
+/// the same crossing with no declaration in the guide and the setting on. The
+/// player keeps the default 10 Hitpoints: the bound is informational and the
+/// walk proceeds.
+#[test]
+#[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
+fn merlin_keep_stairs_global_override_without_declaration() {
+    run_keep_stairs(true, Fixture::new(10, 1), false);
+}
+
+#[derive(Clone, Copy)]
+struct Fixture {
+    hitpoints: i32,
+    defence: i32,
+}
+
+impl Fixture {
+    const fn new(hitpoints: i32, defence: i32) -> Self {
+        Self { hitpoints, defence }
+    }
+}
+
+fn strip_declarations(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(cross) = map.get_mut("cross").filter(|cross| cross.is_array()) {
+                *cross = json!([]);
+            }
+            map.values_mut().for_each(strip_declarations);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_declarations),
+        _ => {}
+    }
+}
+
+/// Serve Arthur from a folder whose stages and steps declare no crossings.
+fn serve_arthur_without_declarations() {
+    let (document, _) = scenario::quester::load_quester_path_document("arthur")
+        .expect("the bundled Arthur Path loads");
+    let mut value = serde_json::to_value(&document).expect("Arthur serializes");
+    strip_declarations(&mut value);
+    let folder = std::path::PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR is required"),
+    )
+    .join("undeclared-arthur");
+    std::fs::create_dir_all(&folder).expect("create the undeclared Arthur folder");
+    std::fs::write(
+        folder.join("arthur.json"),
+        serde_json::to_vec_pretty(&value).expect("Arthur re-serializes"),
+    )
+    .expect("write the undeclared Arthur Path");
+    scenario::quester::reload_quester_path_source("arthur", Some(&folder))
+        .expect("the folder serves Arthur");
+    let (served, source) =
+        scenario::quester::load_quester_path_document("arthur").expect("the folder Arthur loads");
+    assert_eq!(
+        source, "folder",
+        "Arthur must come from the stripped folder"
+    );
+    assert!(
+        served
+            .roles
+            .iter()
+            .flat_map(|role| &role.sequences)
+            .all(|sequence| sequence.cross.is_empty()),
+        "the served guide declares no stage crossings"
+    );
+}
+
+fn run_keep_stairs(
+    global_override_without_declaration: bool,
+    fixture: Fixture,
+    expect_bound_refusal: bool,
+) {
+    let Fixture { hitpoints, defence } = fixture;
     assert!(
         std::env::var_os("QUESTER_TICK_MS").is_none(),
         "the shared Engine Q speed must remain unchanged"
@@ -81,8 +176,19 @@ fn merlin_declared_keep_stairs() {
         z: 3403,
         level: 2,
     };
+    let label = if global_override_without_declaration {
+        "merlin-global-override-undeclared-keep-stairs"
+    } else if expect_bound_refusal {
+        "merlin-declared-keep-stairs-refused-by-bound"
+    } else {
+        "merlin-declared-keep-stairs"
+    };
+    let source_before = script::quester::registry::source();
+    if global_override_without_declaration {
+        serve_arthur_without_declarations();
+    }
     let mut scenario = scenario::quester_stage_with_watch(
-        "merlin-declared-keep-stairs",
+        label,
         "Merlin's Crystal",
         "arthur",
         3,
@@ -99,45 +205,74 @@ fn merlin_declared_keep_stairs() {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("the shared stage builder supplies the native Start");
+    let mut seed = vec![
+        command(
+            "reset the crossing to default player stats",
+            "minme".into(),
+            Proof::StatAtMost { id: 1, max: 1 },
+        ),
+        command(
+            "remove fixture equipment",
+            "~clearinv worn".into(),
+            Proof::SideTabAvailable { index: 3 },
+        ),
+    ];
+    if hitpoints != 10 {
+        seed.push(command(
+            "raise Hitpoints for the request-only crossing",
+            format!("setstat hitpoints {hitpoints}"),
+            Proof::Stat {
+                id: 3,
+                min: hitpoints,
+            },
+        ));
+    }
+    if defence != 1 {
+        seed.push(command(
+            "raise Defence for the request-only crossing",
+            format!("setstat defence {defence}"),
+            Proof::Stat {
+                id: 1,
+                min: defence,
+            },
+        ));
+    }
     scenario.steps.splice(
         start..start,
-        [
-            command(
-                "reset the crossing to default player stats",
-                "minme".into(),
-                Proof::StatAtMost { id: 1, max: 1 },
-            ),
-            command(
-                "remove fixture equipment",
-                "~clearinv worn".into(),
-                Proof::SideTabAvailable { index: 3 },
-            ),
-            Step {
-                name: "observe the exact default crossing fixture",
-                kind: StepKind::Await {
-                    evidence: "default Hitpoints 10, Defence 1, no items, keep approach",
-                    ready: Box::new(|snapshot| default_crossing_start(snapshot).is_ok()),
-                    summary: None,
-                },
-                wait: Wait {
-                    arm: Proof::SideTabAvailable { index: 3 },
-                    budget_ticks: 100,
-                },
+        seed.into_iter().chain([Step {
+            name: "observe the exact crossing fixture",
+            kind: StepKind::Await {
+                evidence: "default Hitpoints 10, Defence 1, no items, keep approach",
+                ready: Box::new(move |snapshot| {
+                    default_crossing_start(snapshot, hitpoints, defence).is_ok()
+                }),
+                summary: None,
             },
-        ],
+            wait: Wait {
+                arm: Proof::SideTabAvailable { index: 3 },
+                budget_ticks: 100,
+            },
+        }]),
     );
     let watch = scenario
         .steps
         .last_mut()
         .expect("the shared stage builder supplies a watch");
-    watch.name = "observe the native declared-zone stair crossing";
+    watch.name = if global_override_without_declaration {
+        "observe the native undeclared stair crossing under the global override"
+    } else {
+        "observe the native declared-zone stair crossing"
+    };
     watch.wait.arm = final_proof;
     scenario.proof = final_proof;
     scenario.settings.deadline = Duration::from_secs(180);
+    // The global override is a user setting: with it on, the walk needs no
+    // declaration at all.
+    scenario.settings.nav.allow_danger_zones = global_override_without_declaration;
     let cell = Cell {
         quest: "arthur",
         display: "Merlin's Crystal",
-        label: "merlin-declared-keep-stairs".into(),
+        label: label.into(),
         scenario,
         start_settings: Map::from_iter([
             ("quests".into(), json!(["arthur"])),
@@ -146,9 +281,11 @@ fn merlin_declared_keep_stairs() {
         mode: Mode::Stage {
             expect: vec!["arthur:4".into()],
         },
-        observe_start: Some(Box::new(default_crossing_start)),
+        observe_start: Some(Box::new(move |snapshot| {
+            default_crossing_start(snapshot, hitpoints, defence)
+        })),
     };
-    quester_live::run_observed(
+    let outcome = quester_live::run_observed(
         cell,
         Box::new(|snapshot, _, _| {
             if snapshot
@@ -166,6 +303,16 @@ fn merlin_declared_keep_stairs() {
                 .map(|_| crossing_observation(snapshot)))
         }),
         Box::new(|snapshot, _| Some(crossing_observation(snapshot))),
-    )
-    .unwrap();
+    );
+    script::quester::registry::set_source(source_before);
+    if expect_bound_refusal {
+        let error = outcome.expect_err("the request-only crossing must fail the 1% bound");
+        assert!(
+            error.contains("upper bound on the chance of death")
+                && error.contains("at most 1% is admitted"),
+            "the refusal must name the bound: {error}"
+        );
+    } else {
+        outcome.unwrap();
+    }
 }

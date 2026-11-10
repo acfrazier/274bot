@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav_planner::contract::{BoundZoneExempt, LegView, RouteView, WildernessView};
+use nav_planner::contract::{LegView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 
@@ -26,7 +26,11 @@ pub struct Estimate<'a> {
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
     pub generation: u64,
-    pub grants: Option<Grants<'a>>,
+    /// The walk carries danger permission (the global override or the
+    /// script's request), so it may deliberately end inside a zone with no
+    /// way out. The death bound still judges the route. There is no per-zone
+    /// matching: a permitted walk is judged on its route, not on zone names.
+    pub permitted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -886,32 +890,6 @@ impl Write for Reason {
     }
 }
 
-/// The zones enforcing admission treats as granted for one found route.
-#[derive(Clone, Copy)]
-pub struct Grants<'a> {
-    /// Request-bound named exemptions (`cross` keys or an explicit `all()`).
-    pub named: BoundZoneExempt,
-    /// Router endpoint completion is retained as request context but is never
-    /// an admission exemption; only `named` affects the NoWayOut exception.
-    pub endpoint: Option<WildernessView<'a>>,
-}
-impl<'a> Grants<'a> {
-    /// Only the request's explicit exemptions.
-    pub const fn named(named: BoundZoneExempt) -> Self {
-        Self {
-            named,
-            endpoint: None,
-        }
-    }
-    /// Retain router request context; endpoint completion does not grant risk.
-    pub const fn request(named: BoundZoneExempt, wilderness: WildernessView<'a>) -> Self {
-        Self {
-            named,
-            endpoint: Some(wilderness),
-        }
-    }
-}
-
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
 /// `route` and `context.zones` must be views of the same pack.
 pub fn assess(
@@ -964,32 +942,6 @@ where
     // The event buffer borrow ended with `timeline_bound`.
     super::checkpoint(checkpoint).await;
     result
-}
-
-async fn crossing_named<F, U>(
-    plan: &RoutePlan,
-    crossing: &CrossingGeom,
-    zones: ZoneTableView<'_>,
-    grants: Option<Grants<'_>>,
-    checkpoint: &mut F,
-) -> Result<bool, UnknownWhy>
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    let Some(grants) = grants else {
-        return Ok(false);
-    };
-    for row in rows(plan, crossing) {
-        let named = zones
-            .exemption_contains(grants.named, row.zone)
-            .map_err(nav_identity)?;
-        super::checkpoint(checkpoint).await;
-        if !named {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 fn display_u8(value: u64) -> u8 {
@@ -1061,13 +1013,6 @@ where
     }
 
     let mut unknown = input_problem(&input, context.combat);
-    if unknown.is_none()
-        && context
-            .grants
-            .is_some_and(|grants| grants.named.pack() != zones.pack())
-    {
-        unknown = Some(UnknownWhy::NavIdentity);
-    }
     for row in &plan.intervals {
         if let Some(class) = row.unknown_kind() {
             let _ = write!(
@@ -1170,9 +1115,7 @@ where
     let mut no_way_out = None;
     if unknown.is_none() {
         for crossing in &plan.crossings {
-            if !crossing.has_way_out()
-                && !crossing_named(&plan, crossing, zones, context.grants, checkpoint).await?
-            {
+            if !crossing.has_way_out() && !context.permitted {
                 no_way_out = Some(*crossing);
                 break;
             }

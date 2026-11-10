@@ -130,7 +130,7 @@ Next time, open the app, type your passphrase, click **Unlock vault** and click
 | The bot cannot log in and the log says "world full" | The world has no room. | A profile set to **auto** world tries the next world by itself. A profile set to one world stays there; set its world to **auto** in **Profiles**. |
 | WalkTo asks "Bake WalkTo map terrain?" | Your game files differ from the ones the package was built with. | Click **Bake now**. It runs once, takes about 15 seconds, and later starts reuse it. **Not now** keeps a map without terrain. |
 | WalkTo shows "no nav pack — run nav-pack" | The `nav` folder is missing next to the app. | Unpack the package again and keep its folders together. |
-| A bot refuses to walk, or says no bank is reachable, near dangerous monsters | **Danger routing** is on **When survivable**, which acts as **Never** (Nav config shows "When survivable (not available yet: acts as Never)"), so walks through dangerous monsters are refused. | Open **Nav config** and set **Danger routing** to **Always**. Use this only when the account can handle the monsters. |
+| A bot refuses to walk, or says no bank is reachable, near dangerous monsters | **Danger routing** is on **Never**, the default, and the script did not ask to cross, so walks through dangerous monsters are refused. | Open **Nav config** and set **Danger routing** to **Always**. Use this only when the account can handle the monsters. |
 
 More problems are listed under "Known issues" in the
 [CHANGELOG](https://github.com/acfrazier/274bot/blob/main/CHANGELOG.md).

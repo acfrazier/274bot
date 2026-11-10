@@ -210,7 +210,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             .unwrap();
         let arms = WalkArms::default();
         let admission = host_play::admission::Admission::manual(
-            command.options(),
+            host_play::WalkGlobals::default().manual_decision(command.options().zones.is_all()),
             host_play::admission::capture(
                 &snapshot,
                 state.map_members,
@@ -219,7 +219,6 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
                 None,
             ),
             0,
-            host_play::WalkGlobals::default(),
         );
         let result = command.walk_on(
             &world,
@@ -486,7 +485,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
         .unwrap();
     let arms = WalkArms::default();
     let admission = host_play::admission::Admission::manual(
-        command.options(),
+        host_play::WalkGlobals::default().manual_decision(command.options().zones.is_all()),
         host_play::admission::capture(
             &snapshot,
             state.map_members,
@@ -495,7 +494,6 @@ fn live_shilo_cart_ten_coins_to_zero() {
             None,
         ),
         1,
-        host_play::WalkGlobals::default(),
     );
     let route = command
         .walk_on(

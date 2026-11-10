@@ -126,7 +126,7 @@ owner = "dual-gpu"
 id = "survivable-acts-as-never"
 kind = "known-issue"
 area = "Navigation"
-text = """With the default Danger routing setting, **When survivable**, bots can
+text = """With the default Danger routing setting, **Never**, bots can
   refuse walks and bank trips through dangerous monsters instead of checking
   whether the account can survive the trip. For example, a bot at Rock Crabs
   can report that no bank is reachable instead of walking to Seers' Village.

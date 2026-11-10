@@ -629,37 +629,6 @@ fn cross_id_error(
     error
 }
 
-fn route_cross_union_len(
-    ids: &[serde_json::Value],
-    stage_cross: &[super::path::RequiredZoneDocument],
-) -> usize {
-    let mut count = 0;
-    for (index, value) in ids.iter().enumerate() {
-        let Some(id) = value.as_str() else {
-            continue;
-        };
-        if ids[..index]
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .any(|previous| previous == id)
-            || stage_cross.iter().any(|zone| zone.id.as_str() == id)
-        {
-            continue;
-        }
-        count += 1;
-    }
-    for (index, zone) in stage_cross.iter().enumerate() {
-        if stage_cross[..index]
-            .iter()
-            .any(|previous| previous.id == zone.id)
-        {
-            continue;
-        }
-        count += 1;
-    }
-    count
-}
-
 fn is_route_cross_kind(kind: &str) -> bool {
     matches!(kind, "walk" | "combat")
 }
@@ -720,28 +689,10 @@ fn visit_nested_step_documents(
 
 fn validate_step_cross_array(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step_id: &FactKey,
-    sequence: Option<&super::path::SequenceDocument>,
     ids: &[serde_json::Value],
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
-    let maximum = nav_planner::contract::MAX_ZONE_KEYS;
-    if ids.len() > maximum {
-        let stage = sequence
-            .map(|sequence| format!(" in stage {:?}", sequence.stage.0))
-            .unwrap_or_default();
-        let mut error = CompileError::code("too-many-route-cross")
-            .with_path(document.id.clone())
-            .with_detail(format!(
-                "step {:?}{stage} declares {} cross values; the maximum per route is {maximum}",
-                step_id.0,
-                ids.len()
-            ));
-        error.step = Some(step_id.clone());
-        return Err(error);
-    }
-
     if ids.iter().any(serde_json::Value::is_string) && zones.is_none() {
         let mut error = CompileError::code("cross-catalog-unavailable")
             .with_path(document.id.clone())
@@ -762,67 +713,32 @@ fn validate_step_cross_array(
             ));
         }
     }
-
-    let check_stage = |stage: Option<&super::path::SequenceDocument>| -> Result<(), CompileError> {
-        let stage_cross = stage.map_or(&[][..], |sequence| sequence.cross.as_slice());
-        let union_len = route_cross_union_len(ids, stage_cross);
-        if union_len > maximum {
-            let stage_detail = stage
-                .map(|sequence| format!(" and stage {:?}", sequence.stage.0))
-                .unwrap_or_default();
-            let mut error = CompileError::code("too-many-route-cross")
-                    .with_path(document.id.clone())
-                    .with_detail(format!(
-                        "step {:?}{stage_detail} grants {union_len} unique cross ids; the maximum per route is {maximum}",
-                        step_id.0
-                    ));
-            error.step = Some(step_id.clone());
-            return Err(error);
-        }
-        Ok(())
-    };
-
-    if let Some(sequence) = sequence {
-        check_stage(Some(sequence))?;
-    } else if role.sequences.is_empty() {
-        check_stage(None)?;
-    } else {
-        // Unscoped steps, including automatically provisioned recipes, can
-        // run while any stage is current, so validate each possible union.
-        for sequence in &role.sequences {
-            check_stage(Some(sequence))?;
-        }
-    }
     Ok(())
 }
 
 fn validate_route_step_cross(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step_id: &FactKey,
-    sequence: Option<&super::path::SequenceDocument>,
     args: &serde_json::Value,
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
     if let Some(ids) = args.get("cross").and_then(serde_json::Value::as_array) {
-        validate_step_cross_array(document, role, step_id, sequence, ids, zones)?;
+        validate_step_cross_array(document, step_id, ids, zones)?;
     }
     Ok(())
 }
 
 fn validate_step_cross(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step: &super::path::StepDocument,
-    sequence: Option<&super::path::SequenceDocument>,
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
     if is_route_cross_kind(&step.kind) {
-        validate_route_step_cross(document, role, &step.id, sequence, &step.args, zones)?;
+        validate_route_step_cross(document, &step.id, &step.args, zones)?;
     }
     let mut validate_nested = |id: &str, kind: &str, args: &serde_json::Value| {
         if is_route_cross_kind(kind) {
-            validate_route_step_cross(document, role, &FactKey::new(id), sequence, args, zones)?;
+            validate_route_step_cross(document, &FactKey::new(id), args, zones)?;
         }
         Ok(())
     };
@@ -847,16 +763,6 @@ fn validate_cross_ids(
     }
 
     for sequence in &role.sequences {
-        if sequence.cross.len() > nav_planner::contract::MAX_ZONE_KEYS {
-            return Err(CompileError::code("too-many-stage-cross")
-                .with_path(document.id.clone())
-                .with_detail(format!(
-                    "stage {:?} declares {} cross identities; the maximum is {}",
-                    sequence.stage.0,
-                    sequence.cross.len(),
-                    nav_planner::contract::MAX_ZONE_KEYS
-                )));
-        }
         if sequence.cross.iter().enumerate().any(|(index, zone)| {
             sequence.cross[..index]
                 .iter()
@@ -901,11 +807,11 @@ fn validate_cross_ids(
         .chain(role.prelude.iter())
         .chain(role.progress_reader.iter())
     {
-        validate_step_cross(document, role, step, None, zones)?;
+        validate_step_cross(document, step, zones)?;
     }
     for sequence in &role.sequences {
         for step in &sequence.steps {
-            validate_step_cross(document, role, step, Some(sequence), zones)?;
+            validate_step_cross(document, step, zones)?;
         }
     }
     Ok(())
@@ -2977,14 +2883,12 @@ mod tests {
     }
 
     #[test]
-    fn stage_cross_accepts_eight_ids_and_rejects_nine() {
+    fn stage_cross_accepts_more_than_eight_ids() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("stage-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..12).map(|index| format!("stage-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
-        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+        document.roles[0].sequences[0].cross = id_refs
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
@@ -2996,21 +2900,10 @@ mod tests {
                 .iter()
                 .map(|id| id.as_ref())
                 .collect::<Vec<_>>(),
-            id_refs[..nav_planner::contract::MAX_ZONE_KEYS].to_vec(),
+            id_refs,
         );
-
-        document.roles[0].sequences[0]
-            .cross
-            .push(stage_cross_declaration(
-                id_refs[nav_planner::contract::MAX_ZONE_KEYS],
-                "Stage zone",
-                "Cross to the next room.",
-            ));
-        let error = compile_with_stage_cross(&document, &id_refs)
-            .err()
-            .expect("invalid zone declaration must fail");
-        assert_eq!(error.code.as_ref(), "too-many-stage-cross");
     }
+
     #[test]
     fn stage_cross_defaults_to_empty_without_a_catalog() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
@@ -3079,9 +2972,7 @@ mod tests {
     #[test]
     fn non_route_cross_arguments_are_not_route_authority() {
         let document = decode_cook().unwrap();
-        let role = &document.roles[0];
-        let sequence = &role.sequences[0];
-        let mut talk = sequence
+        let mut talk = document.roles[0].sequences[0]
             .steps
             .iter()
             .find(|step| step.kind == "talk")
@@ -3089,8 +2980,8 @@ mod tests {
             .clone();
         talk.args["cross"] = serde_json::json!(["missing-zone"]);
 
-        validate_step_cross(&document, role, &talk, Some(sequence), None)
-            .expect("unrelated family data is not route consent");
+        validate_step_cross(&document, &talk, None)
+            .expect("unrelated family data is not a danger request");
     }
 
     #[test]
@@ -3134,39 +3025,27 @@ mod tests {
     }
 
     #[test]
-    fn step_and_stage_cross_union_is_limited_to_eight_ids() {
+    fn step_and_stage_cross_union_over_eight_ids_compiles() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("route-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..12).map(|index| format!("route-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
-        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+        document.roles[0].sequences[0].cross = id_refs[..9]
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
         let mut walk = cook_cross_walk(&document);
-        walk.args["cross"] =
-            serde_json::json!([id_refs[0], id_refs[nav_planner::contract::MAX_ZONE_KEYS],]);
+        walk.args["cross"] = serde_json::json!([id_refs[0], id_refs[10], id_refs[11]]);
         document.roles[0].sequences[0].steps.push(walk);
 
-        let error = compile_with_stage_cross(&document, &id_refs)
-            .err()
-            .expect("invalid zone declaration must fail");
-        assert_eq!(error.code.as_ref(), "too-many-route-cross");
-        assert!(error
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("9 unique cross ids"));
+        compile_with_stage_cross(&document, &id_refs)
+            .expect("a route may declare more than eight distinct zones");
     }
 
     #[test]
     fn step_and_stage_cross_union_deduplicates_shared_ids() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("route-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..8).map(|index| format!("route-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = id_refs

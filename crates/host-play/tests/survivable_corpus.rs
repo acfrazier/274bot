@@ -256,7 +256,7 @@ fn export() -> Result<(), String> {
             "operating_system": std::env::consts::OS,
             "pointer_width_bits": usize::BITS,
         },
-        "risk_policy": { "policy": "Inherit", "enforce": true, "runtime_settings_written": false },
+        "risk_policy": { "policy": "Avoid", "enforce": true, "runtime_settings_written": false },
         "loadouts": loadouts.iter().map(loadout_json).collect::<Vec<_>>(),
         "corpus": {
             "input_count": inputs.len(),
@@ -1903,7 +1903,7 @@ fn export_record(
             "targets": input.targets.iter().map(|target| tile_json(*target)).collect::<Vec<_>>(),
             "route_options": route_options_json(input.route_options, &input.grant_names),
             "assessment_grants": input.grant_names,
-            "policy": "Inherit",
+            "policy": "Avoid",
             "enforce": true,
             "frozen_routes": frozen_rows,
             "end_to_end": end_to_end,
@@ -1918,9 +1918,13 @@ fn make_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
         zones: grants,
         ..FindOptions::default()
     };
-    let mut admission = Admission::manual(options, input, 0, WalkGlobals::default());
-    admission.policy = RiskPolicy::Inherit;
-    admission.enforce = true;
+    let mut admission = Admission::manual(
+        WalkGlobals::default().manual_decision(options.zones.is_all()),
+        input,
+        0,
+    );
+    admission.decision.policy = RiskPolicy::Avoid;
+    admission.decision.enforce = true;
     admission.grants = grants;
     admission
 }
@@ -1977,71 +1981,6 @@ fn end_to_end_search(
                     &[],
                 );
                 match blocked {
-                    Some(keys)
-                        if admission::witness_admissible(
-                            world,
-                            &make_risk_input(
-                                profile,
-                                variants.first().map_or(profile.hp, |v| v.1),
-                                Some(from),
-                                map_members,
-                                poison_for(input, profile),
-                                worn,
-                            ),
-                            &keys,
-                        ) =>
-                    {
-                        let names = world
-                            .graph
-                            .zones
-                            .as_ref()
-                            .map(|table| {
-                                let mut values =
-                                    keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>();
-                                values.sort();
-                                values
-                            })
-                            .unwrap_or_default();
-                        let retry_options_result = ZoneExempt::named(&keys)
-                            .and_then(|zones| input.route_options.zones.union(zones));
-                        let retry_options_error = retry_options_result
-                            .as_ref()
-                            .err()
-                            .map(|error| format!("{error:?}"));
-                        let retry_options = retry_options_result.ok().map(|zones| FindOptions {
-                            zones,
-                            ..input.route_options
-                        });
-                        let retry = retry_options.map(|options| {
-                            find_first_with(
-                                &world.collision,
-                                &world.graph,
-                                from,
-                                targets,
-                                options,
-                                state,
-                            )
-                        });
-                        let retry_route = retry
-                            .as_ref()
-                            .and_then(|search| search.route().ok().cloned());
-                        witness_json = json!({
-                            "blocked_zone_names": names,
-                            "blocked_zone_keys": keys.iter().map(|key| format!("{key:?}")).collect::<Vec<_>>(),
-                            "admissible": true,
-                            "retry_options_constructed": retry_options.is_some(),
-                            "retry_options_error": retry_options_error,
-                            "retry_attempts": u8::from(retry.is_some()),
-                            "retry_route_options": retry_options.map(|options| route_options_json(options, &input.grant_names)),
-                            "retry_result": retry.as_ref().map(|search| search.route().map(canonical_route).map_err(|error| format!("{error:?}"))),
-                            "reason": if retry_options.is_some() {
-                                "single named-zone witness admitted by Inherit policy and retried at most once"
-                            } else {
-                                "risk witness was admissible but its exact named-grant mask could not be represented"
-                            },
-                        });
-                        retry_route
-                    }
                     Some(keys) => {
                         let names = world
                             .graph
@@ -2051,7 +1990,7 @@ fn end_to_end_search(
                                 keys.iter().map(|key| table.name(*key)).collect::<Vec<_>>()
                             })
                             .unwrap_or_default();
-                        witness_json = json!({"blocked_zone_names":names,"admissible":false,"retry_attempts":0,"reason":"witness_admissible rejected this exact witness"});
+                        witness_json = json!({"blocked_zone_names":names,"admissible":false,"retry_attempts":0,"reason":"the product diagnoses the blocking zones but never retries by zone name; NoPath is preserved"});
                         None
                     }
                     None => {
@@ -2240,7 +2179,7 @@ fn assessment_json(
         "poison_test":debug_field(&debug,"poison_test"),
         "assessment_debug_sha256":sha256(debug.as_bytes()),
         "assessment_debug":debug,
-        "risk_policy":"Inherit",
+        "risk_policy":"Avoid",
         "enforce":true,
         "assessment_grants": debug_field(&debug,"grants"),
     }))

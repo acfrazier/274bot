@@ -1839,18 +1839,16 @@ grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
-walks. Danger has three levels: **Never**, **When survivable** (the stored
-default), and **Always**. The middle level stores `allow_danger_zones=false`
-and `survivable_routing=true`; Always stores the danger grant, and Never
-clears both. **The survivable-routing change keeps `host_play::NET_AVAILABLE=false`**: every middle-level
-source resolves to Never, displayed as “When survivable (not available yet:
-acts as Never)”. Default/inherited walks preserve the pre-survivable-routing router result,
-including origin-inside escapes and endpoint completion, with assessments
-informational only. A held-state informational note is logged once per session.
-Explicit script/per-walk overrides retain their survivable-routing admission semantics.
-Only the integrated acceptance gate can enable the middle level.
-The map danger control remains an explicit grant for this walk, independent
-of the middle-level gate. Native scripts cannot use BankBudget, even when
+walks. Danger routing has two levels: **Never** (the default) and **Always**
+(the user's global override; it stores `allow_danger_zones=true`). A saved
+setting from the previous release that holds the removed middle level
+(“When survivable”, `survivable_routing=true`) loads as Never, with one info
+log line; the next level change clears that key. With Never, a script walk
+crosses danger zones only when the script requests it, and the 1% death bound
+is enforced on that walk. While `host_play::NET_AVAILABLE` is false, walks with
+no request keep the router's result, including origin-inside escapes and
+endpoint completion, with assessments informational only.
+The map danger control remains an explicit grant for this walk only. Native scripts cannot use BankBudget, even when
 global bank fetch is enabled. Native bank selection ranks walking routes
 without teleports; the walk to the chosen bank may still use granted teleports.
 Compat v1 uses Proceed through derived danger zones, with assessment logged
@@ -1882,23 +1880,23 @@ Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.
 
-Path `cross` names danger-zone exemptions for that walk; it is independent of
+Path `cross` names the danger zones a walk asks to cross; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may
-be used with or without that guard.
+be used with or without that guard. A non-empty `cross` is the script's
+request for danger permission on that walk: the walk may cross any zone, and
+the list has no length limit. The global Danger routing level `Always` gives
+the same permission to every walk with no request.
 
 Host walking returns the estimate through the same admission seam for native,
-v2 and manual callers. The existing tri-state derives `RiskPolicy`:
-walk-local Allow is Proceed, Forbid is Avoid, and Inherit uses script/global
-grants or the gated global level. Hard teleport/wilderness/avoid/quest
-authority is never broadened. Named `cross` grants bless only their zones:
-known granted damage still affects later crossings; a granted Unknown kind
-does not make an overlapping ungranted crossing safe. A walk that names
-grants also has the zones engaged at its route's endpoint granted, because
-the router's endpoint completion takes it into the zone it ends in. A
-`cross` walk is enforcing even while activation is held, so with Unknown
-poison this is what admits the destination zone. Any other zone crossed on
-the way is still judged, and a walk without named grants still has its
-endpoint crossing judged.
+v2 and manual callers. The decision is `permitted = global override || script
+request`. The global level `Always`, a script's card setting, a walk-local
+Allow and a non-empty `cross` all permit the walk. With the global override
+(or compat v1, which counts as the override) the walk is Proceed and the bound
+is informational. With only a script request the walk is enforced Avoid: the
+1% death bound applies to its route, judged on the route and not on zone names.
+Every permitted native crossing arms the walk's food guard; a compat v1 walk
+gets none. A walk-local Forbid has no danger effect. Hard
+teleport/wilderness/avoid/quest authority is never broadened.
 
 `WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed
 `refusal`, and optional passive `escape` data. `Refused` and `Aborted` map to
@@ -2063,10 +2061,13 @@ those approach endpoints directly.
   `avoidZones` accepts up to 16 rectangles or the known catalog ids
   `white-wolf-mountain` and `draynor-jail-guards`; unknown ids, invalid
   rectangles or too many entries are refused by the host. `crossZones`
-  accepts up to eight named danger zones to exempt for this walk and its
-  verify probe; unknown names, excessive counts or an unavailable zone
-  catalog are refused as well. `bankItemCounts` is not an input (the host
-  bank fetch reads the bank).
+  names danger zones the walk asks to cross. A non-empty list is the
+  script's request for danger permission on this walk and its verify
+  probe: the walk may then cross any danger zone, with no limit on the
+  list length, and the survival check stays on. The global Danger routing
+  setting `Always` gives the same permission to every walk. Unknown names
+  or an unavailable zone catalog are refused. `bankItemCounts` is not an
+  input (the host bank fetch reads the bank).
 - **`Traversal.walkTo`** is one Rust walk: radius 2 and 300 s by default,
   the same teleport, `avoidZones` and `crossZones` rules as
   `walkResilient`, `maxExpansions` accepted as `maxBudget` is, and the

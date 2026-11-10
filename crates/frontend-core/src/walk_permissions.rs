@@ -4,34 +4,9 @@
 //! fail closed; writes merge only values changed by the caller into the
 //! shared preferences, through the process local-state service.
 
+pub use host_play::DangerLevel;
 use host_play::WalkGlobals as HostWalkGlobals;
 use nav_planner::router::FindOptions;
-
-/// Three durable danger-route policies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DangerLevel {
-    Never,
-    WhenSurvivable,
-    Always,
-}
-
-impl DangerLevel {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Never => "Never",
-            Self::WhenSurvivable => "When survivable",
-            Self::Always => "Always",
-        }
-    }
-
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Never => Self::WhenSurvivable,
-            Self::WhenSurvivable => Self::Always,
-            Self::Always => Self::Never,
-        }
-    }
-}
 
 /// Durable movement grants shared by the panel and TUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -41,7 +16,6 @@ pub struct WalkGlobals {
     allow_wilderness: bool,
     allow_bank_fetch: bool,
     allow_danger_zones: bool,
-    survivable_routing: bool,
     allow_prereq_dialogue: bool,
     allow_quest_start: bool,
 }
@@ -53,7 +27,6 @@ impl Default for WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
-            survivable_routing: true,
             allow_prereq_dialogue: true,
             allow_quest_start: true,
         }
@@ -66,7 +39,6 @@ impl WalkGlobals {
         allow_wilderness: bool,
         allow_bank_fetch: bool,
         allow_danger_zones: bool,
-        survivable_routing: bool,
         allow_prereq_dialogue: bool,
         allow_quest_start: bool,
     ) -> Self {
@@ -75,7 +47,6 @@ impl WalkGlobals {
             allow_wilderness,
             allow_bank_fetch,
             allow_danger_zones,
-            survivable_routing,
             allow_prereq_dialogue,
             allow_quest_start,
         }
@@ -87,19 +58,17 @@ impl WalkGlobals {
             globals.allow_wilderness,
             globals.allow_bank_fetch,
             globals.allow_danger_zones,
-            globals.survivable_routing,
             globals.allow_prereq_dialogue,
             globals.allow_quest_start,
         )
     }
 
-    pub(crate) fn to_host(self) -> HostWalkGlobals {
+    pub(crate) const fn to_host(self) -> HostWalkGlobals {
         HostWalkGlobals {
             allow_teleports: self.allow_teleports,
             allow_wilderness: self.allow_wilderness,
             allow_bank_fetch: self.allow_bank_fetch,
             allow_danger_zones: self.allow_danger_zones,
-            survivable_routing: self.survivable_routing,
             allow_prereq_dialogue: self.allow_prereq_dialogue,
             allow_quest_start: self.allow_quest_start,
         }
@@ -117,9 +86,6 @@ impl WalkGlobals {
     pub const fn allow_danger_zones(self) -> bool {
         self.allow_danger_zones
     }
-    pub const fn survivable_routing(self) -> bool {
-        self.survivable_routing
-    }
     pub const fn allow_prereq_dialogue(self) -> bool {
         self.allow_prereq_dialogue
     }
@@ -133,40 +99,19 @@ impl WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
-            survivable_routing: false,
             allow_prereq_dialogue: false,
             allow_quest_start: false,
         }
     }
 
     pub const fn danger_level(self) -> DangerLevel {
-        if self.allow_danger_zones {
-            DangerLevel::Always
-        } else if self.survivable_routing {
-            DangerLevel::WhenSurvivable
-        } else {
-            DangerLevel::Never
-        }
+        self.to_host().danger_level()
     }
 
-    pub fn effective_danger_level(self) -> DangerLevel {
-        match self.danger_level() {
-            DangerLevel::WhenSurvivable if !host_play::NET_AVAILABLE => DangerLevel::Never,
-            level => level,
-        }
-    }
-
-    /// These globals at `level` (the one mapping of a danger level onto the
-    /// two stored booleans).
+    /// These globals at `level` (its one stored boolean).
     pub const fn with_danger_level(self, level: DangerLevel) -> Self {
-        let (allow_danger_zones, survivable_routing) = match level {
-            DangerLevel::Never => (false, false),
-            DangerLevel::WhenSurvivable => (false, true),
-            DangerLevel::Always => (true, false),
-        };
         Self {
-            allow_danger_zones,
-            survivable_routing,
+            allow_danger_zones: matches!(level, DangerLevel::Always),
             ..self
         }
     }
@@ -179,37 +124,17 @@ impl WalkGlobals {
 /// Shared explanation of how the Nav config walk grants apply to scripts.
 pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
-/// The explanatory copy for the `When survivable` danger-routing level.
-pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "Checks a death-probability upper bound of 1% for the whole route, without eating, prayer or escape. Named danger zones still count in the check. Always and rs2b0t-compatible walks proceed without this check.";
-
-/// Explanatory copy while the middle level is held behind the unavailable
-/// runtime net.
-pub const SURVIVABLE_ROUTING_HELD_TOOLTIP: &str = "Stored 'When survivable' is not available yet. Effective level: Never. This setting does not change route admission. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
-
-/// Return only copy that matches the currently active runtime gate.
-pub const fn survivable_routing_tooltip() -> &'static str {
-    if host_play::NET_AVAILABLE {
-        SURVIVABLE_ROUTING_TOOLTIP
-    } else {
-        SURVIVABLE_ROUTING_HELD_TOOLTIP
+/// What each danger-routing level does, shared by the panel tooltip and the
+/// TUI settings line.
+pub const fn danger_routing_tooltip(level: DangerLevel) -> &'static str {
+    match level {
+        DangerLevel::Never => NEVER_DANGER_NOTE,
+        DangerLevel::Always => GLOBAL_DANGER_WARNING,
     }
 }
 
-/// The short migration notice once survivable routing is active.
-pub const SURVIVABLE_ROUTING_NOTICE: &str =
-    "Danger routing now has three levels and defaults to 'When survivable'.";
-
-/// Migration notice while the middle level is held behind the runtime net.
-pub const SURVIVABLE_ROUTING_HELD_NOTICE: &str = "Danger routing has three levels and defaults to 'When survivable'. The stored 'When survivable' setting is not available yet. Its effective level is Never. Explicit danger-zone grants still check a death-probability upper bound of 1%, without eating, prayer or escape. Always and rs2b0t-compatible walks proceed without this check.";
-
-/// Return a migration notice that reflects whether the held level is usable.
-pub const fn survivable_routing_notice() -> &'static str {
-    if host_play::NET_AVAILABLE {
-        SURVIVABLE_ROUTING_NOTICE
-    } else {
-        SURVIVABLE_ROUTING_HELD_NOTICE
-    }
-}
+/// The default level's explanation.
+pub const NEVER_DANGER_NOTE: &str = "Danger-zone routes are refused unless the walk or its script asks to cross. A script's request is checked against a death-probability bound of 1%.";
 
 /// Warning shown for the global Always override and in place of the one-shot control.
 pub const GLOBAL_DANGER_WARNING: &str = "Global danger-zone override is enabled. Walks proceed without the survival check. The model's death-probability bound is information only.";
@@ -221,31 +146,8 @@ pub const ROUTING_SCOPE_NOTE: &str = "Settings are global except where otherwise
 /// Bank-budget fetching is available to manual WalkTo only.
 pub const BANK_FETCH_PERMISSION_SCOPE: &str = "Manual WalkTo only.";
 
-/// Label for the stored middle level while the runtime net is unavailable.
-pub const WHEN_SURVIVABLE_HELD_LABEL: &str = "When survivable (not available yet: acts as Never)";
-
-/// Note under the Danger routing drop-down while the middle level is held.
-pub const WHEN_SURVIVABLE_HELD_NOTE: &str = "Not available yet: acts as Never.";
 /// Danger-routing levels in the order the drop-down lists them.
-pub const DANGER_ROUTING_LEVELS: [DangerLevel; 3] = [
-    DangerLevel::Never,
-    DangerLevel::WhenSurvivable,
-    DangerLevel::Always,
-];
-
-/// True while the stored middle level cannot admit routes because the runtime net is unavailable.
-pub const fn danger_routing_held(level: DangerLevel) -> bool {
-    matches!(level, DangerLevel::WhenSurvivable) && !host_play::NET_AVAILABLE
-}
-
-/// Display the saved danger level, identifying the gated middle level without
-/// changing the canonical preference value or its cycling order.
-pub const fn danger_routing_label(level: DangerLevel) -> &'static str {
-    match level {
-        DangerLevel::WhenSurvivable if !host_play::NET_AVAILABLE => WHEN_SURVIVABLE_HELD_LABEL,
-        level => level.label(),
-    }
-}
+pub const DANGER_ROUTING_LEVELS: [DangerLevel; 2] = [DangerLevel::Never, DangerLevel::Always];
 
 /// The panel and TUI follow gates share this decision: either the ordinary
 /// hold or host movement ownership freezes the armed manual walk.
@@ -277,19 +179,13 @@ pub const PREREQ_SCOPE_NOTE: &str = "Dialogue and quest-start grants are additiv
 pub struct WalkGlobalsView {
     globals: WalkGlobals,
     script_scope_notice_ack: bool,
-    survivable_routing_notice_ack: bool,
 }
 
 impl WalkGlobalsView {
-    pub const fn new(
-        globals: WalkGlobals,
-        script_scope_notice_ack: bool,
-        survivable_routing_notice_ack: bool,
-    ) -> Self {
+    pub const fn new(globals: WalkGlobals, script_scope_notice_ack: bool) -> Self {
         Self {
             globals,
             script_scope_notice_ack,
-            survivable_routing_notice_ack,
         }
     }
 
@@ -298,9 +194,6 @@ impl WalkGlobalsView {
     }
     pub const fn script_scope_notice_ack(self) -> bool {
         self.script_scope_notice_ack
-    }
-    pub const fn survivable_routing_notice_ack(self) -> bool {
-        self.survivable_routing_notice_ack
     }
 
     /// Read the shared preferences once. A missing file is a first-run
@@ -326,14 +219,11 @@ impl WalkGlobalsView {
             nav.get("script_scope_notice_ack")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
-            nav.get("survivable_routing_notice_ack")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
         )
     }
 
     fn fail_closed() -> Self {
-        Self::new(WalkGlobals::fail_closed(), false, false)
+        Self::new(WalkGlobals::fail_closed(), false)
     }
 
     pub const fn danger_level(self) -> DangerLevel {
@@ -362,19 +252,17 @@ impl WalkGlobalsView {
         }
     }
 
-    /// Submit the canonical pair for one danger-level choice as one intent.
+    /// Submit one danger-level choice as one intent. The removed middle level's
+    /// `survivable_routing` key, if a previous release left it, is cleared in
+    /// the same write.
     pub(crate) fn persist_danger(
         preferences: &crate::prefs::UiPreferences,
         level: DangerLevel,
     ) -> Result<host_play::local_state::Update, crate::prefs::PreferenceError> {
-        let (allow, survivable) = match level {
-            DangerLevel::Never => (false, false),
-            DangerLevel::WhenSurvivable => (false, true),
-            DangerLevel::Always => (true, false),
-        };
+        let allow = matches!(level, DangerLevel::Always);
         let mut patch = crate::prefs::PreferencePatch::default();
         patch.set_member(&["nav", "allow_danger_zones"], Some(allow.into()))?;
-        patch.set_member(&["nav", "survivable_routing"], Some(survivable.into()))?;
+        patch.set_member(&["nav", "survivable_routing"], None)?;
         preferences.begin_patch(patch)
     }
 }
@@ -432,12 +320,11 @@ mod tests {
     }
 
     #[test]
-    fn projection_reads_migrates_and_fails_closed_without_reusing_the_old_notice_ack() {
+    fn projection_reads_migrates_and_fails_closed() {
         let store = TempStore::new("read");
         let absent = WalkGlobalsView::read(store.prefs());
         assert_eq!(absent, WalkGlobalsView::default());
-        assert_eq!(absent.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(!absent.survivable_routing_notice_ack);
+        assert_eq!(absent.danger_level(), DangerLevel::Never);
 
         vault::write_private_file(
             store.path(),
@@ -452,14 +339,12 @@ mod tests {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 allow_danger_zones: true,
-                survivable_routing: false,
                 allow_prereq_dialogue: true,
                 allow_quest_start: true,
             }
         );
         assert_eq!(view.danger_level(), DangerLevel::Always);
         assert!(view.script_scope_notice_ack);
-        assert!(view.survivable_routing_notice_ack);
         assert_eq!(view.permission_enabled("allow_teleports"), Some(true));
         assert_eq!(view.permission_enabled("allowTeleports"), Some(true));
         assert_eq!(view.permission_enabled("allow_wilderness"), Some(true));
@@ -480,12 +365,7 @@ mod tests {
         )
         .unwrap();
         let migrated = WalkGlobalsView::read(store.prefs());
-        assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(migrated.globals.survivable_routing);
-        assert_eq!(
-            migrated.globals.effective_danger_level(),
-            DangerLevel::Never
-        );
+        assert_eq!(migrated.danger_level(), DangerLevel::Never);
         assert!(
             migrated.globals.allow_prereq_dialogue,
             "an old file without the prereq keys keeps dialogue steps on"
@@ -495,16 +375,38 @@ mod tests {
             "an old file without the prereq keys keeps quest starts on"
         );
         assert!(migrated.script_scope_notice_ack);
-        assert!(!migrated.survivable_routing_notice_ack);
 
         vault::write_private_file(store.path(), b"{truncated").unwrap();
         let malformed = WalkGlobalsView::read(store.prefs());
         assert_eq!(malformed.globals, WalkGlobals::fail_closed());
-        assert!(!malformed.globals.survivable_routing);
+        assert_eq!(malformed.danger_level(), DangerLevel::Never);
         assert!(!malformed.globals.allow_prereq_dialogue);
         assert!(!malformed.globals.allow_quest_start);
         assert!(!malformed.script_scope_notice_ack);
-        assert!(!malformed.survivable_routing_notice_ack);
+    }
+
+    /// The previous release's format: its middle level ("When survivable",
+    /// stored as `survivable_routing: true`) loads as the default, Never,
+    /// and reading does not rewrite the file.
+    #[test]
+    fn the_removed_middle_level_loads_as_never_without_a_rewrite() {
+        let store = TempStore::new("middle");
+        let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_teleports":true}}"#;
+        vault::write_private_file(store.path(), middle).unwrap();
+        let view = WalkGlobalsView::read(store.prefs());
+        assert_eq!(view.danger_level(), DangerLevel::Never);
+        assert!(view.globals.allow_teleports);
+        assert_eq!(std::fs::read(store.path()).unwrap(), middle);
+        // A previous-release Always is still Always.
+        vault::write_private_file(
+            store.path(),
+            br#"{"nav":{"allow_danger_zones":true,"survivable_routing":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            WalkGlobalsView::read(store.prefs()).danger_level(),
+            DangerLevel::Always
+        );
     }
 
     #[test]
@@ -582,11 +484,11 @@ mod tests {
     }
 
     #[test]
-    fn danger_pair_merges_in_one_durable_update() {
+    fn danger_level_merges_in_one_durable_update_and_clears_the_old_key() {
         let store = TempStore::new("write");
         vault::write_private_file(
             store.path(),
-            br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
+            br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":false,"survivable_routing":true,"custom":"keep"}}"#,
         )
         .unwrap();
         let _before = WalkGlobalsView::read(store.prefs());
@@ -599,7 +501,7 @@ mod tests {
 
         crate::prefs::settled_for_test(WalkGlobalsView::persist_danger(
             store.prefs(),
-            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
         ))
         .unwrap();
         let persisted =
@@ -609,8 +511,8 @@ mod tests {
         assert_eq!(persisted["nav"]["custom"], "keep");
         assert_eq!(persisted["nav"]["allow_wilderness"], true);
         assert!(persisted["nav"].get("allow_bank_fetch").is_none());
-        assert_eq!(persisted["nav"]["allow_danger_zones"], false);
-        assert_eq!(persisted["nav"]["survivable_routing"], true);
+        assert_eq!(persisted["nav"]["allow_danger_zones"], true);
+        assert!(persisted["nav"].get("survivable_routing").is_none());
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
         crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
@@ -621,40 +523,31 @@ mod tests {
         .unwrap();
         crate::prefs::settled_for_test(WalkGlobalsView::persist_danger(
             store.prefs(),
-            DangerLevel::WhenSurvivable,
+            DangerLevel::Never,
         ))
         .unwrap();
-        let after_noop = WalkGlobalsView::read(store.prefs());
-        assert!(!after_noop.globals.allow_teleports);
-        assert_eq!(after_noop.danger_level(), DangerLevel::WhenSurvivable);
-        assert_eq!(
-            after_noop.globals.effective_danger_level(),
-            DangerLevel::Never
-        );
+        let after = WalkGlobalsView::read(store.prefs());
+        assert!(!after.globals.allow_teleports);
+        assert_eq!(after.danger_level(), DangerLevel::Never);
     }
 
     #[test]
-    fn held_survivable_copy_names_the_effective_level_without_unshipped_claims() {
-        let globals = WalkGlobals::default();
-        assert_eq!(globals.danger_level(), DangerLevel::WhenSurvivable);
-        assert_eq!(globals.effective_danger_level(), DangerLevel::Never);
+    fn two_levels_each_with_shared_copy() {
         assert_eq!(
-            super::danger_routing_label(globals.danger_level()),
-            super::WHEN_SURVIVABLE_HELD_LABEL
+            super::DANGER_ROUTING_LEVELS,
+            [DangerLevel::Never, DangerLevel::Always]
         );
-        assert!(super::survivable_routing_tooltip().contains("Effective level: Never"));
-        assert!(super::survivable_routing_notice().contains("effective level is Never"));
-        for copy in [
-            super::survivable_routing_tooltip(),
-            super::survivable_routing_notice(),
-        ] {
-            assert!(copy.contains("upper bound of 1%"));
-            assert!(copy.contains("without eating, prayer or escape"));
-            assert!(copy.contains("proceed without this check"));
-            assert!(!copy.contains("turn back"));
-            assert!(!copy.contains("rebake"));
-            assert!(!copy.contains("274V17"));
+        assert_eq!(WalkGlobals::default().danger_level(), DangerLevel::Never);
+        for level in super::DANGER_ROUTING_LEVELS {
+            let globals = WalkGlobals::default().with_danger_level(level);
+            assert_eq!(globals.danger_level(), level);
+            assert_eq!(level.next().next(), level);
         }
+        assert!(super::danger_routing_tooltip(DangerLevel::Never).contains("1%"));
+        assert_eq!(
+            super::danger_routing_tooltip(DangerLevel::Always),
+            super::GLOBAL_DANGER_WARNING
+        );
     }
 
     #[test]

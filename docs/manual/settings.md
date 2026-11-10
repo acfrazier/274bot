@@ -54,14 +54,15 @@ a first run; an unreadable or malformed settings file denies them until the
 next save. The grants are additive: the global switch or the script's own
 grant allows the step, and only a per-request Forbid narrows it.
 
-**Danger routing** decides if a walk may pass dangerous monsters. Its levels
-are **Never**, **When survivable** and **Always**. While the middle level is
-held, a note under the control reads `Not available yet: acts as Never.`
-Until it works, it refuses like **Never**. With **Always**, the window warns
-`Global danger-zone override is enabled.`
+**Danger routing** decides if a walk may pass dangerous monsters. It has two
+levels. **Never** is the default: a walk avoids dangerous monsters unless its
+script asks to cross them, and then the bot crosses only when its chance of
+death is at most 1%. **Always** lets every walk cross, without that check; the
+window warns `Global danger-zone override is enabled.` A setting saved as
+**When survivable** by an earlier release loads as **Never**.
 
-Two notices explain the scope. Read them once, then click **Dismiss walk
-permissions notice** and **Dismiss danger-routing notice**.
+One notice explains the scope. Read it once, then click **Dismiss walk
+permissions notice**.
 
 **Pause script on manual movement** holds scripts still while you move the
 bot yourself. It starts on. See

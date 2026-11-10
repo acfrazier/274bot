@@ -688,7 +688,7 @@ fn poison_start(
                     &Estimate {
                         zones: Some(zones),
                         wilderness,
-                        grants: None,
+                        permitted: false,
                         risks,
                         combat,
                         allow: Default::default(),
@@ -1040,17 +1040,17 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
         false,
         None,
     );
-    let admission = Admission {
+    // An enforced check with no zone grant, as before the middle level's
+    // `Inherit` mode was removed (it judged exactly like enforced `Avoid`).
+    let admission = Admission::manual(
+        crate::DangerDecision {
+            policy: RiskPolicy::Avoid,
+            enforce: true,
+            ..crate::WalkGlobals::default().manual_decision(false)
+        },
         input,
-        policy: RiskPolicy::Inherit,
-        enforce: true,
-        ..Admission::manual(
-            FindOptions::default(),
-            input,
-            1,
-            crate::WalkGlobals::default(),
-        )
-    };
+        1,
+    );
     let assessment = assess(&route, &rig.world, &admission);
     super::log(Some(&rig.name), &assessment, false);
     *receipt = json!({"cell": cell.name, "account": rig.name, "engine": "127.0.0.1:47594",

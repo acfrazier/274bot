@@ -1410,11 +1410,6 @@ impl Play {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(name.clone()).or_default();
             bot.manual_arm = Some(std::sync::Arc::downgrade(&manual));
-            crate::walk_permissions::log_runtime_net_gate(
-                &name,
-                globals,
-                &mut bot.runtime_gate_logged,
-            );
             if let Some(escape) = bot.slot_escape() {
                 return Err(ActionError::RiskRefused {
                     refusal: script::native::WalkRefusal::EscapeInProgress,
@@ -1452,7 +1447,10 @@ impl Play {
                 std::sync::Arc::clone(&slot),
             )))
         };
-        let admission = Admission::manual(options, input, route_generation, globals);
+        // The command's zone grant is the operator's own choice for this walk
+        // (the global level or the one-walk control, `WalkGlobals::manual_options`).
+        let decision = globals.manual_decision(options.zones.is_all());
+        let admission = Admission::manual(decision, input, route_generation);
         let result = command.walk_on_with_manual(
             world,
             current,

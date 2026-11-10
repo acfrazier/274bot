@@ -20,12 +20,8 @@ pub struct NavSettings {
     pub allow_quest_start: bool,
     /// Durable global override for every walk to route through danger zones.
     pub allow_danger_zones: bool,
-    /// Allow admission of survivable crossings once the runtime net is available.
-    pub survivable_routing: bool,
     /// The shared one-time script-scope explanation was dismissed.
     pub script_scope_notice_ack: bool,
-    /// The one-time danger-routing migration explanation was dismissed.
-    pub survivable_routing_notice_ack: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     /// 11px default; the settings UI clamps writes to 8..=28.
@@ -60,9 +56,7 @@ impl Default for NavSettings {
             allow_prereq_dialogue: true,
             allow_quest_start: true,
             allow_danger_zones: false,
-            survivable_routing: true,
             script_scope_notice_ack: false,
-            survivable_routing_notice_ack: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -91,7 +85,6 @@ impl NavSettings {
             self.allow_wilderness,
             self.allow_bank_fetch,
             self.allow_danger_zones,
-            self.survivable_routing,
             self.allow_prereq_dialogue,
             self.allow_quest_start,
         )
@@ -102,9 +95,10 @@ impl NavSettings {
     }
 
     pub fn set_danger_level(&mut self, level: frontend_core::DangerLevel) {
-        let globals = self.walk_globals().with_danger_level(level);
-        self.allow_danger_zones = globals.allow_danger_zones();
-        self.survivable_routing = globals.survivable_routing();
+        self.allow_danger_zones = self
+            .walk_globals()
+            .with_danger_level(level)
+            .allow_danger_zones();
     }
 
     pub fn refresh_walk_globals(
@@ -119,9 +113,7 @@ impl NavSettings {
         self.allow_prereq_dialogue = globals.allow_prereq_dialogue();
         self.allow_quest_start = globals.allow_quest_start();
         self.allow_danger_zones = globals.allow_danger_zones();
-        self.survivable_routing = globals.survivable_routing();
         self.script_scope_notice_ack = view.script_scope_notice_ack();
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         Ok(())
     }
 }
@@ -262,23 +254,23 @@ mod tests {
     }
 
     #[test]
-    fn danger_level_round_trips_through_both_stored_booleans_and_partial_nav() {
+    fn danger_level_round_trips_through_stored_boolean_and_partial_nav() {
         use frontend_core::DangerLevel;
 
-        assert_eq!(
-            NavSettings::default().danger_level(),
-            DangerLevel::WhenSurvivable
-        );
+        assert_eq!(NavSettings::default().danger_level(), DangerLevel::Never);
         let partial: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
-        assert!(partial.survivable_routing);
-        assert_eq!(partial.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(!partial.survivable_routing_notice_ack);
+        assert_eq!(partial.danger_level(), DangerLevel::Never);
+        // Old files that hold the removed middle-level keys still load as Never
+        // (unknown keys are ignored); the keys are never written back.
+        let old: NavSettings = serde_json::from_str(
+            r#"{"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_danger_zones":false}"#,
+        )
+        .unwrap();
+        assert_eq!(old.danger_level(), DangerLevel::Never);
+        let written = serde_json::to_string(&old).unwrap();
+        assert!(!written.contains("survivable"));
 
-        for level in [
-            DangerLevel::Never,
-            DangerLevel::WhenSurvivable,
-            DangerLevel::Always,
-        ] {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
             let mut settings = NavSettings::default();
             settings.set_danger_level(level);
             assert_eq!(settings.danger_level(), level);

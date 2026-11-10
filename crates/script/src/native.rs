@@ -121,6 +121,8 @@ pub const WALK_OUTCOME_SEQ_MAX: u64 = u64::MAX >> 1;
 
 /// A walk-local permission bit. Inherit uses the captured global and
 /// per-script settings; Allow can add permission and Forbid can narrow it.
+/// The danger-zone bit is the exception: only Allow has an effect, and Forbid
+/// reads as Inherit, because the global danger setting has no exception.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WalkBit {
     #[default]
@@ -156,23 +158,12 @@ impl From<Option<bool>> for WalkBit {
         }
     }
 }
-/// Walk-local override for survivable-risk admission, mapped directly from
-/// `WalkOptions::allow_danger_zones`.
+/// How the host judges a walk that may meet danger zones. `Proceed` walks
+/// without the survival check (the global override); `Avoid` keeps the check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RiskPolicy {
-    Inherit,
     Proceed,
     Avoid,
-}
-
-impl From<WalkBit> for RiskPolicy {
-    fn from(value: WalkBit) -> Self {
-        match value {
-            WalkBit::Inherit => Self::Inherit,
-            WalkBit::Allow => Self::Proceed,
-            WalkBit::Forbid => Self::Avoid,
-        }
-    }
 }
 
 /// Native navigation permissions attached to one request. Native fetch is
@@ -2138,13 +2129,6 @@ mod walk_permission_tests {
                 allow_quest_start: WalkBit::Inherit,
             }
         );
-    }
-
-    #[test]
-    fn risk_policy_is_the_existing_walk_tri_state_projection() {
-        assert_eq!(RiskPolicy::from(WalkBit::Inherit), RiskPolicy::Inherit);
-        assert_eq!(RiskPolicy::from(WalkBit::Allow), RiskPolicy::Proceed);
-        assert_eq!(RiskPolicy::from(WalkBit::Forbid), RiskPolicy::Avoid);
     }
 
     #[test]

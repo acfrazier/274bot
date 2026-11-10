@@ -810,11 +810,8 @@ const CORE: &[(&str, Decision)] = &[
     ("walk_map.rs::validate_walk_search", Excluded(FORMAT)),
     ("walk_map.rs::walk_teleport_authorized", Excluded(FORMAT)),
     // walk_permissions.rs
-    ("walk_permissions.rs::danger_routing_held", Excluded(FORMAT)),
-    ("walk_permissions.rs::danger_routing_label", Excluded(FORMAT)),
+    ("walk_permissions.rs::danger_routing_tooltip", Excluded(FORMAT)),
     ("walk_permissions.rs::manual_walk_may_follow", Excluded(FORMAT)),
-    ("walk_permissions.rs::survivable_routing_notice", Excluded(FORMAT)),
-    ("walk_permissions.rs::survivable_routing_tooltip", Excluded(FORMAT)),
 ];
 
 /// Panel and TUI functions that are not simply one row's handler: a

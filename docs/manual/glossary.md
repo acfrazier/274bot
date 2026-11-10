@@ -78,7 +78,7 @@ The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**
 | Term | What it means | Do not use |
 | --- | --- | --- |
 | **WalkTo** | The map where you pick a destination and send a bot or a group. | map picker |
-| **Danger routing** | The option that decides whether a walk may pass dangerous monsters, with three levels: **Never**, **When survivable** and **Always**. **When survivable** acts as **Never** until the bot can track poison. | danger zones |
+| **Danger routing** | The option that decides whether a walk may pass dangerous monsters, with two levels: **Never** (the default; a walk crosses only when its script asks and the chance of death is at most 1%) and **Always** (every walk crosses, without that check). | danger zones |
 
 ## Words for the same thing
 

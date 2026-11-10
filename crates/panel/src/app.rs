@@ -3711,15 +3711,7 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     let danger_combo = ui.begin_combo("##danger-routing", danger_level.label());
     #[cfg(test)]
     record_test_routing_item(ui);
-    ui.set_item_tooltip(match danger_level {
-        frontend_core::DangerLevel::Never => {
-            "Danger-zone routes are refused unless this walk or its script overrides."
-        }
-        frontend_core::DangerLevel::WhenSurvivable => {
-            frontend_core::walk_permissions::survivable_routing_tooltip()
-        }
-        frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
-    });
+    ui.set_item_tooltip(frontend_core::danger_routing_tooltip(danger_level));
     if let Some(_open) = danger_combo {
         for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
             let selected = level == danger_level;
@@ -3729,6 +3721,7 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
                 .build();
             #[cfg(test)]
             record_test_routing_choice(ui);
+            ui.set_item_tooltip(frontend_core::danger_routing_tooltip(level));
             if picked {
                 changed |= choose_danger_level(nav, level);
             }
@@ -3736,12 +3729,6 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
                 ui.set_item_default_focus();
             }
         }
-    }
-    if frontend_core::walk_permissions::danger_routing_held(danger_level) {
-        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
-        ui.text_wrapped(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_NOTE);
-        #[cfg(test)]
-        record_test_routing_item(ui);
     }
     if danger_level == frontend_core::DangerLevel::Always {
         let _warning = ui.push_style_color(StyleColor::Text, ERROR);
@@ -3808,20 +3795,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     ui,
                     session,
                     Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
-                );
-            }
-
-            if !nav.survivable_routing_notice_ack {
-                ui.separator();
-                ui.text_wrapped(frontend_core::walk_permissions::survivable_routing_notice());
-                if ui.button("Dismiss danger-routing notice") {
-                    nav.survivable_routing_notice_ack = true;
-                    changed = true;
-                }
-                setting_feedback_line(
-                    ui,
-                    session,
-                    Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
                 );
             }
 
@@ -3970,12 +3943,6 @@ fn commit_nav_settings(
             after.script_scope_notice_ack,
         ),
         (
-            P::SurvivableRoutingNoticeAck,
-            "survivable_routing_notice_ack",
-            before.survivable_routing_notice_ack,
-            after.survivable_routing_notice_ack,
-        ),
-        (
             P::PauseScriptOnManualWalkAbort,
             "pause_script_on_manual_walk_abort",
             before.pause_script_on_manual_walk_abort,
@@ -3996,7 +3963,6 @@ fn commit_nav_settings(
     }
     if before.danger_level() != after.danger_level() {
         session.remember_nav_preference("allow_danger_zones", after.allow_danger_zones);
-        session.remember_nav_preference("survivable_routing", after.survivable_routing);
         submit(
             session,
             OperatorCommand::SetDangerLevel(after.danger_level()),
@@ -4030,12 +3996,9 @@ fn commit_nav_settings(
     persist_panel_nav_member!(component_flood);
     persist_panel_nav_member!(camera_follow);
 
-    session.route_through_zones = frontend_core::WalkGlobalsView::new(
-        after.walk_globals(),
-        after.script_scope_notice_ack,
-        after.survivable_routing_notice_ack,
-    )
-    .danger_this_walk(session.route_through_zones);
+    session.route_through_zones =
+        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
+            .danger_this_walk(session.route_through_zones);
     session.ui.nav = after;
     match failure {
         Some(error) => Err(error),

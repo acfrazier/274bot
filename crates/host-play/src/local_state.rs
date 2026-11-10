@@ -2538,8 +2538,8 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
                     | "pause_script_on_manual_walk_abort"
                     | "script_scope_notice_ack"
                     | "show_special_areas"
+                    // Removed with the middle danger level; a level change clears it.
                     | "survivable_routing"
-                    | "survivable_routing_notice_ack"
             ) =>
         {
             Some(PreferenceAuditScalarKind::Boolean)

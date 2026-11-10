@@ -4,7 +4,7 @@ use api::selected::ClientRevision;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use host_play::admission::{self, Admission, RiskInput};
-use host_play::{DangerLevel, WalkGlobals, NET_AVAILABLE};
+use host_play::{DangerDecision, DangerLevel, WalkGlobals, NET_AVAILABLE};
 use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::router::{find_with_avoid, FindOptions, Route};
 use nav_planner::transport::TransportGraph;
@@ -102,7 +102,7 @@ fn find(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
 }
 
 fn default_admission(input: RiskInput) -> Admission {
-    Admission::manual(FindOptions::default(), input, 1, WalkGlobals::default())
+    Admission::manual(WalkGlobals::default().manual_decision(false), input, 1)
 }
 
 #[test]
@@ -152,9 +152,10 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             read("no-nav", Some(r#"{"unrelated":1}"#)).unwrap(),
         ),
         (
-            "explicit",
+            // The previous release's removed middle level loads as Never.
+            "explicit-middle",
             read(
-                "explicit",
+                "explicit-middle",
                 Some(r#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#),
             )
             .unwrap(),
@@ -166,26 +167,19 @@ fn probe_gated_default_is_never_for_every_preference_source() {
     ];
     let world = api::test_support::game_data_available().then(|| corridor(40, &[20]));
     for (name, globals) in sources {
+        assert_eq!(globals.danger_level(), DangerLevel::Never, "{name}");
         assert_eq!(
-            globals.effective_danger_level(),
-            DangerLevel::Never,
-            "{name}"
-        );
-        assert_eq!(
-            globals.risk_policy(WalkPermissions::default(), WalkOptions::default()),
+            globals
+                .danger_decision(WalkPermissions::default(), WalkOptions::default(), false)
+                .policy,
             RiskPolicy::Avoid,
             "{name}: native inherit"
         );
-        let manual = Admission::manual(
-            globals.manual_options(false),
-            RiskInput::default(),
-            0,
-            globals,
-        );
-        assert_eq!(manual.policy, RiskPolicy::Avoid, "{name}: manual");
+        let manual = Admission::manual(globals.manual_decision(false), RiskInput::default(), 0);
+        assert_eq!(manual.decision.policy, RiskPolicy::Avoid, "{name}: manual");
         assert_eq!(manual.grants, ZoneExempt::NONE, "{name}: manual grants");
         assert!(
-            !manual.enforce,
+            !manual.decision.enforce,
             "{name}: held inherited verdict is advisory"
         );
         if let Some(world) = world.as_ref() {
@@ -193,8 +187,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
                 let route = find(world, from, to);
                 let mut risk_input = input(99, PoisonState::default());
                 risk_input.pos = from;
-                let request =
-                    Admission::manual(globals.manual_options(false), risk_input, 1, globals);
+                let request = Admission::manual(globals.manual_decision(false), risk_input, 1);
                 let assessment = admission::assess(&route, world, &request);
                 assert!(
                     admission::permits(&route, world, &request, &assessment),
@@ -203,12 +196,11 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             }
         }
         eprintln!(
-            "probe source={name} stored={:?} effective={:?} native=Avoid manual=Avoid",
+            "probe source={name} stored={:?} native=Avoid manual=Avoid",
             globals.danger_level(),
-            globals.effective_danger_level()
         );
     }
-    // Explicit overrides still proceed; Forbid beats a script grant.
+    // Requests permit danger routing, but keep the model's verdict enforced.
     let globals = WalkGlobals::default();
     let script = WalkPermissions {
         allow_danger_zones: true,
@@ -222,15 +214,42 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         allow_danger_zones: WalkBit::Forbid,
         ..WalkOptions::default()
     };
-    assert_eq!(
-        globals.risk_policy(script, WalkOptions::default()),
-        RiskPolicy::Proceed
-    );
-    assert_eq!(
-        globals.risk_policy(WalkPermissions::default(), allow),
-        RiskPolicy::Proceed
-    );
-    assert_eq!(globals.risk_policy(script, forbid), RiskPolicy::Avoid);
+    for (permissions, options) in [
+        (script, WalkOptions::default()),
+        (WalkPermissions::default(), allow),
+        (script, forbid),
+    ] {
+        let decision = globals.danger_decision(permissions, options, false);
+        assert!(decision.permitted);
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
+        assert!(decision.enforce);
+    }
+    let unrequested = globals.danger_decision(WalkPermissions::default(), forbid, false);
+    assert!(!unrequested.permitted);
+    assert_eq!(unrequested.policy, RiskPolicy::Avoid);
+    assert!(!unrequested.enforce);
+
+    // Only the global override bypasses enforcement, with no Forbid exception.
+    // Compat v1 reaches this decision through the same global override.
+    for overridden in [
+        WalkGlobals {
+            allow_danger_zones: true,
+            ..globals
+        },
+        globals.for_script_family(true),
+    ] {
+        for (permissions, options) in [
+            (script, WalkOptions::default()),
+            (WalkPermissions::default(), allow),
+            (script, forbid),
+            (WalkPermissions::default(), forbid),
+        ] {
+            let decision = overridden.danger_decision(permissions, options, false);
+            assert!(decision.permitted);
+            assert_eq!(decision.policy, RiskPolicy::Proceed);
+            assert!(!decision.enforce);
+        }
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -242,10 +261,10 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
     let world = corridor(40, &[20]);
     let route = find(&world, tile(0, 1), tile(20, 1));
     let request = default_admission(input(99, PoisonState::default()));
-    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.decision.policy, RiskPolicy::Avoid);
     assert_eq!(request.grants, ZoneExempt::NONE);
     assert!(
-        !request.enforce,
+        !request.decision.enforce,
         "the held default keeps its existing routing mode"
     );
     let assessment = admission::assess(&route, &world, &request);
@@ -265,10 +284,13 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
     ));
     assert!(admission::permits(&route, &world, &request, &assessment));
     let opt_in = Admission {
-        policy: RiskPolicy::Proceed,
+        decision: DangerDecision {
+            policy: RiskPolicy::Proceed,
+            ..request.decision
+        },
         ..request
     };
-    assert_eq!(opt_in.policy, RiskPolicy::Proceed);
+    assert_eq!(opt_in.decision.policy, RiskPolicy::Proceed);
     assert_eq!(opt_in.grants, ZoneExempt::NONE);
     assert!(admission::permits(&route, &world, &opt_in, &assessment));
 }
@@ -299,10 +321,13 @@ fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
     assert!(admission::permits(&route, &world, &request, &assessment));
     assert!(assessment.plan.complete);
     assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
-    for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
+    for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
         let enforcing = Admission {
-            policy,
-            enforce: true,
+            decision: DangerDecision {
+                policy,
+                enforce: true,
+                ..request.decision
+            },
             ..request
         };
         assert!(
@@ -398,10 +423,13 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
         unknown_npc,
         player,
     ] {
-        for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
+        for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
             let request = Admission {
-                policy,
-                enforce: true,
+                decision: DangerDecision {
+                    policy,
+                    enforce: true,
+                    ..default_admission(problem).decision
+                },
                 ..default_admission(problem)
             };
             let assessment = admission::assess(&safe_route, &world, &request);
@@ -439,13 +467,16 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
     let mut risk_input = input(99, PoisonState::default());
     risk_input.pos = tile(2, 1);
     let request = Admission {
-        enforce: true,
+        decision: DangerDecision {
+            enforce: true,
+            ..default_admission(risk_input).decision
+        },
         ..default_admission(risk_input)
     };
     let assessment = admission::assess(&route, &world, &request);
-    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.decision.policy, RiskPolicy::Avoid);
     assert_eq!(request.grants, ZoneExempt::NONE);
-    assert!(request.enforce);
+    assert!(request.decision.enforce);
     assert!(assessment.plan.complete);
     assert_eq!(assessment.plan.intervals.len(), 2);
     assert!(assessment.plan.intervals[0].escaping());
@@ -505,8 +536,10 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
         let mut risk_input = input(hp, PoisonState::Clear);
         risk_input.pos = from;
         Admission {
-            policy: RiskPolicy::Inherit,
-            enforce: true,
+            decision: DangerDecision {
+                enforce: true,
+                ..default_admission(risk_input).decision
+            },
             grants: ZoneExempt::NONE,
             ..default_admission(risk_input)
         }
@@ -567,13 +600,16 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
     assert!(assessment.plan.complete);
-    assert!(!held.enforce);
+    assert!(!held.decision.enforce);
     assert!(admission::permits(&route, &world, &held, &assessment));
-    for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
+    for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
         for grants in [ZoneExempt::NONE, ZoneExempt::all()] {
             let enforcing = Admission {
-                policy,
-                enforce: true,
+                decision: DangerDecision {
+                    policy,
+                    enforce: true,
+                    ..held.decision
+                },
                 grants,
                 ..held
             };
@@ -582,9 +618,23 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
                 policy == RiskPolicy::Proceed,
                 "{policy:?}"
             );
-            let compat = Admission {
+            let marker_only = Admission {
                 compat_v1: true,
                 ..enforcing
+            };
+            assert_eq!(
+                admission::permits(&route, &world, &marker_only, &assessment),
+                policy == RiskPolicy::Proceed,
+                "the compatibility marker does not bypass the decision"
+            );
+            let decision = WalkGlobals::default()
+                .for_script_family(true)
+                .danger_decision(WalkPermissions::default(), WalkOptions::default(), false);
+            assert_eq!(decision.policy, RiskPolicy::Proceed);
+            assert!(!decision.enforce);
+            let compat = Admission {
+                decision,
+                ..marker_only
             };
             assert!(admission::permits(&route, &world, &compat, &assessment));
         }
@@ -630,8 +680,10 @@ fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
         let mut risk_input = input(60, PoisonState::Clear);
         risk_input.pos = from;
         let request = Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                enforce: true,
+                ..default_admission(risk_input).decision
+            },
             ..default_admission(risk_input)
         };
         let assessment = admission::assess(&route, &world, &request);

@@ -7248,10 +7248,8 @@ fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
         );
         // The scope note, three checkboxes, the bank-fetch scope, the
         // prerequisite note, the two prerequisite checkboxes, the
-        // drop-down's label and the drop-down, plus the note under a held
-        // level and the Always warning.
-        let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
-            + usize::from(level == frontend_core::DangerLevel::Always);
+        // drop-down's label and the drop-down, plus the Always warning.
+        let notes = usize::from(level == frontend_core::DangerLevel::Always);
         assert_eq!(routing.items.len(), 10 + notes, "routing rows at {level:?}");
         for (index, item) in routing.items.iter().enumerate() {
             let [min_x, _, max_x, _] = *item;
@@ -7306,6 +7304,59 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
         assert!(changed, "picking {target:?} reports a change");
         assert_eq!(nav.danger_level(), target, "the picked entry is stored");
     }
+}
+
+/// The Nav config Danger routing drop-down offers exactly Never and Always,
+/// and picking Always in the open popup, then committing the Nav config,
+/// submits `SetDangerLevel(Always)` (and nothing for the removed middle level).
+#[test]
+fn nav_danger_routing_drop_down_offers_two_levels_and_always_submits_set_danger_level() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-two");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    assert_eq!(before.danger_level(), DangerLevel::Never);
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if !choices.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(
+        choices.len(),
+        2,
+        "the open drop-down lists exactly two items"
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
+        ["Never", "Always"]
+    );
+
+    let always = rect_centre(choices[1]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, always, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::Always);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::Always)]
+    );
 }
 
 /// One headless frame of the render-all warning with the pointer at `point`,

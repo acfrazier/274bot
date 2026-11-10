@@ -41,7 +41,9 @@ pub(super) use script_nav::{
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};
 
-/// Resolve live-fixture crossing grants through the script walk product path.
+/// Resolve live-fixture crossing grants through the script walk product path:
+/// the names are validated, and the zone grant is the danger decision of a
+/// script that requests the crossing with the global override off.
 #[cfg(feature = "test-support")]
 pub fn resolve_script_cross_zones_for_live_test(
     opts: nav_planner::router::FindOptions,
@@ -51,8 +53,7 @@ pub fn resolve_script_cross_zones_for_live_test(
     state: &nav_planner::WorldState,
     cross: &[&str],
 ) -> Result<nav_planner::router::FindOptions, String> {
-    script_nav::resolve_route_exclusions(
-        opts,
+    let exclusions = script_nav::resolve_route_exclusions(
         world,
         from,
         to,
@@ -61,8 +62,16 @@ pub fn resolve_script_cross_zones_for_live_test(
             cross: cross.iter().map(|name| Arc::from(*name)).collect(),
             ..Default::default()
         },
-    )
-    .map(|(opts, _)| opts)
+    )?;
+    let decision = crate::WalkGlobals::default().danger_decision(
+        Default::default(),
+        Default::default(),
+        !exclusions.cross.is_empty(),
+    );
+    Ok(nav_planner::router::FindOptions {
+        zones: decision.zones(),
+        ..opts
+    })
 }
 #[path = "script_walk.rs"]
 mod script_walk;

@@ -55,10 +55,11 @@ prohibition. An omitted per-walk field uses the global, script, and header
 grants.
 These switches do not change the guide's explicitly authored quest conversations.
 
-## Required danger zones
+## Danger zones a guide crosses
 
-Declare each unavoidable danger zone where the guide must enter or cross it.
-A sequence's `cross` grants its zones to every route in that stage.
+Declare each danger zone where the guide must enter or cross it.
+A declaration is the guide's request to cross danger zones on the walks it covers.
+A sequence's `cross` covers every route in that stage.
 The sequence field uses stable navigation zone ids, with a `name` and `reason` for each zone.
 
 ```json
@@ -70,33 +71,37 @@ The sequence field uses stable navigation zone ids, with a `name` and `reason` f
 ```
 
 Walk and combat steps can also declare an `args.cross` array of stable zone ids.
-Those grants apply only to that step's routes, including a combat step's first approach.
-A prelude step keeps its own grants.
-Each route accepts the union of its step and current stage declarations, without duplicates.
+Those requests apply only to that step's routes, including a combat step's first approach.
+A prelude step keeps its own requests.
+Each route is covered by the union of its step and current stage declarations, without duplicates.
+A guide can declare any number of zones.
 
-The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
+The compiler rejects unknown ids.
 Stage declarations also require unique ids and nonempty names and reasons.
 A navigation pack must be available when a guide declares zones.
 
 A Quester walk step cannot use `args.allow_danger_zones`. The compiler rejects
-that field. Declare stage grants in the sequence's `cross` array. Use
-`args.cross` only for a step-scoped grant.
+that field. Declare stage requests in the sequence's `cross` array. Use
+`args.cross` only for a step-scoped request.
 
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
-Other zones remain avoided, even when the global danger setting is on.
 
-An empty `cross` set on an active Quester stage is still a scope. It grants no
-danger zones. A global setting or an old saved Quester card value does not
-change that rule.
+A walk may cross danger zones when the global Danger routing setting is `Always`,
+or when the guide requested it for that walk (a stage or step `cross` that covers
+it). Nothing else decides this. The global setting has no exception: with it on,
+every Quester walk may cross danger zones, declared or not. An old saved Quester
+card value does not change it. With the setting off, a walk that no declaration
+covers avoids danger zones, and a route whose only path crosses one is refused.
 
-A route whose only path crosses an undeclared danger zone is refused. Unscoped
-walks outside a Quester stage are unchanged.
-
-The food guard is armed for the whole walk when a route uses a declared
-crossing. Protection runs only where a step requests it. A declaration does not
-add a survivability check to a fully declared route; its existing admission
-behavior is unchanged.
+A walk that a declaration covers may cross any danger zone, not only the declared
+ones. The food guard is armed for the whole walk on every permitted danger
+crossing, whether the permission is the global setting or a declaration.
+Protection runs only where a step requests it. The two sources are judged
+differently. With the global setting on, the walk goes and the survival model's
+bound is informational. With the setting off and a declaration, survival
+admission checks the walk's route: it is refused when the chance of death is
+above 1%, whichever zones it crosses.
 
 ## Steps
 

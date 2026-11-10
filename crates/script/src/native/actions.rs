@@ -8,10 +8,11 @@ use crate::native_bank::{
 };
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
-/// Add the stage's declared grants to this step's declared route grants.
-/// Named consent never enables the blanket danger opt-in.
+/// Add the stage's declared crossings to this step's. A non-empty set is the
+/// script's request to cross danger zones on this walk. The host decides
+/// permission (global override or this request) and keeps the survival check.
+/// The food guard is armed for the whole walk.
 fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
-    let has_stage_scope = stage.is_some();
     if let Some(stage) = stage {
         let duplicates = request
             .cross
@@ -32,9 +33,6 @@ fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
             }
             request.cross = cross.into_boxed_slice();
         }
-    }
-    if has_stage_scope || !request.cross.is_empty() {
-        request.options.allow_danger_zones = WalkBit::Forbid;
     }
     if !request.cross.is_empty() && !request.cure_guard {
         request.food_guard = true;
@@ -3215,8 +3213,8 @@ mod tests {
             assert!(request.allow.food);
             assert_eq!(
                 request.options.allow_danger_zones,
-                WalkBit::Forbid,
-                "a step grant must not permit unnamed danger zones"
+                WalkBit::Inherit,
+                "a step crossing is a request carried by `cross`; the option stays inherited"
             );
             assert!(!request.protect);
             drop(handle);
@@ -3251,9 +3249,6 @@ mod tests {
                         request.cross.len(),
                         usize::from(stage_cross) + usize::from(step_cross)
                     );
-                    if stage_cross || step_cross {
-                        assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
-                    }
                     drop(handle);
                 });
             }
@@ -3282,7 +3277,7 @@ mod tests {
                     .collect::<Vec<&str>>(),
                 ["step-zone", "declared-zone"]
             );
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Allow);
             assert!(request.protect && request.food_guard);
             let expected_allow = WalkAllow {
                 food: true,
@@ -3299,7 +3294,7 @@ mod tests {
                 panic!("the advisory must use the same stage declaration");
             };
             assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Inherit);
         });
     }
 
@@ -3316,14 +3311,14 @@ mod tests {
             prelude.cross = vec![Arc::from("prelude-zone")].into_boxed_slice();
             apply_stage_cross(&mut prelude, Some(&[]));
             assert_eq!(prelude.cross.as_ref(), &[Arc::<str>::from("prelude-zone")]);
-            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Inherit);
             let mut next_step = assessment_walk_request(cx.evidence());
             apply_stage_cross(&mut next_step, Some(&[]));
             assert!(
                 next_step.cross.is_empty(),
                 "a fresh step inherits no earlier grants"
             );
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Inherit);
             let mut ordinary = assessment_walk_request(cx.evidence());
             ordinary.options.allow_danger_zones = WalkBit::Allow;
             apply_stage_cross(&mut ordinary, None);
@@ -3332,7 +3327,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_declared_stage_forbids_zones_the_old_walk_bit_allowed() {
+    fn empty_declared_stage_leaves_the_walk_option_alone() {
         let mut ledger = None;
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             cx.stage_cross = Some(Arc::<[Arc<str>]>::from([]));
@@ -3346,13 +3341,10 @@ mod tests {
             assert!(request.cross.is_empty(), "the stage declares no zones");
             assert_eq!(
                 request.options.allow_danger_zones,
-                WalkBit::Forbid,
-                "an empty declaration must not inherit a previous allow"
+                WalkBit::Allow,
+                "a stage scope neither grants nor forbids danger zones"
             );
-            assert_eq!(
-                RiskPolicy::from(request.options.allow_danger_zones),
-                RiskPolicy::Avoid
-            );
+            assert!(!request.food_guard, "an empty declaration arms no guard");
             drop(handle);
         });
     }
