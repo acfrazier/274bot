@@ -215,16 +215,19 @@ impl SurvivalStep {
         }
         if let Some(hp) = hp {
             let bite = |schedule: &Schedule| {
-                policy::eat_choice(
+                policy::eat_choice_excluding(
                     &frame,
                     tables,
                     schedule,
-                    danger,
-                    poison_fire,
-                    hp,
-                    hp_max,
-                    tick,
-                    eat_floor,
+                    policy::EatInputs {
+                        danger,
+                        poison_fire,
+                        hp,
+                        hp_max,
+                        tick,
+                        eat_floor,
+                    },
+                    cx.protected_items(),
                 )
                 .and_then(|choice| eat_args(choice, frame.inventory))
             };
@@ -874,6 +877,41 @@ mod tests {
             used: true,
         }]);
         snapshot
+    }
+
+    #[test]
+    fn survival_step_does_not_eat_protected_ordinary_food() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let food = lobster();
+        let food_id = food.def.id;
+        let snapshot = low_hp_snapshot(vec![food]);
+        let condition = condition(5, PoisonState::Clear);
+        for protected in [false, true] {
+            let mut step = SurvivalStep::default();
+            let mut ledger = None;
+            let next = with_tick(&snapshot, &mut ledger, 20, |tick| {
+                tick.cx.condition = Some(condition);
+                tick.cx.cure_poison = CurePoison::Never;
+                if protected {
+                    tick.cx.protected_items = Some(std::sync::Arc::from([food_id]));
+                }
+                step.want(&tick.cx, Upkeep::floor(GATHERER_FLOOR))
+            });
+            if protected {
+                assert!(
+                    matches!(next, SurvivalWant::Need(SurvivalNeed::Food { .. })),
+                    "protected-only food is a supply need, not a bite"
+                );
+            } else {
+                assert!(
+                    matches!(next, SurvivalWant::Click(args)
+                        if matches!(args.kind, OneOpKind::Eat { item_id, .. } if item_id == food_id)),
+                    "the same unprotected food is an available bite"
+                );
+            }
+        }
     }
 
     fn record(step: &mut SurvivalStep, snapshot: &GameSnapshot, kind: OneOpKind, tick: u64) {

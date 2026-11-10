@@ -104,6 +104,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The Quester checks the next step's local damage hazard before preparing
   supplies. A needed bite takes priority over a stage-supply bank search.
   Step selection still checks current evidence after preparation.
+  Missing food can still be fetched before the step starts. Quester upkeep
+  also excludes protected quest food from ordinary eating.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.
