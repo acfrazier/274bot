@@ -5,6 +5,8 @@ fn explicit_289_inputs_select_game_data_and_config() {
     let inputs = parse_args([
         "--revision",
         "289",
+        "--engine",
+        "/fixture/289/engine",
         "--content",
         "/fixture/289/content",
         "--cache",
@@ -17,6 +19,7 @@ fn explicit_289_inputs_select_game_data_and_config() {
     .unwrap();
     assert_eq!(inputs.revision, 289);
     assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/289/content/maps"));
+    assert_eq!(inputs.engine_dir, PathBuf::from("/fixture/289/engine"));
     assert_eq!(
         inputs.doors_dir,
         PathBuf::from("/fixture/289/content/scripts/doors/configs")
@@ -38,6 +41,8 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
     let inputs = parse_args([
         "--revision",
         "274",
+        "--engine",
+        "/fixture/274/engine",
         "--content",
         "/fixture/274/content",
         "--cache",
@@ -48,6 +53,7 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
         "/tmp/274.navpack",
     ])
     .unwrap();
+    assert_eq!(inputs.engine_dir, PathBuf::from("/fixture/274/engine"));
     assert_eq!(
         inputs.config_jag,
         PathBuf::from("/fixture/274/engine/data/pack/config")
@@ -59,6 +65,8 @@ fn explicit_377_selects_its_own_cache_and_game_data() {
     let inputs = parse_args([
         "--revision",
         "377",
+        "--engine",
+        "/fixture/377/engine",
         "--content",
         "/fixture/377/content",
         "--cache",
@@ -72,6 +80,7 @@ fn explicit_377_selects_its_own_cache_and_game_data() {
     ])
     .unwrap();
     assert_eq!(inputs.revision, 377);
+    assert_eq!(inputs.engine_dir, PathBuf::from("/fixture/377/engine"));
     assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/377/content/maps"));
     assert_eq!(
         inputs.config_jag,
@@ -91,6 +100,8 @@ fn explicit_377_requires_an_engine_server_table_without_inferring_cache_layout()
     let inputs = [
         "--revision",
         "377",
+        "--engine",
+        "/engine",
         "--content",
         "/content",
         "--cache",
@@ -106,6 +117,8 @@ fn explicit_377_requires_an_engine_server_table_without_inferring_cache_layout()
         let error = parse_args([
             "--revision",
             revision,
+            "--engine",
+            "/engine",
             "--content",
             "/content",
             "--cache",
@@ -123,6 +136,8 @@ fn explicit_377_requires_an_engine_server_table_without_inferring_cache_layout()
     let error = parse_args([
         "--revision",
         "377",
+        "--engine",
+        "/engine",
         "--content",
         "/content",
         "--cache",
@@ -148,6 +163,8 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
     let complete = [
         "--revision",
         "289",
+        "--engine",
+        "/engine",
         "--content",
         "/content",
         "--cache",
@@ -164,6 +181,8 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
         vec![
             "--revision",
             "378",
+            "--engine",
+            "/engine",
             "--content",
             "/content",
             "--cache",
@@ -179,6 +198,8 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
             "274",
             "--revision",
             "289",
+            "--engine",
+            "/engine",
             "--content",
             "/content",
             "--cache",
@@ -191,6 +212,46 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
     ] {
         assert!(parse_args(args).is_err());
     }
+}
+
+#[test]
+fn explicit_mode_requires_engine_and_accepts_an_optional_shadow_report() {
+    let without_engine = parse_args([
+        "--revision",
+        "289",
+        "--content",
+        "/content",
+        "--cache",
+        "/cache",
+        "--game-data-dir",
+        "/game-data",
+        "--out",
+        "/tmp/x",
+    ])
+    .unwrap_err();
+    assert!(without_engine.contains("requires --engine"), "{without_engine}");
+
+    let inputs = parse_args([
+        "--revision",
+        "289",
+        "--engine",
+        "/engine",
+        "--content",
+        "/content",
+        "--cache",
+        "/cache",
+        "--game-data-dir",
+        "/game-data",
+        "--out",
+        "/tmp/x",
+        "--nav-shadow",
+        "/tmp/nav-shadow.json",
+    ])
+    .unwrap();
+    assert_eq!(
+        inputs.nav_shadow_out,
+        Some(PathBuf::from("/tmp/nav-shadow.json"))
+    );
 }
 
 #[test]
@@ -220,6 +281,8 @@ fn cli_bake_rejects_a_missing_door_config_before_baking() {
     let inputs = parse_args(vec![
         "--revision".to_owned(),
         "274".to_owned(),
+        "--engine".to_owned(),
+        root.join("engine").to_string_lossy().into_owned(),
         "--content".to_owned(),
         root.join("content").to_string_lossy().into_owned(),
         "--cache".to_owned(),

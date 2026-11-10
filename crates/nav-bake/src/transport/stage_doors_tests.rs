@@ -1755,6 +1755,7 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         &ObservableGates::from_content(fx.path(), None),
         &mut audit,
         None,
+        None,
     );
     assert_eq!(
         graph.edges.len(),

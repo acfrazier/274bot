@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
-use client::dash3d::{CollisionFlag, LocShape};
+use client::config::LocType;
+use rs2vm::profile::EngineProfile;
+use rs2vm::program::{LoadError as ProgramLoadError, Program};
 use nav_planner::collision::WorldCollision;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
@@ -26,6 +28,10 @@ mod magic_guild;
 mod membergate;
 mod members_guard;
 mod npc_hops;
+mod nav_world;
+mod nav_shadow;
+#[cfg(test)]
+mod rs2vm_engine_oracles;
 mod observable;
 mod quest_doors;
 mod ranging_guild;
@@ -42,6 +48,55 @@ mod vertical;
 mod webs;
 mod wilderness;
 mod zanaris;
+pub(crate) use nav_shadow::NavShadow;
+
+/// Failures while loading or serializing an optional interpreter shadow.
+#[derive(Debug, thiserror::Error)]
+pub enum NavShadowError {
+    /// The engine bytecode or config input failed to load.
+    #[error("load interpreter program: {0}")]
+    Program(#[source] ProgramLoadError),
+    /// The map data could not form the shadow's base world.
+    #[error("load shadow navigation world: {detail}")]
+    World { detail: String },
+    /// The shadow result could not be encoded as JSON.
+    #[error("serialize nav-shadow report: {0}")]
+    Serialize(#[source] serde_json::Error),
+    /// The requested engine revision has no interpreter profile.
+    #[error("unsupported nav-shadow revision {revision}")]
+    UnsupportedRevision { revision: u16 },
+}
+
+/// Load the interpreter program and immutable map world for one shadow run.
+pub(crate) fn load_nav_shadow(
+    engine: &Path,
+    content_root: &Path,
+    maps_dir: &Path,
+    loc_types: &[LocType],
+    client_varbits: &[u8],
+    revision: u16,
+) -> Result<NavShadow, NavShadowError> {
+    let program =
+        Program::load(engine, content_root, client_varbits).map_err(NavShadowError::Program)?;
+    let world = nav_world::NavWorld::load(maps_dir, content_root, loc_types).map_err(|source| {
+        NavShadowError::World {
+            detail: source.to_string(),
+        }
+    })?;
+    let profile = match revision {
+        274 => EngineProfile::R274,
+        289 => EngineProfile::R289,
+        377 => EngineProfile::R377,
+        revision => return Err(NavShadowError::UnsupportedRevision { revision }),
+    };
+    Ok(NavShadow::new(
+        program,
+        world,
+        profile,
+        revision,
+        content_root,
+    ))
+}
 
 use brass_key::*;
 use condparse::{
@@ -96,9 +151,9 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None, None).0
 }
-/// The graph and accounting for source gates the live snapshot cannot prove.
+/// Derive the graph, gate accounting, and optional non-mutating interpreter report.
 pub(crate) fn derive_transports_for_bake(
     content_root: &Path,
     loc_defs: &LocDefs,
@@ -107,7 +162,9 @@ pub(crate) fn derive_transports_for_bake(
     parsed_door_configs: &[PathBuf],
     quests: Option<&QuestSource<'_>>,
     game_data: &api::game_data::SelectedGameData,
-) -> (TransportGraph, VarpGateAudit) {
+    shadow: Option<NavShadow>,
+) -> Result<(TransportGraph, VarpGateAudit, Option<String>), NavShadowError> {
+    let mut shadow = shadow;
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
         loc_defs,
@@ -115,9 +172,14 @@ pub(crate) fn derive_transports_for_bake(
         Some((configured_door_ids, parsed_door_configs)),
         quests,
         Some(game_data),
+        shadow.as_mut(),
     );
     report(content_root, &graph, &skipped);
-    (graph, audit)
+    let shadow_report = shadow
+        .map(NavShadow::finish)
+        .transpose()
+        .map_err(NavShadowError::Serialize)?;
+    Ok((graph, audit, shadow_report))
 }
 
 #[cfg(test)]
@@ -127,7 +189,7 @@ fn derive_transports_with_skips(
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
     let (graph, skipped, _) =
-        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None);
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None, None);
     (graph, skipped)
 }
 
@@ -138,6 +200,7 @@ fn derive_transports_with_audit(
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
     game_data: Option<&api::game_data::SelectedGameData>,
+    mut shadow: Option<&mut NavShadow>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
@@ -287,6 +350,7 @@ fn derive_transports_with_audit(
         &gates,
         &mut audit,
         quests,
+        shadow.as_deref_mut(),
     );
     scripted_climb_edges(
         content_root,

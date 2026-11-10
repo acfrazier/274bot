@@ -861,19 +861,19 @@ fn header_params(after: &str) -> (Vec<String>, &str) {
 
 /// Requirements an evaluated path reads (see the module comment).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Needs {
-    varps: Vec<(i32, i32)>,
-    skills: Vec<(i32, i32)>,
-    items: Vec<(i32, i32)>,
-    worn: Vec<(i32, i32)>,
-    quests: Vec<api::selected::QuestGate>,
-    forbidden_held: Vec<i32>,
-    forbidden_worn: Vec<i32>,
-    members: bool,
+pub(super) struct Needs {
+    pub(super) varps: Vec<(i32, i32)>,
+    pub(super) skills: Vec<(i32, i32)>,
+    pub(super) items: Vec<(i32, i32)>,
+    pub(super) worn: Vec<(i32, i32)>,
+    pub(super) quests: Vec<api::selected::QuestGate>,
+    pub(super) forbidden_held: Vec<i32>,
+    pub(super) forbidden_worn: Vec<i32>,
+    pub(super) members: bool,
 }
 
 impl Needs {
-    fn merge(&mut self, other: Needs) {
+    pub(super) fn merge(&mut self, other: Needs) {
         self.varps.extend(other.varps);
         self.skills.extend(other.skills);
         self.items.extend(other.items);
@@ -1716,7 +1716,11 @@ pub(super) fn stage_door_edges(
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
     quests: Option<&QuestSource<'_>>,
+    mut shadow: Option<&mut super::nav_shadow::NavShadow>,
 ) {
+    if let Some(shadow) = shadow.as_deref_mut() {
+        shadow.begin_stage();
+    }
     let src = Sources::read(content_root, ids, quests);
     let motion_facts = forced::forced_move_edges(
         content_root,
@@ -1743,6 +1747,9 @@ pub(super) fn stage_door_edges(
             observable,
             audit,
         });
+        if let Some(shadow) = shadow.as_deref_mut() {
+            shadow.run_auxiliary_entries(content_root, collision, observable);
+        }
         return;
     }
     let facts = loc_config_facts(content_root, ids);
@@ -1772,13 +1779,23 @@ pub(super) fn stage_door_edges(
     let mut loc_ids: Vec<i32> = positions.keys().copied().collect();
     loc_ids.sort_unstable();
     for id in loc_ids {
-        if covered.contains(&id)
-            || names
+        let machine_only = names.get(&id).is_some_and(|loc_names| {
+            loc_names.iter().any(|name| {
+                [
+                    "chefdoor",
+                    "crafting_guild_door",
+                    "loc_2025",
+                    "mournerstewfence",
+                ]
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            })
+        });
+        let stage_owned = !covered.contains(&id)
+            && !machine_only
+            && !names
                 .get(&id)
-                .is_some_and(|ns| ns.iter().any(|n| vertical.contains(*n)))
-        {
-            continue;
-        }
+                .is_some_and(|ns| ns.iter().any(|name| vertical.contains(*name)));
         let placements = &positions[&id];
         if !placements.iter().any(|p| placement_role(p).is_some()) {
             continue;
@@ -1812,6 +1829,8 @@ pub(super) fn stage_door_edges(
         let member_path = src.has_member_reads(handler);
         let emitted = graph.edges.len();
         let mut proven = false;
+        let legacy_handler =
+            format!("stage-door text evaluator ({} statements)", handler.body.len());
         for p in placements {
             let at = WorldTile {
                 x: p.x,
@@ -1839,8 +1858,6 @@ pub(super) fn stage_door_edges(
             match placement_role(p) {
                 Some(Role::Wall(angle_dir)) => {
                     for dir in [angle_dir, opposite(angle_dir)] {
-                        // The stand for the crossing along the angle is the
-                        // loc's own tile; the reverse starts across the wall.
                         let stand = if dir == angle_dir {
                             at
                         } else {
@@ -1851,63 +1868,111 @@ pub(super) fn stage_door_edges(
                                 level: at.level,
                             }
                         };
-                        let Some((Arrival::Door(leaf), needs, _)) = eval(Some(stand)) else {
-                            continue;
-                        };
-                        let leaf = match leaf {
-                            LocRef::Id(leaf) => Some(leaf),
-                            LocRef::NextStage => stage,
-                            LocRef::Itself => None,
+                        let stand_edge_start = graph.edges.len();
+                        if stage_owned {
+                            if let Some((Arrival::Door(leaf), needs, _)) = eval(Some(stand)) {
+                                let leaf = match leaf {
+                                    LocRef::Id(leaf) => Some(leaf),
+                                    LocRef::NextStage => stage,
+                                    LocRef::Itself => None,
+                                }
+                                .filter(|&leaf| leaf != id);
+                                if let Some(to) = straight_door_landing(at, angle_dir, dir, collision)
+                                {
+                                    let mut edge = gated_edge(TransportKind::Door, id, at, to, needs);
+                                    edge.dir = Some(dir);
+                                    edge.open_loc_id = leaf;
+                                    proven = true;
+                                    if observable.admit_edge(graph, edge, audit) && member_path {
+                                        audit.record_member_path(
+                                            graph.edges.last().expect("admitted edge"),
+                                        );
+                                    }
+                                }
+                            }
                         }
-                        .filter(|&leaf| leaf != id);
-                        let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
-                            continue;
+                        let baseline = if stage_owned {
+                            &graph.edges[stand_edge_start..]
+                        } else {
+                            &[]
                         };
-                        let mut edge = gated_edge(TransportKind::Door, id, at, to, needs);
-                        edge.dir = Some(dir);
-                        edge.open_loc_id = leaf;
-                        proven = true;
-                        if observable.admit_edge(graph, edge, audit) && member_path {
-                            audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                        if let Some(shadow) = shadow.as_deref_mut() {
+                            shadow.run_candidate(
+                                id,
+                                p,
+                                "wall",
+                                Some(dir),
+                                Some(stand),
+                                stage_owned,
+                                &legacy_handler,
+                                baseline,
+                                collision,
+                                observable,
+                            );
                         }
                     }
                 }
                 Some(Role::Ladder) => {
-                    let Some((Arrival::Climb { to, player_delta }, needs, relative_landing_safe)) =
-                        eval(None)
-                    else {
-                        continue;
-                    };
-                    // `~climb_ladder`'s price is the measured ladders.rs2
-                    // one: `ladder_cellar` runs the same
-                    // `p_arrivedelay; ~climb_ladder(movecoord(coord(), 0, 0, 6400), …)`.
-                    let Some(extra) = extra_ticks("ladder_cellar") else {
-                        continue;
-                    };
-                    let Some(ticks) = edge_ticks(extra) else {
-                        continue;
-                    };
-                    if !in_world_box(&to) {
-                        continue;
+                    let stand_edge_start = graph.edges.len();
+                    if stage_owned {
+                        if let Some((
+                            Arrival::Climb {
+                                to,
+                                player_delta,
+                            },
+                            needs,
+                            relative_landing_safe,
+                        )) = eval(None)
+                        {
+                            if let Some(ticks) =
+                                extra_ticks("ladder_cellar").and_then(edge_ticks)
+                            {
+                                if in_world_box(&to) {
+                                    let relative =
+                                        if needs == Needs::default() && relative_landing_safe {
+                                            player_delta
+                                        } else {
+                                            None
+                                        };
+                                    let mut edge =
+                                        gated_edge(TransportKind::Ladder, id, at, to, needs);
+                                    edge.player_delta = relative;
+                                    edge.ticks = ticks;
+                                    proven = true;
+                                    if observable.admit_edge(graph, edge, audit) && member_path {
+                                        audit.record_member_path(
+                                            graph.edges.last().expect("admitted edge"),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
-                    let relative = if needs == Needs::default() && relative_landing_safe {
-                        player_delta
+                    let baseline = if stage_owned {
+                        &graph.edges[stand_edge_start..]
                     } else {
-                        None
+                        &[]
                     };
-                    let mut edge = gated_edge(TransportKind::Ladder, id, at, to, needs);
-                    // Guarded, dialog-driven, or side-effectful handlers
-                    // retain their anchor landing; only unguarded direct
-                    // `coord` climbs use the existing relative wire mode.
-                    edge.player_delta = relative;
-                    edge.ticks = ticks;
-                    proven = true;
-                    if observable.admit_edge(graph, edge, audit) && member_path {
-                        audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                    if let Some(shadow) = shadow.as_deref_mut() {
+                        shadow.run_candidate(
+                            id,
+                            p,
+                            "ladder",
+                            None,
+                            None,
+                            stage_owned,
+                            &legacy_handler,
+                            baseline,
+                            collision,
+                            observable,
+                        );
                     }
                 }
                 None => {}
             }
+        }
+        if !stage_owned {
+            continue;
         }
         if !proven {
             bump(skipped, SKIP_STAGE_DOOR_UNPROVEN, 1);
@@ -1928,6 +1993,9 @@ pub(super) fn stage_door_edges(
         observable,
         audit,
     });
+    if let Some(shadow) = shadow.as_deref_mut() {
+        shadow.run_auxiliary_entries(content_root, collision, observable);
+    }
 }
 
 /// Loc names with an `[oploc…]` block in `ladders+stairs/scripts/
@@ -1969,7 +2037,7 @@ fn placement_role(p: &Placement) -> Option<Role> {
 /// An edge carrying the evaluated requirements (option 1, one tick; the
 /// caller fills `dir`/`open_loc_id`/`ticks`). Every worn condition on this
 /// path is conjunctive, separate from the graph's any-blade worn gates.
-fn gated_edge(
+pub(super) fn gated_edge(
     kind: TransportKind,
     id: i32,
     at: WorldTile,

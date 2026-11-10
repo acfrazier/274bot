@@ -134,11 +134,39 @@ its default sidecars:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 289 \
+  --engine "$GAME_DATA_289_ENGINE" \
   --content "$GAME_DATA_289_CONTENT" \
   --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \
   --out target/local-data/nav/289/274bot.navpack
 ```
+
+
+Add `--nav-shadow REPORT_JSON` to write the optional interpreter report. The
+report records per-entry machine results, edge differences, and measured
+limits. It does not change the baked pack or its sidecars.
+
+Measure process peak resident bytes separately, with and without this option.
+The report's byte counts cover each machine entry, not the whole bake process.
+
+The real-engine parity tests compare arithmetic, loc life cycles, and zone list
+order with the selected 274 and 289 engines. These tests use the engine's real
+`World`, `Zone`, `Loc`, script state, and command handlers. They do not start a
+server tick or listener. Each engine process has a 120-second deadline.
+
+Select the same input roots used for generation:
+
+```bash
+RS2VM_ENGINE_274="$GAME_DATA_274_ENGINE" \
+RS2VM_CONTENT_274="$GAME_DATA_274_CONTENT" \
+RS2VM_ENGINE_289="$GAME_DATA_289_ENGINE" \
+RS2VM_CONTENT_289="$GAME_DATA_289_CONTENT" \
+RS2VM_BUN="$(command -v bun)" \
+cargo test --locked -p nav-bake rs2vm_engine_oracles
+```
+
+Missing local assets fail these tests. Only hosted GitHub Actions can skip them
+when the inputs are absent.
 
 The complete local navigation payloads live under
 `target/local-data/nav/<revision>/`. Regenerate both game data and navigation

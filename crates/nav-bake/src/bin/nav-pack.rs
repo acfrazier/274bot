@@ -7,9 +7,10 @@
 //! schema; it does not authenticate local content or cache files.
 //!
 //! Bake with explicit inputs:
-//! `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
-//! --game-data-dir GAME_DATA_DIR --out NAV_PACK [--flags-out NAV_FLAGS]
-//! [--server-loc-dat SERVER_LOC_DAT]`.
+//! `nav-pack --revision 274|289|377 --engine ENGINE_DIR --content CONTENT_DIR
+//! --cache CACHE_DIR --game-data-dir GAME_DATA_DIR --out NAV_PACK
+//! [--flags-out NAV_FLAGS] [--server-loc-dat SERVER_LOC_DAT]
+//! [--nav-shadow REPORT_JSON]`.
 //! Revision 377 requires `--server-loc-dat` for the engine's packed
 //! `server/loc.dat`; the other revisions do not accept that option.
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
@@ -26,6 +27,8 @@
 //! `BadVersion`. The derivation lives in [`nav_bake::bake`], shared with the
 //! ordinary application build. Export crossing facts with
 //! `nav-pack --export-crossings PACK --out JSON`.
+//! The optional `--nav-shadow` report runs the interpreter on real placements.
+//! It does not change the graph, pack, or sidecars.
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -274,8 +277,10 @@ struct BakeInputs {
     maps_dir: PathBuf,
     doors_dir: PathBuf,
     config_jag: PathBuf,
+    engine_dir: PathBuf,
     game_data_dir: PathBuf,
     server_loc_dat_377: Option<PathBuf>,
+    nav_shadow_out: Option<PathBuf>,
     out: PathBuf,
     flags_out: PathBuf,
     reach_out: PathBuf,
@@ -287,8 +292,10 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let mut revision = None;
     let mut content = None;
     let mut cache_dir = None;
+    let mut engine_dir = None;
     let mut game_data_dir = None;
     let mut server_loc_dat_377 = None;
+    let mut nav_shadow_out = None;
     let mut out = None;
     let mut explicit_flags = None;
     let mut it = args.iter();
@@ -317,18 +324,22 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             }
             "--content" if content.is_none() => content = Some(PathBuf::from(value)),
             "--cache" if cache_dir.is_none() => cache_dir = Some(PathBuf::from(value)),
+            "--engine" if engine_dir.is_none() => engine_dir = Some(PathBuf::from(value)),
             "--game-data-dir" if game_data_dir.is_none() => {
                 game_data_dir = Some(PathBuf::from(value))
             }
             "--server-loc-dat" if server_loc_dat_377.is_none() => {
                 server_loc_dat_377 = Some(PathBuf::from(value));
             }
+            "--nav-shadow" if nav_shadow_out.is_none() => {
+                nav_shadow_out = Some(PathBuf::from(value));
+            }
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--game-data-dir" | "--out" | "--flags-out"
-            | "--server-loc-dat" => {
+            "--content" | "--cache" | "--engine" | "--game-data-dir" | "--out"
+            | "--flags-out" | "--server-loc-dat" | "--nav-shadow" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -340,6 +351,8 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         content.ok_or_else(|| "explicit mode requires --content CONTENT_DIR".to_string())?;
     let cache_dir =
         cache_dir.ok_or_else(|| "explicit mode requires --cache CACHE_DIR".to_string())?;
+    let engine_dir =
+        engine_dir.ok_or_else(|| "explicit mode requires --engine ENGINE_DIR".to_string())?;
     let game_data_dir = game_data_dir
         .ok_or_else(|| "explicit mode requires --game-data-dir GAME_DATA_DIR".to_string())?;
     let out = out.ok_or_else(|| "explicit mode requires --out NAV_PACK".to_string())?;
@@ -361,8 +374,10 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         maps_dir: inputs.maps_dir,
         doors_dir: inputs.doors_dir,
         config_jag,
+        engine_dir,
         game_data_dir,
         server_loc_dat_377,
+        nav_shadow_out,
         out,
         flags_out,
         reach_out,
@@ -419,6 +434,8 @@ fn bake_world(inputs: &BakeInputs, gates: &Path) -> Result<BakedNav, nav_bake::G
         doors_dir: &inputs.doors_dir,
         gates,
         config_jag: &inputs.config_jag,
+        engine_dir: &inputs.engine_dir,
+        nav_shadow: inputs.nav_shadow_out.is_some(),
         server_loc_dat_377: inputs.server_loc_dat_377.as_deref(),
         require_all_door_configs: true,
     })
@@ -446,6 +463,23 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
             eprintln!("nav-pack: write {}: {e}", inputs.pois_out.display());
             return ExitCode::FAILURE;
         }
+    }
+    match (&inputs.nav_shadow_out, &baked.nav_shadow) {
+        (Some(path), Some(report)) => {
+            if let Err(e) = std::fs::write(path, report) {
+                eprintln!("nav-pack: write {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+        (Some(path), None) => {
+            eprintln!("nav-pack: requested nav-shadow report {} was not produced", path.display());
+            return ExitCode::FAILURE;
+        }
+        (None, Some(_)) => {
+            eprintln!("nav-pack: received an unrequested nav-shadow report");
+            return ExitCode::FAILURE;
+        }
+        (None, None) => {}
     }
     let summary = baked.summary;
     eprintln!(

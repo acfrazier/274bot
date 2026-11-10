@@ -219,6 +219,10 @@ impl ObservableGates {
         self.journal.completed_name(varp, completion)
     }
 
+    pub(super) fn stage_window(&self, varp_id: i32) -> Option<&api::selected::StageWindow> {
+        self.stage_windows.get(&varp_id)
+    }
+
     pub(super) fn admit_edge(
         &self,
         graph: &mut TransportGraph,
