@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::config::LocType;
-use rs2vm::profile::EngineProfile;
-use rs2vm::program::{LoadError as ProgramLoadError, Program};
 use nav_planner::collision::WorldCollision;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
     CELLAR_SHIFT, SHILO_CART_ROUTES, WEB_USE_OPTION,
 };
+use rs2vm::profile::EngineProfile;
+use rs2vm::program::{LoadError as ProgramLoadError, Program};
 
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 
@@ -27,15 +27,15 @@ mod levers;
 mod magic_guild;
 mod membergate;
 mod members_guard;
-mod npc_hops;
-mod nav_world;
 mod nav_shadow;
-#[cfg(test)]
-mod rs2vm_engine_oracles;
+mod nav_world;
+mod npc_hops;
 mod observable;
 mod quest_doors;
 mod ranging_guild;
 mod rs2_syntax;
+#[cfg(test)]
+mod rs2vm_engine_oracles;
 mod script_text;
 mod scripted_doors;
 mod shortcuts;

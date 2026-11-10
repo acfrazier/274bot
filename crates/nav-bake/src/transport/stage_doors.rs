@@ -1829,8 +1829,10 @@ pub(super) fn stage_door_edges(
         let member_path = src.has_member_reads(handler);
         let emitted = graph.edges.len();
         let mut proven = false;
-        let legacy_handler =
-            format!("stage-door text evaluator ({} statements)", handler.body.len());
+        let legacy_handler = format!(
+            "stage-door text evaluator ({} statements)",
+            handler.body.len()
+        );
         for p in placements {
             let at = WorldTile {
                 x: p.x,
@@ -1877,9 +1879,11 @@ pub(super) fn stage_door_edges(
                                     LocRef::Itself => None,
                                 }
                                 .filter(|&leaf| leaf != id);
-                                if let Some(to) = straight_door_landing(at, angle_dir, dir, collision)
+                                if let Some(to) =
+                                    straight_door_landing(at, angle_dir, dir, collision)
                                 {
-                                    let mut edge = gated_edge(TransportKind::Door, id, at, to, needs);
+                                    let mut edge =
+                                        gated_edge(TransportKind::Door, id, at, to, needs);
                                     edge.dir = Some(dir);
                                     edge.open_loc_id = leaf;
                                     proven = true;
@@ -1916,17 +1920,12 @@ pub(super) fn stage_door_edges(
                     let stand_edge_start = graph.edges.len();
                     if stage_owned {
                         if let Some((
-                            Arrival::Climb {
-                                to,
-                                player_delta,
-                            },
+                            Arrival::Climb { to, player_delta },
                             needs,
                             relative_landing_safe,
                         )) = eval(None)
                         {
-                            if let Some(ticks) =
-                                extra_ticks("ladder_cellar").and_then(edge_ticks)
-                            {
+                            if let Some(ticks) = extra_ticks("ladder_cellar").and_then(edge_ticks) {
                                 if in_world_box(&to) {
                                     let relative =
                                         if needs == Needs::default() && relative_landing_safe {

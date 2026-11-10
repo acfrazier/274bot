@@ -1194,19 +1194,18 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
 
     // Client NPC/loc records continue to supply the navpois surface; 377
     // collision LocDefs use the engine's server-then-client LocType decode.
-    let (loc_defs, npc_types, loc_types, client_varbits) =
-        match std::fs::read(request.config_jag) {
-            Ok(bytes) => {
-                let jag = JagFile::new(bytes);
-                let client_varbits = if request.nav_shadow {
-                    Some(jag.read("varbit.dat").ok_or_else(|| {
-                        crate::GenerationError::NavShadowVarbitsMissing {
-                            path: request.config_jag.to_path_buf(),
-                        }
-                    })?)
-                } else {
-                    None
-                };
+    let (loc_defs, npc_types, loc_types, client_varbits) = match std::fs::read(request.config_jag) {
+        Ok(bytes) => {
+            let jag = JagFile::new(bytes);
+            let client_varbits = if request.nav_shadow {
+                Some(jag.read("varbit.dat").ok_or_else(|| {
+                    crate::GenerationError::NavShadowVarbitsMissing {
+                        path: request.config_jag.to_path_buf(),
+                    }
+                })?)
+            } else {
+                None
+            };
             let mut engine_loc_defs = None;
             let (npcs, locs) = if let Some(server_loc_dat_path) = server_loc_dat_377 {
                 let cache =

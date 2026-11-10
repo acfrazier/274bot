@@ -53,9 +53,15 @@ fn local_pack_shadow_paths_match_content_and_leave_bake_outputs_unchanged() {
         assert_eq!(baseline.pack, shadow.pack, "revision {revision} pack bytes");
         assert_eq!(baseline.flags, shadow.flags, "revision {revision} flags");
         assert_eq!(baseline.reach, shadow.reach, "revision {revision} reach");
-        assert_eq!(baseline.canlight, shadow.canlight, "revision {revision} canlight");
+        assert_eq!(
+            baseline.canlight, shadow.canlight,
+            "revision {revision} canlight"
+        );
         assert_eq!(baseline.pois, shadow.pois, "revision {revision} pois");
-        assert_eq!(baseline.summary, shadow.summary, "revision {revision} summary");
+        assert_eq!(
+            baseline.summary, shadow.summary,
+            "revision {revision} summary"
+        );
         assert_eq!(baseline.notes, shadow.notes, "revision {revision} notes");
         assert!(baseline.nav_shadow.is_none());
 
@@ -85,7 +91,10 @@ fn assert_report_limits(report: &Value) {
             .saturating_mul(4)
             .checked_next_power_of_two()
             .unwrap_or(u64::MAX);
-        assert!(percentile_99 <= maximum, "{name} percentile exceeds maximum");
+        assert!(
+            percentile_99 <= maximum,
+            "{name} percentile exceeds maximum"
+        );
         assert_eq!(
             summary["recommended_limit"].as_u64(),
             Some(expected_limit),
@@ -93,9 +102,9 @@ fn assert_report_limits(report: &Value) {
         );
         let largest = summary["ten_largest"].as_array().expect("largest entries");
         assert!(largest.len() <= 10);
-        assert!(largest.windows(2).all(|pair| {
-            pair[0]["value"].as_u64() >= pair[1]["value"].as_u64()
-        }));
+        assert!(largest
+            .windows(2)
+            .all(|pair| { pair[0]["value"].as_u64() >= pair[1]["value"].as_u64() }));
     }
 }
 
@@ -113,10 +122,12 @@ fn assert_transfer_audit(report: &Value, revision: u16) {
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        if candidates.iter().any(|candidate| candidate["covered"] == true) {
+        if candidates
+            .iter()
+            .any(|candidate| candidate["covered"] == true)
+        {
             assert_eq!(
-                entry["execution"]["transfer_assertions"]["all_hold"],
-                true,
+                entry["execution"]["transfer_assertions"]["all_hold"], true,
                 "revision {revision}, entry {:?} has covered candidates",
                 entry["handler_name"]
             );
@@ -135,7 +146,10 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
     for name in required_machine_only {
         let id = loc_id(&names, name).unwrap_or_else(|| panic!("{name} loc id is absent"));
         let placed = entries_for_loc(report, id);
-        assert!(!placed.is_empty(), "revision {revision} has no {name} entry");
+        assert!(
+            !placed.is_empty(),
+            "revision {revision} has no {name} entry"
+        );
         assert!(
             placed.iter().all(|entry| entry["stage_owned"] == false),
             "{name} is machine-only and is not cut over"
@@ -146,7 +160,11 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
         );
     }
 
-    assert_chefdoor(report, loc_id(&names, "chefdoor").expect("chefdoor loc id"), revision);
+    assert_chefdoor(
+        report,
+        loc_id(&names, "chefdoor").expect("chefdoor loc id"),
+        revision,
+    );
     assert_crafting_guild(
         report,
         loc_id(&names, "crafting_guild_door").expect("crafting guild loc id"),
@@ -174,7 +192,10 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
         revision,
     );
     if revision == 289 {
-        assert_misc_ulby(report, loc_id(&names, "misc_ulby_throneroomdoor").expect("289 Ulby door"));
+        assert_misc_ulby(
+            report,
+            loc_id(&names, "misc_ulby_throneroomdoor").expect("289 Ulby door"),
+        );
     }
     assert_climb_ladder(report, revision);
 }
@@ -186,7 +207,10 @@ fn loc_id(names: &std::collections::HashMap<String, i32>, wanted: &str) -> Optio
 }
 
 fn entries(report: &Value) -> &[Value] {
-    report["entries"].as_array().map(Vec::as_slice).unwrap_or(&[])
+    report["entries"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 fn entries_for_loc(report: &Value, loc_type: i32) -> Vec<&Value> {
@@ -281,7 +305,10 @@ fn has_condition_truth(path: &Value, predicate: &str, truth: bool) -> bool {
 
 fn assert_chefdoor(report: &Value, loc_type: i32, revision: u16) {
     let groups = paired_groups(entries_for_loc(report, loc_type));
-    assert!(!groups.is_empty(), "revision {revision} chefdoor has no paired stands");
+    assert!(
+        !groups.is_empty(),
+        "revision {revision} chefdoor has no paired stands"
+    );
     let mut door_stand_finished = false;
     let mut far_stand_crossed = false;
     let mut stat_refusal = false;
@@ -299,7 +326,10 @@ fn assert_chefdoor(report: &Value, loc_type: i32, revision: u16) {
         if let Some(entry) = door {
             let finished: Vec<_> = paths(entry)
                 .iter()
-                .filter(|path| path["end"] == "Finished" && path["conditions"].as_array().is_some_and(Vec::is_empty))
+                .filter(|path| {
+                    path["end"] == "Finished"
+                        && path["conditions"].as_array().is_some_and(Vec::is_empty)
+                })
                 .collect();
             if !finished.is_empty() {
                 assert_eq!(finished.len(), 1, "door-tile chefdoor path count");
@@ -320,13 +350,16 @@ fn assert_chefdoor(report: &Value, loc_type: i32, revision: u16) {
             }
             assert_eq!(crossing_paths.len(), 1, "far-side chefdoor crossing count");
             let (crossing, stat, worn) = crossing_paths[0];
-            let has_stat_refusal = paths(entry).iter().any(|path| {
-                !path_has_move(path) && has_condition_truth(path, &stat.0, !stat.1)
-            });
-            let has_worn_refusal = paths(entry).iter().any(|path| {
-                !path_has_move(path) && has_condition_truth(path, &worn.0, !worn.1)
-            });
-            assert!(has_stat_refusal, "chefdoor lacks the cooking-threshold refusal");
+            let has_stat_refusal = paths(entry)
+                .iter()
+                .any(|path| !path_has_move(path) && has_condition_truth(path, &stat.0, !stat.1));
+            let has_worn_refusal = paths(entry)
+                .iter()
+                .any(|path| !path_has_move(path) && has_condition_truth(path, &worn.0, !worn.1));
+            assert!(
+                has_stat_refusal,
+                "chefdoor lacks the cooking-threshold refusal"
+            );
             assert!(has_worn_refusal, "chefdoor lacks the worn-hat refusal");
             let door_landing = door.and_then(|entry| tile_key(&entry["stand"]));
             assert!(
@@ -341,10 +374,22 @@ fn assert_chefdoor(report: &Value, loc_type: i32, revision: u16) {
         }
     }
 
-    assert!(door_stand_finished, "revision {revision} chefdoor door-tile path missing");
-    assert!(far_stand_crossed, "revision {revision} chefdoor far-tile crossing missing");
-    assert!(stat_refusal, "revision {revision} chefdoor stat refusal missing");
-    assert!(worn_refusal, "revision {revision} chefdoor worn refusal missing");
+    assert!(
+        door_stand_finished,
+        "revision {revision} chefdoor door-tile path missing"
+    );
+    assert!(
+        far_stand_crossed,
+        "revision {revision} chefdoor far-tile crossing missing"
+    );
+    assert!(
+        stat_refusal,
+        "revision {revision} chefdoor stat refusal missing"
+    );
+    assert!(
+        worn_refusal,
+        "revision {revision} chefdoor worn refusal missing"
+    );
 }
 
 fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
@@ -372,7 +417,9 @@ fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
                 "cancel transition leaves npcchat open"
             );
             assert!(
-                path["modal"].as_str().is_some_and(|modal| modal.contains("chat: None")),
+                path["modal"]
+                    .as_str()
+                    .is_some_and(|modal| modal.contains("chat: None")),
                 "input pause path ends with chat still open"
             );
             assert!(
@@ -385,7 +432,10 @@ fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
             tested = true;
         }
     }
-    assert!(tested, "revision {revision} crafting guild input path missing");
+    assert!(
+        tested,
+        "revision {revision} crafting guild input path missing"
+    );
 }
 
 fn site_names_npcchat(site: &Value) -> bool {
@@ -397,7 +447,10 @@ fn site_names_npcchat(site: &Value) -> bool {
 
 fn assert_mourner_fence(report: &Value, loc_type: i32, revision: u16) {
     let groups = paired_groups(entries_for_loc(report, loc_type));
-    assert!(!groups.is_empty(), "revision {revision} mourner fence has no paired stands");
+    assert!(
+        !groups.is_empty(),
+        "revision {revision} mourner fence has no paired stands"
+    );
     for group in groups {
         for entry in &group {
             let stand = tile_key(&entry["stand"]).expect("wall stand tile");
@@ -429,7 +482,10 @@ fn assert_mourner_fence(report: &Value, loc_type: i32, revision: u16) {
 
 fn assert_bkfortress_door(report: &Value, loc_type: i32, revision: u16) {
     let groups = paired_groups(entries_for_loc(report, loc_type));
-    assert!(!groups.is_empty(), "revision {revision} black-knight door has no paired stands");
+    assert!(
+        !groups.is_empty(),
+        "revision {revision} black-knight door has no paired stands"
+    );
     for group in groups {
         for entry in group {
             assert!(
@@ -481,8 +537,14 @@ fn entries_with_script(report: &Value, wanted: &str) -> Vec<&Value> {
 }
 
 fn assert_double_door(report: &Value, revision: u16) {
-    let groups = paired_groups(entries_with_script(report, "_double_door_open_and_close_left"));
-    assert!(!groups.is_empty(), "revision {revision} double-door helper has no paired stands");
+    let groups = paired_groups(entries_with_script(
+        report,
+        "_double_door_open_and_close_left",
+    ));
+    assert!(
+        !groups.is_empty(),
+        "revision {revision} double-door helper has no paired stands"
+    );
     for group in groups {
         for entry in group.iter().copied() {
             let covered = paths(entry).iter().any(|path| {
@@ -493,7 +555,9 @@ fn assert_double_door(report: &Value, revision: u16) {
             });
             assert!(covered, "double-door stand has no covered crossing");
         }
-        let active_id = group[0]["placed_id"].as_u64().expect("double-door placement id");
+        let active_id = group[0]["placed_id"]
+            .as_u64()
+            .expect("double-door placement id");
         assert!(
             group.iter().any(|entry| {
                 paths(entry).iter().any(|path| {
@@ -515,9 +579,7 @@ fn assert_double_door(report: &Value, revision: u16) {
 fn loc_type_for(effects: &[Value], kind: &str, placed_id: u64) -> Option<String> {
     effects.iter().find_map(|effect| {
         let description = effect["effect"].as_str()?;
-        let expected = format!(
-            "Loc {{ kind: {kind}, obj: Placed(PlacedId({placed_id})),"
-        );
+        let expected = format!("Loc {{ kind: {kind}, obj: Placed(PlacedId({placed_id})),");
         if !description.starts_with(&expected) {
             return None;
         }
@@ -535,7 +597,10 @@ fn placed_ids(path: &Value) -> BTreeSet<u64> {
         let mut rest = description;
         while let Some(index) = rest.find("PlacedId(") {
             rest = &rest[index + "PlacedId(".len()..];
-            let digits = rest.chars().take_while(char::is_ascii_digit).collect::<String>();
+            let digits = rest
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>();
             if let Ok(id) = digits.parse() {
                 ids.insert(id);
             }
@@ -564,8 +629,14 @@ fn assert_watch_ladder(report: &Value, loc_type: i32, revision: u16) {
             }
         }
     }
-    assert!(low_candidate, "revision {revision} watchtower low landing lacks itwatchtower < 13");
-    assert!(high_candidate, "revision {revision} watchtower high landing lacks itwatchtower >= 13");
+    assert!(
+        low_candidate,
+        "revision {revision} watchtower low landing lacks itwatchtower < 13"
+    );
+    assert!(
+        high_candidate,
+        "revision {revision} watchtower high landing lacks itwatchtower >= 13"
+    );
 }
 
 fn path_has_relation(path: &Value, constant: i32, relation: &str) -> bool {
@@ -609,10 +680,8 @@ fn assert_misc_ulby(report: &Value, loc_type: i32) {
                     && path["conditions"].as_array().is_some_and(|conditions| {
                         conditions.len() == 1
                             && conditions.first().is_some_and(|condition| {
-                                let predicate =
-                                    condition["predicate"].as_str().unwrap_or_default();
-                                let truth =
-                                    condition["truth"].as_bool().unwrap_or_default();
+                                let predicate = condition["predicate"].as_str().unwrap_or_default();
+                                let truth = condition["truth"].as_bool().unwrap_or_default();
                                 predicate.contains("Varp")
                                     && predicate.contains("Known(0)")
                                     && ((predicate.contains("Gt") && truth)

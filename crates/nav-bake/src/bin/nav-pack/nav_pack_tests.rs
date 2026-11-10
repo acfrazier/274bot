@@ -229,7 +229,10 @@ fn explicit_mode_requires_engine_and_accepts_an_optional_shadow_report() {
         "/tmp/x",
     ])
     .unwrap_err();
-    assert!(without_engine.contains("requires --engine"), "{without_engine}");
+    assert!(
+        without_engine.contains("requires --engine"),
+        "{without_engine}"
+    );
 
     let inputs = parse_args([
         "--revision",

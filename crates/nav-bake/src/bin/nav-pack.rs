@@ -338,8 +338,8 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--engine" | "--game-data-dir" | "--out"
-            | "--flags-out" | "--server-loc-dat" | "--nav-shadow" => {
+            "--content" | "--cache" | "--engine" | "--game-data-dir" | "--out" | "--flags-out"
+            | "--server-loc-dat" | "--nav-shadow" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -472,7 +472,10 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
             }
         }
         (Some(path), None) => {
-            eprintln!("nav-pack: requested nav-shadow report {} was not produced", path.display());
+            eprintln!(
+                "nav-pack: requested nav-shadow report {} was not produced",
+                path.display()
+            );
             return ExitCode::FAILURE;
         }
         (None, Some(_)) => {

@@ -23,7 +23,6 @@ use super::{
     dir_delta, door_dir, edge_ticks, extra_ticks, in_world_box, opposite, straight_door_landing,
 };
 
-
 #[derive(Serialize)]
 pub(super) struct NavShadowReport {
     schema: u8,
@@ -232,7 +231,6 @@ struct EdgeDiff {
     members_sources: Vec<String>,
 }
 
-
 #[derive(Default)]
 struct RunPeaks {
     paths: Vec<EntryMeasurement>,
@@ -382,12 +380,7 @@ impl NavShadow {
         }
     }
 
-    fn has_entry(
-        &self,
-        loc_type: i32,
-        placement: &Placement,
-        stand: Option<WorldTile>,
-    ) -> bool {
+    fn has_entry(&self, loc_type: i32, placement: &Placement, stand: Option<WorldTile>) -> bool {
         let Some(placed_id) = self
             .world
             .placements(loc_type)
@@ -399,9 +392,7 @@ impl NavShadow {
         };
         let stand = stand.map(tile_summary);
         self.report.entries.iter().any(|entry| {
-            entry.loc_type == loc_type
-                && entry.placed_id == placed_id
-                && entry.stand == stand
+            entry.loc_type == loc_type && entry.placed_id == placed_id && entry.stand == stand
         })
     }
 
@@ -595,18 +586,15 @@ impl NavShadow {
         else {
             return;
         };
-        let script_id = self
-            .program
-            .trigger("OPLOC1")
-            .and_then(|trigger| {
-                let category = self
-                    .program
-                    .packs
-                    .locs
-                    .get(&LocTypeId(loc_type))
-                    .and_then(|config| config.category);
-                self.program.lookup(trigger, Some(loc_type), category)
-            });
+        let script_id = self.program.trigger("OPLOC1").and_then(|trigger| {
+            let category = self
+                .program
+                .packs
+                .locs
+                .get(&LocTypeId(loc_type))
+                .and_then(|config| config.category);
+            self.program.lookup(trigger, Some(loc_type), category)
+        });
         let script = script_id.and_then(|id| self.program.script(id));
         let mut entry_report = EntryReport {
             loc_type,
@@ -794,13 +782,7 @@ impl NavShadow {
                 path: index,
                 landing: landing.map(|(tile, _)| tile_summary(tile)),
                 covered: false,
-                selected: is_selected(
-                    run,
-                    path,
-                    &self.program,
-                    &self.worn_slots,
-                    observable,
-                ),
+                selected: is_selected(run, path, &self.program, &self.worn_slots, observable),
                 edge: None,
                 rejection: None,
                 blocked_by: Vec::new(),
@@ -819,7 +801,13 @@ impl NavShadow {
                 results.push(row);
                 continue;
             }
-            if landing == stand.unwrap_or(WorldTile { x: i32::MIN, z: i32::MIN, level: i32::MIN }) {
+            if landing
+                == stand.unwrap_or(WorldTile {
+                    x: i32::MIN,
+                    z: i32::MIN,
+                    level: i32::MIN,
+                })
+            {
                 row.rejection = Some("landing is the stand".to_owned());
                 results.push(row);
                 continue;
@@ -830,7 +818,8 @@ impl NavShadow {
                 _ => None,
             };
             if expected != Some(landing) {
-                row.rejection = Some("landing does not satisfy the role's consumer rule".to_owned());
+                row.rejection =
+                    Some("landing does not satisfy the role's consumer rule".to_owned());
                 results.push(row);
                 continue;
             }
@@ -844,7 +833,11 @@ impl NavShadow {
             if !row.covered {
                 let rivals = run.rivals(&path.conds);
                 for (rival_index, rival) in run.paths.iter().enumerate() {
-                    if rivals.iter().any(|candidate| std::ptr::eq(*candidate, rival)) && !same(rival) {
+                    if rivals
+                        .iter()
+                        .any(|candidate| std::ptr::eq(*candidate, rival))
+                        && !same(rival)
+                    {
                         row.blocked_by.push(RivalSummary {
                             path: rival_index,
                             end: format!("{:?}", rival.end),
@@ -852,12 +845,14 @@ impl NavShadow {
                         });
                     }
                 }
-                row.rejection = Some("an overlapping rival does not preserve this landing".to_owned());
+                row.rejection =
+                    Some("an overlapping rival does not preserve this landing".to_owned());
                 results.push(row);
                 continue;
             }
             if !row.selected {
-                row.rejection = Some("candidate is not selected by the legacy threshold rule".to_owned());
+                row.rejection =
+                    Some("candidate is not selected by the legacy threshold rule".to_owned());
                 results.push(row);
                 continue;
             }
@@ -867,13 +862,7 @@ impl NavShadow {
             let mut needs = Needs::default();
             let mut fields_complete = true;
             for condition in &generalized {
-                match condition_needs(
-                    run,
-                    condition,
-                    &self.program,
-                    &self.worn_slots,
-                    observable,
-                ) {
+                match condition_needs(run, condition, &self.program, &self.worn_slots, observable) {
                     Some(mut condition_needs) => needs.merge(std::mem::take(&mut condition_needs)),
                     None => {
                         fields_complete = false;
@@ -905,9 +894,8 @@ impl NavShadow {
                 edge.dir = Some(direction);
                 edge.open_loc_id = opened_type(path, loc_type);
             } else {
-                let relative_safe = delta.is_some()
-                    && needs == Needs::default()
-                    && relative_effects_safe(path);
+                let relative_safe =
+                    delta.is_some() && needs == Needs::default() && relative_effects_safe(path);
                 if relative_safe {
                     edge.player_delta = delta;
                 }
@@ -985,9 +973,9 @@ impl NavShadow {
             };
             self.report.diffs.push(EdgeDiff {
                 status: status.to_owned(),
-                changed_fields: baseline_summary
-                    .as_ref()
-                    .map_or_else(Vec::new, |summary| edge_changed_fields(summary, &candidate_summary)),
+                changed_fields: baseline_summary.as_ref().map_or_else(Vec::new, |summary| {
+                    edge_changed_fields(summary, &candidate_summary)
+                }),
                 baseline: baseline_summary,
                 candidate: Some(candidate_summary),
                 loc_type,
@@ -1006,7 +994,10 @@ impl NavShadow {
         let mut blocked_by = Vec::new();
         for row in results {
             for rival in &row.blocked_by {
-                if !blocked_by.iter().any(|seen: &RivalSummary| seen.path == rival.path) {
+                if !blocked_by
+                    .iter()
+                    .any(|seen: &RivalSummary| seen.path == rival.path)
+                {
                     blocked_by.push(rival.clone());
                 }
             }
@@ -1038,7 +1029,6 @@ impl NavShadow {
             });
         }
     }
-
 
     pub(super) fn finish(mut self) -> Result<String, serde_json::Error> {
         self.report.stage_elapsed_ns = self
@@ -1178,7 +1168,11 @@ fn path_summary(index: usize, path: &PathResult, run: &Run, program: &Program) -
         world_reads_after_suspend: path.world_reads_after_suspend,
         modal: format!("{:?}", path.modal),
         ints: path.ints.iter().map(|value| format!("{value:?}")).collect(),
-        strings: path.strings.iter().map(|value| format!("{value:?}")).collect(),
+        strings: path
+            .strings
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect(),
     }
 }
 
@@ -1190,11 +1184,7 @@ fn predicate_summary(pred: &Pred, run: &Run, program: &Program) -> String {
             op,
             value_summary(*rhs, run, program, 0)
         ),
-        Pred::In { of, set } => format!(
-            "{} in {:?}",
-            value_summary(*of, run, program, 0),
-            set
-        ),
+        Pred::In { of, set } => format!("{} in {:?}", value_summary(*of, run, program, 0), set),
     }
 }
 
@@ -1232,22 +1222,12 @@ fn expression_summary(
             "Bits({}, {lo}..={hi})",
             expression_summary(*of, run, program, depth + 1)
         ),
-        Expr::WithBits {
-            of,
-            lo,
-            hi,
-            to,
-        } => format!(
+        Expr::WithBits { of, lo, hi, to } => format!(
             "WithBits({}, {lo}..={hi}, {})",
             expression_summary(*of, run, program, depth + 1),
             value_summary(*to, run, program, depth + 1)
         ),
-        Expr::CoordPlus {
-            of,
-            dx,
-            dlevel,
-            dz,
-        } => format!(
+        Expr::CoordPlus { of, dx, dlevel, dz } => format!(
             "CoordPlus({}, {dx}, {dlevel}, {dz})",
             expression_summary(*of, run, program, depth + 1)
         ),
@@ -1278,10 +1258,14 @@ fn last_move_source(path: &PathResult, program: &Program) -> Option<String> {
 }
 
 fn landing_rejection(path: &PathResult) -> String {
-    let movement = path.effects.iter().rev().find_map(|record| match record.effect {
-        Effect::Move { to, .. } => Some(to),
-        _ => None,
-    });
+    let movement = path
+        .effects
+        .iter()
+        .rev()
+        .find_map(|record| match record.effect {
+            Effect::Move { to, .. } => Some(to),
+            _ => None,
+        });
     landing_rejection_reason(movement).to_owned()
 }
 
@@ -1331,7 +1315,14 @@ fn candidate_landing_from_position(
             Some((tile_of(coord), None))
         }
         ("ladder", PlayerPos::Tile(coord)) => Some((tile_of(coord), None)),
-        ("ladder", PlayerPos::Rel { dx: 0, dlevel, dz: 0 }) => {
+        (
+            "ladder",
+            PlayerPos::Rel {
+                dx: 0,
+                dlevel,
+                dz: 0,
+            },
+        ) => {
             let delta = WorldTile {
                 x: 0,
                 z: 0,
@@ -1339,9 +1330,15 @@ fn candidate_landing_from_position(
             };
             Some((offset_tile(at, delta), Some(delta)))
         }
-        ("ladder", PlayerPos::Rel { dx: 0, dlevel: 0, dz })
-            if dz == nav_planner::transport::CELLAR_SHIFT
-                || dz == -nav_planner::transport::CELLAR_SHIFT =>
+        (
+            "ladder",
+            PlayerPos::Rel {
+                dx: 0,
+                dlevel: 0,
+                dz,
+            },
+        ) if dz == nav_planner::transport::CELLAR_SHIFT
+            || dz == -nav_planner::transport::CELLAR_SHIFT =>
         {
             let delta = WorldTile {
                 x: 0,
@@ -1353,7 +1350,6 @@ fn candidate_landing_from_position(
         _ => None,
     }
 }
-
 
 fn tile_of(coord: Coord) -> WorldTile {
     WorldTile {
@@ -1425,8 +1421,7 @@ fn condition_order(
         return 0;
     };
     match atom.kind {
-        rs2vm::machine::AtomKind::InvTotal { .. }
-        | rs2vm::machine::AtomKind::InvSlot { .. } => 1,
+        rs2vm::machine::AtomKind::InvTotal { .. } | rs2vm::machine::AtomKind::InvSlot { .. } => 1,
         rs2vm::machine::AtomKind::Stat { .. } | rs2vm::machine::AtomKind::Members => 2,
         rs2vm::machine::AtomKind::Varp(_) => 3,
         _ => 0,
@@ -1507,10 +1502,10 @@ fn condition_needs(
                 return None;
             }
             match (operator, condition.truth) {
-                (rs2vm::machine::CmpOp::Eq, true)
-                | (rs2vm::machine::CmpOp::Ne, false) => needs.worn.push((object, 1)),
-                (rs2vm::machine::CmpOp::Eq, false)
-                | (rs2vm::machine::CmpOp::Ne, true) => {
+                (rs2vm::machine::CmpOp::Eq, true) | (rs2vm::machine::CmpOp::Ne, false) => {
+                    needs.worn.push((object, 1))
+                }
+                (rs2vm::machine::CmpOp::Eq, false) | (rs2vm::machine::CmpOp::Ne, true) => {
                     needs.forbidden_worn.push(object)
                 }
                 _ => return None,
@@ -1543,10 +1538,7 @@ fn direct_atom(run: &Run, value: Value) -> Option<&rs2vm::machine::Atom> {
 }
 
 fn command_at(program: &Program, site: Site) -> Option<&str> {
-    let instruction = program
-        .script(site.script)?
-        .code
-        .get(site.pc as usize)?;
+    let instruction = program.script(site.script)?.code.get(site.pc as usize)?;
     program.opcode(instruction.opcode)
 }
 
@@ -1563,7 +1555,11 @@ fn members_sources(run: &Run, conditions: &[Cond], program: &Program) -> Vec<Str
             continue;
         }
         let allocation = atom.site == Site::default();
-        let site = if allocation { condition.site } else { atom.site };
+        let site = if allocation {
+            condition.site
+        } else {
+            atom.site
+        };
         let command = command_at(program, site).unwrap_or("unknown command");
         let source_kind = if allocation { "allocation" } else { "script" };
         sources.push(format!(
@@ -1629,12 +1625,10 @@ fn selection_truth(
         {
             Some(true)
         }
-        AtomKind::Varp(_) | AtomKind::Stat { .. } | AtomKind::InvTotal { .. } => {
-            match operator {
-                CmpOp::Ge | CmpOp::Gt | CmpOp::Ne => Some(true),
-                CmpOp::Le | CmpOp::Lt | CmpOp::Eq => Some(false),
-            }
-        }
+        AtomKind::Varp(_) | AtomKind::Stat { .. } | AtomKind::InvTotal { .. } => match operator {
+            CmpOp::Ge | CmpOp::Gt | CmpOp::Ne => Some(true),
+            CmpOp::Le | CmpOp::Lt | CmpOp::Eq => Some(false),
+        },
         AtomKind::Members if operator == CmpOp::Eq && constant == 1 => Some(true),
         AtomKind::InvSlot { inv, slot }
             if inventory_is_worn(program, inv)
@@ -1658,12 +1652,12 @@ fn is_selected(
     path.conds
         .iter()
         .filter(|condition| matches!(condition.class, CondClass::Requirement | CondClass::Hidden))
-        .all(|condition| {
-            match selection_truth(run, condition, program, worn_slots, observable) {
+        .all(
+            |condition| match selection_truth(run, condition, program, worn_slots, observable) {
                 Some(required_truth) => condition.truth == required_truth,
                 None => true,
-            }
-        })
+            },
+        )
 }
 
 fn opened_type(path: &PathResult, closed_id: i32) -> Option<i32> {
@@ -1774,9 +1768,7 @@ fn bound_summary(mut entries: Vec<EntryMeasurement>) -> BoundSummary {
             entry.value,
             entry.loc_type,
             entry.placed_id,
-            entry
-                .stand
-                .map(|stand| (stand.x, stand.z, stand.level)),
+            entry.stand.map(|stand| (stand.x, stand.z, stand.level)),
         )
     });
     let maximum = entries.last().map_or(0, |entry| entry.value);
@@ -1785,9 +1777,7 @@ fn bound_summary(mut entries: Vec<EntryMeasurement>) -> BoundSummary {
         .saturating_mul(99)
         .div_ceil(100)
         .saturating_sub(1);
-    let percentile_99 = entries
-        .get(percentile_index)
-        .map_or(0, |entry| entry.value);
+    let percentile_99 = entries.get(percentile_index).map_or(0, |entry| entry.value);
     let ten_largest = entries.iter().rev().take(10).cloned().collect();
     let recommended_limit = maximum
         .saturating_mul(4)
@@ -1807,7 +1797,7 @@ mod tests {
     use api::game_data::{QuestIdentityRow, QuestRequirements, Transmission};
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
     use nav_planner::quest_gates::QuestGates;
-    use rs2vm::machine::{Atom, AtomId, AtomKind, Arena, CmpOp, ExprId, RunStats, TransferAudit};
+    use rs2vm::machine::{Arena, Atom, AtomId, AtomKind, CmpOp, ExprId, RunStats, TransferAudit};
     use rs2vm::{ScriptId, VarpId};
 
     fn test_tile(x: i32, z: i32, level: i32) -> WorldTile {
