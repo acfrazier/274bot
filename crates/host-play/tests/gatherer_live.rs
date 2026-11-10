@@ -2287,9 +2287,20 @@ fn relog_log() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The Gatherer logged the restart of its bank trip at `step`.
-fn relog_restart_logged(step: &str) -> bool {
-    let needle = format!("step={step} ");
+/// The Gatherer logged the restart of its bank trip after a cut at `fired_step`.
+///
+/// The acquisition core owns Access and Open: a session change there restarts
+/// the whole trip request, so the restart line names the trip's own step
+/// (`Supply { .. }` for the supply request, `Deposit` for a deposit-only trip)
+/// and never the acquisition sub-step the cut landed in
+/// (`crates/script/src/gatherer/runner.rs` `restart_trip_after_session`).
+fn relog_restart_logged(fired_step: &str) -> bool {
+    let restart_step = if fired_step == "Deposit" {
+        "Deposit"
+    } else {
+        "Supply"
+    };
+    let needle = format!("step={restart_step} ");
     relog_log()
         .iter()
         .any(|line| line.contains("gatherer-bank-trip-restart") && line.contains(&needle))
