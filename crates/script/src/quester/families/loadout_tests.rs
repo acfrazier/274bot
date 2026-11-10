@@ -1171,20 +1171,22 @@ fn exclusive_strip_follows_the_trip_without_a_separate_close() {
 
 #[test]
 fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let items = [
+        "bronze_full_helm",
+        "bronze_platebody",
+        "bronze_platelegs",
+    ]
+    .map(|alias| {
+        let item = selected.item_by_alias(alias).unwrap();
         BankItem {
-            id: 3001,
-            name: Arc::from("Survival helm"),
-        },
-        BankItem {
-            id: 3002,
-            name: Arc::from("Survival body"),
-        },
-        BankItem {
-            id: 3003,
-            name: Arc::from("Survival boots"),
-        },
-    ];
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+        }
+    });
     let (bank, banks) = bank_facts();
     let mut bank_rows = items
         .iter()
@@ -1207,13 +1209,15 @@ fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
         &banks,
         |cx| {
             begin_survival_loadout(
-                &items,
-                Some(bank),
-                false,
-                Arc::from([2000]),
-                Arc::from([]),
-                0,
-                false,
+                SurvivalLoadoutRequest {
+                    items: &items,
+                    bank: Some(bank),
+                    bank_required: false,
+                    keep_ids: Arc::from([2000]),
+                    carried_ids: Arc::from([]),
+                    equipment_slots: 0,
+                    protect_worn: false,
+                },
                 cx,
             )
             .expect("survival loadout begins")
@@ -1403,9 +1407,14 @@ fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
 
 #[test]
 fn survival_loadout_skips_a_session_known_absent_item() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item_facts = selected.item_by_alias("bronze_kiteshield").unwrap();
     let item = BankItem {
-        id: 3004,
-        name: Arc::from("Absent survival shield"),
+        id: item_facts.id,
+        name: Arc::from(item_facts.name.as_deref().unwrap()),
     };
     let (bank, banks) = bank_facts();
     let snapshot = snapshot(Vec::new(), Vec::new(), Some(Vec::new()), Vec::new());
@@ -1419,13 +1428,15 @@ fn survival_loadout_skips_a_session_known_absent_item() {
         &banks,
         |cx| {
             begin_survival_loadout(
-                std::slice::from_ref(&item),
-                Some(bank),
-                false,
-                Arc::from([]),
-                Arc::from([]),
-                0,
-                false,
+                SurvivalLoadoutRequest {
+                    items: std::slice::from_ref(&item),
+                    bank: Some(bank),
+                    bank_required: false,
+                    keep_ids: Arc::from([]),
+                    carried_ids: Arc::from([]),
+                    equipment_slots: 0,
+                    protect_worn: false,
+                },
                 cx,
             )
             .expect("survival loadout begins")
@@ -1478,13 +1489,15 @@ fn survival_loadout_rechecks_managed_worn_items_before_equipping() {
             let mut ledger = None;
             let mut run = with_step(&snapshot, &mut ledger, 1, &banks, |cx| {
                 begin_survival_loadout(
-                    std::slice::from_ref(&item),
-                    Some(bank),
-                    false,
-                    Arc::from([protected.id]),
-                    Arc::from([]),
-                    0,
-                    protect_worn,
+                    SurvivalLoadoutRequest {
+                        items: std::slice::from_ref(&item),
+                        bank: Some(bank),
+                        bank_required: false,
+                        keep_ids: Arc::from([protected.id]),
+                        carried_ids: Arc::from([]),
+                        equipment_slots: 0,
+                        protect_worn,
+                    },
                     cx,
                 )
                 .unwrap()

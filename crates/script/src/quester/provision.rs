@@ -676,17 +676,20 @@ impl Provisioner {
                                 .any(|row| !spillover_keep.contains(&row.def.id)))
                     {
                         self.gear_run = Some(super::families::begin_survival_loadout(
-                            &gear,
-                            plan.bank,
-                            plan.bank_required,
-                            super::compile::inventory::capacity_keep_with_held_foods(
-                                stock,
-                                spillover_keep,
-                                |id| survival.tables().food(id).is_some(),
-                            ),
-                            Arc::clone(&plan.carried_items),
-                            survival.equipment_slots(),
-                            true,
+                            super::families::s2::SurvivalLoadoutRequest {
+                                items: &gear,
+                                bank: plan.bank,
+                                bank_required: plan.bank_required,
+                                keep_ids:
+                                    super::compile::inventory::capacity_keep_with_held_foods(
+                                        stock,
+                                        spillover_keep,
+                                        |id| survival.tables().food(id).is_some(),
+                                    ),
+                                carried_ids: Arc::clone(&plan.carried_items),
+                                equipment_slots: survival.equipment_slots(),
+                                protect_worn: true,
+                            },
                             cx,
                         )?);
                         self.in_session = true;
@@ -2489,7 +2492,12 @@ mod tests {
         if !api::test_support::game_data_available() {
             return;
         }
-        let (mut path, quests, mut snapshot) = survival_fixture_with_gear(true, true);
+        let (mut path, quests, mut snapshot) =
+            survival_fixture_document(true, true, |document| {
+                // Keep the configured kit available without Path claiming its slots.
+                let fight = &mut document.roles[0].sequences[0].steps[0];
+                assert!(fight.args.as_object_mut().unwrap().remove("loadout").is_some());
+            });
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let equipment = [
             (0, "bronze_full_helm"),
@@ -2538,7 +2546,7 @@ mod tests {
                     ..snapshot_view(&snapshot, 1).stock()
                 },
                 survival_input(&snapshot, survival),
-                None,
+                Some(&*plan),
             )
             .unwrap();
         assert_eq!(target.gear.len(), equipment.len());

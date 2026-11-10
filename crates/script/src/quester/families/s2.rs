@@ -1467,24 +1467,28 @@ struct SurvivalLoadout {
     protect_worn: bool,
 }
 
+pub(crate) struct SurvivalLoadoutRequest<'a> {
+    pub items: &'a [BankItem],
+    pub bank: Option<api::named_banks::NamedBank>,
+    pub bank_required: bool,
+    pub keep_ids: Arc<[i32]>,
+    pub carried_ids: Arc<[i32]>,
+    pub equipment_slots: u16,
+    pub protect_worn: bool,
+}
+
 pub(crate) fn begin_survival_loadout(
-    items: &[BankItem],
-    bank: Option<api::named_banks::NamedBank>,
-    bank_required: bool,
-    keep_ids: Arc<[i32]>,
-    carried_ids: Arc<[i32]>,
-    equipment_slots: u16,
-    protect_worn: bool,
+    request: SurvivalLoadoutRequest<'_>,
     cx: &mut StepContext<'_, '_>,
 ) -> Result<Box<dyn StepRun>, ActionError> {
     let plan = LoadoutStartPlan::Survival {
-        bank,
-        bank_required,
-        items: Arc::from(items),
-        keep_ids,
-        carried_ids,
-        equipment_slots,
-        protect_worn,
+        bank: request.bank,
+        bank_required: request.bank_required,
+        items: Arc::from(request.items),
+        keep_ids: request.keep_ids,
+        carried_ids: request.carried_ids,
+        equipment_slots: request.equipment_slots,
+        protect_worn: request.protect_worn,
     };
     let snapshot = cx.tick.cx.snapshot();
     if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
