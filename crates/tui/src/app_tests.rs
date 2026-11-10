@@ -1974,18 +1974,25 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             shown.contains("Start zone scope"),
             "{width}x{height}: {shown}"
         );
-        assert!(
-            shown.contains("The guide asks to cross these zones."),
-            "{width}x{height}: {shown}"
-        );
-        assert!(
-            shown.contains("The food guard is armed for the whole walk"),
-            "{width}x{height}: {shown}"
-        );
-        assert!(
-            shown.contains("protection runs only where a step requests it."),
-            "{width}x{height}: {shown}"
-        );
+        // The disclosure wraps at the pane width: test its words, not its
+        // line breaks or the pane border.
+        let flat = shown
+            .chars()
+            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for sentence in [
+            "The guide asks to cross these zones.",
+            "The food guard is armed for the whole walk",
+            "protection runs only where a step requests it.",
+        ] {
+            assert!(
+                flat.contains(sentence),
+                "{width}x{height}: {sentence}: {shown}"
+            );
+        }
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
         assert!(
             !shown.contains("Prince Ali Rescue"),
