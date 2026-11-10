@@ -239,6 +239,14 @@ pub enum WorldError {
         /// Zone whose stamp cannot advance.
         zone: ZoneKey,
     },
+    /// An entry-local allocation would exceed the caller's byte limit.
+    #[error("entry byte limit {limit} would be exceeded by {count} bytes")]
+    ByteLimit {
+        /// Entry byte limit.
+        limit: u64,
+        /// Cumulative capacity bytes requested before allocation.
+        count: u64,
+    },
 }
 
 impl WorldError {
@@ -253,6 +261,45 @@ impl WorldError {
                 | Self::InvalidDuration { .. }
         )
     }
+}
+
+pub(crate) struct ByteBudget {
+    pub limit: u64,
+    pub used: u64,
+}
+
+impl ByteBudget {
+    pub(crate) fn unlimited() -> Self {
+        Self { limit: u64::MAX, used: 0 }
+    }
+
+    pub(crate) fn charge(&mut self, bytes: usize) -> Result<(), WorldError> {
+        let count = self.used.saturating_add(bytes as u64);
+        if count > self.limit {
+            return Err(WorldError::ByteLimit { limit: self.limit, count });
+        }
+        self.used = count;
+        Ok(())
+    }
+
+    pub(crate) fn reserve<T>(&mut self, values: &mut Vec<T>, additional: usize) -> Result<(), WorldError> {
+        if let Some((additional, bytes)) = buffer_growth(values, additional) {
+            self.charge(bytes)?;
+            values.reserve_exact(additional);
+        }
+        Ok(())
+    }
+}
+
+// Choose the whole next buffer before allocation. Geometric growth avoids
+// reallocating on each push; reserve_exact keeps that charged capacity explicit.
+pub(crate) fn buffer_growth<T>(values: &Vec<T>, additional: usize) -> Option<(usize, usize)> {
+    let wanted = values.len().saturating_add(additional);
+    if wanted <= values.capacity() {
+        return None;
+    }
+    let capacity = wanted.max(values.capacity().saturating_mul(2)).max(4);
+    Some((capacity - values.len(), capacity.saturating_mul(std::mem::size_of::<T>())))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,6 +398,17 @@ impl WorldOverlay {
         info: LocInfo,
         duration: i32,
     ) -> Result<LocObj, WorldError> {
+        self.loc_add_bounded(w, tile, info, duration, &mut ByteBudget::unlimited())
+    }
+
+    pub(crate) fn loc_add_bounded(
+        &mut self,
+        w: &dyn World,
+        tile: Coord,
+        info: LocInfo,
+        duration: i32,
+        budget: &mut ByteBudget,
+    ) -> Result<LocObj, WorldError> {
         validate_coord(tile)?;
         validate_loc_type(info.ty)?;
         validate_angle(info.angle)?;
@@ -372,14 +430,14 @@ impl WorldOverlay {
             }
         }
         if let Some(obj) = found {
-            self.change_existing(w, obj, info, life)?;
+            self.change_existing(w, obj, info, life, budget)?;
             return Ok(obj);
         }
 
         let id = self.created;
         let next_created = id.checked_add(1).ok_or(WorldError::CreatedIdExhausted)?;
         let next_stamp = self.next_stamp(zone)?;
-        let zone_index = self.ensure_zone_cached(w, zone)?;
+        let zone_index = self.ensure_zone_cached(w, zone, budget)?;
         let obj = LocObj::Created(id);
         self.insert_record(
             obj,
@@ -393,7 +451,9 @@ impl WorldOverlay {
                 left: life,
                 unknown: false,
             },
-        );
+            budget,
+        )?;
+        budget.reserve(&mut self.zones[zone_index].order, 1)?;
         self.zones[zone_index].order.push(obj);
         self.zones[zone_index].stamp = next_stamp;
         self.created = next_created;
@@ -409,6 +469,17 @@ impl WorldOverlay {
         ty: LocTypeId,
         duration: i32,
     ) -> Result<(), WorldError> {
+        self.loc_change_bounded(w, obj, ty, duration, &mut ByteBudget::unlimited())
+    }
+
+    pub(crate) fn loc_change_bounded(
+        &mut self,
+        w: &dyn World,
+        obj: LocObj,
+        ty: LocTypeId,
+        duration: i32,
+        budget: &mut ByteBudget,
+    ) -> Result<(), WorldError> {
         validate_duration_policy(duration, self.loc_duration)?;
         let life = if duration == 0 {
             self.loc_life(self.fixed_tile(w, obj)?, duration)?
@@ -422,12 +493,18 @@ impl WorldOverlay {
         }
         let mut info = previous.cur;
         info.ty = ty;
-        self.change_existing(w, obj, info, life)
+        self.change_existing(w, obj, info, life, budget)
     }
 
     /// Delete an active object, or do nothing when the object is already inactive.
     /// Mirrors `src/engine/World.ts:1417-1439` and `src/engine/zone/Zone.ts:266-281`.
     pub fn loc_del(&mut self, w: &dyn World, obj: LocObj, duration: i32) -> Result<(), WorldError> {
+        self.loc_del_bounded(w, obj, duration, &mut ByteBudget::unlimited())
+    }
+
+    pub(crate) fn loc_del_bounded(
+        &mut self, w: &dyn World, obj: LocObj, duration: i32, budget: &mut ByteBudget,
+    ) -> Result<(), WorldError> {
         validate_positive_duration(duration)?;
         let record = self.record(w, obj)?;
         if !record.active {
@@ -441,8 +518,8 @@ impl WorldOverlay {
             return Err(WorldError::ObjectNotInZone { obj, zone });
         }
         let next_stamp = self.next_stamp(zone)?;
-        let zone_index = self.ensure_zone_cached(w, zone)?;
-        let object_index = self.ensure_record_cached(w, obj)?;
+        let zone_index = self.ensure_zone_cached(w, zone, budget)?;
+        let object_index = self.ensure_record_cached(w, obj, budget)?;
         let list = &mut self.zones[zone_index].order;
         let position = list
             .iter()
@@ -492,8 +569,15 @@ impl WorldOverlay {
     /// Mirrors `src/engine/script/handlers/LocOps.ts:96-112` and `src/engine/script/ScriptIterators.ts:377-383`.
     /// `src/engine/zone/Zone.ts:483-489` filters to active objects; `src/datastruct/LinkList.ts:97-109` reverses order.
     pub fn zone_iter(&self, w: &dyn World, zone: ZoneKey) -> Result<Vec<LocObj>, WorldError> {
+        self.zone_iter_bounded(w, zone, &mut ByteBudget::unlimited())
+    }
+
+    pub(crate) fn zone_iter_bounded(
+        &self, w: &dyn World, zone: ZoneKey, budget: &mut ByteBudget,
+    ) -> Result<Vec<LocObj>, WorldError> {
         let order = self.zone_order(w, zone)?;
         self.ensure_zone_known(w, zone, order)?;
+        budget.charge(order.len().saturating_mul(std::mem::size_of::<LocObj>()))?;
         let mut objects = Vec::with_capacity(order.len());
         for index in (0..order.len()).rev() {
             let obj = order
@@ -530,6 +614,12 @@ impl WorldOverlay {
     /// Later object or zone-list access then returns an unsupported-state error.
     /// Mirrors `src/engine/entity/Loc.ts:54-73` and the zone phase in `src/engine/World.ts:963-970`.
     pub fn age(&mut self, w: &dyn World, elapsed: Ticks) -> Result<(), WorldError> {
+        self.age_bounded(w, elapsed, &mut ByteBudget::unlimited())
+    }
+
+    pub(crate) fn age_bounded(
+        &mut self, w: &dyn World, elapsed: Ticks, budget: &mut ByteBudget,
+    ) -> Result<(), WorldError> {
         if elapsed.min > elapsed.max {
             return Err(WorldError::InvalidTickRange {
                 min: elapsed.min,
@@ -571,7 +661,7 @@ impl WorldOverlay {
             {
                 return Err(WorldError::ListStampExhausted { zone });
             }
-            self.ensure_zone_cached(w, zone)?;
+            self.ensure_zone_cached(w, zone, budget)?;
         }
 
         for index in 0..self.objects.len() {
@@ -625,6 +715,7 @@ impl WorldOverlay {
         obj: LocObj,
         info: LocInfo,
         life: Option<Ticks>,
+        budget: &mut ByteBudget,
     ) -> Result<(), WorldError> {
         // World.changeLoc and Zone.changeLoc define these active, life, and list transitions
         // (`src/engine/World.ts:1365-1400`, `src/engine/zone/Zone.ts:243-264`).
@@ -639,8 +730,8 @@ impl WorldOverlay {
             return Err(WorldError::ObjectNotInZone { obj, zone });
         }
         let next_stamp = self.next_stamp(zone)?;
-        let zone_index = self.ensure_zone_cached(w, zone)?;
-        let object_index = self.ensure_record_cached(w, obj)?;
+        let zone_index = self.ensure_zone_cached(w, zone, budget)?;
+        let object_index = self.ensure_record_cached(w, obj, budget)?;
         let record = &mut self.objects[object_index].record;
         record.cur = info;
         record.active = true;
@@ -790,7 +881,7 @@ impl WorldOverlay {
         }
     }
 
-    fn ensure_record_cached(&mut self, w: &dyn World, obj: LocObj) -> Result<usize, WorldError> {
+    fn ensure_record_cached(&mut self, w: &dyn World, obj: LocObj, budget: &mut ByteBudget) -> Result<usize, WorldError> {
         if let Some(index) = self.object_index(obj) {
             if self.objects[index].record.unknown {
                 return Err(WorldError::UnknownLifeState { obj });
@@ -809,18 +900,19 @@ impl WorldOverlay {
             }
             LocObj::Created(_) => return Err(WorldError::MissingCreatedObject { obj }),
         };
-        Ok(self.insert_record(obj, record))
+        self.insert_record(obj, record, budget)
     }
 
-    fn insert_record(&mut self, obj: LocObj, record: LocRecord) -> usize {
+    fn insert_record(&mut self, obj: LocObj, record: LocRecord, budget: &mut ByteBudget) -> Result<usize, WorldError> {
         match self.objects.binary_search_by_key(&obj, |entry| entry.obj) {
             Ok(index) => {
                 self.objects[index].record = record;
-                index
+                Ok(index)
             }
             Err(index) => {
+                budget.reserve(&mut self.objects, 1)?;
                 self.objects.insert(index, ObjectEntry { obj, record });
-                index
+                Ok(index)
             }
         }
     }
@@ -839,13 +931,14 @@ impl WorldOverlay {
         Ok(ZoneOrder::Base(placements))
     }
 
-    fn ensure_zone_cached(&mut self, w: &dyn World, zone: ZoneKey) -> Result<usize, WorldError> {
+    fn ensure_zone_cached(&mut self, w: &dyn World, zone: ZoneKey, budget: &mut ByteBudget) -> Result<usize, WorldError> {
         if let Some(index) = self.zone_index(zone) {
             return Ok(index);
         }
         validate_zone_key(zone)?;
         let placements = w.zone_locs(zone);
         validate_world_zone(zone, placements)?;
+        budget.charge(placements.len().saturating_mul(std::mem::size_of::<LocObj>()))?;
         let mut order = Vec::with_capacity(placements.len());
         for placement in placements {
             order.push(LocObj::Placed(placement.id));
@@ -858,6 +951,7 @@ impl WorldOverlay {
         let index = match self.zones.binary_search_by_key(&zone, |item| item.key) {
             Ok(index) => index,
             Err(index) => {
+                budget.reserve(&mut self.zones, 1)?;
                 self.zones.insert(index, entry);
                 index
             }

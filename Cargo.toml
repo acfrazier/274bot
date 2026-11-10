@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc", "tools/xtask"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/rs2vm", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc", "tools/xtask"]
 default-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc"]
 
 [workspace.lints.clippy]
@@ -8,8 +8,8 @@ undocumented_unsafe_blocks = "warn"
 unwrap_used = "warn"
 # Suppression hygiene: `allow_attributes` forces `#[expect]` (an expectation
 # that stops firing is an error), and `allow_attributes_without_reason`
-# requires every suppression to justify itself. The six approved lints below
-# are the current ratchet set. `vault`, `nav-planner`, and `nav-bake` opt in
+# requires every suppression to justify itself. These crates opt in to the
+# lints below: `vault`, `nav-planner`, `nav-bake`, and `rs2vm`
 # (`[lints] workspace = true` in their manifests). A refactored crate stays opted in.
 # These denies apply to test code too: clippy 1.98 offers no per-lint
 # `allow-*-in-tests` knob for any of them (only `unwrap_used` is scoped to
