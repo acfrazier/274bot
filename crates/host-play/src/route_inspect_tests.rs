@@ -157,6 +157,7 @@ fn req(from: WorldTile, to: WorldTile, request_id: u64) -> InspectRequest {
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: false,
+        max_expansions: None,
         zones: nav_planner::zones::ZoneExempt::NONE,
         avoid: Vec::new(),
         request_id,
@@ -391,6 +392,7 @@ fn bank_false_fare_is_nopath() {
         bank: Vec::new(),
         from: at,
         to,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             ..FindOptions::default()
@@ -406,6 +408,69 @@ fn bank_false_fare_is_nopath() {
     assert!(!term.ok);
     assert_eq!(term.reason, "NoPath");
     assert!(!term.bank_planned);
+}
+#[test]
+fn route_needing_more_than_120k_settles_succeeds_with_default_budget() {
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 512;
+    const WALL_X: usize = WIDTH / 2;
+    let mut flags = vec![0u32; WIDTH * HEIGHT * 4];
+    for z in 0..HEIGHT - 1 {
+        flags[z * WIDTH + WALL_X] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    }
+    let (walk, blocked) = pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0, 0),
+            width: WIDTH,
+            height: HEIGHT,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![],
+    ));
+    let from = tile(0, 0, 0);
+    let to = tile(WIDTH as i32 - 1, 0, 0);
+    let options = FindOptions {
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    let mut limited = capture(
+        Arc::clone(&world),
+        from,
+        to,
+        options,
+        101,
+        BankRows::default(),
+        None,
+        None,
+        None,
+    );
+    // `calculate` consumes this explicit bound in its test-only route path.
+    limited.max_expansions = 120_000;
+    limited.search_budget_strict = Some(120_000);
+    let capped = calculate(&limited);
+    assert!(!capped.ok, "the route must exceed the caller's 120,000 cap");
+
+    let default_budget = capture(
+        world,
+        from,
+        to,
+        options,
+        102,
+        BankRows::default(),
+        None,
+        None,
+        None,
+    );
+    let routed = calculate(&default_budget);
+    assert!(
+        routed.ok,
+        "the default router bound must reach the destination"
+    );
+    assert_eq!(routed.terminal, Some(to));
 }
 
 #[test]
@@ -445,6 +510,7 @@ fn pre_state_stand_proof_rejects_post_only_stand() {
         bank: vec![(995, 10)],
         from,
         to: dest,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -478,6 +544,7 @@ fn no_path_reason_names_the_active_zone_witness() {
         bank: Vec::new(),
         from,
         to: tile(4, 0, 0),
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             ..FindOptions::default()
@@ -528,6 +595,7 @@ fn bank_access_no_path_reason_names_the_active_zone_witness() {
         bank: vec![(995, 1)],
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -589,6 +657,7 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
         bank: vec![(995, 10)],
         from,
         to: dest,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
@@ -669,6 +738,7 @@ fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
         bank: bank.rows.clone(),
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: options,
         avoid: Vec::new(),
         cache: Some(Arc::clone(&cache)),
@@ -769,6 +839,7 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
         bank: bank.rows.clone(),
         from,
         to: destination,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts: options,
         avoid: Vec::new(),
         cache: Some(Arc::clone(&cache)),
@@ -1383,6 +1454,7 @@ fn capture(
         bank: bank.rows,
         from,
         to,
+        max_expansions: nav_planner::router::NODE_BUDGET,
         opts,
         avoid: vec![],
         cache: None,
@@ -3147,6 +3219,7 @@ fn real_content_inspection_capture_bytes() {
                 bank: Vec::new(),
                 from,
                 to,
+                max_expansions: nav_planner::router::NODE_BUDGET,
                 opts: FindOptions {
                     allow_wilderness: true,
                     ..FindOptions::default()
@@ -3317,11 +3390,11 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script_js::wire::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script_js::wire::decode_snapshot(&bytes).unwrap();
 
-    assert_eq!(bytes.len(), 1_360, "new capture size");
+    assert_eq!(bytes.len(), 1_448, "new capture size");
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
         nav_planner::pack::sha256_hex(&new_digest),
-        "342c6caaccae1009d420d0e32a632042a60dbe3d056f62b22aaee48764b7ea5d",
+        "76ecc3e0aae7fba3b8a7f0c738eb04572d1c6782740cd7f0cb6dae788fc7111f",
         "new real-content inspection capture authority"
     );
 
@@ -3340,11 +3413,36 @@ fn real_content_inspection_capture_bytes() {
             "new capture omits retired vtable offset {retired_field}"
         );
     }
+    // `inv_ready`, `bank_side_ready` and `stats_ready` (vtable offsets 298,
+    // 300 and 302) are trailing bool fields from waves 1-2; wave 3 walking adds
+    // `walk_outcome_no_path`, `walk_remaining_request_id` and `walk_remaining`
+    // at 310, 312 and 314 and the route-inspect terminals at 316 and 318
+    // (after ClientAdapter 304, `taking_damage` 306 and
+    // `guardian_active_event` 308). This capture writes the three walk scalars
+    // and the previous inspection's terminal (318); the latest inspection has
+    // no terminal. The old capture predates them all (1,376 bytes, digest
+    // 886f2db7…). The separate 1,440-byte walking-branch capture is not this
+    // baseline; the new capture is 1,448 bytes (digest asserted above).
+    for added_field in [298_u16, 300, 302, 310, 312, 314, 318] {
+        assert_eq!(
+            old_vtable.get(added_field),
+            0,
+            "old capture predates offset {added_field}"
+        );
+        assert_ne!(
+            new_vtable.get(added_field),
+            0,
+            "new capture writes offset {added_field}"
+        );
+    }
     let field_count = old_vtable.num_fields().max(new_vtable.num_fields());
     for field_index in 0..field_count {
         let field_offset =
             4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
-        if field_offset == 126 || field_offset == 128 {
+        if matches!(
+            field_offset,
+            126 | 128 | 298 | 300 | 302 | 310 | 312 | 314 | 318
+        ) {
             continue;
         }
         assert_eq!(
@@ -3354,10 +3452,25 @@ fn real_content_inspection_capture_bytes() {
         );
     }
 
+    // The old capture predates the route-inspect terminal fields. The held
+    // successful (previous) inspection now publishes its exact terminal: the
+    // captured destination. Check it, then compare every other active field.
+    let prev_terminal = snapshot
+        .route_inspect_prev_terminal()
+        .expect("previous successful inspection publishes its terminal");
+    assert_eq!(
+        (prev_terminal.x(), prev_terminal.z(), prev_terminal.level()),
+        (capture.to.x, capture.to.z, capture.to.level),
+        "previous inspection terminal is the captured destination"
+    );
+    assert!(snapshot.route_inspect_terminal().is_none());
     // flatc's generated Debug visits every active accessor recursively;
     // FlatBuffers Vector Debug iterates every entry without truncation.
     // Thus this compares every active nested field, not just route fields.
-    let active_fields = format!("{snapshot:?}");
+    let active_fields = format!("{snapshot:?}").replace(
+        &format!("route_inspect_prev_terminal: Some({prev_terminal:?})"),
+        "route_inspect_prev_terminal: None",
+    );
     assert_eq!(
         active_fields,
         format!("{old_snapshot:?}"),

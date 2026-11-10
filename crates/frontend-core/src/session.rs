@@ -2726,6 +2726,11 @@ impl<Io> OperatorSession<Io> {
         &self.script_lines
     }
 
+    #[cfg(all(test, feature = "memory-profile"))]
+    pub(crate) fn set_script_lines_for_test(&mut self, lines: Vec<(String, String)>) {
+        self.script_lines = lines;
+    }
+
     /// First half of [`Self::poll`]: reap finished workers, start the
     /// spawns that waited for them and advance pending removals (stop on
     /// disconnect or timeout). Never joins a live worker.

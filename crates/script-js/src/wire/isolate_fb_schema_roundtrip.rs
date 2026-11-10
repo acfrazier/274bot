@@ -310,7 +310,7 @@ fn older_snapshot_without_side_modal_id_reads_absent() {
 
     let snapshot = decode_snapshot(b.finished_data()).expect("older snapshot verifies");
     assert!(!snapshot.has_side_modal_id());
-    assert_eq!(snapshot.side_modal_id(), -1);
+    assert_eq!(snapshot.side_modal_id(), None);
     crate::scene::observed::on_reset();
     crate::scene::observed::apply(&snapshot);
     let posted = crate::scene::observed::with(|scene| {

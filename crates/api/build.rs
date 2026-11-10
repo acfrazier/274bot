@@ -16,6 +16,7 @@ use flate2::Compression;
 const GENERATE_GAME_DATA: &str = "python tools/local-data/build.py";
 const BANK_CATALOG_JSON: &str = "data/game-data/bank-catalog.json";
 const COOK_CATALOG_JSON: &str = "data/game-data/cook-catalog.json";
+const GATHER_CATALOG_JSON: &str = "data/game-data/gather-catalog.json";
 const LOCAL_ASSETS: &[&str] = &[
     "data/game-data/274.json",
     "data/game-data/289.json",
@@ -28,6 +29,7 @@ const LOCAL_ASSETS: &[&str] = &[
     "data/game-data/289/prereq_steps.json",
     BANK_CATALOG_JSON,
     COOK_CATALOG_JSON,
+    GATHER_CATALOG_JSON,
 ];
 const LOCAL_377_ASSETS: &[&str] = &[
     "data/game-data/377.json",
@@ -91,9 +93,21 @@ fn main() -> io::Result<()> {
     let cook_catalog_rust = catalog_codegen::cook_catalog_rust(&cook_catalog_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
+    let gather_catalog_json = fs::read_to_string(manifest_dir.join(GATHER_CATALOG_JSON))
+        .map_err(|error| io::Error::new(error.kind(), format!("{GATHER_CATALOG_JSON}: {error}")))?;
+    let gather_catalog_rust = catalog_codegen::gather_catalog_rust(&gather_catalog_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     fs::write(out.join("bank_catalog.rs"), bank_catalog_rust)?;
     fs::write(out.join("cook_catalog.rs"), cook_catalog_rust)?;
+    fs::write(out.join("gather_camps.rs"), gather_catalog_rust.camps)?;
+    fs::write(out.join("fishing_gear.rs"), gather_catalog_rust.fishing)?;
+    fs::write(
+        out.join("fish_camp_cook_plans.rs"),
+        gather_catalog_rust.cook,
+    )?;
+    fs::write(out.join("quest_junk.rs"), gather_catalog_rust.quest_junk)?;
     let source_377 = (!missing_377).then(|| (377, &paths_377[0]));
     for (revision, source) in [(274, &paths[0]), (289, &paths[1])]
         .into_iter()

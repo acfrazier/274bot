@@ -100,7 +100,7 @@ function rememberBase() {
             players: Players.query().results(),
             ground: GroundItems.query().results(),
         },
-        all: { npcs: Npcs.all(), players: Players.all() },
+        all: { npcs: Npcs.all(), players: Players.query().results() },
     };
     return {
         queryIdentity: [
@@ -245,9 +245,9 @@ function nativeSummary() {
         ],
         all: [
             Npcs.all().map((npc) => [npc.id, npc.name]),
-            Players.all().map((player) => [player.index, player.name]),
+            Players.query().results().map((player) => [player.index, player.name]),
             sameRows(Npcs.all(), base.pages.npcs),
-            sameRows(Players.all(), base.pages.players),
+            sameRows(Players.query().results(), base.pages.players),
         ],
         validityAndTargets: [
             base.all.npcs[0].valid(),

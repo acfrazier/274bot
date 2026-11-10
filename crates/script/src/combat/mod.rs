@@ -9,6 +9,7 @@
 //! attempts at most four reachable nearby pickups of the selected ammunition.
 mod arbiter;
 pub mod arm;
+pub mod cast_npc;
 pub mod frame;
 pub mod guard;
 mod machine;
@@ -25,6 +26,7 @@ pub mod style {
     pub mod melee;
     pub mod ranged;
 }
+pub use cast_npc::CastNpc;
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::{Combat, SwitchCause, SwitchState};
 pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};

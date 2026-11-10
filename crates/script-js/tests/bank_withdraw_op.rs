@@ -404,4 +404,51 @@ export default class T extends LoopingBot {
         assert!(harness.runner.slot.last_error().is_none());
         harness.runner.stop();
     }
+
+    #[test]
+    fn hunting_supply_withdraw_to_returns_the_observed_gain() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let source = r#"
+import { withdrawTo } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__gained = await withdrawTo('Lobster', 7);
+    }
+}
+"#
+        .to_owned();
+        let mut harness = Harness::with_source(source, &LADDER);
+        assert_eq!(
+            harness.next_click(2),
+            InteractReq::Withdraw {
+                name: "Lobster".into(),
+                action: "Withdraw-5".into(),
+            }
+        );
+        harness.finish(7, 0, 5);
+    }
+
+    #[test]
+    fn hunting_supply_withdraw_to_stops_at_a_full_pack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let source = r#"
+import { withdrawTo } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__gained = await withdrawTo('Lobster', 22);
+    }
+}
+"#
+        .to_owned();
+        let mut harness = Harness::with_source(source, &LADDER);
+        harness.finish(2, 27, 0);
+    }
 }

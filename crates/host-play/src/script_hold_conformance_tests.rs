@@ -325,6 +325,7 @@ fn start_compat_surface(slot: &mut script::SlotScript, factory: &Arc<StubSurface
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("the stub compatibility surface starts");
     factory
@@ -488,6 +489,7 @@ impl Rig {
                     held,
                     held,
                     false,
+                    None,
                     None,
                     None,
                     Some(Arc::clone(&observe_cache)),

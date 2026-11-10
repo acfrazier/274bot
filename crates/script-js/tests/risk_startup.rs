@@ -11,9 +11,10 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
     let mut slot = SlotScript::new();
     let source: Arc<str> = "export function tick() {}".into();
     let family = resolve_api_family(&source).ok().map(|(_, family)| family);
-    slot.bind_surface_factory(Arc::new(surface::JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(surface::JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(surface::JsStartCard {
+            card_name: "risk startup test".into(),
             source,
             shape: LoadShape::NativeTick,
             siblings: Arc::default(),
@@ -23,6 +24,7 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
         game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

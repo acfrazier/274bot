@@ -171,6 +171,8 @@ pub struct ScriptStartHandle {
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     world: Option<Arc<nav_planner::world::NavWorld>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+    #[cfg(feature = "js")]
+    wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
     /// connection, whose Starts post no operator rows.
@@ -463,20 +465,27 @@ impl ScriptStartHandle {
             } => {
                 // Caller-owned rows (a harness scenario's fixtures) or the
                 // operator's current rows from the state service.
-                let loadouts: Result<Arc<[api::loadout::Loadout]>, String> = match loadouts {
-                    Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
-                    None => self.operator_loadouts(name).map(Arc::from),
-                };
-                match loadouts {
-                    Ok(loadouts) => {
-                        slot.start_surface_with_settings(script_runtime::js_surface_start(
-                            script_runtime::js_start_card(source, shape, siblings),
+                // The compatibility SettingsStore is synchronous. Read its
+                // account/content store before V8 starts.
+                let resolved_loadouts: Result<Arc<[api::loadout::Loadout]>, String> = self
+                    .state
+                    .as_ref()
+                    .map_or(Ok(()), |state| state.prepare_script_runtime_settings(name))
+                    .and_then(|()| match loadouts {
+                        Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
+                        None => self.operator_loadouts(name).map(Arc::from),
+                    });
+                match resolved_loadouts {
+                    Ok(loadouts) => slot.start_surface_with_settings(
+                        script_runtime::js_surface_start_with_wilderness_rules(
+                            script_runtime::js_start_card(name, source, shape, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),
                             loadouts,
-                        ))
-                    }
+                            Arc::clone(&self.wilderness_rules),
+                        ),
+                    ),
                     Err(error) => Err(Refused(error)),
                 }
             }
@@ -1133,6 +1142,8 @@ impl Play {
             game_data: self.game_data.clone(),
             world: self.world.clone(),
             named_banks: Arc::clone(&self.named_banks),
+            #[cfg(feature = "js")]
+            wilderness_rules: Arc::clone(&self.wilderness_rules),
             state: self.local_state.clone(),
         }
     }

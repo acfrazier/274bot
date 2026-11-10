@@ -36,6 +36,27 @@ converts them to static Rust tables in Cargo's `OUT_DIR`. No Rust source is
 generated beneath the ignored data directory. The application retains borrowed
 static tables, not another JSON copy or a runtime catalog parser.
 
+## The rs2b0t gather catalogs
+
+The curated camp tables (woodcutting, mining and fishing camps), the fishing methods and gear vendors, the fish-camp
+cook plans and the bank quest-junk table are written as one JSON catalog, `gather-catalog.json`, beside the other local
+game data. They are read from the rs2b0t sources by `tools/game-data/extractors/rs2b0t-literals.ts`, an AST reader that
+evaluates nothing: it expands local helper calls (`camp(...)`, `mine(...)`, `tool(...)`) with their default parameters
+and recognises two library calls by their exact source text (`.sort((a, b) => a.name.localeCompare(b.name))` and
+`.map(<local helper>)`). `generate.ts` writes the catalog with the rest of the selected data. Tracked API build code
+(`crates/api/build_support/catalog_codegen.rs`) converts it to static Rust tables in Cargo's `OUT_DIR`; no Rust source is
+generated beneath the ignored data directory. The catalog needs none of the engine or content checkouts, so one command
+regenerates only it (the engine root only supplies `node_modules/typescript`):
+
+```bash
+RS2B0T=/absolute/path/to/rs2b0t GAME_DATA_289_ENGINE=/absolute/path/to/a-root-with-node_modules/typescript \
+    bun tools/game-data/generate-gather-catalogs.ts [--check]
+```
+
+`--check` writes nothing and fails when the local file differs from the rs2b0t export.
+`tools/game-data/gather-oracle.ts` runs the same upstream modules to produce the expected results of the
+`compat_v1_gather` contract tests (`RS2B0T=<rs2b0t ae56ccc95 checkout> bun tools/game-data/gather-oracle.ts`).
+
 ### Revision 377
 
 Add the selected 377 source roots alongside the historical roots above:

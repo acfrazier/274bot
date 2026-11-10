@@ -306,7 +306,7 @@ export type InteractReq =
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-nearest-bank'}
-  | { op: 'inspect-route'; x: number; z: number; level: number; from_x: number; from_z: number; from_level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number}
+  | { op: 'inspect-route'; x: number; z: number; level: number; from_x: number; from_z: number; from_level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; max_expansions?: number; request_id?: number}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
@@ -461,7 +461,7 @@ export type NativeOp =
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-nearest-bank'}
-  | { op: 'inspect-route'; from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number};
+  | { op: 'inspect-route'; from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; max_expansions?: number; request_id?: number};
 
 export type HelperResult<T> =
   | { ok: true; value: T }
@@ -733,9 +733,9 @@ export interface NativeApi {
   readonly paint: NativePaint;
   request(op: NativeOp): void;
   /** Isolate-owned inspect token. Pair with request inspect-route request_id, or query inspectSettled/inspectValue. Caller-invented ids never consume host jobs; 0 is snapshot-only preview. */
-  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;
+  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number; maxExpansions?: number }): number;
   inspectSettled(token: number): boolean;
-  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;
+  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; terminal: WorldTile | null; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;
   prayerPoints(): HelperResult<number>;
   prayerMax(): HelperResult<number>;
   prayerFull(): HelperResult<boolean>;
@@ -1133,7 +1133,7 @@ export interface CombatSession {
   status: CombatStatus | null;
 }
 
-/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */
+/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'single-way-blocked' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */
 export interface CombatReport {
   end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';
   reason: string | null;

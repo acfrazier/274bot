@@ -137,20 +137,43 @@ export const Banking = new Proxy(
         },
     },
 );
-export async function purgePackAtBank() {
-    throw notImpl('purgePackAtBank', 'multi-step bank transaction');
+// Rust opens, deposits every unkept row, closes and verifies the pack.
+export async function purgePackAtBank(opts) {
+    const out = await runMachine(
+        'bank_task',
+        {
+            kind: 'purge',
+            keep: Array.from(opts.keep, (name) => String(name)),
+            stand: opts.stand ?? null,
+            destination: opts.destination ?? null,
+            preferNearby: opts.preferNearby,
+            boothName: opts.boothName,
+            boothOp: opts.boothOp,
+            obstacles: opts.obstacles ?? [],
+        },
+        { log: typeof opts.log === 'function' ? opts.log : undefined },
+    );
+    return out.kind === 'done' && out.value === true;
 }
 
-export async function withdrawCoins() {
-    throw notImpl('withdrawCoins', 'multi-step bank transaction');
+// `need` is a held target. Rust reads the held and banked coins itself.
+export async function withdrawCoins(need, opts) {
+    const out = await runMachine(
+        'bank_task',
+        {
+            kind: 'coins',
+            need: Number(need),
+            coin_name: opts.coinName === undefined ? null : String(opts.coinName),
+        },
+        { log: typeof opts.log === 'function' ? opts.log : undefined },
+    );
+    return out.kind === 'done' && out.value === true;
 }
 
-export async function bankPace() {
-    throw notImpl('bankPace', 'randomized pacing is not carried');
-}
-
-export function bankPaceTicks() {
-    throw notImpl('bankPaceTicks', 'randomized pacing is not carried');
+// One observed game tick in the accepted session (fixed; no randomness).
+export async function bankPace(log) {
+    log?.('bank: pause 1t');
+    await runMachine('bank_task', { kind: 'pace' }, {});
 }
 export function resolveBankOpenRoute(input) {
     return globalThis.__rs2b0t_resolve_bank_open_route(input);

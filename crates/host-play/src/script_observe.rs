@@ -471,6 +471,7 @@ pub(crate) fn script_observe_cached(
         // The test wrappers model the guardian's hold.
         hold,
         ours,
+        None,
         canlight,
         slot_input,
         cache,
@@ -604,6 +605,7 @@ pub(crate) fn script_observe_cached_with_channels<'a, S>(
     hold: bool,
     guardian_hold: bool,
     ours: bool,
+    guardian_active_event: Option<&str>,
     canlight: Option<&[u64]>,
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
@@ -621,6 +623,8 @@ where
     let snapshot = snapshot.into();
     #[cfg(feature = "test-support")]
     let mut snapshot = snapshot;
+    #[cfg(not(feature = "js"))]
+    let _ = guardian_active_event;
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
         if let Some(snapshot) = snapshot.read() {
@@ -663,6 +667,7 @@ where
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
+    let mut loc_projection_wanted = false;
     // The script's own wait for the result of its own interaction, read after
     // this frame's script tick; the host holds its auto-run press meanwhile.
     let mut script_wait = None;
@@ -1044,6 +1049,9 @@ where
                     walk_radius,
                     walk_allow_teleports,
                     walk_blocked,
+                    walk_no_path,
+                    walk_remaining_request_id,
+                    walk_remaining,
                     walk_cancel_reason,
                     user_move_intent_seq,
                     walk_missing_carry,
@@ -1065,6 +1073,9 @@ where
                                 b.walk_outcome_radius,
                                 b.walk_outcome_allow_teleports,
                                 b.walk_outcome_blocked,
+                                b.walk_outcome_no_path,
+                                b.walk_request_id,
+                                b.traveller.remaining() as u64,
                                 b.walk_outcome_cancel_reason,
                                 b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
@@ -1088,6 +1099,9 @@ where
                             0,
                             false,
                             false,
+                            false,
+                            0,
+                            0,
                             script::native::WalkCancelReason::None,
                             0,
                             Vec::new(),
@@ -1148,6 +1162,9 @@ where
                         radius: walk_radius,
                         allow_teleports: walk_allow_teleports,
                         blocked: walk_blocked,
+                        no_path: walk_no_path,
+                        remaining_request_id: walk_remaining_request_id,
+                        remaining: walk_remaining,
                         cancel_reason: walk_cancel_reason,
                         user_move_intent_seq,
                     },
@@ -1157,6 +1174,7 @@ where
                     Some(packed.view.as_ref()),
                     packed.flood.as_deref(),
                     packed.stamp,
+                    Some(guardian_active_event.unwrap_or("")),
                     |input, native| {
                         post_script_snapshot(slot, navs, name, walk_seq, |slot| {
                             if wake_waits {
@@ -1559,6 +1577,7 @@ where
             script::RunState::Starting | script::RunState::Running | script::RunState::Paused
         )
         .then_some(slot.runtime_generation());
+        loc_projection_wanted = slot.loc_projection_wanted();
         has_native_actions = slot.has_native_actions();
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
         script_wait =
@@ -1566,6 +1585,7 @@ where
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
+        run_policy.set_loc_projection_wanted(loc_projection_wanted);
         if let Some(update) = run_policy_update {
             update.apply(run_policy);
         }
@@ -2465,7 +2485,9 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         .filter(|(request, _)| *request == request_id)
         .map(|(_, end)| end.clone());
     let end = typed_failure.unwrap_or({
-        if bot.walk_outcome_blocked {
+        if bot.walk_outcome_no_path {
+            script::native::WalkEnd::NoPath
+        } else if bot.walk_outcome_blocked {
             script::native::WalkEnd::Blocked
         } else if bot.walk_outcome_failed {
             script::native::WalkEnd::Failed

@@ -322,10 +322,14 @@ pub enum SeatStartArgs {
     Gather(crate::native::SettingsBag),
     /// Decoded combat-session request.
     Combat(crate::api_combat::CombatSessionRequest),
-    /// Decoded quest-progress name.
-    QuestProgress(String),
+    /// Decoded quest-progress or journal request.
+    QuestProgress { name: String, journal_only: bool },
     /// Decoded typed banking operation.
     Bank(crate::bank::request::BankSeatArgs),
+    /// Decoded native spell cast on one exact NPC.
+    CastNpc(crate::combat::CastNpcRequest),
+    /// Decoded typed Shop.buyById arguments.
+    Shop(crate::native_shop::ShopBuyByIdArgs),
 }
 
 /// One decoded decision answer.

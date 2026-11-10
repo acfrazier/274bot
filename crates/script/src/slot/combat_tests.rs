@@ -25,6 +25,7 @@ fn load_slot(incarnation: u64, data: bool) -> SlotScript {
         game_data: data.then(selected),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: crate::surface::no_wilderness(),
     })
     .unwrap();
     factory
@@ -251,6 +252,7 @@ fn one_api_session_per_slot_refuses_busy_both_ways() {
     slot.consume_api_control(&InteractReq::ProgressRead {
         request_id: 306,
         name: "cook".into(),
+        journal_only: false,
     });
     assert!(matches!(
         &seat(&slot).progress_page,

@@ -1,6 +1,6 @@
-//! Shared walk destinations: the 12 rs2b0t `WALK_DESTINATIONS` town pins
-//! the TUI map draws (the headed picker may adopt them later). Each entry
-//! is the world tile a WalkTo confirm arms.
+//! Named walk destinations: the 12 rs2b0t `WALK_DESTINATIONS` town pins the compatibility
+//! `WalkExecutor` names. Each entry is the world tile a walk arms. Pure static data, exposed
+//! to `script` through this facade.
 
 /// One named walk destination pin: the town's world tile.
 pub struct WalkDestination {
@@ -88,5 +88,5 @@ pub static WALK_DESTINATIONS: &[WalkDestination] = &[
 ];
 
 #[cfg(test)]
-#[path = "walk_destinations_tests.rs"]
+#[path = "destinations_tests.rs"]
 mod tests;

@@ -331,26 +331,62 @@ fn button_label_toggle_is_a_real_change() {
 }
 
 #[test]
-fn stepper_still_throws_not_impl() {
+fn stepper_records_three_controls_and_cycles_from_the_current_option() {
     let src = r#"
 import { Paint } from '../../paint/Paint.js';
 export default class T extends LoopingBot {
     onPaint() {
         const p = Paint.begin(null, {});
-        try { p.stepper(); } catch (e) { globalThis.__err = String(e.message || e); }
+        globalThis.__picked = p.stepper('mode', 'Mode', ['one', 'two'], 'one');
         p.end();
     }
 }
 "#;
     let iso = spawn(src);
     tick(&iso, 1);
-    let err = iso.probe("__err").unwrap();
-    assert!(
-        err.as_str()
-            .unwrap_or("")
-            .contains("not impl: PaintFrame.stepper"),
-        "unused widgets stay missing, got {err:?}"
+    assert_eq!(iso.probe("__picked").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.paint().unwrap().buttons,
+        vec![
+            ScriptPaintButton {
+                id: "step:mode:prev".into(),
+                label: "◀".into(),
+            },
+            ScriptPaintButton {
+                id: "step:mode:mid".into(),
+                label: "Mode: one".into(),
+            },
+            ScriptPaintButton {
+                id: "step:mode:next".into(),
+                label: "▶".into(),
+            }
+        ]
     );
+    iso.paint_click("step:mode:next");
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("two"));
+    assert_eq!(clicked(&iso), serde_json::Value::Null);
+    iso.join();
+}
+
+#[test]
+fn stepper_matches_unicode_case_conversion_when_cycling() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const p = Paint.begin(null, {});
+        globalThis.__picked = p.stepper('mode', 'Mode', ['other', '\u0130'], 'i\u0307');
+        p.end();
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__picked").unwrap(), serde_json::Value::Null);
+    iso.paint_click("step:mode:prev");
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("other"));
     iso.join();
 }
 

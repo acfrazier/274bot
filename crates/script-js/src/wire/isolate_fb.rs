@@ -45,13 +45,14 @@ pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
-    Booth, Carry, ChatLine, ChatOption, Collision, CombatFight, CombatProjectile, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, MirrorRevoke,
-    NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow,
-    QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason,
-    SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt,
-    SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
-    WalkCancelReason, WidgetText,
+    Booth, Carry, ChatLine, ChatModalTexts, ChatOption, ClientAdapterFacts, Collision, CombatFight,
+    CombatProjectile, CombatStyle, InspectHop, Interact, InteractBatch, JournalEvidence,
+    MainModalTexts, MakeButton, MakeProduct, MirrorRevoke, NativeRequest, NearestBooth, NpcBox,
+    ProgressFlagRow, ProjectionLoc, ProjectionScene, PuzzleBoard, QuestProgressRow, QuestStatus,
+    Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason, SeatDecide, SeatKind,
+    SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt, SeatRefusal, SeatResult,
+    SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason,
+    WidgetFact, WidgetText,
 };
 
 impl From<script::native::WalkCancelReason> for WalkCancelReason {
@@ -195,10 +196,14 @@ pub enum SeatStartArgsRef<'a> {
     Gather(&'a script::native::SettingsBag),
     /// Typed combat-session request.
     Combat(&'a script::api_combat::CombatSessionRequest),
-    /// Typed quest-progress name.
-    QuestProgress(&'a str),
+    /// Typed quest-progress name and journal-only mode.
+    QuestProgress { name: &'a str, journal_only: bool },
     /// Typed banking operation.
     Bank(&'a script::bank::request::BankSeatArgs),
+    /// Typed cast on one selected NPC index.
+    CastNpc(&'a script::combat::CastNpcRequest),
+    /// Typed Shop.buyById request.
+    Shop(&'a script::native_shop::ShopBuyByIdArgs),
 }
 
 /// One start with its push-time request stamp and typed family payload.
@@ -427,6 +432,9 @@ impl<'a> Snapshot<'a> {
         has_bank_side => VT_BANK_SIDE,
         has_bank_open => VT_BANK_OPEN,
         has_bank_loaded => VT_BANK_LOADED,
+        has_inv_ready => VT_INV_READY,
+        has_bank_side_ready => VT_BANK_SIDE_READY,
+        has_stats_ready => VT_STATS_READY,
         has_hold => VT_HOLD,
         has_ours => VT_OURS,
         has_npcs => VT_NPCS,
@@ -548,6 +556,9 @@ impl<'a> Snapshot<'a> {
         has_bank_selection_kind => VT_BANK_SELECTION_KIND,
         has_self_anim => VT_SELF_ANIM,
         has_walk_outcome_blocked => VT_WALK_OUTCOME_BLOCKED,
+        has_walk_outcome_no_path => VT_WALK_OUTCOME_NO_PATH,
+        has_walk_remaining_request_id => VT_WALK_REMAINING_REQUEST_ID,
+        has_walk_remaining => VT_WALK_REMAINING,
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
         has_api_gather => VT_API_GATHER,
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
@@ -558,6 +569,7 @@ impl<'a> Snapshot<'a> {
         has_local_attack_marks => VT_LOCAL_ATTACK_MARKS,
         has_side_modal_id => VT_SIDE_MODAL_ID,
         has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
+        has_guardian_active_event => VT_GUARDIAN_ACTIVE_EVENT,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -668,6 +680,59 @@ pub struct ItemRowFp {
     pub cert: i32,
     pub component_id: i32,
     pub slot: i32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WidgetFactFp {
+    pub component_id: i32,
+    pub root_component_id: i32,
+    pub parent_id: i32,
+    pub type_: i32,
+    pub button_type: i32,
+    pub client_code: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub hidden: bool,
+    pub text: Option<String>,
+    pub alternate_text: Option<String>,
+    pub button_text: Option<String>,
+    pub target_base: Option<String>,
+    pub model_type: i32,
+    pub model_id: i32,
+    pub script_opcode: i32,
+    pub script_varp: i32,
+    pub script_value: i32,
+    pub colour: i32,
+    pub inventory_ready: bool,
+    pub items: Vec<ItemRowFp>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ProjectionSceneFp {
+    pub view: api::snapshot::ProjectionSceneView,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ClientAdapterFactsFp {
+    pub attached: bool,
+    pub map_build_base: (i32, i32),
+    pub server_tile: Option<TileInput>,
+    pub hint_tile_level: Option<i32>,
+    pub bank_com_id: i32,
+    pub chat_continue_component_id: i32,
+    pub chat_modal_texts: (i32, Vec<String>),
+    pub widgets: Vec<WidgetFactFp>,
+    pub player_count: i32,
+    pub npc_count: i32,
+    pub run_controls: Option<(i32, i32)>,
+    pub login_message: String,
+    pub menu_entries: Vec<String>,
+    pub last_walk_path_local: Vec<(i32, i32)>,
+    pub session_generation: u64,
+    pub modal_close_generation: u64,
+    pub projection_scene: Option<ProjectionSceneFp>,
 }
 
 /// One posted puzzle board as an owned fingerprint row. The generation is a
@@ -968,6 +1033,9 @@ pub struct SnapshotFingerprint {
     pub bank_side: Vec<ItemRowFp>,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub inv_ready: bool,
+    pub stats_ready: bool,
+    pub bank_side_ready: bool,
     pub bank_generation: u64,
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: u64,
@@ -1036,6 +1104,8 @@ pub struct SnapshotFingerprint {
     /// `(root, texts)` — the whole pair or nothing. A missing pair is not
     /// a closed modal, so the comparison cannot tear lines off the root.
     pub main_modal_texts: Option<(i32, Vec<String>)>,
+    /// One complete host-captured projection of synchronous ClientAdapter reads.
+    pub client_adapter: Option<ClientAdapterFactsFp>,
     /// The whole board observation (identity, size, rows, generation) or
     /// nothing — one family, so a delta cannot post one half.
     pub puzzle_board: Option<PuzzleBoardFp>,
@@ -1055,6 +1125,9 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub walk_outcome_blocked: bool,
+    pub walk_outcome_no_path: bool,
+    pub walk_remaining_request_id: u64,
+    pub walk_remaining: u64,
     pub walk_outcome_cancel_reason: WalkCancelReason,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
@@ -1081,6 +1154,9 @@ pub struct SnapshotFingerprint {
     pub local_attack_marks: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
+    pub taking_damage: Option<bool>,
+    /// Current guardian-owned or handled event; an empty string clears it.
+    pub guardian_active_event: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1107,6 +1183,7 @@ pub struct RouteInspectTerminalFp {
     pub reason: String,
     pub bank_planned: bool,
     pub ticks_bits: u64,
+    pub terminal: Option<(i32, i32, i32)>,
     pub hops: Vec<InspectHopFp>,
 }
 
@@ -1210,6 +1287,9 @@ impl SnapshotFingerprint {
             bank_side: input.bank_side.iter().map(item_row_fp).collect(),
             bank_open: input.bank_open,
             bank_loaded: input.bank_loaded,
+            inv_ready: native.inv_ready,
+            stats_ready: native.stats_ready,
+            bank_side_ready: native.bank_side_ready,
             bank_generation: input.bank_generation,
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
@@ -1333,6 +1413,62 @@ impl SnapshotFingerprint {
             main_modal_texts: native
                 .main_modal_texts
                 .map(|pair| (pair.root, pair.texts.to_vec())),
+            client_adapter: native.client_adapter.map(|facts| ClientAdapterFactsFp {
+                attached: facts.attached,
+                map_build_base: facts.map_build_base,
+                server_tile: facts.server_tile,
+                hint_tile_level: facts.hint_tile_level,
+                bank_com_id: facts.bank_com_id,
+                chat_continue_component_id: facts.chat_continue_component_id,
+                chat_modal_texts: (
+                    facts.chat_modal_texts.root,
+                    facts.chat_modal_texts.texts.to_vec(),
+                ),
+                widgets: facts
+                    .widget_facts
+                    .iter()
+                    .map(|w| WidgetFactFp {
+                        component_id: w.component_id,
+                        root_component_id: w.root_component_id,
+                        parent_id: w.parent_id,
+                        type_: w.type_,
+                        button_type: w.button_type,
+                        client_code: w.client_code,
+                        x: w.x,
+                        y: w.y,
+                        width: w.width,
+                        height: w.height,
+                        hidden: w.hidden,
+                        text: w.text.map(str::to_string),
+                        alternate_text: w.alternate_text.map(str::to_string),
+                        button_text: w.button_text.map(str::to_string),
+                        target_base: w.target_base.map(str::to_string),
+                        model_type: w.model_type,
+                        model_id: w.model_id,
+                        script_opcode: w.script_opcode,
+                        script_varp: w.script_varp,
+                        script_value: w.script_value,
+                        colour: w.colour,
+                        inventory_ready: w.inventory_ready,
+                        items: w.items.iter().map(item_row_fp).collect(),
+                    })
+                    .collect(),
+                player_count: facts.player_count,
+                npc_count: facts.npc_count,
+                run_controls: facts.run_controls,
+                login_message: facts.login_message.to_string(),
+                menu_entries: facts
+                    .menu_entries
+                    .iter()
+                    .map(|entry| entry.to_string())
+                    .collect(),
+                last_walk_path_local: facts.last_walk_path_local.to_vec(),
+                session_generation: facts.session_generation,
+                modal_close_generation: facts.modal_close_generation,
+                projection_scene: facts.projection_scene.map(|projection| ProjectionSceneFp {
+                    view: (*projection.view).clone(),
+                }),
+            }),
             puzzle_board: native.puzzle_board.map(|board| PuzzleBoardFp {
                 component_id: board.component_id,
                 size: board.size,
@@ -1355,6 +1491,9 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             walk_outcome_blocked: native.walk_outcome_blocked,
+            walk_outcome_no_path: native.walk_outcome_no_path,
+            walk_remaining_request_id: native.walk_remaining_request_id,
+            walk_remaining: native.walk_remaining,
             walk_outcome_cancel_reason: input.walk_outcome_cancel_reason.into(),
             walk_missing_carry: native
                 .walk_missing_carry
@@ -1380,6 +1519,8 @@ impl SnapshotFingerprint {
             local_attack_marks: native.local_attack_marks,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
+            taking_damage: native.taking_damage,
+            guardian_active_event: native.guardian_active_event.map(str::to_string),
         }
     }
 }
@@ -1410,6 +1551,7 @@ fn route_inspect_terminal_fp(t: &RouteInspectTerminalInput<'_>) -> RouteInspectT
         reason: t.reason.unwrap_or("").to_string(),
         bank_planned: t.bank_planned,
         ticks_bits: t.ticks.to_bits(),
+        terminal: t.terminal.map(|tile| (tile.x, tile.z, tile.level)),
         hops: t.hops.iter().map(inspect_hop_fp).collect(),
     }
 }
@@ -1449,6 +1591,9 @@ pub struct DeltaMask {
     pub bank_side: bool,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub inv_ready: bool,
+    pub stats_ready: bool,
+    pub bank_side_ready: bool,
     pub bank_generation: bool,
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
@@ -1522,6 +1667,7 @@ pub struct DeltaMask {
     /// another root's id. When set, slot 248 and slot 68 post in the same
     /// buffer.
     pub main_modal_texts: bool,
+    pub client_adapter: bool,
     /// One bit for the whole board family (identity, size, rows AND
     /// generation): when set, slot 250 and slot 252 post in the same
     /// buffer. Never set for the generation alone — the generation is not
@@ -1550,6 +1696,9 @@ pub struct DeltaMask {
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
     pub seat_page: bool,
+    pub taking_damage: bool,
+    /// The guardian-owned or currently handled event. Empty clears it.
+    pub guardian_active_event: bool,
 }
 
 impl DeltaMask {
@@ -1569,6 +1718,9 @@ impl DeltaMask {
             bank_side: true,
             bank_open: true,
             bank_loaded: true,
+            inv_ready: true,
+            stats_ready: true,
+            bank_side_ready: true,
             bank_generation: true,
             count_dialog_open: true,
             withdraw_x_result_seq: true,
@@ -1638,6 +1790,7 @@ impl DeltaMask {
             route_inspect: true,
             collision: true,
             main_modal_texts: true,
+            client_adapter: true,
             puzzle_board: true,
             bank_selection: true,
             self_anim: true,
@@ -1652,6 +1805,8 @@ impl DeltaMask {
             local_attack_marks: true,
             side_modal_id: true,
             seat_page: true,
+            taking_damage: true,
+            guardian_active_event: true,
         }
     }
 
@@ -1678,6 +1833,9 @@ impl DeltaMask {
             bank_side: next.bank_side != last.bank_side,
             bank_open: next.bank_open != last.bank_open,
             bank_loaded: next.bank_loaded != last.bank_loaded,
+            inv_ready: next.inv_ready != last.inv_ready,
+            stats_ready: next.stats_ready != last.stats_ready,
+            bank_side_ready: next.bank_side_ready != last.bank_side_ready,
             bank_generation: next.bank_generation != last.bank_generation,
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
@@ -1756,11 +1914,15 @@ impl DeltaMask {
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
                 || next.walk_outcome_blocked != last.walk_outcome_blocked
+                || next.walk_outcome_no_path != last.walk_outcome_no_path
+                || next.walk_remaining_request_id != last.walk_remaining_request_id
+                || next.walk_remaining != last.walk_remaining
                 || next.walk_outcome_cancel_reason != last.walk_outcome_cancel_reason
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
             main_modal_texts: next.main_modal_texts != last.main_modal_texts,
+            client_adapter: next.client_adapter != last.client_adapter,
             // The generation rides inside the board row, so one comparison
             // covers both slots.
             puzzle_board: next.puzzle_board != last.puzzle_board,
@@ -1780,6 +1942,8 @@ impl DeltaMask {
             local_attack_marks: next.local_attack_marks != last.local_attack_marks,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
+            taking_damage: next.taking_damage != last.taking_damage,
+            guardian_active_event: next.guardian_active_event != last.guardian_active_event,
         }
     }
     /// Whether this delta carries an actual evidence change. The tick and
@@ -1796,6 +1960,9 @@ impl DeltaMask {
             || self.bank_side
             || self.bank_open
             || self.bank_loaded
+            || self.inv_ready
+            || self.stats_ready
+            || self.bank_side_ready
             || self.bank_generation
             || self.count_dialog_open
             || self.withdraw_x_result_seq
@@ -1864,6 +2031,7 @@ impl DeltaMask {
             || self.route_inspect
             || self.collision
             || self.main_modal_texts
+            || self.client_adapter
             || self.puzzle_board
             || self.bank_selection
             || self.self_anim
@@ -1876,8 +2044,10 @@ impl DeltaMask {
             || self.local_attack_marks
             || self.side_modal_id
             || self.seat_page
+            || self.guardian_active_event
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
+            || self.taking_damage
     }
 }
 
@@ -1972,6 +2142,9 @@ impl IsolateBuf {
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint, bool) {
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        if let Some(previous) = last {
+            fp.taking_damage = native.taking_damage.or(previous.taking_damage);
+        }
         fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
         let (mask, evidence_changed) = match last {
             None => (DeltaMask::all(), false),
@@ -2026,6 +2199,7 @@ impl IsolateBuf {
             );
         };
         let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        fp.taking_damage = native.taking_damage.or(last.taking_damage);
         fp.collision = collision_fp(Some(&last.collision), native.collision);
         let mut mask = DeltaMask::changed(last, &fp, force_banks);
         mask.npc_boxes = false;
@@ -2035,6 +2209,8 @@ impl IsolateBuf {
             mask.inv_size = false;
             fp.inv = std::mem::take(&mut last.inv);
             fp.inv_size = last.inv_size;
+            mask.inv_ready = false;
+            fp.inv_ready = last.inv_ready;
         }
         let evidence_changed = mask.has_evidence_change(last, &fp);
         self.builder.reset();
@@ -2297,6 +2473,13 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let guardian_active_event_off = if mask.guardian_active_event {
+        native
+            .guardian_active_event
+            .map(|event| b.create_string(event))
+    } else {
+        None
+    };
     let trade_mine_off = if mask.trade_mine {
         let offs = input
             .trade_mine
@@ -2372,6 +2555,13 @@ fn encode_snapshot_masked_into(
         native
             .main_modal_texts
             .map(|pair| main_modal_texts_off(b, &pair))
+    } else {
+        None
+    };
+    let client_adapter_off = if mask.client_adapter {
+        native
+            .client_adapter
+            .map(|facts| client_adapter_off(b, &facts))
     } else {
         None
     };
@@ -2471,6 +2661,24 @@ fn encode_snapshot_masked_into(
     };
     let inspect_prev_reason_off = if mask.route_inspect {
         Some(b.create_string(native.route_inspect.prev.reason.unwrap_or("")))
+    } else {
+        None
+    };
+    let inspect_terminal_off = if mask.route_inspect {
+        native
+            .route_inspect
+            .latest
+            .terminal
+            .map(|tile| tile_off(b, tile))
+    } else {
+        None
+    };
+    let inspect_prev_terminal_off = if mask.route_inspect {
+        native
+            .route_inspect
+            .prev
+            .terminal
+            .map(|tile| tile_off(b, tile))
     } else {
         None
     };
@@ -2591,6 +2799,15 @@ fn encode_snapshot_masked_into(
     }
     if mask.bank_loaded {
         table.add_bank_loaded(input.bank_loaded);
+    }
+    if mask.inv_ready {
+        table.add_inv_ready(native.inv_ready);
+    }
+    if mask.stats_ready {
+        table.add_stats_ready(native.stats_ready);
+    }
+    if mask.bank_side_ready {
+        table.add_bank_side_ready(native.bank_side_ready);
     }
     if mask.bank_generation {
         table.add_bank_generation(input.bank_generation);
@@ -2829,6 +3046,9 @@ fn encode_snapshot_masked_into(
         table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
         table.add_walk_outcome_request_id(native.walk_outcome_request_id);
         table.add_walk_outcome_blocked(native.walk_outcome_blocked);
+        table.add_walk_outcome_no_path(native.walk_outcome_no_path);
+        table.add_walk_remaining_request_id(native.walk_remaining_request_id);
+        table.add_walk_remaining(native.walk_remaining);
         table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason.into());
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
@@ -2847,6 +3067,9 @@ fn encode_snapshot_masked_into(
         }
         table.add_route_inspect_bank_planned(facts.latest.bank_planned);
         table.add_route_inspect_ticks(facts.latest.ticks);
+        if let Some(off) = inspect_terminal_off {
+            table.add_route_inspect_terminal(off);
+        }
         if let Some(off) = inspect_hops_off {
             table.add_route_inspect_hops(off);
         }
@@ -2859,6 +3082,9 @@ fn encode_snapshot_masked_into(
         }
         table.add_route_inspect_prev_bank_planned(facts.prev.bank_planned);
         table.add_route_inspect_prev_ticks(facts.prev.ticks);
+        if let Some(off) = inspect_prev_terminal_off {
+            table.add_route_inspect_prev_terminal(off);
+        }
         if let Some(off) = inspect_prev_hops_off {
             table.add_route_inspect_prev_hops(off);
         }
@@ -2880,6 +3106,11 @@ fn encode_snapshot_masked_into(
     if mask.main_modal_texts {
         if let Some(off) = main_modal_texts_off {
             table.add_main_modal_texts(off);
+        }
+    }
+    if mask.client_adapter {
+        if let Some(off) = client_adapter_off {
+            table.add_client_adapter(off);
         }
     }
     // Both slots or neither: the generation is pushed only from the same
@@ -2926,6 +3157,14 @@ fn encode_snapshot_masked_into(
     }
     if mask.local_player_motion {
         table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
+    }
+    if mask.taking_damage {
+        if let Some(taking_damage) = native.taking_damage {
+            table.add_taking_damage(taking_damage);
+        }
+    }
+    if let Some(off) = guardian_active_event_off {
+        table.add_guardian_active_event(off);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -3671,16 +3910,52 @@ fn progress_row_off<'b>(
     }
     table.finish()
 }
+fn journal_evidence_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    journal: &script::api_progress::JournalEvidence,
+) -> WIPOffset<JournalEvidence<'b>> {
+    let quest = b.create_string(&journal.quest);
+    let lines = journal
+        .lines
+        .iter()
+        .map(|line| b.create_string(line))
+        .collect::<Vec<_>>();
+    let lines = b.create_vector(&lines);
+    let mut table = JournalEvidenceBuilder::new(b);
+    table.add_quest(quest);
+    table.add_root(journal.root);
+    table.add_lines(lines);
+    table.add_has_colour(journal.colour.is_some());
+    table.add_colour(journal.colour.unwrap_or_default());
+    table.add_acquired_slot(journal.acquired.run.slot);
+    table.add_acquired_run(journal.acquired.run.run);
+    table.add_acquired_session(journal.acquired.run.session);
+    table.add_acquired_tick(journal.acquired.tick);
+    table.add_acquired_sequence(journal.acquired.sequence);
+    table.add_closed_slot(journal.closed.run.slot);
+    table.add_closed_run(journal.closed.run.run);
+    table.add_closed_session(journal.closed.run.session);
+    table.add_closed_tick(journal.closed.tick);
+    table.add_closed_sequence(journal.closed.sequence);
+    table.finish()
+}
 
 fn api_progress_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     page: &script::api_progress::ProgressPage,
 ) -> WIPOffset<ApiProgress<'b>> {
     use script::api_progress::ProgressPage;
-    let (reason, row) = match page {
-        ProgressPage::Reading { .. } => (None, None),
-        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row))),
-        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None),
+    let (reason, row, journal) = match page {
+        ProgressPage::Reading { .. } => (None, None, None),
+        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row)), None),
+        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None, None),
+        ProgressPage::JournalDone { result, .. } => (
+            None,
+            None,
+            result
+                .as_deref()
+                .map(|journal| journal_evidence_off(b, journal)),
+        ),
     };
     let mut table = ApiProgressBuilder::new(b);
     table.add_request_id(page.token());
@@ -3690,6 +3965,9 @@ fn api_progress_off<'b>(
     }
     if let Some(row) = row {
         table.add_row(row);
+    }
+    if let Some(journal) = journal {
+        table.add_journal(journal);
     }
     table.finish()
 }
@@ -3917,6 +4195,178 @@ fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset
     table.add_component_id(r.component_id);
     if r.slot >= 0 {
         table.add_slot(r.slot);
+    }
+    table.finish()
+}
+
+fn widget_fact_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    widget: &WidgetFactInput<'_>,
+) -> WIPOffset<WidgetFact<'b>> {
+    let text = widget.text.map(|value| b.create_string(value));
+    let alternate_text = widget.alternate_text.map(|value| b.create_string(value));
+    let button_text = widget.button_text.map(|value| b.create_string(value));
+    let target_base = widget.target_base.map(|value| b.create_string(value));
+    let items = widget
+        .items
+        .iter()
+        .map(|item| row_off(b, item))
+        .collect::<Vec<_>>();
+    let items = b.create_vector(&items);
+    let mut table = WidgetFactBuilder::new(b);
+    table.add_component_id(widget.component_id);
+    table.add_root_component_id(widget.root_component_id);
+    table.add_parent_id(widget.parent_id);
+    table.add_component_type(widget.type_);
+    table.add_button_type(widget.button_type);
+    table.add_client_code(widget.client_code);
+    table.add_x(widget.x);
+    table.add_y(widget.y);
+    table.add_width(widget.width);
+    table.add_height(widget.height);
+    table.add_hidden(widget.hidden);
+    if let Some(value) = text {
+        table.add_text(value);
+    }
+    if let Some(value) = alternate_text {
+        table.add_alternate_text(value);
+    }
+    if let Some(value) = button_text {
+        table.add_button_text(value);
+    }
+    if let Some(value) = target_base {
+        table.add_target_base(value);
+    }
+    table.add_model_type(widget.model_type);
+    table.add_model_id(widget.model_id);
+    table.add_script_opcode(widget.script_opcode);
+    table.add_script_varp(widget.script_varp);
+    table.add_script_value(widget.script_value);
+    table.add_colour(widget.colour);
+    table.add_inventory_ready(widget.inventory_ready);
+    table.add_items(items);
+    table.finish()
+}
+
+fn chat_modal_texts_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    pair: &ChatModalTextsInput<'_>,
+) -> WIPOffset<ChatModalTexts<'b>> {
+    let texts = pair
+        .texts
+        .iter()
+        .map(|text| b.create_string(text))
+        .collect::<Vec<_>>();
+    let texts = b.create_vector(&texts);
+    let mut table = ChatModalTextsBuilder::new(b);
+    table.add_root(pair.root);
+    table.add_texts(texts);
+    table.finish()
+}
+fn projection_loc_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    loc: &api::snapshot::ProjectionLocView,
+) -> WIPOffset<ProjectionLoc<'b>> {
+    let name = loc.name.as_deref().map(|name| b.create_string(name));
+    let mut table = ProjectionLocBuilder::new(b);
+    table.add_id(loc.id);
+    if let Some(name) = name {
+        table.add_name(name);
+    }
+    table.add_rank(loc.rank);
+    table.add_level(loc.level);
+    table.add_min_tile_x(loc.min_tile_x);
+    table.add_max_tile_x(loc.max_tile_x);
+    table.add_min_tile_z(loc.min_tile_z);
+    table.add_max_tile_z(loc.max_tile_z);
+    table.add_scene_x(loc.scene_x);
+    table.add_scene_z(loc.scene_z);
+    table.add_half_width(loc.half_width);
+    table.add_half_length(loc.half_length);
+    table.add_top_height(loc.top_height);
+    table.finish()
+}
+
+fn projection_scene_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    view: &api::snapshot::ProjectionSceneView,
+) -> WIPOffset<ProjectionScene<'b>> {
+    let heights = b.create_vector(view.heights.as_ref());
+    let heights_above = b.create_vector(view.heights_above.as_ref());
+    let link_below = b.create_vector(view.link_below.as_ref());
+    let locs = view
+        .locs
+        .iter()
+        .map(|loc| projection_loc_off(b, loc))
+        .collect::<Vec<_>>();
+    let locs = b.create_vector(&locs);
+    let mut table = ProjectionSceneBuilder::new(b);
+    table.add_level(view.level);
+    table.add_camera_x(view.camera_x);
+    table.add_camera_y(view.camera_y);
+    table.add_camera_z(view.camera_z);
+    table.add_sin_pitch(view.sin_pitch);
+    table.add_cos_pitch(view.cos_pitch);
+    table.add_sin_yaw(view.sin_yaw);
+    table.add_cos_yaw(view.cos_yaw);
+    table.add_heights(heights);
+    table.add_heights_above(heights_above);
+    table.add_link_below(link_below);
+    table.add_locs(locs);
+    table.finish()
+}
+
+fn client_adapter_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    facts: &ClientAdapterFactsInput<'_>,
+) -> WIPOffset<ClientAdapterFacts<'b>> {
+    let server_tile = facts.server_tile.map(|tile| tile_off(b, tile));
+    let projection_scene = facts
+        .projection_scene
+        .map(|projection| projection_scene_off(b, projection.view));
+    let chat_modal_texts = chat_modal_texts_off(b, &facts.chat_modal_texts);
+    let widgets = facts
+        .widget_facts
+        .iter()
+        .map(|widget| widget_fact_off(b, widget))
+        .collect::<Vec<_>>();
+    let widgets = b.create_vector(&widgets);
+    let login_message = b.create_string(facts.login_message);
+    let menu_entries = facts
+        .menu_entries
+        .iter()
+        .map(|entry| b.create_string(entry))
+        .collect::<Vec<_>>();
+    let menu_entries = b.create_vector(&menu_entries);
+    let mut last_walk_path = Vec::with_capacity(facts.last_walk_path_local.len() * 2);
+    for &(x, z) in facts.last_walk_path_local {
+        last_walk_path.extend([x, z]);
+    }
+    let last_walk_path = b.create_vector(&last_walk_path);
+    let (run_on, run_off) = facts.run_controls.unwrap_or((-1, -1));
+    let mut table = ClientAdapterFactsBuilder::new(b);
+    table.add_attached(facts.attached);
+    table.add_map_build_base_x(facts.map_build_base.0);
+    table.add_map_build_base_z(facts.map_build_base.1);
+    if let Some(tile) = server_tile {
+        table.add_server_tile(tile);
+    }
+    table.add_hint_tile_level(facts.hint_tile_level.unwrap_or(-1));
+    table.add_bank_com_id(facts.bank_com_id);
+    table.add_chat_continue_component_id(facts.chat_continue_component_id);
+    table.add_chat_modal_texts(chat_modal_texts);
+    table.add_widgets(widgets);
+    table.add_player_count(facts.player_count);
+    table.add_npc_count(facts.npc_count);
+    table.add_run_on_com_id(run_on);
+    table.add_run_off_com_id(run_off);
+    table.add_login_message(login_message);
+    table.add_menu_entries(menu_entries);
+    table.add_last_walk_path_local(last_walk_path);
+    table.add_session_generation(facts.session_generation);
+    table.add_modal_close_generation(facts.modal_close_generation);
+    if let Some(scene) = projection_scene {
+        table.add_projection_scene(scene);
     }
     table.finish()
 }
@@ -4232,7 +4682,8 @@ fn seat_interact_class(
         InteractReq::RunPolicyOverride { .. } => Ok(SeatInteractClass::RunPolicy),
         InteractReq::GatherRun { .. }
         | InteractReq::CombatFight { .. }
-        | InteractReq::ProgressRead { .. } => {
+        | InteractReq::ProgressRead { .. }
+        | InteractReq::CastNpc { .. } => {
             Err("native family starts must use typed seat starts".into())
         }
         _ => Ok(SeatInteractClass::Gameplay),
@@ -4247,7 +4698,7 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
             }
         }
         (NativeKind::Combat, SeatStartArgsRef::Combat(_)) => {}
-        (NativeKind::QuestProgress, SeatStartArgsRef::QuestProgress(name)) => {
+        (NativeKind::QuestProgress, SeatStartArgsRef::QuestProgress { name, .. }) => {
             if name.len() > MAX_START_CHARGE {
                 return Err(format!(
                     "progress start name length {} exceeds cap {MAX_START_CHARGE}",
@@ -4262,6 +4713,11 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
         (NativeKind::BankPlan | NativeKind::BankNearest, _) => {
             return Err("bank native starts must use typed bank arguments".into())
         }
+        (NativeKind::CastNpc, SeatStartArgsRef::CastNpc(_)) => {}
+        (NativeKind::CastNpc, _) => {
+            return Err("CastNpc start must use typed cast arguments".into())
+        }
+        (NativeKind::Shop, SeatStartArgsRef::Shop(_)) => {}
         (NativeKind::Gather | NativeKind::Combat | NativeKind::QuestProgress, _) => {
             return Err("native start arguments do not match the family kind".into())
         }
@@ -4428,6 +4884,7 @@ fn seat_kind_wire(kind: NativeKind) -> SeatKind {
         NativeKind::Clue => SeatKind::Clue,
         NativeKind::Duel => SeatKind::Duel,
         NativeKind::CakeStall => SeatKind::CakeStall,
+        NativeKind::CastNpc => SeatKind::CastNpc,
     }
 }
 
@@ -4458,6 +4915,7 @@ fn native_kind_from_wire(kind: SeatKind) -> Result<NativeKind, String> {
         SeatKind::Clue => Ok(NativeKind::Clue),
         SeatKind::Duel => Ok(NativeKind::Duel),
         SeatKind::CakeStall => Ok(NativeKind::CakeStall),
+        SeatKind::CastNpc => Ok(NativeKind::CastNpc),
         SeatKind::None => Err("native start has no family kind".into()),
         _ => Err(format!("native start has unknown family kind {kind:?}")),
     }
@@ -4487,6 +4945,11 @@ fn bank_operation_wire(operation: script::bank::request::BankSeatOperation) -> B
         Operation::WaitReady => BankSeatOperation::WaitReady,
         Operation::WaitSnapshotAfter => BankSeatOperation::WaitSnapshotAfter,
         Operation::BankNearest => BankSeatOperation::BankNearest,
+        Operation::PurgePack => BankSeatOperation::PurgePack,
+        Operation::WithdrawCoins => BankSeatOperation::WithdrawCoins,
+        Operation::Pace => BankSeatOperation::Pace,
+        Operation::BackpackReady => BankSeatOperation::BackpackReady,
+        Operation::Sort => BankSeatOperation::Sort,
     }
 }
 
@@ -4617,6 +5080,24 @@ fn bank_args_off<'b>(
     } else {
         Some(bank_string_vector_off(b, bank.obstacles()))
     };
+    let expected_pack = bank.expected_pack().map(|rows| {
+        let mut packed = [BankPackRow::new(0, 0, 0); script::bank::request::MAX_EXPECTED_PACK_ROWS];
+        for (out, row) in packed.iter_mut().zip(rows) {
+            *out = BankPackRow::new(row.slot, row.id, row.count);
+        }
+        b.create_vector(&packed[..rows.len().min(packed.len())])
+    });
+    let category_overrides = if bank.category_overrides().is_empty() {
+        None
+    } else {
+        let mut packed =
+            [BankCategoryOverride::new(0, 0); script::bank::request::MAX_SORT_OVERRIDES];
+        for (out, row) in packed.iter_mut().zip(bank.category_overrides()) {
+            *out = BankCategoryOverride::new(row.id, row.category);
+        }
+        let len = bank.category_overrides().len().min(packed.len());
+        Some(b.create_vector(&packed[..len]))
+    };
     let mut table = BankSeatArgsBuilder::new(b);
     table.add_operation(bank_operation_wire(operation));
     if let Some(item_id) = item_id {
@@ -4681,6 +5162,12 @@ fn bank_args_off<'b>(
     table.add_deposit_all(bank.deposit_all());
     table.add_common_junk(bank.common_junk());
     table.add_hooks_present(bank.hooks_present());
+    if let Some(rows) = expected_pack {
+        table.add_expected_pack(rows);
+    }
+    if let Some(rows) = category_overrides {
+        table.add_category_overrides(rows);
+    }
     table.finish()
 }
 
@@ -4698,13 +5185,33 @@ fn native_request_off<'b>(
     } else {
         None
     };
-    let progress_name = if let SeatStartArgsRef::QuestProgress(name) = &start.args {
+    let progress = if let SeatStartArgsRef::QuestProgress { name, .. } = &start.args {
         Some(b.create_string(name))
     } else {
         None
     };
+    let progress_journal_only = match &start.args {
+        SeatStartArgsRef::QuestProgress { journal_only, .. } => *journal_only,
+        _ => false,
+    };
     let bank = if let SeatStartArgsRef::Bank(bank) = &start.args {
         Some(bank_args_off(b, bank))
+    } else {
+        None
+    };
+    let cast_npc = if let SeatStartArgsRef::CastNpc(request) = &start.args {
+        let mut table = CastNpcArgsBuilder::new(b);
+        table.add_component_id(request.component_id);
+        table.add_index(request.index);
+        Some(table.finish())
+    } else {
+        None
+    };
+    let shop = if let SeatStartArgsRef::Shop(request) = &start.args {
+        let mut table = ShopBuyByIdArgsBuilder::new(b);
+        table.add_item_id(request.item_id);
+        table.add_quantity(request.quantity);
+        Some(table.finish())
     } else {
         None
     };
@@ -4715,11 +5222,18 @@ fn native_request_off<'b>(
     if let Some(combat) = combat {
         args.add_combat(combat);
     }
-    if let Some(progress_name) = progress_name {
-        args.add_progress_name(progress_name);
+    if let Some(progress) = progress {
+        args.add_progress_name(progress);
     }
     if let Some(bank) = bank {
         args.add_bank(bank);
+    }
+    args.add_progress_journal_only(progress_journal_only);
+    if let Some(cast_npc) = cast_npc {
+        args.add_cast_npc(cast_npc);
+    }
+    if let Some(shop) = shop {
+        args.add_shop(shop);
     }
     let args = args.finish();
     let run = start.stamp.run();
@@ -5102,6 +5616,7 @@ fn decode_interact_rows<'a>(
                 out.push(script::interact::InteractReq::ProgressRead {
                     request_id,
                     name: name.to_string(),
+                    journal_only: row.progress_journal_only(),
                 });
             }
             "abort-walk" => out.push(script::interact::InteractReq::AbortWalk {
@@ -5123,6 +5638,7 @@ fn decode_interact_rows<'a>(
                     .map(|names| names.iter().map(str::to_string).collect())
                     .unwrap_or_default(),
                 request_id: row.request_id(),
+                max_expansions: row.max_expansions(),
             }),
             "inspect-ack" => out.push(script::interact::InteractReq::InspectAck {
                 seq: row.inspect_ack_seq(),
@@ -5210,6 +5726,28 @@ fn decode_interact_rows<'a>(
                 generation: row
                     .bank_generation()
                     .ok_or_else(|| "puzzle-move has no generation".to_string())?,
+            }),
+            "bank-drag" => out.push(script::interact::InteractReq::BankDrag {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "bank-drag has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "bank-drag has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "bank-drag has no component".to_string())?,
+                target_slot: row
+                    .target_item_slot()
+                    .ok_or_else(|| "bank-drag has no target slot".to_string())?,
+                insert: match row.stand_op() {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err("bank-drag has no insert mode".to_string()),
+                },
+                bank_generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "bank-drag has no generation".to_string())?,
             }),
             "shop-button" => out.push(script::interact::InteractReq::ShopButton {
                 kind: row
@@ -5316,6 +5854,7 @@ fn decode_interact_rows<'a>(
                 z: row.z(),
                 level: row.level(),
                 index: row.index(),
+                target_id: row.target_id(),
             }),
             "continue" => out.push(script::interact::InteractReq::ContinueDialog {
                 component_id: row.component_id(),
@@ -5374,6 +5913,12 @@ fn decode_interact_rows<'a>(
             "set-camera-yaw" => {
                 out.push(script::interact::InteractReq::SetCameraYaw { yaw: row.x() })
             }
+            "say-public" => out.push(script::interact::InteractReq::SayPublic {
+                text: row
+                    .name()
+                    .ok_or_else(|| "say-public has no text".to_string())?
+                    .to_string(),
+            }),
             "note-progress" => out.push(script::interact::InteractReq::NoteProgress),
             "loop-settled" => out.push(script::interact::InteractReq::LoopSettled),
             "wait-enqueued" => out.push(script::interact::InteractReq::WaitEnqueued),
@@ -5534,7 +6079,7 @@ fn validate_seat_wire_reqs<'a>(
                 reserved += 1;
                 SeatInteractClass::RunPolicy
             }
-            "gather-run" | "combat-fight" | "progress-read" => {
+            "gather-run" | "combat-fight" | "progress-read" | "cast-npc" => {
                 return Err("native family starts must use typed seat starts".into())
             }
             _ => SeatInteractClass::Gameplay,
@@ -5659,6 +6204,11 @@ fn bank_operation_from_wire(
         BankSeatOperation::WaitReady => Ok(Operation::WaitReady),
         BankSeatOperation::WaitSnapshotAfter => Ok(Operation::WaitSnapshotAfter),
         BankSeatOperation::BankNearest => Ok(Operation::BankNearest),
+        BankSeatOperation::PurgePack => Ok(Operation::PurgePack),
+        BankSeatOperation::WithdrawCoins => Ok(Operation::WithdrawCoins),
+        BankSeatOperation::Pace => Ok(Operation::Pace),
+        BankSeatOperation::BackpackReady => Ok(Operation::BackpackReady),
+        BankSeatOperation::Sort => Ok(Operation::Sort),
         _ => Err(format!("unknown bank seat operation {operation:?}")),
     }
 }
@@ -5774,6 +6324,34 @@ fn decode_bank_args(
     args.set_deposit_all(row.deposit_all());
     args.set_common_junk(row.common_junk());
     args.set_hooks_present(row.hooks_present());
+    // Bound raw vectors before allocating their owned copies.
+    if let Some(rows) = row.expected_pack() {
+        if rows.len() > script::bank::request::MAX_EXPECTED_PACK_ROWS {
+            return Err(script::bank::request::BankRequestError::TooManyExpectedRows.to_string());
+        }
+        args.set_expected_pack(Some(
+            rows.iter()
+                .map(|row| script::bank::request::BankPackRow {
+                    slot: row.slot(),
+                    id: row.id(),
+                    count: row.count(),
+                })
+                .collect(),
+        ));
+    }
+    if let Some(rows) = row.category_overrides() {
+        if rows.len() > script::bank::request::MAX_SORT_OVERRIDES {
+            return Err(script::bank::request::BankRequestError::TooManyOverrides.to_string());
+        }
+        args.set_category_overrides(
+            rows.iter()
+                .map(|row| script::bank::request::BankCategoryOverride {
+                    id: row.id(),
+                    category: row.category(),
+                })
+                .collect(),
+        );
+    }
     args.validate(kind).map_err(|error| error.to_string())?;
     Ok(args)
 }
@@ -5792,19 +6370,34 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
     let gather_settings = args.gather_settings();
     let combat = args.combat();
     let progress_name = args.progress_name();
+    let progress_journal_only = args.progress_journal_only();
     let bank = args.bank();
+    let cast_npc = args.cast_npc();
+    let shop = args.shop();
     let decoded_args = match kind {
         NativeKind::Gather => {
             let settings = gather_settings
                 .ok_or_else(|| "Gather start has no typed settings vector".to_string())?;
-            if combat.is_some() || progress_name.is_some() || bank.is_some() {
+            if combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+                || cast_npc.is_some()
+                || shop.is_some()
+            {
                 return Err("Gather start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Gather(decode_gather_settings(settings)?)
         }
         NativeKind::Combat => {
             let combat = combat.ok_or_else(|| "Combat start has no typed request".to_string())?;
-            if gather_settings.is_some() || progress_name.is_some() || bank.is_some() {
+            if gather_settings.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+                || cast_npc.is_some()
+                || shop.is_some()
+            {
                 return Err("Combat start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Combat(decode_combat_fight(combat)?)
@@ -5812,7 +6405,12 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
         NativeKind::QuestProgress => {
             let name =
                 progress_name.ok_or_else(|| "QuestProgress start has no typed name".to_string())?;
-            if gather_settings.is_some() || combat.is_some() || bank.is_some() {
+            if gather_settings.is_some()
+                || combat.is_some()
+                || bank.is_some()
+                || cast_npc.is_some()
+                || shop.is_some()
+            {
                 return Err("QuestProgress start carries mismatched typed arguments".into());
             }
             if name.len() > MAX_START_CHARGE {
@@ -5821,21 +6419,78 @@ fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, Strin
                     name.len()
                 ));
             }
-            SeatStartArgs::QuestProgress(name.to_string())
+            SeatStartArgs::QuestProgress {
+                name: name.to_string(),
+                journal_only: progress_journal_only,
+            }
         }
         NativeKind::BankPlan | NativeKind::BankNearest => {
             let bank =
                 bank.ok_or_else(|| "bank start has no typed banking arguments".to_string())?;
-            if gather_settings.is_some() || combat.is_some() || progress_name.is_some() {
+            if gather_settings.is_some()
+                || combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || cast_npc.is_some()
+                || shop.is_some()
+            {
                 return Err("bank start carries mismatched typed arguments".into());
             }
             SeatStartArgs::Bank(decode_bank_args(bank, kind)?)
+        }
+        NativeKind::CastNpc => {
+            let cast_npc =
+                cast_npc.ok_or_else(|| "CastNpc start has no typed cast arguments".to_string())?;
+            if gather_settings.is_some()
+                || combat.is_some()
+                || progress_name.is_some()
+                || progress_journal_only
+                || bank.is_some()
+                || shop.is_some()
+            {
+                return Err("CastNpc start carries mismatched typed arguments".into());
+            }
+            SeatStartArgs::CastNpc(script::combat::CastNpcRequest {
+                component_id: cast_npc.component_id(),
+                index: cast_npc.index(),
+            })
+        }
+        NativeKind::Shop => {
+            if let Some(shop) = shop {
+                if gather_settings.is_some()
+                    || combat.is_some()
+                    || progress_name.is_some()
+                    || progress_journal_only
+                    || bank.is_some()
+                    || cast_npc.is_some()
+                {
+                    return Err("Shop start carries mismatched typed arguments".into());
+                }
+                SeatStartArgs::Shop(script::native_shop::ShopBuyByIdArgs {
+                    item_id: shop.item_id(),
+                    quantity: shop.quantity(),
+                })
+            } else {
+                if gather_settings.is_some()
+                    || combat.is_some()
+                    || progress_name.is_some()
+                    || progress_journal_only
+                    || bank.is_some()
+                    || cast_npc.is_some()
+                {
+                    return Err("Shop start carries mismatched typed arguments".into());
+                }
+                SeatStartArgs::Empty
+            }
         }
         _ => {
             if gather_settings.is_some()
                 || combat.is_some()
                 || progress_name.is_some()
+                || progress_journal_only
                 || bank.is_some()
+                || cast_npc.is_some()
+                || shop.is_some()
             {
                 return Err("native start carries unsupported typed arguments".into());
             }
@@ -5991,6 +6646,7 @@ fn interact_off<'b>(
         InteractReq::GatherStop { .. } => "gather-stop",
         InteractReq::CombatFight { .. } => "combat-fight",
         InteractReq::CombatStop { .. } => "combat-stop",
+        InteractReq::CastNpc { .. } => "cast-npc",
         InteractReq::ProgressRead { .. } => "progress-read",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
@@ -6002,6 +6658,7 @@ fn interact_off<'b>(
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::PuzzleMove { .. } => "puzzle-move",
+        InteractReq::BankDrag { .. } => "bank-drag",
         InteractReq::ShopButton { .. } => "shop-button",
         InteractReq::MakePanel { .. } => "make-panel",
         InteractReq::Close => "close",
@@ -6038,6 +6695,7 @@ fn interact_off<'b>(
         InteractReq::Key { .. } => "key",
         InteractReq::Mouse { .. } => "mouse",
         InteractReq::RunPolicyOverride { .. } => "run-policy",
+        InteractReq::SayPublic { .. } => "say-public",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -6067,6 +6725,7 @@ fn interact_off<'b>(
         | InteractReq::ChannelMessage { sender: name, .. }
         | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
         InteractReq::ProgressRead { name, .. } => Some(b.create_string(name)),
+        InteractReq::SayPublic { text } => Some(b.create_string(text)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -6182,9 +6841,17 @@ fn interact_off<'b>(
             table.add_request_id(*request_id);
             table.add_combat(combat_off.expect("combat-fight request encoded"));
         }
-        InteractReq::ProgressRead { request_id, .. } => {
+        InteractReq::ProgressRead {
+            request_id,
+            journal_only,
+            ..
+        } => {
             table.add_request_id(*request_id);
             table.add_name(name_off.expect("progress-read quest id encoded"));
+            table.add_progress_journal_only(*journal_only);
+        }
+        InteractReq::CastNpc { .. } => {
+            unreachable!("cast-npc starts must use typed seat starts")
         }
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
@@ -6316,6 +6983,7 @@ fn interact_off<'b>(
             allow_wilderness,
             allow_bank_fetch,
             request_id,
+            max_expansions,
             ..
         } => {
             table.add_x(*x);
@@ -6332,6 +7000,9 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(max_expansions) = max_expansions {
+                table.add_max_expansions(*max_expansions);
             }
             if *request_id != 0 {
                 table.add_request_id(*request_id);
@@ -6448,6 +7119,21 @@ fn interact_off<'b>(
             table.add_component_id(*component);
             table.add_bank_generation(*generation);
         }
+        InteractReq::BankDrag {
+            id,
+            slot,
+            component,
+            target_slot,
+            insert,
+            bank_generation,
+        } => {
+            table.add_bank_item_id(*id);
+            table.add_source_item_slot(*slot);
+            table.add_component_id(*component);
+            table.add_target_item_slot(*target_slot);
+            table.add_stand_op(i32::from(*insert));
+            table.add_bank_generation(*bank_generation);
+        }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {
             table.add_name(name_off.unwrap());
@@ -6526,6 +7212,7 @@ fn interact_off<'b>(
             z,
             level,
             index,
+            target_id,
             ..
         } => {
             table.add_component_id(*component_id);
@@ -6539,11 +7226,17 @@ fn interact_off<'b>(
             if let Some(idx) = index {
                 table.add_index(*idx);
             }
+            if let Some(target_id) = target_id {
+                table.add_target_id(*target_id);
+            }
         }
         InteractReq::ContinueDialog { component_id } => {
             if let Some(component_id) = component_id {
                 table.add_component_id(*component_id);
             }
+        }
+        InteractReq::SayPublic { .. } => {
+            table.add_name(name_off.expect("say-public text encoded"));
         }
         InteractReq::CloseModal
         | InteractReq::NoteProgress
@@ -7045,7 +7738,7 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(None, &input, native(700), false);
         let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
         assert!(keyframe.has_side_modal_id());
-        assert_eq!(keyframe.side_modal_id(), 700);
+        assert_eq!(keyframe.side_modal_id(), Some(700));
         crate::scene::observed::apply(&keyframe);
         assert_eq!(crate::scene::observed::with(side), (Some(700), Some(700)));
 
@@ -7057,11 +7750,7 @@ pub(crate) mod tests {
             !unchanged.has_side_modal_id(),
             "an unchanged root is omitted"
         );
-        assert_eq!(
-            unchanged.side_modal_id(),
-            -1,
-            "the reader default is absent"
-        );
+        assert_eq!(unchanged.side_modal_id(), None, "the reader sees omission");
         crate::scene::observed::apply(&unchanged);
         assert_eq!(
             crate::scene::observed::with(side),
@@ -7075,7 +7764,7 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
         let closed = decode_snapshot(&closed_bytes).expect("closed");
         assert!(closed.has_side_modal_id(), "-1 is an explicit close");
-        assert_eq!(closed.side_modal_id(), -1);
+        assert_eq!(closed.side_modal_id(), Some(-1));
         crate::scene::observed::apply(&closed);
         assert_eq!(crate::scene::observed::with(side), (Some(-1), Some(-1)));
 
@@ -7107,7 +7796,47 @@ pub(crate) mod tests {
         let (old_bytes, _) = encode_snapshot_delta(None, &empty_input(7), false);
         let old = decode_snapshot(&old_bytes).expect("old");
         assert!(!old.has_side_modal_id());
-        assert_eq!(old.side_modal_id(), -1);
+        assert_eq!(old.side_modal_id(), None);
+    }
+
+    #[test]
+    fn taking_damage_round_trips_as_a_delta_scalar() {
+        let native = |taking_damage| NativeFactsInput {
+            taking_damage,
+            ..NativeFactsInput::default()
+        };
+        let mut input = empty_input(1);
+        let (absent_bytes, absent_fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native(None), false);
+        let absent = decode_snapshot(&absent_bytes).expect("absent keyframe");
+        assert_eq!(absent.taking_damage(), None);
+        assert_eq!(absent_fingerprint.taking_damage, None);
+
+        let (keyframe_bytes, fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native(Some(true)), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert_eq!(keyframe.taking_damage(), Some(true));
+
+        input.tick = 2;
+        let (unchanged_bytes, fingerprint) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(None), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged");
+        assert_eq!(unchanged.taking_damage(), None, "absent is omitted");
+        assert_eq!(
+            fingerprint.taking_damage,
+            Some(true),
+            "absence retains state"
+        );
+
+        input.tick = 3;
+        let (cleared_bytes, _) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &input,
+            native(Some(false)),
+            false,
+        );
+        let cleared = decode_snapshot(&cleared_bytes).expect("clear");
+        assert_eq!(cleared.taking_damage(), Some(false));
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.
@@ -7760,6 +8489,40 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_interact_use_widget_on_target_id_round_trips() {
+        let request = InteractReq::UseWidgetOn {
+            component_id: 1922,
+            kind: "npc".into(),
+            target_name: Some("Cow".into()),
+            x: 3220,
+            z: 3220,
+            level: 0,
+            index: Some(7),
+            target_id: Some(81),
+        };
+        let bytes = encode_interact_batch(std::slice::from_ref(&request));
+        assert_eq!(
+            decode_interact_batch(&bytes).expect("decode NPC target interaction"),
+            vec![request]
+        );
+    }
+
+    #[test]
+    fn progress_read_wire_carries_journal_mode() {
+        let bytes = encode_interact_batch(&[InteractReq::ProgressRead {
+            request_id: 42,
+            name: "Cook's Assistant".into(),
+            journal_only: true,
+        }]);
+        let batch = InteractBatch::from_bytes(&bytes).expect("decode progress-read wire");
+        let row = batch.reqs().expect("progress-read row").get(0);
+        assert_eq!(row.op(), Some("progress-read"));
+        assert_eq!(row.request_id(), 42);
+        assert_eq!(row.name(), Some("Cook's Assistant"));
+        assert!(row.progress_journal_only());
     }
 
     #[test]
@@ -9569,6 +10332,10 @@ pub(crate) mod tests {
         };
         let settings = script::native::SettingsBag::new();
         let combat = script::api_combat::CombatSessionRequest::default();
+        let cast_npc = script::combat::CastNpcRequest {
+            component_id: 1152,
+            index: 7,
+        };
         let starts = [
             SeatStartRef {
                 stamp: stamp(201),
@@ -9583,7 +10350,15 @@ pub(crate) mod tests {
             SeatStartRef {
                 stamp: stamp(203),
                 kind: NativeKind::QuestProgress,
-                args: SeatStartArgsRef::QuestProgress("cook"),
+                args: SeatStartArgsRef::QuestProgress {
+                    name: "cook",
+                    journal_only: false,
+                },
+            },
+            SeatStartRef {
+                stamp: stamp(204),
+                kind: NativeKind::CastNpc,
+                args: SeatStartArgsRef::CastNpc(&cast_npc),
             },
         ];
         let decision_answer = [1, 3, 5, 7];
@@ -9655,7 +10430,7 @@ pub(crate) mod tests {
             "a dropped batch is retried with the same sequence and owner"
         );
         assert_eq!(batch.consumed_terminal_seq, 19);
-        assert_eq!(batch.starts.len(), 3);
+        assert_eq!(batch.starts.len(), 4);
         assert_eq!(
             batch.starts[0].args,
             SeatStartArgs::Gather(settings.clone())
@@ -9663,8 +10438,12 @@ pub(crate) mod tests {
         assert_eq!(batch.starts[1].args, SeatStartArgs::Combat(combat.clone()));
         assert_eq!(
             batch.starts[2].args,
-            SeatStartArgs::QuestProgress("cook".into())
+            SeatStartArgs::QuestProgress {
+                name: "cook".into(),
+                journal_only: false,
+            }
         );
+        assert_eq!(batch.starts[3].args, SeatStartArgs::CastNpc(cast_npc));
         assert_eq!(batch.decisions.len(), 1);
         assert_eq!(batch.decisions[0].sequence.get(), 2);
         assert_eq!(batch.decisions[0].answer.as_slice(), decision_answer);
@@ -9718,6 +10497,10 @@ pub(crate) mod tests {
         };
         let settings = script::native::SettingsBag::new();
         let combat = script::api_combat::CombatSessionRequest::default();
+        let cast_npc = script::combat::CastNpcRequest {
+            component_id: 1152,
+            index: 7,
+        };
         let bank_plan = script::bank::request::BankSeatArgs::new(
             script::bank::request::BankSeatOperation::DepositAll,
         );
@@ -9731,9 +10514,13 @@ pub(crate) mod tests {
                 let args = match *kind {
                     NativeKind::Gather => SeatStartArgsRef::Gather(&settings),
                     NativeKind::Combat => SeatStartArgsRef::Combat(&combat),
-                    NativeKind::QuestProgress => SeatStartArgsRef::QuestProgress("cook"),
+                    NativeKind::QuestProgress => SeatStartArgsRef::QuestProgress {
+                        name: "cook",
+                        journal_only: false,
+                    },
                     NativeKind::BankPlan => SeatStartArgsRef::Bank(&bank_plan),
                     NativeKind::BankNearest => SeatStartArgsRef::Bank(&bank_nearest),
+                    NativeKind::CastNpc => SeatStartArgsRef::CastNpc(&cast_npc),
                     _ => SeatStartArgsRef::Empty,
                 };
                 SeatStartRef {

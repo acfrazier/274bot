@@ -41,7 +41,8 @@ pub const MAX_CHANNEL_BYTES: usize = 16 * 1024;
 const MAX_DEPTH: usize = 8;
 const MAX_NODES: usize = 512;
 const MAX_STRING_BYTES: usize = 1024;
-const MAX_COLLECTION: usize = 128;
+/// Most entries one array or object may hold.
+pub const MAX_COLLECTION: usize = 128;
 
 const NULL: u8 = 0;
 const FALSE: u8 = 1;

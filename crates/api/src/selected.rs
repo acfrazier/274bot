@@ -175,6 +175,12 @@ pub enum FactError {
     },
 }
 
+/// The refusal every compiled catalog table gives when this build embeds no local game data.
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+pub(crate) fn local_game_data_unavailable() -> FactError {
+    FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
+}
+
 /// Process-local identity of one operator run, stamped with the session it
 /// currently executes in; `slot` comes from Play's worker lifetime owner only.
 /// Intentionally not deserializable or persistable. The typed projections

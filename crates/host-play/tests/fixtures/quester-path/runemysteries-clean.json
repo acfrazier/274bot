@@ -1,0 +1,14 @@
+{
+  "stage": "runemysteries:0",
+  "stand": [
+    3212,
+    3220,
+    1
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}

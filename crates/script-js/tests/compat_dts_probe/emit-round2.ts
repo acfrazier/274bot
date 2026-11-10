@@ -41,12 +41,8 @@ export class PostedConsumers extends LoopingBot {
       const wrong: string = e.level;
       void wrong;
     });
-    this.on('varp.changed', e => {
-      const fields: [number, number, number] = [e.index, e.value, e.previous];
-      void fields;
-      // @ts-expect-error varp changes do not contain item names
-      void e.name;
-    });
+    // @ts-expect-error varp.changed is absent from the published event map.
+    this.on('varp.changed', e => void e.index);
     this.on('tick', e => {
       const tick: number = e.tick;
       void tick;

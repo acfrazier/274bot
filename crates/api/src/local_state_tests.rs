@@ -54,7 +54,8 @@ fn domains_keep_their_canonical_codes() {
             "preferences",
             "bank-hints",
             "loadouts-references",
-            "knowledge"
+            "knowledge",
+            "script-runtime-settings",
         ]
     );
     for domain in LocalStateDomain::ALL {
@@ -63,6 +64,97 @@ fn domains_keep_their_canonical_codes() {
     assert_eq!(LocalStateDomain::parse("bank hints"), None);
     assert_eq!(LocalStateDomain::parse("loadouts/references"), None);
     assert_eq!(LocalStateDomain::parse(""), None);
+}
+
+#[test]
+fn runtime_settings_rows_and_edits_preserve_the_exact_box_scope() {
+    let settings_identity = identity(LocalStateDomain::ScriptRuntimeSettings, "alice");
+    let row = RuntimeSettingsRow::try_new(
+        &settings_identity,
+        "catalog:Alcher",
+        "activeEvent",
+        r#"{"x":1}"#,
+    )
+    .unwrap();
+    assert_eq!(row.identity(), &settings_identity);
+    assert_eq!(row.namespace(), "catalog:Alcher");
+    assert_eq!(row.key(), "activeEvent");
+    assert_eq!(row.raw(), r#"{"x":1}"#);
+
+    let lease = DomainLease::try_new(
+        settings_identity.clone(),
+        StoreVersion::INITIAL,
+        at(1_700_000_000),
+        LeaseSnapshot::script_runtime_settings(vec![row.clone()]),
+    )
+    .unwrap();
+    assert_eq!(
+        lease.snapshot().as_script_runtime_settings().unwrap(),
+        &[row]
+    );
+    let edit = RuntimeSettingsEdit::try_set(
+        settings_identity.clone(),
+        None,
+        "catalog:Alcher",
+        "activeEvent",
+        "",
+    )
+    .unwrap();
+    assert!(edit.applies_to(StoreVersion::INITIAL));
+    assert_eq!(edit.raw(), "");
+    let newer = StoreVersion::INITIAL.checked_next().unwrap();
+    let versioned = RuntimeSettingsEdit::try_set(
+        settings_identity.clone(),
+        Some(newer),
+        "catalog:Alcher",
+        "activeEvent",
+        "new",
+    )
+    .unwrap();
+    assert!(!versioned.applies_to(StoreVersion::INITIAL));
+
+    let other_scope = DomainIdentity::new(
+        LocalStateDomain::ScriptRuntimeSettings,
+        account("local-289", "alice"),
+        ContentScope::try_new(client::io::ClientRevision::R274, "main").unwrap(),
+    );
+    assert!(DomainLease::try_new(
+        other_scope,
+        StoreVersion::INITIAL,
+        at(1_700_000_000),
+        LeaseSnapshot::script_runtime_settings(vec![lease
+            .snapshot()
+            .as_script_runtime_settings()
+            .unwrap()[0]
+            .clone()]),
+    )
+    .is_err());
+    let preferences_identity = identity(LocalStateDomain::Preferences, "alice");
+    assert_eq!(
+        RuntimeSettingsRow::try_new(
+            &preferences_identity,
+            "catalog:Alcher",
+            "activeEvent",
+            "raw",
+        ),
+        Err(ErrorCode::Validation {
+            domain: LocalStateDomain::Preferences,
+            reason: ValidationReason::Identity,
+        })
+    );
+    assert!(matches!(
+        RuntimeSettingsEdit::try_set(
+            settings_identity,
+            None,
+            "x".repeat(MAX_RUNTIME_SETTING_NAME_BYTES + 1).as_str(),
+            "key",
+            "raw",
+        ),
+        Err(ErrorCode::Validation {
+            domain: LocalStateDomain::ScriptRuntimeSettings,
+            reason: ValidationReason::TooLong,
+        })
+    ));
 }
 
 #[test]

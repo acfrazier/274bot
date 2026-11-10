@@ -1489,37 +1489,30 @@ mod tests {
         assert_eq!(food_options.label_for("LOBSTER"), "Lobster");
 
         let mut order = source_setting("order_override", "string[]", "released-path-order");
-        order.options = vec!["cook".into(), "sheep".into()];
-        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
-        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        order.options = vec!["arena".into(), "ball".into()];
+        order.option_labels = vec!["Arena display".into(), "Ball display".into()];
+        bag.insert("quests".into(), serde_json::json!(["ball", "arena"]));
         bag.insert(
             "order_override".into(),
-            serde_json::json!(["cook", "sheep"]),
+            serde_json::json!(["arena", "ball"]),
         );
         let order_options =
             resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();
-        assert_eq!(order_options.values, ["sheep", "cook"]);
+        assert_eq!(order_options.values, ["ball", "arena"]);
         assert_eq!(order_options.labels.len(), 2);
-        assert!(order_options.labels[0].starts_with("2. Sheep display"));
+        assert!(order_options.labels[0].starts_with("2. Ball display"));
         assert!(order_options.labels[0].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
-        // A concurrent Path reload may replace the process-wide cook label;
-        // its display name changes, but the requested order never does.
+        // Both ids are bundled drafts that no Path reload test replaces.
         assert!(
-            [
-                "1. Cook display",
-                "1. Folder Cook [folder]",
-                "1. Edited Again [folder]",
-            ]
-            .iter()
-            .any(|prefix| order_options.labels[1].starts_with(prefix)),
+            order_options.labels[1].starts_with("1. Arena display"),
             "{:?}",
             order_options.labels
         );
         assert!(order_options.labels[1].contains(script::quester::queue::UNQUALIFIED_PATH_REASON));
 
         let mut paths = source_setting("quests", "string[]", "released-paths");
-        paths.options = vec!["cook".into(), "sheep".into()];
-        paths.option_labels = vec!["Cook display".into(), "Sheep display".into()];
+        paths.options = vec!["arena".into(), "ball".into()];
+        paths.option_labels = vec!["Arena display".into(), "Ball display".into()];
         bag.insert("quests".into(), serde_json::json!(["removed-path"]));
         let quest_options =
             resolve_parameter_options(SettingView::new(&paths), &bag, &loadouts, None).unwrap();
@@ -1544,9 +1537,9 @@ mod tests {
         );
 
         let mut order = source_setting("order_override", "string[]", "released-path-order");
-        order.options = vec!["cook".into(), "sheep".into()];
-        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
-        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        order.options = vec!["arena".into(), "ball".into()];
+        order.option_labels = vec!["Arena display".into(), "Ball display".into()];
+        bag.insert("quests".into(), serde_json::json!(["ball", "arena"]));
         bag.insert("order_override".into(), serde_json::json!(["removed-path"]));
         let order_options =
             resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();

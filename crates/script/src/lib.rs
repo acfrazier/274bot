@@ -28,6 +28,8 @@ pub mod duel_arena;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
+/// Fishing gear calculations (held, missing, restock, buy plans) over caller-owned pieces.
+pub mod fishing_gear;
 
 pub mod food_policy;
 /// Borrowed preset-location helpers for compiled and compatibility callers.

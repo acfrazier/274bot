@@ -33,6 +33,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
+fixed = "0.2.9"
 target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
@@ -43,12 +44,22 @@ kind = "not-in-release"
 area = "Scripts"
 text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
-  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
-  unavailable. The host does not recreate the foreign router or random pacing."""
+  the random pause length (`bankPaceTicks`) remain deliberately unavailable:
+  the host does not recreate the foreign router or random pacing. These
+  private exports reported `not impl` in earlier releases and are removed in
+  0.2.9. `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick
+  pause."""
 first = "0.2.4"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
+
+[[item.earlier]]
+until = "0.2.9"
+text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing."""
 
 [[item]]
 id = "jivekbd-dragon-bones"
@@ -690,6 +701,47 @@ severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
 
 [[item]]
+id = "quester-undeclared-step-damage"
+kind = "not-in-release"
+area = "Quester"
+text = """A quest step without a declared damage source uses only the fallback:
+  the bot eats at half its Hitpoints on the tick that the damage lands.
+  A first undeclared hit larger than its current Hitpoints is not prevented.
+  The Tourist Trap guide declares its cell climb and mine cart damage."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "QUEST-TERRA (next backlog review)"
+
+[[item]]
+id = "survival-area-timer-damage"
+kind = "not-in-release"
+area = "Survival"
+text = """Damage from a game area while the bot stands in it is not a step
+  hazard. This includes the Underground Pass spear and spring traps, desert
+  heat, and Trollweiss cold. Outside fights and walks the bot does not eat
+  for this damage. A bot holding for food on such a tile keeps taking damage.
+  The Underground Pass guide is not covered by this release."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "SURVIVAL-P2-DESIGN (next backlog review)"
+
+[[item]]
+id = "quester-hazard-food-recovery"
+kind = "known-issue"
+area = "Quester"
+text = """Without food, the Quester holds at a step that can hurt it until
+  its Hitpoints recover enough to clear that step's eat line, then tries again.
+  Hitpoints recover at one point per 100 game ticks. It does not fetch food.
+  If a game page stays open for 24 ticks while it holds, it stops with a clear
+  reason instead of waiting."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "SURVIVAL-P2-DESIGN"
+
+[[item]]
 id = "gnome-magic-chopper-full-pack-fruit"
 kind = "known-issue"
 area = "Scripts"
@@ -705,20 +757,33 @@ severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
 
 [[item]]
-id = "compat-catalog-members-missing"
+id = "compat-reader-hidden-side-tab"
 kind = "known-issue"
 area = "Scripts"
-text = """Some rs2b0t catalog scripts call script API members that 274bot does
-  not implement yet: `SettingsStore.save` and `onChange`, `Bank.backpackReady`
-  and `normalBackpackSnapshot`, `Reachability.probeable`, `ScriptRunner.pause`,
-  `resume`, `state` and `ctx`, and `BotHost.addFrameListener`. Such a script
-  stops with "not implemented" when it reaches that call; for example, the
-  current AutoFighter cannot start fighting. Support is planned for 0.2.9."""
-first = "0.2.0"
-listed = "0.2.9"
-target = "0.2.9"
-severity = "medium"
-owner = "compat (UPSTREAM-MEMBERS-1023 census)"
+text = """`ClientAdapter` readers that search interface components see only the
+  side tab that is open. For example, a button search by varp
+  (`reader.selectButtonByVarp`) on a side tab other than the combat tab finds
+  nothing while that tab is closed. The combat tab is not affected: combat
+  style reads (`Game.combatStyles`, `Game.setCombatMode`) work while another
+  tab is open. Open the side tab before you read it."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "COMPAT-FINISH ClientAdapter"
+
+[[item]]
+id = "compat-projection-first-read"
+kind = "known-issue"
+area = "Scripts"
+text = """`reader.locBox`, `reader.overlayPosWorld` and
+  `reader.projectAreaGameWorld` can return `null` once when a script reaches
+  them without their names in its code (for example through a computed
+  property name). A script that names the reader gets correct values from its
+  first game tick. Call the reader by its name."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "COMPAT-FINISH ClientAdapter"
 
 [[item]]
 id = "background-work-stops-after-slow-disk"
@@ -727,6 +792,10 @@ area = "Host"
 text = """Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9."""
+# The stop was already in 0.2.4 (the 60 s stall latch shipped then), but the
+# published 0.2.8 block says "0.2.6 to 0.2.7", and `check --release 0.2.8`
+# renders that sentence from `first`. Keep 0.2.6 so the published text still
+# matches. Closed in 0.2.9 by d9028b148 (a slow step only logs a warning).
 first = "0.2.6"
 listed = "0.2.8"
 target = "0.2.9"

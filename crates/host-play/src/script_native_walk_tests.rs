@@ -1959,6 +1959,7 @@ fn seed_prayer_widgets(snapshot: &mut GameSnapshot) {
                 width: 20,
                 height: 20,
                 scroll_height: 0,
+                inventory_ready: false,
                 scroll_position: 0,
                 hidden: false,
                 text: None,
@@ -5133,6 +5134,7 @@ fn in_place_load_rig() -> Rig {
     rig.slot().lock().unwrap().stop();
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
+            "native walk test",
             "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
                 .into(),
             script_js::LoadShape::NativeTick,
@@ -5146,7 +5148,7 @@ fn in_place_load_rig() -> Rig {
     {
         let slot = rig.slot();
         let mut slot = slot.lock().unwrap();
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         slot.start_surface(start).unwrap();
     }
     rig.slot().lock().unwrap().probe("true").unwrap();
@@ -6732,6 +6734,12 @@ fn s2b_admission_per_bot_layouts() {
     // Separately measured macOS aarch64 on e560b8222 (Rust 1.98.1, same lib-test
     // features) also gives 4056 B / 1576 B; the old 1656 B slot pin was stale.
     // Pre-FLOOR and per-bot memory A/B remain separate, still-owed proofs.
+    // Compat finish: Walking adds 48 B to NavBot and 16 B to SlotScript;
+    // Shop/Trade adds 8 B through `Option<Box<ShopSeat>>`, offset by the 8 B
+    // reduction from thin `Arc<WildernessRules>`. The Linux x86_64 pin was
+    // measured after the merge with dev (4104 B / 1592 B); the wilderness seam is a
+    // fat `Arc<dyn WildernessLevels>` (+8 B, 1600 B); the macOS pin follows it
+    // because the two have matched at every earlier measurement.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -6745,7 +6753,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1576, 552, 264)
+        (4104, 1600, 560, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -6755,7 +6763,7 @@ fn s2b_admission_per_bot_layouts() {
     ))]
     // Provenance removal shrinks each of the two inline NavLease owners
     // by 32 B and the inline quest evidence by 40 B.
-    // The full Linux suite at 65f18f8c3 measured NavBot at 4056 B.
+    // The Linux lib suite on the compat-finish merge with dev measured NavBot at 4104 B.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6763,9 +6771,11 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4056, 1576, 552, 264)
+        (4104, 1600, 560, 264)
     );
-    // Linux Combat is 552 B at 7ab903712; Main retains 8 B of headroom.
+    // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
+    // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B
+    // with padding), which use Main's 8 B of headroom (the 560 B ceiling).
     // NavBot and SlotScript pins still need their composed measurements.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 560);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -7635,6 +7645,7 @@ mod s2b_admission_contract {
 
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "native walk test",
                 "export function tick(api) {}".into(),
                 script_js::LoadShape::NativeTick,
                 Vec::new(),
@@ -7709,6 +7720,7 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         false,
         false,
         false,
+        None,
         None,
         None,
         None,

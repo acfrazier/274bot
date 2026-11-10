@@ -21,7 +21,7 @@ fn js_slot(incarnation: u64) -> SlotScript {
     if incarnation != 0 {
         slot.bind_incarnation(incarnation);
     }
-    slot.bind_surface_factory(Arc::new(JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(JsSurfaceFactory));
     slot
 }
 
@@ -33,6 +33,7 @@ fn surface_start(
     let source = source.into();
     let family = resolve_api_family(&source).ok().map(|(_, family)| family);
     let card: Arc<dyn SurfaceCard> = Arc::new(JsStartCard {
+        card_name: "slot test".into(),
         source,
         shape,
         siblings: Arc::from(Vec::<(String, String)>::new()),
@@ -44,6 +45,7 @@ fn surface_start(
         game_data,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
         loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+        wilderness_rules: script::surface::no_wilderness(),
     }
 }
 

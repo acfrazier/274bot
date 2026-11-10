@@ -16,6 +16,8 @@ import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
+import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
+import { requireEnvPath } from './extractors/rs2b0t-literals.ts';
 import { extractNpcTransformClosure, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
@@ -30,12 +32,7 @@ export type SelectedItemRow = {
 
 const root = path.resolve(import.meta.dirname, '../..');
 type Revision = { revision: number; engine: string; content: string; output: string };
-/** Every external source root is explicit: an unset variable fails closed and names itself. */
-export function requireEnvPath(name: string, label: string): string {
-    const value = process.env[name];
-    if (!value) throw new Error(`set ${name} to ${label}`);
-    return path.resolve(value);
-}
+export { requireEnvPath };
 export const revisions: Revision[] = [
     { revision: 274, engine: requireEnvPath('GAME_DATA_274_ENGINE', 'the 274 engine root'), content: requireEnvPath('GAME_DATA_274_CONTENT', 'the 274 content root'), output: path.join(root, 'crates/api/data/game-data/274.json') },
     { revision: 289, engine: requireEnvPath('GAME_DATA_289_ENGINE', 'the 289 engine root'), content: requireEnvPath('GAME_DATA_289_CONTENT', 'the 289 content root'), output: path.join(root, 'crates/api/data/game-data/289.json') },
@@ -2155,13 +2152,6 @@ type CatalogBank = {
     npcAccess?: { name: string; op: string; choose?: string };
 };
 
-// The runtime-selected engine owns TypeScript. Only fields guarded by its
-// is* predicates are read; no foreign module is executed.
-type BankAstNode = {
-    text: string; name: BankAstNode; initializer: BankAstNode;
-    elements: BankAstNode[]; properties: BankAstNode[]; arguments: BankAstNode[];
-    expression: BankAstNode; getText(source: unknown): string;
-};
 type BankLiteral = string | number | BankLiteral[] | { [key: string]: BankLiteral };
 
 function catalogBank(value: BankLiteral): CatalogBank {
@@ -2747,6 +2737,9 @@ async function generate(spec: Revision, stage: GenerationStage) {
     });
     const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog, spec.revision);
     if (cookCatalog) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.json'), cookCatalogJson(cookCatalog));
+    if (spec.revision !== 377) {
+        for (const [file, bytes] of Object.entries(await gatherCatalogFiles(spec.engine, rs2b0tRoot))) fs.writeFileSync(path.join(root, 'crates/api/data/game-data', file), bytes);
+    }
     fs.rmSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), { force: true });
     fs.rmSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), { force: true });
     const shops = extractShopFacts(spec.content, items, spec.revision);

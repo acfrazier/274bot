@@ -7,6 +7,14 @@
 // while held/paused, so even time waits stay parked.
 const host = () => globalThis.__rs2b0t_host || {};
 
+const runtime = (operation) => globalThis.__rs2b0t_script_runtime(operation);
+
+export class ScriptAborted extends Error {
+    constructor() {
+        super('script stopped');
+        this.name = 'ScriptAborted';
+    }
+}
 // Mirrors rs2b0t Scheduler.trySettle per wait: cond, then timeout.
 // `undefined` keeps the wait parked; an Error rejects it. A machine wait
 // takes its Rust outcome envelope once the machine has settled.
@@ -32,11 +40,18 @@ const park = {
 
     enqueue(spec) {
         return new Promise((resolve, reject) => {
-            park.waits.push({ ...spec, resolve, reject });
+            park.waits.push({
+                ...spec,
+                activityId: runtime('activityId'),
+                resolve,
+                reject,
+            });
             const h = host();
             h.waitEnqueues = (h.waitEnqueues || 0) + 1;
         });
     },
+
+
 
     // A wait enqueued by a settled wait's continuation lands on the next
     // pump: continuations run after this returns, never inside the pass.
@@ -61,6 +76,9 @@ const park = {
         }
     },
 };
+
+globalThis.__rs2b0t_wait_queue = () => park.waits;
+globalThis.__rs2b0t_make_script_aborted = () => new ScriptAborted();
 
 export const Execution = {
     async delay(ms) {

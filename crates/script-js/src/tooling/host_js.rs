@@ -550,9 +550,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  readonly paint: NativePaint;\n");
     out.push_str("  request(op: NativeOp): void;\n");
     out.push_str("  /** Isolate-owned inspect token. Pair with request inspect-route request_id, or query inspectSettled/inspectValue. Caller-invented ids never consume host jobs; 0 is snapshot-only preview. */\n");
-    out.push_str("  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;\n");
+    out.push_str("  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number; maxExpansions?: number }): number;\n");
     out.push_str("  inspectSettled(token: number): boolean;\n");
-    out.push_str("  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;\n");
+    out.push_str("  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; terminal: WorldTile | null; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;\n");
     out.push_str("  prayerPoints(): HelperResult<number>;\n");
     out.push_str("  prayerMax(): HelperResult<number>;\n");
     out.push_str("  prayerFull(): HelperResult<boolean>;\n");
@@ -1046,7 +1046,7 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  /** `null` until the card publishes its first status */\n");
     out.push_str("  status: CombatStatus | null;\n");
     out.push_str("}\n\n");
-    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */\n");
+    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'single-way-blocked' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */\n");
     out.push_str("export interface CombatReport {\n");
     out.push_str(
         "  end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';\n",
@@ -2312,6 +2312,7 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             TsField { name: "allow_wilderness", ty: "boolean", optional: true, doc: None },
             TsField { name: "allow_bank_fetch", ty: "boolean", optional: true, doc: None },
             TsField { name: "avoid", ty: "Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>", optional: true, doc: None },
+            TsField { name: "max_expansions", ty: "number", optional: true, doc: None },
             TsField { name: "request_id", ty: "number", optional: true, doc: None },
         ],
     },
@@ -3233,6 +3234,7 @@ const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
             TsField { name: "allow_wilderness", ty: "boolean", optional: true, doc: None },
             TsField { name: "allow_bank_fetch", ty: "boolean", optional: true, doc: None },
             TsField { name: "avoid", ty: "Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>", optional: true, doc: None },
+            TsField { name: "max_expansions", ty: "number", optional: true, doc: None },
             TsField { name: "request_id", ty: "number", optional: true, doc: Some("Isolate inspectBegin token only. 0 is snapshot-only and still runs a host preview. Invented nonzero ids never reach the host.") },
         ],
     },

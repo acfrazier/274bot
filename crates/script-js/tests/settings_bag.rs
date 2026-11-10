@@ -82,7 +82,7 @@ export default class T extends LoopingBot {
 // every level, JS Numbers for every integer, and object values a shim can
 // stringify.
 #[test]
-fn posted_bag_values_are_plain_json_values() {
+fn posted_bag_values_are_plain_json_and_saved_ignores_host_bag() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
@@ -99,7 +99,7 @@ export default class T extends LoopingBot {
             protoKeyOwn: Object.prototype.hasOwnProperty.call(bag.odd, '__proto__'),
             protoKeyKept: Object.getPrototypeOf(bag.odd) === Object.prototype,
             display: SettingsStore.displayString('T', 'camp', { default: '' }),
-            saved: SettingsStore.saved('T', 'rows'),
+            saved: SettingsStore.saved('T', 'rows') ?? null,
             text: `${bag.camp}`,
         };
     }
@@ -131,7 +131,7 @@ export default class T extends LoopingBot {
             "protoKeyOwn": true,
             "protoKeyKept": true,
             "display": "[object Object]",
-            "saved": "[object Object]",
+            "saved": null,
             "text": "[object Object]",
         }),
         "logs: {logs:?}"

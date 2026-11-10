@@ -703,6 +703,26 @@ fn content_reengagement_budget(budget_ticks: u16) -> u32 {
     MAX_CONTENT_NPC_RESPAWN_TICKS.div_ceil(shortest_end_ticks) - 1
 }
 
+/// Confirmed kills a quantity-aware `until` loop spends on missed loot before
+/// the step fails. A settled loot miss re-engages like any chance outcome
+/// (AGENTS.md: retry within a bounded, content-justified budget). Separate
+/// from the per-fight `kill_budget_ticks` and the non-kill `reengage_budget`.
+///
+/// Policy: one shared constant for every loot-and-`until` step, sized from
+/// the hardest known authored case. A step whose drop is rarer, or whose
+/// target is larger, may therefore end at this limit.
+///
+/// Rule: enough kills that the hardest known target is at least 99% likely to
+/// be reached. That is The Knight's Sword on 377 (`paths/377/squire.json`,
+/// step `dwarf-iron-bar-drops`): two iron bars, which a dwarf drops on 3 of
+/// `random(128)` (content `scripts/drop tables/scripts/dwarf.rs2:47-48`). The
+/// smallest `n` with P(Binomial(n, 3/128) >= 2) >= 0.99 is 281 (0.99012; 280
+/// gives 0.98992). In the same 281 kills: Doric's two iron ores at 4/128
+/// (`dwarf.rs2:13,39-42`) reach 0.99866; Ikov's 20 limpwurt roots at 22/128
+/// (`hobgoblin.rs2:63-64`) reach 0.9994 or more; Gobdip's three goblin armour
+/// at 5/128 (`goblin.rs2:75-76`) reach 0.99894.
+const DROP_LOOP_KILL_BUDGET: u32 = 281;
+
 fn compile_finish(
     args: FinishArgs,
     target: &Target,
@@ -2289,15 +2309,32 @@ impl CombatRun {
             return self.rebegin_combat(cx, false);
         }
         if missing_required_loot {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "required combat loot was not acquired during the post-kill search",
-            ))));
+            if self.kills >= DROP_LOOP_KILL_BUDGET {
+                return self.drop_loop_budget_failure();
+            }
+            return self.rebegin_combat(cx, false);
         }
         if self.until.is_none() && self.win.is_none() {
             self.finish(cx)
         } else {
             self.rebegin_combat(cx, false)
         }
+    }
+
+    fn drop_loop_budget_failure(&self) -> Poll<Result<StepOutcome, ActionError>> {
+        let detail = self.last_report.as_ref().map_or_else(
+            || {
+                format!(
+                    "required combat loot was not acquired within {DROP_LOOP_KILL_BUDGET} kills"
+                )
+            },
+            |report| {
+                format!(
+                    "required combat loot was not acquired within {DROP_LOOP_KILL_BUDGET} kills; last report: {report:?}"
+                )
+            },
+        );
+        Poll::Ready(Err(ActionError::Failed(Arc::from(detail))))
     }
 
     fn evaluate_predicate(

@@ -5,7 +5,7 @@ use script::quester::compile::{
     compile_uncached_for_test, compile_uncached_for_test_as_with_zones,
     compile_uncached_for_test_with_zones, CompileError,
 };
-use script::quester::path::PathDocument;
+use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
 use serde_json::{json, Value};
@@ -477,6 +477,63 @@ fn generated_schema_rejects_blank_make_source_and_until_drop_stop() {
         json!("\\S")
     );
 }
+
+#[test]
+fn generated_step_schema_accepts_optional_hazard() {
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    let interact = &schema["$defs"]["step.interact.v1"];
+    let hazard = &interact["properties"]["hazard"];
+    assert_eq!(hazard["anyOf"][0]["$ref"], json!("#/$defs/HazardDocument"));
+    assert_eq!(hazard["anyOf"][1]["type"], json!("null"));
+    assert!(!interact["required"]
+        .as_array()
+        .expect("required step fields")
+        .contains(&json!("hazard")));
+
+    let hazard_schema = &schema["$defs"]["HazardDocument"];
+    assert_eq!(hazard_schema["required"], json!(["of", "source"]));
+    assert_eq!(hazard_schema["properties"]["mul"]["default"], json!(0));
+    assert_eq!(hazard_schema["properties"]["div"]["default"], json!(1));
+    assert_eq!(hazard_schema["properties"]["plus"]["default"], json!(0));
+    assert_eq!(
+        hazard_schema["properties"]["cap"]["type"],
+        json!(["integer", "null"])
+    );
+
+    let authored = json!({
+        "id": "hazard-schema",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []},
+        "hazard": {
+            "of": "none",
+            "plus": 7,
+            "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:271"
+        }
+    });
+    let decoded: StepDocument =
+        serde_json::from_value(authored).expect("optional hazard step decodes");
+    let decoded_hazard = decoded.hazard.expect("authored hazard is present");
+    assert_eq!(decoded_hazard.mul, 0);
+    assert_eq!(decoded_hazard.div, 1);
+    assert_eq!(decoded_hazard.plus, 7);
+    assert_eq!(decoded_hazard.cap, None);
+
+    let omitted: StepDocument = serde_json::from_value(json!({
+        "id": "no-hazard",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []}
+    }))
+    .expect("hazard omission stays valid");
+    assert!(omitted.hazard.is_none());
+}
 #[test]
 #[ignore]
 fn regen_path_schema() {
@@ -585,6 +642,138 @@ fn bundled_paths_decode_and_compile() {
             },
         );
     }
+}
+
+/// Prince Ali Rescue works inside Draynor jail from stage 20 on (key imprint,
+/// Keli, the cell). The jail guards hunt as `aggressive_melee`
+/// (`area_draynor/configs/draynor.npc:152-190`), so a stage that walks to Keli
+/// is refused unless it declares the baked `draynor-jail-guards` group.
+/// QUESTER-QUALIFY-029 live run 1 blocked at `prince:20` step `20-key`
+/// (`search_result=Danger ... [draynor-jail-guards]`) with no declaration.
+#[test]
+fn prince_jail_stages_declare_the_draynor_jail_guard_group() {
+    let _home = script::IsolatedEnv::enter("path-schema-prince-jail");
+    let path = paths_dir().join("prince.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read prince.json"))
+            .expect("decode prince.json");
+    let role = &document.roles[0];
+    for stage in [
+        "prince:20",
+        "prince:30",
+        "prince:40",
+        "prince:50",
+        "prince:100",
+    ] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["draynor-jail-guards"], "{stage} danger declaration");
+    }
+    for stage in ["prince:0", "prince:10"] {
+        let sequence = role
+            .sequences
+            .iter()
+            .find(|sequence| sequence.stage.0.as_ref() == stage)
+            .unwrap_or_else(|| panic!("{stage} sequence"));
+        assert!(
+            sequence.cross.is_empty(),
+            "{stage} stays outside the jail and declares no danger zone"
+        );
+    }
+    // The group id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "prince.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
+}
+
+/// Monk's Friend stage 10 walks through the blanket cave (ladder 2561,3222 to
+/// the blanket at 2570,9604). The baked zone catalog lists the cave's hobgoblins
+/// and head thief, and the combined admission refuses the route when they are
+/// undeclared. QUESTER-QUALIFY-029 live run 1 stopped at tick 87 with
+/// `NoWayOut: ends inside Head Thief (L26) ... standing inside Hobgoblin (L28)`.
+/// Run 3 passed the whole quest with these three declarations.
+#[test]
+fn drunkmonk_cave_stage_declares_the_blanket_cave_zones() {
+    let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-cave");
+    let path = paths_dir().join("drunkmonk.json");
+    let document: PathDocument =
+        serde_json::from_slice(&std::fs::read(&path).expect("read drunkmonk.json"))
+            .expect("decode drunkmonk.json");
+    for sequence in &document.roles[0].sequences {
+        let ids = sequence
+            .cross
+            .iter()
+            .map(|zone| zone.id.as_str())
+            .collect::<Vec<_>>();
+        if sequence.stage.0.as_ref() == "drunkmonk:10" {
+            assert_eq!(
+                ids,
+                [
+                    "hobgoblin_unarmed@2566,9632,0",
+                    "hobgoblin_unarmed@2573,9626,0",
+                    "headthief_blanket@2569,9606,0",
+                ]
+            );
+        } else {
+            assert!(
+                ids.is_empty(),
+                "{} stays outside the cave",
+                sequence.stage.0
+            );
+        }
+    }
+    // Every id must resolve against the real baked zone catalog.
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(nav) = real_nav_lease() else {
+        return;
+    };
+    let _gathering = script::quester::compile::prepare_for_test({
+        let selected = Arc::clone(&selected);
+        move |worker| selected.prepare_gathering(worker)
+    })
+    .expect("289 gather catalog");
+    compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        nav.zones().expect("real 289 zone catalog"),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "drunkmonk.json path={} step={:?} code={} detail={:?}",
+            error.path.0, error.step, error.code, error.detail
+        )
+    });
 }
 
 #[test]

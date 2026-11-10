@@ -192,6 +192,33 @@ table WidgetText {
   text: string;
   item_count: int = -1;
 }
+// One selected widget from the open interface trees. Positions are in the
+// root-relative coordinate space used by the upstream positioned walk.
+table WidgetFact {
+  component_id: int;
+  root_component_id: int;
+  parent_id: int = -1;
+  component_type: int;
+  button_type: int;
+  client_code: int;
+  x: int;
+  y: int;
+  width: int;
+  height: int;
+  hidden: bool;
+  text: string;
+  alternate_text: string;
+  button_text: string;
+  target_base: string;
+  model_type: int;
+  model_id: int;
+  script_opcode: int = -1;
+  script_varp: int = -1;
+  script_value: int = -1;
+  colour: int;
+  inventory_ready: bool;
+  items: [Row];
+}
 
 // One quest-tab text row after Rust resolves its native display colour.
 // `component_id` (slot 8) is the walked TYPE_TEXT id — the row's click
@@ -215,6 +242,66 @@ table QuestStatus {
 table MainModalTexts {
   root: int = -1;
   texts: [string];
+}
+table ChatModalTexts {
+  root: int = -1;
+  texts: [string];
+}
+
+// Camera, selected terrain planes and placed-loc geometry for the native
+// synchronous ClientAdapter projection readers.
+table ProjectionLoc {
+  id: int;
+  name: string;
+  rank: int;
+  level: int;
+  min_tile_x: int;
+  max_tile_x: int;
+  min_tile_z: int;
+  max_tile_z: int;
+  scene_x: int;
+  scene_z: int;
+  half_width: int;
+  half_length: int;
+  top_height: int;
+}
+table ProjectionScene {
+  level: int;
+  camera_x: int;
+  camera_y: int;
+  camera_z: int;
+  sin_pitch: int;
+  cos_pitch: int;
+  sin_yaw: int;
+  cos_yaw: int;
+  heights: [int];
+  heights_above: [int];
+  link_below: [ubyte];
+  locs: [ProjectionLoc];
+}
+
+// Coherent bounded snapshot facts for the synchronous ClientAdapter readers.
+table ClientAdapterFacts {
+  attached: bool;
+  map_build_base_x: int;
+  map_build_base_z: int;
+  server_tile: Tile;
+  hint_tile_level: int = -1;
+  bank_com_id: int = -1;
+  chat_continue_component_id: int = -1;
+  chat_modal_texts: ChatModalTexts;
+  widgets: [WidgetFact];
+  player_count: int;
+  npc_count: int;
+  run_on_com_id: int = -1;
+  run_off_com_id: int = -1;
+  login_message: string;
+  menu_entries: [string];
+  // Local x/z pairs, flattened in source→destination order.
+  last_walk_path_local: [int];
+  session_generation: ulong;
+  modal_close_generation: ulong;
+  projection_scene: ProjectionScene;
 }
 
 // One navigator-named gate short (`nav_planner::router::MissingReq::Carry`): an
@@ -325,12 +412,31 @@ table QuestProgressRow {
   binding: string;
   role: string;
 }
+// Retained identity, text and exact open/close observations for a journal-only read.
+table JournalEvidence {
+  quest: string;
+  root: int = -1;
+  lines: [string];
+  has_colour: bool = false;
+  colour: int = 0;
+  acquired_slot: ulong;
+  acquired_run: ulong;
+  acquired_session: ulong;
+  acquired_tick: ulong;
+  acquired_sequence: ulong;
+  closed_slot: ulong;
+  closed_run: ulong;
+  closed_session: ulong;
+  closed_tick: ulong;
+  closed_sequence: ulong;
+}
 
 table ApiProgress {
   request_id: ulong;
-  kind: ubyte; // 1 reading, 2 done, 3 refused.
+  kind: ubyte; // 1 reading, 2 done, 3 refused, 4 journal done.
   reason: string;
   row: QuestProgressRow;
+  journal: JournalEvidence;
 }
 
 // Bounded cancellation reason for the retained host walk outcome.
@@ -579,8 +685,8 @@ table Snapshot {
   // main_modal_id/chat_modal_id in meaning only. With bank_open it tells a
   // posted (possibly empty) bank_side from one not posted yet; never infer
   // that from the vector length. Written on the keyframe and whenever it
-  // changes; an omitted delta keeps the last root; old buffers read -1.
-  side_modal_id: int = -1;
+  // changes; an omitted delta keeps the last root; old buffers read null.
+  side_modal_id: int = null;
   // Slot 286: local-player motion. 0 is unknown or unobserved (including old
   // buffers), 1 is stationary, and 2 is moving. Omitted deltas keep the last
   // reported state.
@@ -597,6 +703,31 @@ table Snapshot {
   // Highest contiguous mirror revocation sequence applied by the host.
   // Optional so an omitted delta retains the previous acknowledgement.
   mirror_revokes_consumed: ulong = null;
+  // Inv tab transmitting with a full update (`inventorySnapshotReady`).
+  inv_ready: bool;
+  // Open bank side pack carries this session's full update
+  // (`bankSideSnapshotReady`).
+  bank_side_ready: bool;
+  // Every used skill has a positive stat update from this login session.
+  stats_ready: bool;
+  // The ClientAdapter fact family is one optional delta: every scalar and
+  // bounded vector below comes from one current API snapshot.
+  client_adapter: ClientAdapterFacts;
+  // Whether the local player has a current positive type-1 hitmark. An
+  // omitted delta retains the last observation.
+  taking_damage: bool = null;
+  // Slot 308: the guardian-owned or currently handled event. Empty clears it;
+  // an unowned detection is never posted as active.
+  guardian_active_event: string;
+  // The published walk reason is explicitly NoPath only for a route search
+  // that proved no route. Retained route progress is tagged by its request id.
+  walk_outcome_no_path: bool = false;
+  walk_remaining_request_id: ulong = 0;
+  walk_remaining: ulong = 0;
+  // Exact terminal selected by the latest successful route inspection.
+  route_inspect_terminal: Tile;
+  // Exact terminal selected by the previous successful route inspection.
+  route_inspect_prev_terminal: Tile;
   // The local player's packed `api::snapshot::AttackMarks`: the newest hit,
   // animation and spot animation marks folded into the low 32 bits and the
   // newest start of a projectile aimed at the player in the high 32 bits.
@@ -701,7 +832,8 @@ enum SeatKind: ubyte {
   Fire,
   Clue,
   Duel,
-  CakeStall
+  CakeStall,
+  CastNpc
 }
 
 enum SeatCancelReason: ubyte {
@@ -769,7 +901,25 @@ enum BankSeatOperation: ubyte {
   Close,
   WaitReady,
   WaitSnapshotAfter,
-  BankNearest
+  BankNearest,
+  PurgePack,
+  WithdrawCoins,
+  Pace,
+  BackpackReady,
+  Sort
+}
+
+// One `Bank.backpackReady` expectation row (slot, item id, count).
+struct BankPackRow {
+  slot: int;
+  id: int;
+  count: int;
+}
+
+// One `sortBank` category override: item id and native category index.
+struct BankCategoryOverride {
+  id: int;
+  category: ubyte;
 }
 
 table BankSeatObjectAccess {
@@ -817,6 +967,16 @@ table BankSeatArgs {
   deposit_all: bool = false;
   common_junk: bool = true;
   hooks_present: uint = 0;
+  // Present (possibly empty) only when the caller passed an expectation.
+  expected_pack: [BankPackRow];
+  category_overrides: [BankCategoryOverride];
+}
+
+// Shop.buyById adds a requested quantity of one exact stock id to the
+// currently open shop; the host returns the count actually observed.
+table ShopBuyByIdArgs {
+  item_id: double;
+  quantity: double;
 }
 
 table SeatArgs {
@@ -824,6 +984,9 @@ table SeatArgs {
   combat: CombatFight;
   progress_name: string;
   bank: BankSeatArgs;
+  progress_journal_only: bool = false;
+  cast_npc: CastNpcArgs;
+  shop: ShopBuyByIdArgs;
 }
 
 table NativeRequest {
@@ -891,7 +1054,7 @@ table SeatResult {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route" | "run-policy".
+// | "inspect-route" | "run-policy" | "progress-read".
 // Reserved legacy Interact.op tag: "select-bank" (do not reuse).
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
@@ -964,6 +1127,11 @@ table Interact {
   lineage: ulong = 0;
   // In-isolate machine row that owned this emission, or 0 for none.
   mirror_owner: ulong = 0;
+  progress_journal_only: bool = false;
+  // NPC type for a `use-widget-on` target.
+  target_id: int = null;
+  // Optional inspect-route search expansion limit; zero remains invalid.
+  max_expansions: ulong = null;
   // Per-walk prerequisite consent: absent inherits; only false forbids.
   allow_prereq_dialogue: bool = null;
   allow_quest_start: bool = null;
@@ -980,6 +1148,11 @@ table InteractBatch {
   cancels: [SeatCancel];
   // Coalesced in-isolate mirror revocations, carried until page acknowledgement.
   mirror_revokes: [MirrorRevoke];
+}
+// One compatibility magic-tab spell cast on an exact NPC index.
+table CastNpcArgs {
+  component_id: int;
+  index: int;
 }
 
 root_type Snapshot;

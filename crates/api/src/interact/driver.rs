@@ -101,6 +101,11 @@ pub trait Driver {
     /// Emit one typed packet using this driver's bound revision.
     /// Required in every build, including opt-in test recorders.
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError>;
+    /// Encode and send a typed MESSAGE_PUBLIC action. The default refuses;
+    /// the real Client implementation uses `prot::Send::message_public`.
+    fn send_public_message(&mut self, _text: &str) -> bool {
+        false
+    }
     /// Complete observation of the previous producer's packet without writing bytes.
     /// Call before changing input lineage or measuring a new row's commits.
     /// Recording drivers have no deferred packet observation.
@@ -257,6 +262,11 @@ impl Driver for Client {
 
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.out)
+    }
+    fn send_public_message(&mut self, text: &str) -> bool {
+        Send::message_public(0, 0, text)
+            .and_then(|packet| self.send_packet(&packet))
+            .is_ok()
     }
     fn finish_pending_packet(&mut self) {
         self.out.finish_packet();

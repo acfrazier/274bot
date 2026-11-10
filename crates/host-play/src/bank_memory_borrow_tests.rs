@@ -168,6 +168,7 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
         None,
         None,
         None,
+        None,
         #[cfg(feature = "js")]
         None,
         #[cfg(feature = "js")]
@@ -250,6 +251,7 @@ fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
         false,
         false,
         false,
+        None,
         None,
         None,
         None,

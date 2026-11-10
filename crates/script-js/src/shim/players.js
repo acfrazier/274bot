@@ -52,7 +52,4 @@ export const Players = proxy('Players', {
     query() {
         return globalThis.__rs2b0t_entities_v8(58 /* native query */, 1, EntityQuery, Player);
     },
-    all() {
-        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, 1, Player);
-    },
 });

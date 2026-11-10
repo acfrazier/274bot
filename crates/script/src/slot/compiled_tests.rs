@@ -988,6 +988,7 @@ fn invalid_gatherer_settings_leave_no_runnable_instance() {
             game_data: None,
             named_banks: Arc::default(),
             loadouts: Arc::default(),
+            wilderness_rules: crate::surface::no_wilderness(),
         })
         .is_err());
 }
@@ -2478,6 +2479,50 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
     slot.stop();
 }
 
+/// Every slot, native-only ones included, owns one `Arc<ScriptRuntimeContext>` from `SlotScript::new`
+/// (`slot.rs:704`), the run-fenced projection `compiled.rs` reads for control requests and native
+/// input (`slot/compiled.rs:1454,1461`; a native-only slot cannot skip it). The input authority is a
+/// lazy `OnceLock` inside it; it was one eager `Arc<NativeInputAuthority>` slot field before.
+/// Measured against dev 91d2ca897 (a warm `SlotScript::new()` and a started stub surface, same test
+/// on both heads): an idle slot goes 296 -> 496 B on Linux x86_64 and 304 -> 504 B on macOS aarch64
+/// (+200 B each: the 240/248 B context less the 40/48 B authority it no longer allocates up front).
+/// A started slot goes 1488 -> 1760 B (+272 B) and 1656 -> 2000 B (+344 B). The start replaces the idle
+/// context with the run's own (`slot.rs:1357-1371`, after forcing the authority), so a running slot
+/// holds one context (240/248 B) over what dev held; the other 32 B (Linux, one allocation) and 96 B
+/// (macOS, two allocations) of the running delta are in the start path and are not traced to a line.
+/// The Gatherer and API-seat caps below subtract a shared baseline slot, so the delta they see is the
+/// authority allocation moving from slot construction to the first native-input use. This pins both sizes.
+#[test]
+fn the_slot_runtime_context_and_lazy_authority_have_known_sizes() {
+    let mut context = None;
+    let measured = allocation_counter::measure(|| {
+        context = Some(Arc::new(ScriptRuntimeContext::new(0)));
+    });
+    assert_eq!(measured.count_total, 1, "{measured:?}");
+    assert_eq!(
+        measured.bytes_total,
+        (2 * std::mem::size_of::<usize>() + std::mem::size_of::<ScriptRuntimeContext>()) as u64,
+        "{measured:?}"
+    );
+    let context = context.expect("context built");
+    let authority = allocation_counter::measure(|| {
+        let _ = context.native_input();
+    });
+    assert_eq!(authority.count_total, 1, "{authority:?}");
+    assert_eq!(
+        authority.bytes_total,
+        (2 * std::mem::size_of::<usize>()
+            + std::mem::size_of::<api::native_input::NativeInputAuthority>()) as u64,
+        "{authority:?}"
+    );
+    println!(
+        "ScriptRuntimeContext: {} B allocated (size_of {}); lazy authority {} B",
+        measured.bytes_total,
+        std::mem::size_of::<ScriptRuntimeContext>(),
+        authority.bytes_total
+    );
+}
+
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     if !api::test_support::game_data_available() {
@@ -2672,10 +2717,15 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // The new private owner probe reproduces all three preparation totals
     // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
     // Inline TickKit storage is already in Prepared; shared tables stay out.
+    // Compat finish: the 40 B input authority is allocated on first use instead of eagerly in the
+    // slot (see `the_slot_runtime_context_and_lazy_authority_have_known_sizes`), and the shared
+    // baseline slot never uses it. Dev 91d2ca897 measures 9,938 / 9,990 for the oak and Knife
+    // samples; Linux now 9,978 / 10,030, so 10030 + 8 B headroom = 10038. macOS (merlot, aarch64)
+    // measures 9,621 / 10,178 / 10,230 for ordinary / oak Off / oak Knife; 10230 + 8 B = 10238.
     #[cfg(target_os = "macos")]
-    let exclusive_cap = 10126;
+    let exclusive_cap = 10238;
     #[cfg(not(target_os = "macos"))]
-    let exclusive_cap = 9998;
+    let exclusive_cap = 10038;
     for (oak, knife, exclusive) in measurements {
         assert!(
             (0..=exclusive_cap).contains(&exclusive),
@@ -2705,6 +2755,7 @@ mod api_gather_seat {
             game_data: data.then(selected),
             named_banks: Arc::default(),
             loadouts: Arc::default(),
+            wilderness_rules: crate::surface::no_wilderness(),
         })
         .unwrap();
         factory
@@ -3580,15 +3631,20 @@ mod api_gather_seat {
         // measured; macOS +24 B by the same allocation size, not measured).
         // Non-blocking follow-up: "Off" could use &'static str or a shared
         // static Arc instead of a separate allocation per bot.
+        // Compat finish, against dev 91d2ca897: Linux 9,995 B -> 10,035 B (+40 B, measured as one
+        // delta, not split; macOS measures 10,099 B on merlot: cap 10,099 + 8 B headroom). Two changes in the range can move this number: the 40 B input
+        // authority now allocated on first use (see
+        // `the_slot_runtime_context_and_lazy_authority_have_known_sizes`) and the CastNpcSeat the
+        // boxed ApiSeat now holds inline (`slot/api.rs`, `slot/cast_npc.rs`).
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10067;
+        let exclusive_limit = 10107;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 10003;
+        let exclusive_limit = 10043;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let exclusive_limit = 8848;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat exceeds {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
+            "exclusive API seat is {exclusive} B, over {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

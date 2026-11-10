@@ -1619,6 +1619,7 @@ LOCAL_DATA_REQUIRED_OUTPUTS = (
     Path("crates/api/data/game-data/289/prereq_steps.json"),
     Path("crates/api/data/game-data/bank-catalog.json"),
     Path("crates/api/data/game-data/cook-catalog.json"),
+    Path("crates/api/data/game-data/gather-catalog.json"),
     Path("target/local-data/prereq-crossings-289.json"),
     Path("tools/game-data/gather-sites-hidden.json"),
 ) + tuple(

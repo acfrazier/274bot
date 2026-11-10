@@ -14,7 +14,7 @@ memory-profile = []
 
 [dependencies]
 api = { path = "../api" }
-# TS parse for import scans and the TS -> JS strip used by the catalog shape.
+# JavaScript parsing for import scans and TS -> JS stripping of catalog sources.
 deno_ast = { version = "=0.49.0", features = ["transpiling"] }
 deno_core = { version = "=0.355.0" }
 # Isolate IPC wire format (schema: `crates/script-js/schema/isolate.fbs`);
@@ -54,6 +54,11 @@ harness = false
 
 [[test]]
 name = "entity_row_shape"
+required-features = ["test-hooks"]
+harness = false
+
+[[test]]
+name = "client_adapter_snapshot_shape"
 required-features = ["test-hooks"]
 harness = false
 
@@ -132,6 +137,8 @@ name = "return_to_anchor"
 [[test]]
 name = "walk_options"
 [[test]]
+name = "compat_v1_walking"
+[[test]]
 name = "quest_journal"
 [[test]]
 name = "shop"
@@ -193,6 +200,9 @@ name = "settings_bag"
 name = "paint_buttons"
 [[test]]
 name = "paint_chrome"
+
+[[test]]
+name = "paint_helpers"
 [[test]]
 name = "paint_crossings"
 [[test]]
@@ -296,6 +306,9 @@ name = "api_progress_wire"
 name = "broadcast_channel"
 [[test]]
 name = "gather_gas_alloc"
+[[test]]
+name = "shim_import_graph_alloc"
+required-features = ["test-hooks"]
 [[test]]
 name = "gather_gas_set"
 [[test]]

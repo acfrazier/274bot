@@ -415,6 +415,7 @@ fn inspect(request_id: u64) -> InteractReq {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        max_expansions: None,
         avoid: Vec::new(),
         cross: Vec::new(),
         request_id,

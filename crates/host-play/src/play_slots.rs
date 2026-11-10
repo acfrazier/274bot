@@ -136,6 +136,21 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
     )
 }
 
+/// Queue one host-owned client frame under the slot lock, then wait for its
+/// isolate receipt after releasing that lock.
+pub(crate) fn dispatch_client_frame(slot: &Arc<Mutex<script::SlotScript>>, _name: &str) -> bool {
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_begin(_name);
+    let dispatch = {
+        let mut slot = slot.lock().unwrap();
+        slot.begin_client_frame()
+    };
+    let delivered = dispatch.is_some_and(|dispatch| dispatch.wait_for_ack());
+    #[cfg(feature = "memory-profile")]
+    memory::frame_dispatch_end(_name, delivered);
+    delivered
+}
+
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -867,6 +882,13 @@ pub(super) fn apply_offline_logout_reset(
 /// slot back in, a stopped one stops the relog nothing else wants.
 pub(super) fn sync_script_login(arm: &SlotArm, scripts: &ScriptWall, name: &str) {
     arm.set_script_active(script_active(scripts, name));
+}
+
+fn active_guardian_event_name(status: &RandomStatus) -> Option<&str> {
+    status
+        .name
+        .as_deref()
+        .filter(|_| status.ours || status.handling)
 }
 
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
@@ -1618,6 +1640,8 @@ fn spawn_slot_thread(
                                 }
                                 last_nav_step = None;
                             }
+                            nav_snapshot
+                                .set_loc_projection_wanted(run_policy.loc_projection_wanted());
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
@@ -1815,6 +1839,21 @@ fn spawn_slot_thread(
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
+                            // Operator pause parks ScriptRunner work, not
+                            // BotHost client frames (`BotHost.ts:48-55`).
+                            let mut frame_delivered = false;
+                            if matches!(
+                                script_state,
+                                Some(
+                                    script::RunState::Starting
+                                        | script::RunState::Running
+                                        | script::RunState::Paused,
+                                )
+                            ) {
+                                if let Some(slot) = script_slot(&slot_scripts, name) {
+                                    frame_delivered = dispatch_client_frame(&slot, name);
+                                }
+                            }
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1957,6 +1996,7 @@ fn spawn_slot_thread(
                                 hold,
                                 guardian_hold,
                                 status.ours,
+                                active_guardian_event_name(status),
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
                                 Some(Arc::clone(&slot_cache)),
@@ -2129,10 +2169,12 @@ fn spawn_slot_thread(
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with
-                            // a running script, queued cheats, or an armed
-                            // nav bot must keep ticking (never parked), so
-                            // the observe hook reports it every frame.
-                            running
+                            // a running script, a frame listener (also while
+                            // paused: one callback per 20 ms client loop),
+                            // queued cheats, or an armed nav bot must keep
+                            // ticking (never parked), so the observe hook
+                            // reports it every frame.
+                            slot_busy_requires_tick(running, frame_delivered)
                                 || slot_cheats
                                     .lock()
                                     .unwrap()
@@ -2278,6 +2320,10 @@ pub(super) fn update_transfer_title(
     true
 }
 
+fn slot_busy_requires_tick(running: bool, frame_delivered: bool) -> bool {
+    running || frame_delivered
+}
+
 #[cfg(test)]
 mod capacity_class_tests {
     use super::capacity_service_class;
@@ -2334,6 +2380,77 @@ mod capacity_class_tests {
         assert_eq!(
             capacity_service_class(true, false, quiet),
             ServiceClass::Quiet
+        );
+    }
+    #[test]
+    fn delivered_frame_keeps_even_a_paused_slot_busy() {
+        assert!(!super::slot_busy_requires_tick(false, false));
+        assert!(super::slot_busy_requires_tick(false, true));
+        assert!(super::slot_busy_requires_tick(true, false));
+    }
+}
+#[cfg(test)]
+mod active_guardian_event_tests {
+    use super::*;
+
+    #[test]
+    fn only_owned_or_handled_events_reach_script_context() {
+        let mut status = RandomStatus {
+            name: Some("abyssal guardian".into()),
+            ..RandomStatus::default()
+        };
+        assert_eq!(active_guardian_event_name(&status), None);
+
+        status.ours = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
+        );
+
+        status.ours = false;
+        status.handling = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
+        );
+    }
+}
+#[cfg(test)]
+mod loc_projection_tests {
+    use super::*;
+    use client::client::ClientConfig;
+    use client::io::ClientRevision;
+
+    #[test]
+    fn slot_without_js_surface_does_not_build_projection_locs() {
+        let script = script::SlotScript::new();
+        assert!(!script.loc_projection_wanted());
+        let mut run_policy = ScriptRunPolicy::default();
+        run_policy.set_loc_projection_wanted(script.loc_projection_wanted());
+        assert!(!run_policy.loc_projection_wanted());
+
+        let mut client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.scene = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.set_loc_projection_wanted(run_policy.loc_projection_wanted());
+        snapshot.rebuild_family(&client, api::snapshot::Family::Loc);
+        assert!(
+            snapshot.projection_scene().locs.is_empty(),
+            "a slot without a JavaScript surface does not request loc projection data"
         );
     }
 }

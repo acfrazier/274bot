@@ -1054,6 +1054,21 @@ fn stat_view_rebuild_reads_full_skills() {
     assert!(!snap.rebuild_family(&c, Family::Stat));
 }
 
+/// Aggregate stat-family changes cannot prove that each skill was updated in
+/// the current session: that generation also advances for runenergy/weight,
+/// while the client keeps its stat table across logout.
+#[test]
+fn stats_ready_stays_false_without_per_skill_session_receipts() {
+    let mut c = client_with_npc();
+    c.gens.session = 2;
+    c.stat_base_level.fill(1);
+    c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::Stat));
+    assert!(!snap.stats_ready());
+}
+
 /// An npc rebuild copies the full actor view: tile, distance, anims,
 /// health, face target, and the npc-type name/actions/level.
 #[test]

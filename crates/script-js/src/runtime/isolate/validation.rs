@@ -164,6 +164,7 @@ fn run(rx: Receiver<Job>) {
             } else {
                 validate_one(
                     card.card.js.clone(),
+                    std::sync::Arc::from(card.card.name.as_str()),
                     card.card.shape,
                     card.siblings.clone(),
                     &mut retiring,
@@ -203,16 +204,20 @@ fn refuse(job: Job, reason: &str) {
 
 fn validate_one(
     js: String,
+    card_name: std::sync::Arc<str>,
     shape: LoadShape,
     siblings: Vec<(String, String)>,
     retiring: &mut Option<Receiver<Vec<String>>>,
 ) -> Result<(), String> {
     let isolate = LoadIsolate::spawn_inner(
         js,
+        card_name,
         shape,
         siblings,
         None,
         std::sync::Arc::clone(&EMPTY_BANKS),
+        script::surface::no_wilderness(),
+        None,
         None,
     )
     .map_err(|error| error.to_string())?;

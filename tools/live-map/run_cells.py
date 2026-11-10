@@ -111,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Local rs2b0t checkout root. Required when a selected cell uses ${CATALOG_ROOT}.")
     parser.add_argument("--unpack-source", default=None,
                         help="Revision decoded unpack directory copied to panel-home/.274bot/unpack-289. Required when a selected cell uses ${PANEL_LIVE_HOME}.")
+    parser.add_argument("--partner-prefix", default=None,
+                        help="Second account's name prefix, 1-4 characters and different from --prefix. Required when a selected cell uses ${BOT_LIVE_PARTNER_NAME_PREFIX} (the BOT_LIVE_PARTNER_NAME_PREFIX variable is read when the flag is absent).")
     parser.add_argument("--self-test", action="store_true", help="Run the runner unit tests.")
     return parser
 
@@ -184,6 +186,34 @@ def ensure_unpack_source(cells: list[live_map.Cell], unpack_source: str | None) 
     return unpack_source
 
 
+def needs_partner_prefix(cells: list[live_map.Cell]) -> bool:
+    return any("BOT_LIVE_PARTNER_NAME_PREFIX" in cell.command for cell in cells)
+
+
+def ensure_partner_prefix(
+    cells: list[live_map.Cell], partner_prefix: str | None, prefix: str
+) -> str | None:
+    """The second account's name prefix, for cells that run two real accounts."""
+    if not needs_partner_prefix(cells):
+        return partner_prefix
+    partner_prefix = partner_prefix or os.environ.get("BOT_LIVE_PARTNER_NAME_PREFIX")
+    if not partner_prefix:
+        names = ", ".join(
+            cell.name for cell in cells if "BOT_LIVE_PARTNER_NAME_PREFIX" in cell.command
+        )
+        raise live_map.MapError(
+            f"run-cells: refusing cells [{names}]: a selected cell runs two accounts. "
+            "Pass --partner-prefix <1-4 characters>, different from --prefix."
+        )
+    if not 1 <= len(partner_prefix) <= 4:
+        raise live_map.MapError(
+            f"run-cells: the partner prefix must be 1-4 characters, got {partner_prefix!r}"
+        )
+    if partner_prefix == prefix:
+        raise live_map.MapError("run-cells: the partner prefix must differ from --prefix")
+    return partner_prefix
+
+
 def hash_unpack_source(source: Path) -> str:
     digest = hashlib.sha256()
     names: list[str] = []
@@ -250,21 +280,16 @@ def _first_existing(candidates: list[str | None], want_file: bool) -> str | None
     return None
 
 
-def _reference_dir() -> str | None:
-    candidates = [
-        os.environ.get("REFERENCE_V17_DIR"),
-        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17",
-        "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_dir():
-            return candidate
-    return None
+def _local_data_nav(repo: Path, revision: str, name: str) -> str | None:
+    """The pack or flags that `tools/local-data/build.py` wrote for a revision."""
+    path = repo / "target" / "local-data" / "nav" / revision / name
+    return str(path) if path.is_file() else None
 
 
-def host_defaults() -> dict[str, str]:
+def host_defaults(repo: Path) -> dict[str, str]:
     home = str(Path.home())
-    ref = _reference_dir()
+    # The nav pack is the repository's own build output. The stored v17 and v18
+    # reference packs are refused by the current reader.
     defaults: dict[str, str] = {}
     isohome = _first_existing(
         [
@@ -316,16 +341,14 @@ def host_defaults() -> dict[str, str]:
     )
     if snapshot:
         defaults["NAV_SNAPSHOT_ROOT_289"] = snapshot
-    if ref:
-        pack = Path(ref) / "274bot-289-v17.navpack"
-        flags = Path(ref) / "274bot-289-v17.navflags"
-        pack274 = Path(ref) / "274bot-274-v17.navpack"
-        if pack.is_file():
-            defaults["NAV_PACK_289"] = str(pack)
-        if flags.is_file():
-            defaults["NAV_FLAGS_289"] = str(flags)
-        if pack274.is_file():
-            defaults["NAV_PACK_274"] = str(pack274)
+    for key, revision, name in (
+        ("NAV_PACK_289", "289", "274bot.navpack"),
+        ("NAV_FLAGS_289", "289", "274bot.navflags"),
+        ("NAV_PACK_274", "274", "274bot.navpack"),
+    ):
+        found = _local_data_nav(repo, revision, name)
+        if found:
+            defaults[key] = found
     for key in (
         "NAV_PACK_289",
         "NAV_FLAGS_289",
@@ -374,6 +397,7 @@ def build_cell_env(
     quest_http_port: int,
     defaults: dict[str, str] | None = None,
     catalog_root: str | None = None,
+    partner_prefix: str | None = None,
 ) -> tuple[dict[str, str], str]:
     reject_tick_override(cell_name, cell_command)
     quest = is_quest_cell(cell_name, cell_command)
@@ -390,6 +414,8 @@ def build_cell_env(
     if catalog_root is not None:
         env["CATALOG_ROOT"] = catalog_root
     env["BOT_LIVE_NAME_PREFIX"] = prefix
+    if partner_prefix is not None:
+        env["BOT_LIVE_PARTNER_NAME_PREFIX"] = partner_prefix
     env["BOT_NAV_BUILD"] = "skip"
     env["WORLD_GAME_PORT"] = str(game_port)
     env["WORLD_HTTP_PORT"] = str(http_port)
@@ -541,6 +567,7 @@ def run_all(
     defaults: dict[str, str] | None = None,
     catalog_root: str | None = None,
     unpack_source: str | None = None,
+    partner_prefix: str | None = None,
     runner: Callable[..., tuple[int, str, str, int]] | None = None,
 ) -> list[RunResult]:
     head = repo_head(repo)
@@ -586,6 +613,7 @@ def run_all(
                 quest_http_port=quest_http_port,
                 defaults=defaults,
                 catalog_root=catalog_root,
+                partner_prefix=partner_prefix,
             )
             try:
                 if runner is not None:
@@ -689,8 +717,9 @@ def main(argv: list[str] | None = None) -> int:
         ensure_no_tick_override(cells)
         catalog_root = ensure_catalog_root(cells, args.catalog_root)
         unpack_source = ensure_unpack_source(cells, args.unpack_source)
+        partner_prefix = ensure_partner_prefix(cells, args.partner_prefix, args.prefix)
         evidence_root.mkdir(parents=True, exist_ok=True)
-        defaults = host_defaults()
+        defaults = host_defaults(repo)
         results = run_all(
             cells,
             repo=repo,
@@ -704,6 +733,7 @@ def main(argv: list[str] | None = None) -> int:
             defaults=defaults,
             catalog_root=catalog_root,
             unpack_source=unpack_source,
+            partner_prefix=partner_prefix,
         )
         head = repo_head(repo)
         summary = format_summary(
@@ -1064,6 +1094,71 @@ class RunCellsTests(unittest.TestCase):
         cells = [live_map.Cell("nav.route-search-live", "LIVE=1 ${CATALOG_ROOT:?} cargo test", "")]
         with self.assertRaises(live_map.MapError):
             ensure_catalog_root(cells, "/no/such/catalog-root-r2")
+
+    def test_partner_prefix_is_required_for_two_account_cells(self) -> None:
+        pair = [
+            live_map.Cell(
+                "host.quester-partner-trade",
+                "LIVE=1 BOT_LIVE_PARTNER_NAME_PREFIX=${BOT_LIVE_PARTNER_NAME_PREFIX:?} cargo test",
+                "",
+            )
+        ]
+        self.assertTrue(needs_partner_prefix(pair))
+        with unittest.mock.patch.dict(os.environ):
+            os.environ.pop("BOT_LIVE_PARTNER_NAME_PREFIX", None)
+            with self.assertRaises(live_map.MapError) as context:
+                ensure_partner_prefix(pair, None, "abc")
+            self.assertIn("--partner-prefix", str(context.exception))
+            os.environ["BOT_LIVE_PARTNER_NAME_PREFIX"] = "xyz"
+            self.assertEqual(ensure_partner_prefix(pair, None, "abc"), "xyz")
+        self.assertEqual(ensure_partner_prefix(pair, "def", "abc"), "def")
+        with self.assertRaises(live_map.MapError):
+            ensure_partner_prefix(pair, "abc", "abc")
+        with self.assertRaises(live_map.MapError):
+            ensure_partner_prefix(pair, "toolong", "abc")
+        single = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
+        self.assertFalse(needs_partner_prefix(single))
+        self.assertIsNone(ensure_partner_prefix(single, None, "abc"))
+
+    def test_partner_prefix_flag_reaches_cell_env(self) -> None:
+        args = parse_run_args(
+            ["--repo", "/r", "--cells", "a", "--prefix", "abc", "--evidence", "/e",
+             "--partner-prefix", "def"]
+        )
+        self.assertEqual(args.partner_prefix, "def")
+        env, _ = build_cell_env(
+            cell_name="host.quester-partner-trade",
+            cell_command="LIVE=1 ${ISOHOME:?} cargo test",
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            partner_prefix="def",
+        )
+        self.assertEqual(env["BOT_LIVE_PARTNER_NAME_PREFIX"], "def")
+
+    def test_nav_pack_defaults_come_from_the_repo_local_data(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            nav = repo / "target" / "local-data" / "nav"
+            (nav / "289").mkdir(parents=True)
+            (nav / "289" / "274bot.navpack").write_bytes(b"p")
+            (nav / "289" / "274bot.navflags").write_bytes(b"f")
+            with unittest.mock.patch.dict(os.environ):
+                for name in ("NAV_PACK_289", "NAV_FLAGS_289", "NAV_PACK_274"):
+                    os.environ.pop(name, None)
+                defaults = host_defaults(repo)
+            self.assertEqual(defaults["NAV_PACK_289"], str(nav / "289" / "274bot.navpack"))
+            self.assertEqual(defaults["NAV_FLAGS_289"], str(nav / "289" / "274bot.navflags"))
+            self.assertNotIn("NAV_PACK_274", defaults)
 
     def test_catalog_root_reaches_cell_env(self) -> None:
         import tempfile

@@ -4,5 +4,9 @@ pub fn local_fact_catalogs_available() -> bool {
         "data/game-data/cook-catalog.json",
         "API local asset `data/game-data/cook-catalog.json`; generate it with `python tools/local-data/build.py`",
     );
-    banks && cooking
+    let gathering = crate::local_api_asset::local_api_asset(
+        "data/game-data/gather-catalog.json",
+        "API local asset `data/game-data/gather-catalog.json`; generate it with `python tools/local-data/build.py`",
+    );
+    banks && cooking && gathering
 }

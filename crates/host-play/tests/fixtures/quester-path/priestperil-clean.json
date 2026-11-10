@@ -1,0 +1,24 @@
+{
+  "stage": "priestperil:0",
+  "stand": [
+    3222,
+    3476,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [],
+  "before_relog": [
+    "setvar runemysteries 6",
+    "givebank rune_full_helm 1",
+    "givebank rune_chainbody 1",
+    "givebank rune_platelegs 1",
+    "givebank rune_kiteshield 1",
+    "givebank rune_scimitar 1",
+    "givebank bronze_pickaxe 1",
+    "givebank lobster 8",
+    "givebank coins 100"
+  ],
+  "expect": [],
+  "mode": "clean"
+}

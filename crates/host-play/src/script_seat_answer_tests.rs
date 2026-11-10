@@ -109,6 +109,7 @@ impl Frames {
             let mut slot = slot.lock().unwrap();
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
+                    "test",
                     source(body),
                     script_js::LoadShape::CompatClass,
                     vec![],
@@ -231,6 +232,7 @@ impl Frames {
             false,
             false,
             false,
+            None,
             None,
             None,
             None,

@@ -270,10 +270,58 @@ pub fn vendor_by_keeper_config<'a>(
 /// Formula: `shop.rs2:131-147` and `shop.rs2:183-192`.
 /// Integer scaling: `NumberOps.ts:124-126`.
 pub fn unit_price(item: &ShopItemFact, sell: i32, delta: i32, stock: i32) -> i64 {
-    let d = i64::from(stock) - i64::from(item.baseline);
-    let haggle = (d * i64::from(delta)).clamp(-5000, 1000);
+    unit_price_values(item.cost, item.baseline, sell, delta, stock)
+}
+
+/// Integer buying price for one unit at this stock, never below 1 gp.
+pub fn unit_price_values(base_cost: i32, baseline: i32, sell: i32, delta: i32, stock: i32) -> i64 {
+    let d = i64::from(stock) - i64::from(baseline);
+    let haggle = d.saturating_mul(i64::from(delta)).clamp(-5000, 1000);
     let pct = (i64::from(sell) - haggle).max(100);
-    (pct * i64::from(item.cost) / 1000).max(1)
+    (pct.saturating_mul(i64::from(base_cost)) / 1000).max(1)
+}
+
+/// Frozen `shopBuyPrice`: the unit price after `bought` units left the shelf.
+pub fn shop_buy_price(base_cost: i32, bought: i32, sell_multiplier: i32, delta: i32) -> i64 {
+    let swing = (-i64::from(bought))
+        .saturating_mul(i64::from(delta))
+        .clamp(-5000, 1000);
+    let pct = (i64::from(sell_multiplier) - swing).max(100);
+    (pct.saturating_mul(i64::from(base_cost)) / 1000).max(1)
+}
+
+/// Frozen `buyoutCost`, summed one unit at a time with bounded work.
+pub fn buyout_cost(base_cost: i32, stock: i32, sell_multiplier: i32, delta: i32) -> i64 {
+    let stock = stock.max(0);
+    let delta = i64::from(delta);
+    let variable_limit = match delta.cmp(&0) {
+        std::cmp::Ordering::Greater => (5000 + delta - 1) / delta,
+        std::cmp::Ordering::Less => {
+            let magnitude = delta.saturating_abs();
+            (1000 + magnitude - 1) / magnitude
+        }
+        std::cmp::Ordering::Equal => 0,
+    };
+    let variable_units = i64::from(stock).min(variable_limit);
+    let mut total = 0i64;
+    for bought in 0..variable_units {
+        total = total.saturating_add(shop_buy_price(
+            base_cost,
+            bought as i32,
+            sell_multiplier,
+            delta as i32,
+        ));
+    }
+    let remaining = i64::from(stock) - variable_units;
+    total.saturating_add(
+        shop_buy_price(
+            base_cost,
+            variable_units as i32,
+            sell_multiplier,
+            delta as i32,
+        )
+        .saturating_mul(remaining),
+    )
 }
 /// Total price from `stock`, pricing each unit at the stock left by earlier units.
 ///
@@ -875,6 +923,26 @@ mod tests {
             ..item.clone()
         };
         assert_eq!(unit_price(&zero, 1300, 20, 500), 1);
+    }
+    #[test]
+    fn shop_buy_price_matches_the_engine_integer_curve() {
+        assert_eq!(shop_buy_price(100, 0, 100, 10), 10);
+        assert_eq!(shop_buy_price(100, 5, 100, 10), 15);
+        assert_eq!(shop_buy_price(100, 500, 100, 10), 510);
+        assert_eq!(shop_buy_price(0, 5, 100, 10), 1);
+        assert_eq!(shop_buy_price(100, 0, 0, 0), 10);
+    }
+
+    #[test]
+    fn buyout_cost_is_stock_sensitive_and_bounded() {
+        assert_eq!(buyout_cost(100, 3, 100, 10), 33);
+        assert_eq!(buyout_cost(100, 0, 100, 10), 0);
+        assert_eq!(buyout_cost(100, -1, 100, 10), 0);
+        let expected = (0..500)
+            .map(|bought| shop_buy_price(100, bought, 100, 10))
+            .sum::<i64>()
+            + i64::from(i32::MAX - 500) * shop_buy_price(100, 500, 100, 10);
+        assert_eq!(buyout_cost(100, i32::MAX, 100, 10), expected);
     }
 
     #[test]

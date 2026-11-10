@@ -4,12 +4,12 @@
 // rows spend the dock budget in one batched crossing instead of one per row.
 import { HOST_CONTROLS, host, notImpl } from '../shim/_kernel.js';
 
-function chrome(op, a, b, c, d) {
+function chrome(op, ...args) {
     const fn = globalThis.__rs2b0t_paint_chrome;
     if (typeof fn !== 'function') {
         throw notImpl('Paint.' + op);
     }
-    return fn(op, a, b, c, d);
+    return fn(op, ...args);
 }
 
 function asNames(names) {
@@ -32,7 +32,7 @@ export class PaintFrame {
 export const Paint = {
     begin(ctx, opts) {
         const dock = opts && opts.dock != null ? opts.dock : 'chatbox';
-        chrome('begin', typeof dock === 'string' ? dock : 'chatbox');
+        chrome('begin', dock, ctx);
         const rec = {
             title: null,
             accent: (opts && opts.accent) || null,
@@ -57,7 +57,7 @@ export const Paint = {
         const frame = {
             title(text) {
                 rec.title = String(text);
-                chrome('title');
+                chrome('title', host());
                 return frame;
             },
             row(...cols) {
@@ -148,12 +148,76 @@ export const Paint = {
                 }
                 return current;
             },
-            cols() { throw notImpl('PaintFrame.cols'); },
-            wrap(text, color, indent) { throw notImpl('PaintFrame.wrap'); },
-            list(id, lines, rows, opts) { throw notImpl('PaintFrame.list'); },
-            fill(id, lines, opts) { throw notImpl('PaintFrame.fill'); },
-            grid(id, lines, columns, opts) { throw notImpl('PaintFrame.grid'); },
-            stepper(id, label, options, current) { throw notImpl('PaintFrame.stepper'); },
+            cols() {
+                const result = chrome('cols', pendingRows);
+                pendingRows = 0;
+                return result;
+            },
+            wrap(text, color, indent = 2) {
+                const result = chrome(
+                    'wrap',
+                    rec,
+                    String(text),
+                    color,
+                    indent,
+                    pendingRows
+                );
+                pendingRows = 0;
+                return result;
+            },
+            list(id, lines, rows, opts = {}) {
+                const result = chrome(
+                    'list',
+                    rec,
+                    String(id),
+                    lines,
+                    rows,
+                    opts,
+                    pendingRows
+                );
+                pendingRows = 0;
+                return result;
+            },
+            fill(id, lines, opts = {}) {
+                const result = chrome(
+                    'fill',
+                    rec,
+                    String(id),
+                    lines,
+                    opts,
+                    pendingRows
+                );
+                pendingRows = 0;
+                return result;
+            },
+            grid(id, lines, columns, opts = {}) {
+                const result = chrome(
+                    'grid',
+                    rec,
+                    String(id),
+                    lines,
+                    columns,
+                    opts,
+                    pendingRows
+                );
+                pendingRows = 0;
+                return result;
+            },
+            stepper(id, label, options, current) {
+                const key = String(id);
+                const picked = chrome(
+                    'stepper',
+                    rec,
+                    key,
+                    String(label),
+                    options,
+                    String(current),
+                    pendingRows,
+                    host()
+                );
+                pendingRows = 0;
+                return picked;
+            },
             buttons(items) {
                 flushRows();
                 if (!items || items.length === 0) {

@@ -1,0 +1,31 @@
+{
+  "stage": "imp:0",
+  "stand": [
+    3103,
+    3163,
+    2
+  ],
+  "loadout": null,
+  "extra_items": [
+    [
+      "black_bead",
+      1
+    ],
+    [
+      "red_bead",
+      1
+    ],
+    [
+      "white_bead",
+      1
+    ],
+    [
+      "yellow_bead",
+      1
+    ]
+  ],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}

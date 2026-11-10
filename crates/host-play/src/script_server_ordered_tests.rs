@@ -320,6 +320,7 @@ impl Rig {
             false,
             false,
             None,
+            None,
             Some(&self.input),
             Some(cache),
             Some(Arc::clone(&self.names)),
@@ -1965,6 +1966,7 @@ fn ordered_dispatch_does_not_relax_ordinary_invisible_ui_or_target_mask_checks()
             z: 3205,
             level: 0,
             index: None,
+            target_id: None,
         }],
         None,
         None,
@@ -2008,6 +2010,7 @@ fn ordered_dispatch_does_not_relax_ordinary_invisible_ui_or_target_mask_checks()
                 z: 3205,
                 level: 0,
                 index: None,
+                target_id: None,
             },
         ],
         None,
@@ -2058,7 +2061,7 @@ fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_
     }
     let mut rig = Rig::new();
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.objs.resize(1539, client::config::ObjType::default());
         for slot in 0..28 {
             let id = 1511 + slot;
@@ -2130,7 +2133,7 @@ fn ordered_existing_shop_move_op_npc_spills_to_engine_without_host_deferral_or_r
     };
     let _ = knife_request(&mut rig, false);
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.npcs.resize_with(10, client::config::NpcType::default);
         cache.npcs[9] = client::config::NpcType {
             id: 9,
@@ -2402,6 +2405,7 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
 
 fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrderedRequest {
     {
+        api::snapshot::clear_client_adapter_cache_for_tests(&rig.client.cache);
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
         cache
             .npcs
@@ -2750,7 +2754,7 @@ fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
         return;
     };
     {
-        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        let cache = test_cache_mut(&mut rig.client);
         cache.npcs.resize_with(10, client::config::NpcType::default);
         cache.npcs[9] = client::config::NpcType {
             id: 9,

@@ -914,7 +914,7 @@ mod tests {
         assert!(summary.contains("Reload Paths:"), "{summary}");
         let published = script::quester::registry::snapshot();
         for (id, label) in [
-            ("cook", "Folder Cook [folder] [draft]"),
+            ("cook", "Folder Cook [folder]"),
             ("fresh-draft", "Fresh Draft [draft]"),
         ] {
             assert!(
@@ -953,11 +953,11 @@ mod tests {
         assert!(edited
             .rows()
             .iter()
-            .any(|row| row.id == "cook" && row.label == "Edited Again [folder] [draft]"));
+            .any(|row| row.id == "cook" && row.label == "Edited Again [folder]"));
         assert!(!edited
             .rows()
             .iter()
-            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder] [draft]"));
+            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder]"));
         assert!(edited
             .diagnostics()
             .iter()

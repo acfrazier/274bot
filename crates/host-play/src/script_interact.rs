@@ -922,6 +922,7 @@ where
                 avoid,
                 cross,
                 request_id,
+                max_expansions,
             } => {
                 let from = WorldTile {
                     x: from_x,
@@ -982,6 +983,7 @@ where
                         zones,
                         avoid: rects,
                         request_id,
+                        max_expansions,
                         invalid_args,
                     },
                 );
@@ -1125,6 +1127,30 @@ where
                     {
                         wrote |= matches!(
                             ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
+            InteractReq::BankDrag {
+                id,
+                slot,
+                component,
+                target_slot,
+                insert,
+                bank_generation,
+            } => {
+                // The exact posted bank row in the same bank session; the
+                // api re-checks the grid and the target slot before sending.
+                if snapshot.bank_component_id() >= 0
+                    && snapshot.bank_loaded()
+                    && snapshot.bank_session_generation() == bank_generation
+                {
+                    if let Some(item) = snapshot.bank().iter().find(|item| {
+                        item.def.id == id && item.slot == slot && item.component_id == component
+                    }) {
+                        wrote |= matches!(
+                            ix.drag_bank_item(item, target_slot, insert),
                             SendResult::Sent { .. }
                         );
                     }
@@ -1361,6 +1387,7 @@ where
                         z,
                         level,
                         index,
+                        None,
                     ) {
                         let on_loc = match &target {
                             OpTarget::Loc(loc) => {
@@ -1394,6 +1421,7 @@ where
                 z,
                 level,
                 index,
+                target_id,
             } => {
                 let ctx = api::snapshot::ReadContext::new(snapshot);
                 if let Some(widget) = ctx.component(component_id) {
@@ -1408,11 +1436,15 @@ where
                         z,
                         level,
                         index,
+                        target_id,
                     ) {
                         wrote |=
                             matches!(ix.use_widget_on(widget, target), SendResult::Sent { .. });
                     }
                 }
+            }
+            InteractReq::SayPublic { text } => {
+                wrote |= matches!(ix.say_public(&text), SendResult::Sent { .. });
             }
             InteractReq::ContinueDialog { component_id } => {
                 wrote |= matches!(ix.continue_dialog(component_id), SendResult::Sent { .. });
@@ -1590,8 +1622,9 @@ where
             | InteractReq::GatherStop { .. }
             | InteractReq::CombatFight { .. }
             | InteractReq::CombatStop { .. }
+            | InteractReq::CastNpc { .. }
             | InteractReq::ProgressRead { .. } => {
-                // Host-local controls are consumed by the slot before game
+                // Host-local controls and typed native starts are consumed by the slot before game
                 // dispatch; none can authorize a Driver packet here.
             }
             InteractReq::NoteProgress
@@ -1700,11 +1733,32 @@ fn resolve_op_target<'a>(
     z: i32,
     level: i32,
     index: Option<i32>,
+    target_id: Option<i32>,
 ) -> Option<api::interact::OpTarget<'a>> {
     use api::interact::OpTarget;
     match kind {
+        "npc" if target_id.is_some() => {
+            let wanted_type = usize::try_from(target_id?).ok()?;
+            let wanted_index = usize::try_from(index?).ok()?;
+            snapshot
+                .npcs()
+                .iter()
+                .find(|npc| {
+                    npc.index == wanted_index
+                        && npc.r#type == Some(wanted_type)
+                        && npc.network.x == x
+                        && npc.network.z == z
+                        && npc.network.level == level
+                        && target_name.is_none_or(|wanted| {
+                            npc.name
+                                .as_deref()
+                                .is_some_and(|name| name.eq_ignore_ascii_case(wanted))
+                        })
+                })
+                .map(OpTarget::Npc)
+        }
         "npc" => {
-            let wanted = target_name.map(|n| n.to_lowercase());
+            let wanted = target_name.map(str::to_lowercase);
             snapshot
                 .npcs()
                 .iter()
@@ -1841,6 +1895,7 @@ mod ground_use_target_tests {
             tile.z,
             tile.level,
             None,
+            None,
         );
         assert!(matches!(target, Some(OpTarget::GroundItem(item)) if item.def.id == 11));
         assert!(
@@ -1854,6 +1909,7 @@ mod ground_use_target_tests {
                 tile.x,
                 tile.z,
                 tile.level,
+                None,
                 None,
             )
             .is_none(),

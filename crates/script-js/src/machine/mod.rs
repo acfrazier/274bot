@@ -165,6 +165,7 @@ const BANK_LOG_CALLBACK: &[&str] = &["log"];
 const BANK_DEPOSIT_CALLBACKS: &[&str] = &["match", "log"];
 const BANK_NEAREST_CALLBACKS: &[&str] = &["deposit", "afterDeposit", "log"];
 
+const SHOP_BUY_BY_ID_FAMILY: &str = "shop-buy-by-id";
 pub(crate) const BANK_FAMILY_DESCRIPTORS: &[BankFamilyDescriptor] = &[
     BankFamilyDescriptor {
         name: "bank_op",
@@ -244,6 +245,14 @@ pub(crate) const BANK_FAMILY_DESCRIPTORS: &[BankFamilyDescriptor] = &[
         kind: native::request::NativeKind::BankPlan,
         exclusive_group: None,
     },
+    // Native bank transactions and reads behind purgePackAtBank,
+    // withdrawCoins, bankPace, Bank.backpackReady and sortBank.
+    BankFamilyDescriptor {
+        name: "bank_task",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
 ];
 
 fn bank_family_descriptor(name: &str) -> Option<&'static BankFamilyDescriptor> {
@@ -268,6 +277,7 @@ fn bank_family_for_operation(operation: script::bank::request::BankSeatOperation
         Op::WithdrawLoad => "bank_withdraw_load",
         Op::SetNoteMode => "bank_note_mode",
         Op::Close => "bank_close",
+        Op::PurgePack | Op::WithdrawCoins | Op::Pace | Op::BackpackReady | Op::Sort => "bank_task",
         Op::None => unreachable!("bank start operation is validated"),
     }
 }
@@ -283,9 +293,18 @@ fn bank_hook_bit(operation: script::bank::request::BankSeatOperation, member: &s
         (Op::BankNearest, "deposit") => BANK_NEAREST_HOOK_DEPOSIT,
         (Op::BankNearest, "afterDeposit") => BANK_NEAREST_HOOK_AFTER_DEPOSIT,
         (Op::BankNearest, "log") => BANK_NEAREST_HOOK_LOG,
-        (Op::OpenObject | Op::OpenNpc | Op::OpenAccess | Op::Open | Op::WaitReady, "log") => {
-            HOOK_LOG
-        }
+        (
+            Op::OpenObject
+            | Op::OpenNpc
+            | Op::OpenAccess
+            | Op::Open
+            | Op::WaitReady
+            | Op::PurgePack
+            | Op::WithdrawCoins
+            | Op::BackpackReady
+            | Op::Sort,
+            "log",
+        ) => HOOK_LOG,
         _ => 0,
     }
 }
@@ -301,6 +320,9 @@ fn bank_transfer_operation(operation: script::bank::request::BankSeatOperation) 
             | Op::DepositAll
             | Op::DepositKeep
             | Op::DepositMatch
+            | Op::PurgePack
+            | Op::WithdrawCoins
+            | Op::Sort
     )
 }
 
@@ -558,6 +580,18 @@ fn bank_withdraw_lands_as(value: &Value) -> Option<i32> {
 }
 
 fn bank_op_immediate_outcome(family: &str, value: &Value) -> Result<Option<Outcome>, String> {
+    if family == "bank_task" {
+        let object = bank_object(value, "bank arguments")?;
+        if bank_required_string(object, "kind", None)? == "coins" {
+            // A held target that is not a safe integer names no pack count;
+            // it settles false before any bank action.
+            let need = bank_js_number(object.get("need").unwrap_or(&Value::Null));
+            if !bank_safe_integer(need) {
+                return Ok(Some(Outcome::Done(Value::Bool(false))));
+            }
+        }
+        return Ok(None);
+    }
     if family != "bank_op" {
         return Ok(None);
     }
@@ -596,6 +630,84 @@ fn bank_op_immediate_outcome(family: &str, value: &Value) -> Result<Option<Outco
         _ => None,
     };
     Ok(outcome.map(|value| Outcome::Done(Value::Bool(value))))
+}
+
+/// `Bank.backpackReady(expected)`: `None` when omitted. Each row keeps its
+/// position; a row whose slot, id or count is not an i32 can never equal a
+/// posted row (upstream `sameBackpack` compares with `===`) and becomes the
+/// impossible row. A list longer than the backpack becomes one impossible row.
+fn bank_expected_pack(
+    value: Option<&Value>,
+) -> Result<Option<Vec<script::bank::request::BankPackRow>>, String> {
+    use script::bank::request::{BankPackRow, IMPOSSIBLE_PACK_ROW, MAX_EXPECTED_PACK_ROWS};
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "expected must be an array".to_string())?;
+    if rows.len() > MAX_EXPECTED_PACK_ROWS {
+        return Ok(Some(vec![IMPOSSIBLE_PACK_ROW]));
+    }
+    let field = |row: &serde_json::Map<String, Value>, name: &str| {
+        row.get(name)
+            .and_then(Value::as_f64)
+            .and_then(bank_numeric_i32)
+    };
+    Ok(Some(
+        rows.iter()
+            .map(|row| {
+                row.as_object()
+                    .and_then(|row| {
+                        Some(BankPackRow {
+                            slot: field(row, "slot")?,
+                            id: field(row, "id")?,
+                            count: field(row, "count")?,
+                        })
+                    })
+                    .unwrap_or(IMPOSSIBLE_PACK_ROW)
+            })
+            .collect(),
+    ))
+}
+
+/// `sortBank({ categoryOverrides })` entries as `[id, category]` pairs. The
+/// category must be one of the native `BankCategory` names.
+fn bank_category_overrides(
+    value: Option<&Value>,
+) -> Result<Vec<script::bank::request::BankCategoryOverride>, String> {
+    use script::bank::request::{BankCategoryOverride, MAX_SORT_OVERRIDES};
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "categoryOverrides must be a Map".to_string())?;
+    if entries.len() > MAX_SORT_OVERRIDES {
+        return Err(format!(
+            "categoryOverrides has more than {MAX_SORT_OVERRIDES} entries"
+        ));
+    }
+    entries
+        .iter()
+        .map(|entry| {
+            let pair = entry
+                .as_array()
+                .filter(|pair| pair.len() == 2)
+                .ok_or_else(|| "categoryOverrides entries must be [id, category]".to_string())?;
+            let id = bank_id_number(&pair[0])
+                .ok_or_else(|| "categoryOverrides ids must be i32 item ids".to_string())?;
+            let name = pair[1]
+                .as_str()
+                .ok_or_else(|| "categoryOverrides categories must be strings".to_string())?;
+            let category = script::bank::sort::CATEGORY_ORDER
+                .iter()
+                .position(|category| category.as_str() == name)
+                .and_then(|index| u8::try_from(index).ok())
+                .ok_or_else(|| format!("unknown bank category {name:?}"))?;
+            Ok(BankCategoryOverride { id, category })
+        })
+        .collect()
 }
 
 fn bank_positive_withdraw_count(value: &Value, name: &str) -> Result<i64, String> {
@@ -837,6 +949,56 @@ fn parse_bank_start(
                 args
             }
             other => return Err(format!("unknown bank wait kind {other:?}")),
+        },
+        "bank_task" => match bank_required_string(object, "kind", None)?.as_str() {
+            "purge" => {
+                let mut args = Args::new(Op::PurgePack);
+                args.set_keep_names(bank_string_list(object.get("keep"), "keep")?);
+                args.set_stand(bank_optional_tile(object, "stand", None)?);
+                args.set_destination(bank_destination(object.get("destination"))?);
+                let booth_name = bank_string(object, "boothName", None)?;
+                let booth_op = bank_string(object, "boothOp", None)?;
+                args.set_object_access(match (booth_name, booth_op) {
+                    (None, None) => None,
+                    (name, op) => Some(script::bank::request::BankSeatObjectAccess::new(
+                        name.unwrap_or_else(|| "Bank booth".into()),
+                        op.unwrap_or_else(|| "Use-quickly".into()),
+                        None,
+                        None,
+                    )),
+                });
+                args.set_prefer_nearby(match object.get("preferNearby") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Bool(value)) => Some(*value),
+                    Some(_) => return Err("preferNearby must be a boolean".into()),
+                });
+                args.set_obstacles(bank_string_list(object.get("obstacles"), "obstacles")?);
+                args
+            }
+            "coins" => {
+                let need = bank_js_number(object.get("need").unwrap_or(&Value::Null));
+                if !bank_safe_integer(need) {
+                    return Err("need must be a safe integer".into());
+                }
+                let mut args = Args::new(Op::WithdrawCoins);
+                args.set_quantity(Some(need as i64));
+                args.set_item_name(Some(
+                    bank_string(object, "coin_name", None)?.unwrap_or_else(|| "Coins".into()),
+                ));
+                args
+            }
+            "pace" => Args::new(Op::Pace),
+            "backpack" => {
+                let mut args = Args::new(Op::BackpackReady);
+                args.set_expected_pack(bank_expected_pack(object.get("expected"))?);
+                args
+            }
+            "sort" => {
+                let mut args = Args::new(Op::Sort);
+                args.set_category_overrides(bank_category_overrides(object.get("overrides"))?);
+                args
+            }
+            other => return Err(format!("unknown bank task kind {other:?}")),
         },
         _ => return Err(format!("unknown bank family {family:?}")),
     };
@@ -1336,11 +1498,13 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::api_v2::api_session::CombatSession>(),
     entry::<crate::api_v2::api_session::CombatStop>(),
     entry::<crate::api_v2::api_session::ProgressQuery>(),
+    entry::<crate::api_v2::api_session::CastNpc>(),
     entry::<crate::compat::quest_journal::QuestJournal>(),
     entry::<crate::compat::reach_entity::EntityOp>(),
     entry::<crate::compat::reach_entity::LocOp>(),
     entry::<crate::compat::reach_entity::WalkHops>(),
     entry::<crate::compat::walk::WalkResilient>(),
+    entry::<crate::compat::walk::ProbeDest>(),
     entry::<crate::compat::walk::WalkOpening>(),
     entry::<crate::compat::walk::DirectWalk>(),
     entry::<crate::compat::walk::DirectClick>(),
@@ -1388,6 +1552,7 @@ pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
                 .find(|entry| entry.name == family)
                 .map(|entry| entry.callbacks)
         })
+        .or_else(|| (family == SHOP_BUY_BY_ID_FAMILY).then_some(&[]))
 }
 
 /// Whether a live row of `family` is running (its begin returned
@@ -1562,8 +1727,13 @@ pub(crate) enum SeatStartPayload {
     Empty,
     Gather(std::sync::Arc<script::native::SettingsBag>),
     Combat(std::sync::Arc<script::api_combat::CombatSessionRequest>),
-    QuestProgress(std::sync::Arc<str>),
+    QuestProgress {
+        name: std::sync::Arc<str>,
+        journal_only: bool,
+    },
     Bank(script::bank::request::BankSeatArgs),
+    CastNpc(script::combat::CastNpcRequest),
+    Shop(script::native_shop::ShopBuyByIdArgs),
 }
 
 impl SeatStartPayload {
@@ -1572,8 +1742,15 @@ impl SeatStartPayload {
             Self::Empty => isolate_fb::SeatStartArgsRef::Empty,
             Self::Gather(settings) => isolate_fb::SeatStartArgsRef::Gather(settings),
             Self::Combat(request) => isolate_fb::SeatStartArgsRef::Combat(request),
-            Self::QuestProgress(name) => isolate_fb::SeatStartArgsRef::QuestProgress(name),
+            Self::QuestProgress { name, journal_only } => {
+                isolate_fb::SeatStartArgsRef::QuestProgress {
+                    name,
+                    journal_only: *journal_only,
+                }
+            }
             Self::Bank(args) => isolate_fb::SeatStartArgsRef::Bank(args),
+            Self::CastNpc(request) => isolate_fb::SeatStartArgsRef::CastNpc(request),
+            Self::Shop(args) => isolate_fb::SeatStartArgsRef::Shop(args),
         }
     }
 }
@@ -1636,6 +1813,8 @@ struct BankMirror {
     owner: Handle,
     /// The newest prompt sequence a page has carried for this mirror.
     prompt_seq_seen: u32,
+    /// `sortBank`: settles as a whole `BankSortResult` (see `sort_outcome`).
+    sort: bool,
 }
 
 /// One isolate-side continuation over an admitted native bank seat row.
@@ -1647,6 +1826,40 @@ pub(crate) struct NativeBankChild {
     awaiting_reply: Option<DecisionSequence>,
     cancel_on_drop: bool,
     finished: bool,
+    /// `sortBank`: its result carries `unmatched` as channel chunks and its refusal or abort is a
+    /// failed `BankSortResult`, not a thrown error.
+    sort: bool,
+}
+
+/// The failed `BankSortResult` a refused or aborted `sortBank` settles with.
+fn sort_failure(reason: &str) -> Value {
+    serde_json::json!({ "sorted": false, "moves": 0, "mode": null, "unmatched": [], "reason": reason })
+}
+
+/// Join the consecutive `unmatched` chunks the bounded seat channel carries into one array.
+fn join_sort_chunks(mut result: Value) -> Value {
+    if let Some(Value::Array(chunks)) = result.get_mut("unmatched") {
+        let joined: Vec<Value> = chunks
+            .drain(..)
+            .flat_map(|chunk| match chunk {
+                Value::Array(ids) => ids,
+                other => vec![other],
+            })
+            .collect();
+        *chunks = joined;
+    }
+    result
+}
+
+/// A `sortBank` seat terminal as the `BankSortResult` it settles with: chunks joined, a refusal or
+/// abort a failed result. Idempotent, so an embedded child's step may apply it again.
+fn sort_outcome(outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Done(value) => Outcome::Done(join_sort_chunks(value)),
+        Outcome::Aborted(reason) => Outcome::Done(sort_failure(reason.as_str())),
+        Outcome::Refused(reason) => Outcome::Done(sort_failure(&reason)),
+        failed @ Outcome::Failed(_) => failed,
+    }
 }
 
 fn bank_hook_indices(
@@ -1745,6 +1958,7 @@ fn enqueue_bank_child(
             orphaned: false,
             owner,
             prompt_seq_seen: 0,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
         });
         Ok(())
     })
@@ -1793,6 +2007,7 @@ impl NativeBankChild {
             awaiting_reply: None,
             cancel_on_drop: true,
             finished: false,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
         })
     }
 
@@ -1822,12 +2037,15 @@ impl NativeBankChild {
             self.finished = true;
             clear_bank_mirror(self.id);
             return match outcome {
+                Outcome::Done(value) if self.sort => Step::Done(join_sort_chunks(value)),
                 Outcome::Done(value) => Step::Done(value),
                 Outcome::Failed(thrown) => Step::Fail(thrown),
+                Outcome::Aborted(reason) if self.sort => Step::Done(sort_failure(reason.as_str())),
                 Outcome::Aborted(reason) => Step::Fail(Thrown::new(format!(
                     "native bank seat aborted: {}",
                     reason.as_str()
                 ))),
+                Outcome::Refused(reason) if self.sort => Step::Done(sort_failure(&reason)),
                 Outcome::Refused(reason) => {
                     Step::Fail(Thrown::new(format!("native bank seat refused: {reason}")))
                 }
@@ -2602,10 +2820,21 @@ impl Host {
                 *request_id,
                 SeatStartPayload::Combat(std::sync::Arc::clone(request)),
             ),
-            InteractReq::ProgressRead { request_id, name } => (
+            InteractReq::ProgressRead {
+                request_id,
+                name,
+                journal_only,
+            } => (
                 *request_id,
-                SeatStartPayload::QuestProgress(std::sync::Arc::from(name.as_str())),
+                SeatStartPayload::QuestProgress {
+                    name: std::sync::Arc::from(name.as_str()),
+                    journal_only: *journal_only,
+                },
             ),
+            InteractReq::CastNpc {
+                request_id,
+                request,
+            } => (*request_id, SeatStartPayload::CastNpc(*request)),
             _ => return false,
         };
         if let Ok(id) = RequestId::isolate(raw_id) {
@@ -3048,6 +3277,15 @@ fn settle_seat_result(host: &mut Host, id: RequestId, terminal_seq: u64, outcome
         return;
     };
     let handle = handle.get();
+    let outcome = if host
+        .bank_mirrors
+        .iter()
+        .any(|mirror| mirror.id == id && mirror.sort)
+    {
+        sort_outcome(outcome)
+    } else {
+        outcome
+    };
     let (orphaned, owner) =
         if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
             mirror.prompt = None;
@@ -3360,6 +3598,8 @@ fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
         "gather" => NativeKind::Gather,
         "combat" => NativeKind::Combat,
         "quest-progress" => NativeKind::QuestProgress,
+        "cast-npc" => NativeKind::CastNpc,
+        SHOP_BUY_BY_ID_FAMILY => NativeKind::Shop,
         "hunt-fight" | "hunt-hold" | "hunt-retreat" | "hunt-walkspot" | "hunt-enter" => {
             NativeKind::Hunt
         }
@@ -3379,6 +3619,9 @@ fn seat_start_payload(
             native::request::NativeKind::QuestProgress,
             InteractReq::ProgressRead { request_id, .. },
         ) => *request_id == id.get(),
+        (native::request::NativeKind::CastNpc, InteractReq::CastNpc { request_id, .. }) => {
+            *request_id == id.get()
+        }
         _ => false,
     });
     match kind {
@@ -3404,10 +3647,25 @@ fn seat_start_payload(
             let Some(position) = position else {
                 return Err("native QuestProgress start is missing its quest name".into());
             };
-            let InteractReq::ProgressRead { name, .. } = ops.remove(position) else {
+            let InteractReq::ProgressRead {
+                name, journal_only, ..
+            } = ops.remove(position)
+            else {
                 unreachable!("matched ProgressRead")
             };
-            Ok(SeatStartPayload::QuestProgress(std::sync::Arc::from(name)))
+            Ok(SeatStartPayload::QuestProgress {
+                name: std::sync::Arc::from(name),
+                journal_only,
+            })
+        }
+        native::request::NativeKind::CastNpc => {
+            let Some(position) = position else {
+                return Err("native CastNpc start is missing typed cast arguments".into());
+            };
+            let InteractReq::CastNpc { request, .. } = ops.remove(position) else {
+                unreachable!("matched CastNpc")
+            };
+            Ok(SeatStartPayload::CastNpc(request))
         }
         _ => Ok(SeatStartPayload::Empty),
     }
@@ -3571,12 +3829,171 @@ impl Drop for BeginGuard {
     }
 }
 
+fn native_seat_start_context(
+    parent: Option<Handle>,
+    family: &str,
+) -> Result<StartContext, Started> {
+    let context = HOST.with(|host| host.borrow().start_context_for(parent));
+    if context.history_expired {
+        return Err(Started::Refused("history expired".into()));
+    }
+    if context.parent_revoked {
+        return Err(Started::Refused("parent not live".into()));
+    }
+    if !HOST.with(|host| host.borrow().execution.is_some()) {
+        return Err(Started::Refused(format!(
+            "native {family} seat requires an active execution"
+        )));
+    }
+    Ok(context)
+}
+
+fn ensure_native_seat_start_capacity() -> Result<(), Started> {
+    if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
+        Err(Started::Refused("native seat start carry is full".into()))
+    } else {
+        Ok(())
+    }
+}
+
+fn allocate_native_seat_identity(family: &str) -> Result<(Handle, RequestId), Started> {
+    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
+        return Err(Started::Refused("machine handle exhausted".into()));
+    };
+    let id = RequestId::isolate(handle)
+        .map_err(|_| Started::Refused(format!("native {family} seat identity exhausted")))?;
+    Ok((handle, id))
+}
+
+struct NativeSeatRowStart {
+    family: &'static str,
+    exclusive_group: Option<&'static str>,
+    handle: Handle,
+    context: StartContext,
+    kind: native::request::NativeKind,
+    hooks: Vec<Hook>,
+    machine: Box<dyn Machine>,
+    at: usize,
+}
+
+fn start_native_seat_row(start: NativeSeatRowStart) -> Started {
+    let NativeSeatRowStart {
+        family,
+        exclusive_group,
+        handle,
+        context,
+        kind,
+        hooks,
+        machine,
+        at,
+    } = start;
+    let hooks = hooks.into_iter().map(Rc::new).collect();
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        if let Some(group) = exclusive_group {
+            host.newest.retain(|(newest, _)| *newest != group);
+            host.newest.push((group, handle));
+            host.abort_superseded(at);
+        }
+        let clock = host.fresh_clock();
+        let inherited_baseline = WALK_BASELINE.with(Cell::get);
+        let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
+        let carries_walk_baseline = inherited_baseline.is_some();
+        host.rows.push(Row {
+            handle,
+            family,
+            exclusive: exclusive_group,
+            sync_hooks: &[],
+            clock,
+            hooks,
+            calls: 0,
+            last_snapshot: None,
+            reply: None,
+            pending: None,
+            machine,
+            seat_parent: context.seat_parent,
+            parent_row: context.parent_row,
+            native_kind: Some(kind),
+            admitted: false,
+            awaiting_seat_terminal: false,
+            authority_revoked: false,
+            phase: native::NativePhase::Preparing,
+            manual_walk_event_sent: false,
+            intent_baseline,
+            carries_walk_baseline,
+            walking_operation: false,
+            rebaseline_on_resume: false,
+            seat_changed: false,
+        });
+        host.publish_walking();
+        Started::Running(handle)
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
     start_with_parent(family, args, hooks, at, None)
 }
 
+fn start_shop_family(value: Value, hooks: Vec<Hook>, at: usize, parent: Option<Handle>) -> Started {
+    if IN_BEGIN.with(Cell::get) {
+        return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if !hooks.is_empty() {
+        return Started::Refused("Shop.buyById does not accept callbacks".into());
+    }
+    let context = match native_seat_start_context(parent, "Shop") {
+        Ok(context) => context,
+        Err(started) => return started,
+    };
+    if let Err(started) = ensure_native_seat_start_capacity() {
+        return started;
+    }
+    let args = match serde_json::from_value::<script::native_shop::ShopBuyByIdArgs>(value) {
+        Ok(args) => args,
+        Err(error) => return Started::Refused(format!("shop.buyById arguments: {error}")),
+    };
+    let (handle, id) = match allocate_native_seat_identity("Shop") {
+        Ok(identity) => identity,
+        Err(started) => return started,
+    };
+    HOST.with(|host| {
+        host.borrow_mut().pending_starts.push(PendingSeatStart {
+            id,
+            parent: context.seat_parent,
+            local_parent: context.local_parent,
+            kind: native::request::NativeKind::Shop,
+            args: SeatStartPayload::Shop(args),
+        });
+    });
+    start_native_seat_row(NativeSeatRowStart {
+        family: SHOP_BUY_BY_ID_FAMILY,
+        exclusive_group: Some(SHOP_BUY_BY_ID_FAMILY),
+        handle,
+        context,
+        kind: native::request::NativeKind::Shop,
+        hooks,
+        machine: Box::new(ShopSeatMachine),
+        at,
+    })
+}
+
 fn start_bank_family(
+    family: &'static str,
+    value: Value,
+    hooks: Vec<Hook>,
+    at: usize,
+    parent: Option<Handle>,
+) -> Started {
+    let sort = family == "bank_task" && value.get("kind").and_then(Value::as_str) == Some("sort");
+    match start_bank_family_inner(family, value, hooks, at, parent) {
+        // A refused `sortBank` settles as a failed result with the refusal as its reason.
+        Started::Refused(reason) if sort => Started::Settled(Outcome::Done(sort_failure(&reason))),
+        started => started,
+    }
+}
+
+fn start_bank_family_inner(
     family: &'static str,
     value: Value,
     hooks: Vec<Hook>,
@@ -3587,16 +4004,10 @@ fn start_bank_family(
     let Some(descriptor) = bank_family_descriptor(family) else {
         return Started::Refused(format!("unknown bank family {family:?}"));
     };
-    let context = HOST.with(|host| host.borrow().start_context_for(parent));
-    if context.history_expired {
-        return Started::Refused("history expired".into());
-    }
-    if context.parent_revoked {
-        return Started::Refused("parent not live".into());
-    }
-    if !HOST.with(|host| host.borrow().execution.is_some()) {
-        return Started::Refused("native bank seat requires an active execution".into());
-    }
+    let context = match native_seat_start_context(parent, "bank") {
+        Ok(context) => context,
+        Err(started) => return started,
+    };
     match bank_op_immediate_outcome(family, &value) {
         Ok(Some(outcome)) => return Started::Settled(outcome),
         Ok(None) => {}
@@ -3653,67 +4064,34 @@ fn start_bank_family(
     if let Err(error) = args.validate(descriptor.kind) {
         return Started::Refused(error.to_string());
     }
-    if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
-        return Started::Refused("native seat start carry is full".into());
+    if let Err(started) = ensure_native_seat_start_capacity() {
+        return started;
     }
-    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
-        return Started::Refused("machine handle exhausted".into());
-    };
-    let id = match RequestId::isolate(handle) {
-        Ok(id) => id,
-        Err(_) => return Started::Refused("native bank seat identity exhausted".into()),
+    let (handle, id) = match allocate_native_seat_identity("bank") {
+        Ok(identity) => identity,
+        Err(started) => return started,
     };
     if let Err(error) = enqueue_bank_child(id, family, args, context, handle) {
         return Started::Refused(error);
     }
-    let hooks = hooks.into_iter().map(Rc::new).collect();
-    HOST.with(|host| {
-        let mut host = host.borrow_mut();
-        if let Some(group) = descriptor.exclusive_group {
-            host.newest.retain(|(newest, _)| *newest != group);
-            host.newest.push((group, handle));
-            host.abort_superseded(at);
-        }
-        let clock = host.fresh_clock();
-        let inherited_baseline = WALK_BASELINE.with(Cell::get);
-        let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
-        let carries_walk_baseline = inherited_baseline.is_some();
-        host.rows.push(Row {
-            handle,
+    start_native_seat_row(NativeSeatRowStart {
+        family,
+        exclusive_group: descriptor.exclusive_group,
+        handle,
+        context,
+        kind: descriptor.kind,
+        hooks,
+        machine: Box::new(BankSeatMachine(NativeBankChild {
+            id,
             family,
-            exclusive: descriptor.exclusive_group,
-            sync_hooks: &[],
-            clock,
-            hooks,
-            calls: 0,
-            last_snapshot: None,
-            reply: None,
-            pending: None,
-            machine: Box::new(BankSeatMachine(NativeBankChild {
-                id,
-                family,
-                hook_indices,
-                seen_prompt: 0,
-                awaiting_reply: None,
-                cancel_on_drop: false,
-                finished: false,
-            })),
-            seat_parent: context.seat_parent,
-            parent_row: context.parent_row,
-            native_kind: Some(descriptor.kind),
-            admitted: false,
-            awaiting_seat_terminal: false,
-            authority_revoked: false,
-            phase: native::NativePhase::Preparing,
-            manual_walk_event_sent: false,
-            intent_baseline,
-            carries_walk_baseline,
-            walking_operation: false,
-            rebaseline_on_resume: false,
-            seat_changed: false,
-        });
-        host.publish_walking();
-        Started::Running(handle)
+            hook_indices,
+            seen_prompt: 0,
+            awaiting_reply: None,
+            cancel_on_drop: false,
+            finished: false,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
+        })),
+        at,
     })
 }
 
@@ -3743,6 +4121,32 @@ impl Machine for BankSeatMachine {
     }
 }
 
+struct ShopSeatMachine;
+
+impl Machine for ShopSeatMachine {
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        Step::Wait
+    }
+
+    fn snapshot_sensitive(&self) -> bool {
+        true
+    }
+
+    fn snapshot_step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+        Step::Wait
+    }
+
+    fn abort(&mut self, _why: AbortReason) {}
+
+    fn release(&self) -> Option<InteractReq> {
+        None
+    }
+
+    fn walking_operation(&self) -> bool {
+        false
+    }
+}
+
 pub(crate) fn start_with_parent(
     family: &str,
     args: Value,
@@ -3752,6 +4156,9 @@ pub(crate) fn start_with_parent(
 ) -> Started {
     if IN_BEGIN.with(Cell::get) {
         return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if family == SHOP_BUY_BY_ID_FAMILY {
+        return start_shop_family(args, hooks, at, parent);
     }
     if let Some(descriptor) = bank_family_descriptor(family) {
         return start_bank_family(descriptor.name, args, hooks, at, parent);

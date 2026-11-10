@@ -1,5 +1,6 @@
 import { snap, proxy, notImpl, runMachine } from '../../shim/_kernel.js';
 import { Sustain } from '../sustain/Sustain.js';
+const walkApi = globalThis.rustyscript.functions.__rs2b0t_walk_api;
 
 const whole = (value) => (typeof value === 'number' ? { value: Math.floor(value) } : null);
 const count = (value) => (Array.isArray(value) ? value.length : 0);
@@ -68,6 +69,9 @@ export const Traversal = proxy('Traversal', {
                     ...(typeof opts.timeoutMs === 'number'
                         ? { timeoutMs: Math.floor(opts.timeoutMs) }
                         : {}),
+                    ...(typeof opts.maxBudget === 'number'
+                        ? { maxBudget: Math.floor(opts.maxBudget) }
+                        : {}),
                     ...(typeof opts.sceneRadius === 'number'
                         ? { sceneRadius: Math.floor(opts.sceneRadius) }
                         : {}),
@@ -102,13 +106,13 @@ export const Traversal = proxy('Traversal', {
         // NavWorld already binds at template/Play construction.
     },
     remaining() {
-        throw notImpl('Traversal.remaining');
+        return walkApi('remaining');
     },
     teleportsEnabled() {
         return snap().teleports_enabled === true;
     },
     requestRepath(_reason) {
-        throw notImpl('Traversal.requestRepath');
+        walkApi('request-repath');
     },
     get pureWalk() {
         return NAV_PURE_WALK;

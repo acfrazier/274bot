@@ -177,7 +177,7 @@ import { reader } from '../../adapter/ClientAdapter.js';
 import { Players } from '../../api/players/Players.js';
 export default class T extends LoopingBot {
     loop() {
-        const peers = Players.all().map((p) => ({
+        const peers = Players.query().results().map((p) => ({
             index: p.index,
             name: p.name,
             level: p.combatLevel,

@@ -252,7 +252,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["unfinishedFood"], false);
 }
 #[test]
-fn settings_display_and_saved_preserve_posted_values() {
+fn settings_display_uses_host_bag_and_saved_reads_raw_store() {
     let value = probe_json(
         r#"
 import { SettingsStore } from '../../runtime/Settings.js';
@@ -270,8 +270,8 @@ export default class T extends LoopingBot {
             bool: SettingsStore.displayString('T', 'enabled', { default: false }),
             list: SettingsStore.displayString('T', 'targets', { default: '' }),
             tile: SettingsStore.displayString('T', 'tile', { default: '' }),
-            saved: SettingsStore.saved('T', 'combatStyle'),
-            absent: SettingsStore.saved('T', 'missing'),
+            saved: SettingsStore.saved('T', 'combatStyle') ?? null,
+            absent: SettingsStore.saved('T', 'missing') ?? null,
             resolved: SettingsStore.resolve('T', { missing: { default: 'Lobster' } }).missing,
         });
     }
@@ -283,7 +283,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["bool"], "true");
     assert_eq!(value["list"], "A, B");
     assert_eq!(value["tile"], "3200,3201,2");
-    assert_eq!(value["saved"], "defence");
+    assert!(value["saved"].is_null());
     assert!(value["absent"].is_null());
-    assert!(value["resolved"].is_null());
+    assert_eq!(value["resolved"], "Lobster");
 }

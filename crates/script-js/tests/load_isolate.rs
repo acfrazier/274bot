@@ -72,9 +72,10 @@ fn start_js_surface(
     let family = script_js::resolve_api_family(&source)
         .ok()
         .map(|(_, family)| family);
-    slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+    slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script_js::surface::JsStartCard {
+            card_name: "test card".into(),
             source,
             shape,
             siblings: Arc::<[(String, String)]>::from([]),
@@ -84,6 +85,7 @@ fn start_js_surface(
         game_data: None,
         named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
         loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+        wilderness_rules: script::surface::no_wilderness(),
     })
 }
 
@@ -193,6 +195,48 @@ fn post_snapshot_input(
     input: &script::native::snapshot_source::SnapshotInput<'_>,
 ) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
+}
+
+fn client_adapter_facts<'a>(
+    server_tile: Option<script::native::snapshot_source::TileInput>,
+    bank_com_id: i32,
+    chat_continue_component_id: i32,
+    widget_facts: &'a [script::native::snapshot_source::WidgetFactInput<'a>],
+) -> script::native::snapshot_source::ClientAdapterFactsInput<'a> {
+    script::native::snapshot_source::ClientAdapterFactsInput {
+        attached: true,
+        map_build_base: (0, 0),
+        server_tile,
+        hint_tile_level: None,
+        bank_com_id,
+        chat_continue_component_id,
+        chat_modal_texts: script::native::snapshot_source::MainModalTextsInput {
+            root: -1,
+            texts: &[],
+        },
+        widget_facts,
+        player_count: 0,
+        npc_count: 0,
+        run_controls: None,
+        login_message: "",
+        menu_entries: &[],
+        last_walk_path_local: &[],
+        session_generation: 0,
+        modal_close_generation: 0,
+        projection_scene: None,
+    }
+}
+
+fn post_snapshot_with_client_adapter(
+    iso: &LoadIsolate,
+    input: &script::native::snapshot_source::SnapshotInput<'_>,
+    facts: script::native::snapshot_source::ClientAdapterFactsInput<'_>,
+) {
+    let native = script::native::snapshot_source::NativeFactsInput {
+        client_adapter: Some(facts),
+        ..Default::default()
+    };
+    iso.post_snapshot(script_js::wire::encode_snapshot_with_native(input, native));
 }
 
 /// Throw-shaped isolate lines: tick errors, not-v1, Error. Ordinary
@@ -1900,16 +1944,23 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    // Establish the initial producer baseline before posting a new line.
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(0));
+
     let lines = [script::native::snapshot_source::ChatLineInput {
         seq: 11,
         text: "wishes to trade with you.",
         type_: 4,
         username: Some("Partner"),
     }];
-    let mut snap = base_snapshot();
     snap.chat_lines = &lines;
+    snap.tick = 2;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
+    iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(1));
     assert_eq!(iso.probe("__chat[0]").unwrap()["type"], 4);
@@ -1927,14 +1978,15 @@ export default class T extends LoopingBot {
         username: Some("Partner"),
     }];
     snap.chat_lines = &repeat;
-    snap.tick = 2;
+    snap.tick = 3;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
 
+    snap.tick = 4;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
     iso.join();
@@ -2968,6 +3020,7 @@ export default class T extends LoopingBot {
     loop() {
         globalThis.__probe = {
             tile: reader.serverTile(),
+            world: reader.worldTile(),
             slot: reader.selfSlot(),
         };
     }
@@ -2981,12 +3034,23 @@ export default class T extends LoopingBot {
         level: 0,
     });
     snap.self_slot = 17;
-    post_snapshot_input(&iso, &snap);
+    let facts = client_adapter_facts(
+        Some(script::native::snapshot_source::TileInput {
+            x: 3111,
+            z: 3222,
+            level: 1,
+        }),
+        -1,
+        -1,
+        &[],
+    );
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
     iso.on_game_tick(1);
     assert_eq!(
         iso.probe("__probe").unwrap(),
         serde_json::json!({
-            "tile": { "x": 3508, "z": 9493, "level": 0 },
+            "tile": { "x": 3111, "z": 3222, "level": 1 },
+            "world": { "x": 3508, "z": 9493, "level": 0 },
             "slot": 17,
         })
     );
@@ -4126,7 +4190,6 @@ export default class T extends LoopingBot {
             bones: Inventory.count('Bones'),
             drag: Inventory.count('Dragon bones'),
             pending: EventSignal.pending(),
-            ignored: EventSignal.ignoredRandoms(),
             xp: Skills.xp('prayer'),
             idx: Skills.index('prayer'),
             tile: Game.tile(),
@@ -4167,11 +4230,6 @@ export default class T extends LoopingBot {
     assert_eq!(
         value["pending"], true,
         "EventSignal.pending() reads the posted flags"
-    );
-    assert_eq!(
-        value["ignored"],
-        serde_json::json!([]),
-        "no posted ignore list defaults to []"
     );
     assert_eq!(value["xp"], 1300, "Skills.xp reads the posted stats row");
     assert_eq!(
@@ -4274,59 +4332,6 @@ fn malformed_paint_record_keeps_the_ticks_logs() {
         logs.iter()
             .any(|line| line.starts_with("tick 1: paint eval: ")),
         "{logs:?}"
-    );
-    iso.join();
-}
-
-// Task 12 — `EventSignal.ignoredRandoms()` reads the bot instance (the
-// rs2b0t `setIgnoredRandoms` source): the class shape's `__rs_bot` and
-// the defineBot shape's created instance. The host reads the same list
-// through the knock path to skip act on those names.
-#[test]
-fn event_signal_ignored_randoms_reads_the_bot_instance() {
-    let src = r#"
-import { EventSignal } from '../../api/execution/EventSignal.js';
-export default class T extends LoopingBot {
-    ignoredRandoms() { return ['swarm', 'rock golem']; }
-    loop() {
-        globalThis.__probe = EventSignal.ignoredRandoms();
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso
-        .probe("__probe")
-        .expect("instance ignore list reads back");
-    assert_eq!(
-        value,
-        serde_json::json!(["swarm", "rock golem"]),
-        "EventSignal.ignoredRandoms() is the bot instance's method"
-    );
-    iso.join();
-}
-
-#[test]
-fn event_signal_ignored_randoms_reads_a_definebot_instance() {
-    let src = r#"
-import { EventSignal } from '../../api/execution/EventSignal.js';
-export default defineBot({
-    name: 'ignorer',
-    create() {
-        return {
-            ignoredRandoms: () => ['maze'],
-            loop() { globalThis.__probe = EventSignal.ignoredRandoms(); },
-        };
-    },
-});
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatDefineBot, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").expect("defineBot instance reads back");
-    assert_eq!(
-        value,
-        serde_json::json!(["maze"]),
-        "the defineBot-created instance is the ignoredRandoms source"
     );
     iso.join();
 }
@@ -4630,8 +4635,8 @@ fn isolate_reader_preserves_chat_choice_id_without_inventing_other_component_ids
 import { reader } from '../../adapter/ClientAdapter.js';
 export default class T extends LoopingBot {
     loop() {
-        try { reader.chatContinueComId(); } catch (e) { this.log(String(e)); }
-        try { reader.bankComId(); } catch (e) { this.log(String(e)); }
+        this.log('chatContinue:' + reader.chatContinueComId());
+        this.log('bank:' + reader.bankComId());
         this.log('opt:' + JSON.stringify(reader.chatOptions()));
     }
 }
@@ -4645,19 +4650,17 @@ export default class T extends LoopingBot {
         com_id: 2468,
     }];
     snap.chat_options = &opts;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_with_client_adapter(&iso, &snap, client_adapter_facts(None, -1, -1, &[]));
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("chatContinueComId")),
-        "chat continue has no posted comId: {logs:?}"
+        logs.iter().any(|l| l.contains("chatContinue:-1")),
+        "an open chat without a posted continue control returns -1: {logs:?}"
     );
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("bankComId")),
-        "bank open is not component id 1: {logs:?}"
+        logs.iter().any(|l| l.contains("bank:-1")),
+        "an open bank without a posted component returns -1: {logs:?}"
     );
     assert!(
         logs.iter()
@@ -5422,12 +5425,13 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+/// `Banking.open` accepts `obstacles`: the native walk opens route doors
+/// itself, so the call starts the open instead of refusing it.
 #[test]
-fn isolate_banking_open_refuses_unsupported_obstacle_work_without_acting() {
+fn isolate_banking_open_accepts_obstacles_and_starts_the_open() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
-
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -5435,10 +5439,9 @@ export default class T extends LoopingBot {
         if (globalThis.__did) return;
         globalThis.__did = true;
         try {
-            await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
-            globalThis.__refused = false;
-        } catch (_) {
-            globalThis.__refused = true;
+            globalThis.__opened = await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
+        } catch (error) {
+            globalThis.__refused = String(error);
         }
     }
 }
@@ -5448,10 +5451,10 @@ export default class T extends LoopingBot {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
     assert_eq!(
-        slot.probe("globalThis.__refused").unwrap(),
-        serde_json::json!(true)
+        slot.probe("typeof globalThis.__refused").unwrap(),
+        serde_json::json!("undefined"),
+        "obstacles no longer refuse"
     );
-    assert!(slot.take_actions().is_empty());
     slot.stop();
 }
 
@@ -5635,21 +5638,23 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
-/// `Bank.depositAllExcept(keep)` resolves the kept names (case-insensitive)
-/// to ids and presses the first other row by id, with no script predicate.
+/// `purgePackAtBank({ keep })` on an open, loaded bank resolves the kept
+/// names (case-insensitive) to ids through the native keep deposit, presses
+/// the other row by id with no script predicate, then closes the bank and
+/// answers from the fresh pack. (The compat-only `Bank.depositAllExcept`
+/// that used to reach this deposit is removed.)
 #[test]
-fn isolate_bank_deposit_all_except_skips_kept_names() {
+fn isolate_purge_pack_deposits_unkept_rows_then_closes() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
-
     let src = r#"
-import { Bank } from '../../api/bank/Bank.js';
+import { purgePackAtBank } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        Bank.depositAllExcept(['knife']);
+        globalThis.__purged = await purgePackAtBank({ keep: ['knife'] });
     }
 }
 "#;
@@ -5670,9 +5675,14 @@ export default class T extends LoopingBot {
     input.bank_open = true;
     input.bank_loaded = true;
     let mut snapshot = api::snapshot::GameSnapshot::new();
-    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
-    let actions = slot.take_actions();
-    assert_eq!(actions.len(), 1);
+    let mut tick = 1;
+    let mut actions = Vec::new();
+    while actions.is_empty() && tick <= 6 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+        actions = slot.take_actions();
+        tick += 1;
+    }
+    assert_eq!(actions.len(), 1, "one keep deposit");
     assert!(matches!(
         bank_interaction(&actions[0]),
         script::interact::InteractReq::InvButton {
@@ -5683,11 +5693,31 @@ export default class T extends LoopingBot {
             bank_generation,
         } if *bank_generation == snapshot.bank_session_generation()
     ));
-    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    accept_bank_interaction(&mut slot, &actions[0], tick - 1, true);
     let pack_after = [pack[0]];
+    let side_after = [bank_side[0]];
     input.inv = &pack_after;
-    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
-    assert!(slot.take_actions().is_empty());
+    input.bank_side = &side_after;
+    let mut close = Vec::new();
+    while close.is_empty() && tick <= 12 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+        close = slot.take_actions();
+        tick += 1;
+    }
+    assert_eq!(close.len(), 1, "the purge closes the bank");
+    assert!(matches!(
+        bank_interaction(&close[0]),
+        script::interact::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &close[0], tick - 1, true);
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_side = &[];
+    for _ in 0..4 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        tick += 1;
+    }
+    assert_eq!(slot.probe("__purged").unwrap(), serde_json::json!(true));
     slot.stop();
 }
 
@@ -6084,52 +6114,121 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+/// `bankPace(log)` logs once, starts one native wait and settles on a later
+/// observed tick of the same session (the exact one-tick rule is the native
+/// `compat_v1_bank__bankpace__contract`). `bankPaceTicks` is no longer
+/// exported (`compat_v1_bank__bankpaceticks__removed`).
 #[test]
-fn isolate_banking_not_implemented_exports_load_and_name_each_call() {
+fn isolate_bank_pace_logs_and_settles_on_a_later_observed_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
-import { purgePackAtBank, withdrawCoins, bankPace, bankPaceTicks } from '../../api/bank/Banking.js';
+import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
-        const failures = [];
-        for (const [name, invoke] of [
-            ['purgePackAtBank', () => purgePackAtBank()],
-            ['withdrawCoins', () => withdrawCoins()],
-            ['bankPace', () => bankPace()],
-            ['bankPaceTicks', () => bankPaceTicks()],
-        ]) {
-            try {
-                await invoke();
-                failures.push(`${name}: resolved`);
-            } catch (error) {
-                failures.push(error.message);
-            }
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__logs = [];
+        try {
+            const value = await bankPace((message) => globalThis.__logs.push(message));
+            globalThis.__paced = value === undefined;
+        } catch (error) {
+            globalThis.__paced = String(error);
         }
-        globalThis.__notImplemented = failures;
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let failures: serde_json::Value = iso.probe("__notImplemented").unwrap();
-    let failures = failures.as_array().expect("all deferred calls were caught");
-    assert_eq!(failures.len(), 4);
-    for (member, failure) in [
-        "purgePackAtBank",
-        "withdrawCoins",
-        "bankPace",
-        "bankPaceTicks",
-    ]
-    .into_iter()
-    .zip(failures)
-    {
-        assert!(
-            failure
-                .as_str()
-                .is_some_and(|message| message.starts_with(&format!("not impl: {member}"))),
-            "{member} failure: {failure}"
-        );
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("__logs").unwrap(),
+        serde_json::json!(["bank: pause 1t"])
+    );
+    assert_eq!(
+        slot.probe("globalThis.__paced ?? 'pending'").unwrap(),
+        serde_json::json!("pending"),
+        "the pause never settles on the tick that started it"
+    );
+    for tick in 2..=5 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
     }
-    iso.join();
+    assert_eq!(
+        slot.probe("globalThis.__paced ?? 'pending'").unwrap(),
+        serde_json::json!(true)
+    );
+    assert!(slot.take_actions().is_empty(), "a pause sends nothing");
+    slot.stop();
+}
+
+/// `sortBank` on an open bank whose 200 rows the planner cannot categorize:
+/// the result reaches the script with every unmatched id, past the seat
+/// channel's 128-entry array limit.
+#[test]
+fn isolate_sort_bank_returns_more_unmatched_ids_than_one_channel_array() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let src = r#"
+import { sortBank } from '../../api/bank/bankSort.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        try {
+            globalThis.__sorted = await sortBank();
+        } catch (error) {
+            globalThis.__sorted = String(error);
+        }
+    }
+}
+"#;
+    let names: Vec<String> = (0..200)
+        .map(|index| format!("Mystery {index:03}"))
+        .collect();
+    let rows: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(
+            |(slot, name)| script::native::snapshot_source::ItemRowInput {
+                slot: slot as i32,
+                ..item_row(
+                    40_000 + slot as i32,
+                    Some(name.as_str()),
+                    1,
+                    &[],
+                    false,
+                    -1,
+                    BANK_GAME_COMPONENT,
+                )
+            },
+        )
+        .collect();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank = &rows;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let mut actions = 0;
+    for tick in 1..=12 {
+        tick_bank_slot(&mut slot, &mut input, tick, 1, -1, &mut snapshot);
+        actions += slot.take_actions().len();
+    }
+    let sorted = slot.probe("globalThis.__sorted ?? 'pending'").unwrap();
+    assert_eq!(
+        sorted["reason"], "sorted",
+        "{sorted}; {actions} host actions"
+    );
+    let unmatched = sorted["unmatched"].as_array().expect("one flat array");
+    assert_eq!(unmatched.len(), 200, "{sorted}");
+    assert!(unmatched
+        .iter()
+        .zip(40_000..)
+        .all(|(id, want)| id.as_f64() == Some(f64::from(want))));
+    slot.stop();
 }
 
 #[test]
@@ -6947,6 +7046,7 @@ export default class T extends LoopingBot {
             z: 0,
             level: 0,
             index: None,
+            target_id: None,
         }],
         "Game.castOnItem queues use-widget-on from posted spell label"
     );
@@ -6975,29 +7075,6 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![script::interact::InteractReq::ContinueDialog { component_id: None }],
         "ChatDialog.continue queues the continue interact op"
-    );
-    iso.join();
-}
-
-// Task 9 fix — Game.autoRetaliate is the gold export name (not autoRetaliateOn).
-#[test]
-fn kernel_facade_game_auto_retaliate_is_exported() {
-    let src = r#"
-import { Game } from '../../api/game/Game.js';
-export default class T extends LoopingBot {
-    loop() {
-        globalThis.__probe = typeof Game.autoRetaliate;
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, "function", "Game.autoRetaliate must be exported");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().all(|l| !l.contains("not impl")),
-        "autoRetaliate must not throw not impl: {logs:?}"
     );
     iso.join();
 }
@@ -7184,7 +7261,7 @@ export default class T extends LoopingBot {
             tile: Tile.from({ x: 1, z: 2, level: 0 }).toString(),
             npcs: typeof Npcs.nearest,
             locs: typeof Locs.query,
-            players: typeof Players.all,
+            players: typeof Players.query,
             ground: typeof GroundItems.query,
             equip: typeof Equipment.contains,
             task: typeof ContinueDialog,
@@ -8306,24 +8383,24 @@ export default class T extends TaskBot {
     iso.join();
 }
 
-// Task 12b — SettingsStore is the host bag, not schema defaults pretending to be set.
+// Task 12b — SettingsStore.saved exposes raw values, not the host display bag.
 #[test]
-fn isolate_settings_store_does_not_return_schema_defaults() {
+fn isolate_settings_store_saved_ignores_unpersisted_host_bag() {
     let src = r#"
 import { SettingsStore } from '../../runtime/Settings.js';
 export default class T extends LoopingBot {
     loop() {
-        const schema = { food: { type: 'string', default: 'Lobster' } };
-        globalThis.__probe = SettingsStore.resolve('T', schema).food;
+        globalThis.__rs2b0t_host.settingsBag = { food: 'Lobster' };
+        globalThis.__probe = SettingsStore.saved('T', 'food') ?? null;
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_ne!(
-        value, "Lobster",
-        "SettingsStore must not return schema defaults as if they were set: {value:?}"
+    assert!(
+        value.is_null(),
+        "SettingsStore.saved must omit unset values even if the host display bag contains food: {value:?}"
     );
     iso.join();
 }
@@ -8811,13 +8888,124 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
-        label: "Aggressive",
+        label: "(Aggressive)",
         component_id: 77,
     }];
     snap.combat_styles = &styles;
-    post_snapshot_input(&iso, &snap);
+    let tabs = [script::native::snapshot_source::SideTabIfaceInput { index: 0, id: 900 }];
+    snap.side_tab_ifaces = &tabs;
+    let widgets = [
+        script::native::snapshot_source::WidgetFactInput {
+            component_id: 77,
+            root_component_id: 900,
+            parent_id: 901,
+            type_: 5,
+            button_type: 5,
+            client_code: 0,
+            x: 10,
+            y: 300,
+            width: 20,
+            height: 20,
+            hidden: false,
+            text: None,
+            alternate_text: None,
+            button_text: None,
+            target_base: None,
+            model_type: 0,
+            model_id: -1,
+            script_opcode: 5,
+            script_varp: 43,
+            script_value: 1,
+            colour: 0,
+            inventory_ready: false,
+            items: &[],
+        },
+        script::native::snapshot_source::WidgetFactInput {
+            component_id: 78,
+            root_component_id: 900,
+            parent_id: 901,
+            type_: 4,
+            button_type: 0,
+            client_code: 0,
+            x: 40,
+            y: 300,
+            width: 80,
+            height: 20,
+            hidden: false,
+            text: Some("(Aggressive)"),
+            alternate_text: None,
+            button_text: None,
+            target_base: None,
+            model_type: 0,
+            model_id: -1,
+            script_opcode: 0,
+            script_varp: 0,
+            script_value: 0,
+            colour: 0,
+            inventory_ready: false,
+            items: &[],
+        },
+    ];
+    let facts = client_adapter_facts(None, -1, -1, &widgets);
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
     iso.on_game_tick(1);
     let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::interact::InteractReq::IfButton { component_id: 77 }]
+    );
+    iso.join();
+}
+
+/// The posted widget facts walk only the shown side tab. With the inventory
+/// shown, the combat tab's styles still come from the rows Rust posts from the
+/// combat tab's own tree (JiveKQ found no styles on the wave-2 head and left
+/// the Kalphite lair three times without attacking).
+#[test]
+fn combat_styles_and_set_combat_mode_read_the_combat_tab_while_another_tab_is_shown() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__styles = Game.combatStyles();
+        globalThis.__set = Game.setCombatMode(1);
+        globalThis.__missing = Game.setCombatMode(3);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let styles = [
+        script::native::snapshot_source::CombatStyleInput {
+            mode: 0,
+            label: "(Accurate)",
+            component_id: 76,
+        },
+        script::native::snapshot_source::CombatStyleInput {
+            mode: 1,
+            label: "(Aggressive)",
+            component_id: 77,
+        },
+    ];
+    snap.combat_styles = &styles;
+    let tabs = [
+        script::native::snapshot_source::SideTabIfaceInput { index: 0, id: 900 },
+        script::native::snapshot_source::SideTabIfaceInput { index: 3, id: 3213 },
+    ];
+    snap.side_tab_ifaces = &tabs;
+    // The inventory tab is shown: no posted widget sits under the combat root.
+    let facts = client_adapter_facts(None, -1, -1, &[]);
+    post_snapshot_with_client_adapter(&iso, &snap, facts);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__styles").unwrap(),
+        serde_json::json!([
+            { "mode": 0, "label": "(Accurate)" },
+            { "mode": 1, "label": "(Aggressive)" }
+        ])
+    );
+    assert_eq!(iso.probe("__set").unwrap(), serde_json::json!(true));
+    assert_eq!(iso.probe("__missing").unwrap(), serde_json::json!(false));
     assert_eq!(
         iso.drain_interacts(),
         vec![script::interact::InteractReq::IfButton { component_id: 77 }]
@@ -9195,6 +9383,7 @@ export default class T extends LoopingBot {
             z: 3220,
             level: 0,
             index: None,
+            target_id: None,
         }],
         "Game.castOnLoc queues use-widget-on from posted spell label and loc tile"
     );

@@ -187,6 +187,7 @@ fn widget(root: i32, component_id: i32, text: Option<&str>, hidden: bool) -> Wid
         width: 1,
         height: 1,
         scroll_height: 0,
+        inventory_ready: false,
         scroll_position: 0,
         hidden,
         text: text.map(str::to_owned),

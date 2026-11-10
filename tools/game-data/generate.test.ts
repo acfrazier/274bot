@@ -48,6 +48,8 @@ import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts,
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import './gather-catalog.test.ts';
+import './quest-junk.test.ts';
 import './extractors/prereq-preservation.test.ts';
 import './extractors/prereq-journal-proof.test.ts';
 import './extractors/prereq-steps.test.ts';

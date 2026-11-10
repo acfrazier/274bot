@@ -1530,6 +1530,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "draynor-jail-guards",
+              "name": "Draynor jail guards",
+              "reason": "Lady Keli and the cell are inside Draynor jail, whose guards (npc 917) hunt as aggressive_melee within 5 tiles (content scripts/areas/area_draynor/configs/draynor.npc:152-190; spawns maps/m50_50.jm2; lady_keli.rs2:5 checks for a guard within 7 of Keli), and no route to her avoids them."
+            }
+          ],
           "steps": [
             {
               "id": "20-rescue-loadout",
@@ -1605,6 +1612,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "draynor-jail-guards",
+              "name": "Draynor jail guards",
+              "reason": "Lady Keli and the cell are inside Draynor jail, whose guards (npc 917) hunt as aggressive_melee within 5 tiles (content scripts/areas/area_draynor/configs/draynor.npc:152-190; spawns maps/m50_50.jm2; lady_keli.rs2:5 checks for a guard within 7 of Keli), and no route to her avoids them."
+            }
+          ],
           "steps": [
             {
               "id": "30-rescue-loadout",
@@ -1700,6 +1714,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "draynor-jail-guards",
+              "name": "Draynor jail guards",
+              "reason": "Lady Keli and the cell are inside Draynor jail, whose guards (npc 917) hunt as aggressive_melee within 5 tiles (content scripts/areas/area_draynor/configs/draynor.npc:152-190; spawns maps/m50_50.jm2; lady_keli.rs2:5 checks for a guard within 7 of Keli), and no route to her avoids them."
+            }
+          ],
           "steps": [
             {
               "id": "40-rescue-loadout",
@@ -1787,6 +1808,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "draynor-jail-guards",
+              "name": "Draynor jail guards",
+              "reason": "Lady Keli and the cell are inside Draynor jail, whose guards (npc 917) hunt as aggressive_melee within 5 tiles (content scripts/areas/area_draynor/configs/draynor.npc:152-190; spawns maps/m50_50.jm2; lady_keli.rs2:5 checks for a guard within 7 of Keli), and no route to her avoids them."
+            }
+          ],
           "steps": [
             {
               "id": "50-rescue-loadout",
@@ -1939,6 +1967,13 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "cross": [
+            {
+              "id": "draynor-jail-guards",
+              "name": "Draynor jail guards",
+              "reason": "Lady Keli and the cell are inside Draynor jail, whose guards (npc 917) hunt as aggressive_melee within 5 tiles (content scripts/areas/area_draynor/configs/draynor.npc:152-190; spawns maps/m50_50.jm2; lady_keli.rs2:5 checks for a guard within 7 of Keli), and no route to her avoids them."
+            }
+          ],
           "steps": [
             {
               "id": "100-leave-jail",

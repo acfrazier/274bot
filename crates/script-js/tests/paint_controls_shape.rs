@@ -1,12 +1,11 @@
-//! The paint-controls helper's descriptors must have fast properties on the
-//! real recorder path, and the recorder must record the cached host controls
-//! without a per-frame copy.
+//! Paint helper and paint-controls descriptors keep fast properties on the
+//! real recorder path. Host controls are recorded without a per-frame copy.
 //!
 //! This is a `harness = false` executable so `--allow-natives-syntax` can be
 //! set before any V8 platform exists (as in `entity_row_shape.rs`). The bot
-//! calls the real `Paint.begin` recorder and the real
-//! `ScriptRunner.paintControls` helper from its `onPaint`; the probe reads
-//! the records that `Paint.end` wrote for the host.
+//! calls the real `PaintFrame.stepper` and `ScriptRunner.paintControls`
+//! helpers from its `onPaint`; the probe reads the records that `Paint.end`
+//! wrote for the host.
 
 use script_js::{LoadIsolate, LoadShape};
 
@@ -19,6 +18,7 @@ export default class PaintControlsShape extends LoopingBot {
         const p = Paint.begin(null, {});
         p.title('Helper');
         p.row('status');
+        p.stepper('mode', 'Mode', ['one', 'two'], 'one');
         p.buttons([{ id: 'gobank', label: 'Go bank' }]);
         p.gap();
         ScriptRunner.paintControls(p);
@@ -76,6 +76,9 @@ fn main() {
     assert_eq!(
         facts["ids"],
         serde_json::json!([
+            "step:mode:prev",
+            "step:mode:mid",
+            "step:mode:next",
             "gobank",
             script::paint::HOST_PAUSE_CONTROL_ID,
             script::paint::HOST_STOP_CONTROL_ID
@@ -98,19 +101,21 @@ fn main() {
             "button {index} field order: {facts}"
         );
     }
-    // The script's own descriptor is copied each frame; the host controls
-    // are the one frozen cached pair, recorded as they are.
+    // Stepper descriptors are native-created and rebuilt per frame. The
+    // script descriptor is copied; the host controls are the frozen cache.
     assert_eq!(
         facts["sameObject"],
-        serde_json::json!([false, true, true]),
-        "host controls are recorded without a per-frame copy: {facts}"
+        serde_json::json!([false, false, false, false, true, true]),
+        "the stepper and script descriptors are new while host controls are shared: {facts}"
     );
-    assert_eq!(
-        facts["buttons"][0]["frozen"], false,
-        "the script descriptor copy is an ordinary object: {facts}"
-    );
-    assert_eq!(facts["buttons"][1]["frozen"], true, "{facts}");
-    assert_eq!(facts["buttons"][2]["frozen"], true, "{facts}");
+    for index in 0..4 {
+        assert_eq!(
+            facts["buttons"][index]["frozen"], false,
+            "button {index} is an ordinary descriptor: {facts}"
+        );
+    }
+    assert_eq!(facts["buttons"][4]["frozen"], true, "{facts}");
+    assert_eq!(facts["buttons"][5]["frozen"], true, "{facts}");
     iso.join();
     println!("paint_controls_shape: ok {facts}");
 }

@@ -57,24 +57,6 @@
     "declaration": "partner: string;"
   },
   {
-    "id": "bank-native-deposit-except",
-    "module": "api/bank/Bank.js",
-    "selector": "Bank.depositAllExcept",
-    "add": true,
-    "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-    "runtime": "crates/script-js/src/shim/bank.js:68",
-    "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;"
-  },
-  {
-    "id": "bank-native-nearest-world",
-    "module": "api/bank/Bank.js",
-    "selector": "Bank.openNearestWorld",
-    "add": true,
-    "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-    "runtime": "crates/script-js/src/shim/bank.js:117",
-    "declaration": "openNearestWorld(): Promise<boolean>;"
-  },
-  {
     "id": "banking-native-optional-policy",
     "module": "api/bank/Banking.js",
     "selector": "Banking.bankNearest",
@@ -152,30 +134,13 @@
     "runtime": "crates/script-js/src/shim/firemaking.js:108"
   },
   {
-    "id": "game-native-retaliate-alias",
-    "module": "api/game/Game.js",
-    "selector": "Game.autoRetaliate",
-    "add": true,
-    "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-    "runtime": "crates/script-js/src/shim/game.js:73",
-    "declaration": "autoRetaliate(): boolean;"
-  },
-  {
+
     "id": "game-current-combat-mode",
     "module": "api/game/Game.js",
     "selector": "Game.combatStyleMode",
     "reason": "Native facade ignores the legacy style argument and returns the current posted varp mode.",
-    "runtime": "crates/script-js/src/shim/game.js:195",
+    "runtime": "crates/script-js/src/shim/game.js:194",
     "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;"
-  },
-  {
-    "id": "event-ignored-randoms",
-    "module": "api/execution/EventSignal.js",
-    "selector": "EventSignal.ignoredRandoms",
-    "add": true,
-    "reason": "Host additionally publishes the active bot's ignored random-event names.",
-    "runtime": "crates/script-js/src/shim/event_signal.js:25",
-    "declaration": "ignoredRandoms(): string[];"
   },
   {
     "id": "continue-dialog-public-callback",
@@ -225,7 +190,7 @@
     "operation": "optional",
     "parameters": ["opts"],
     "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-    "runtime": "crates/script-js/src/shim/traversal.js:57"
+    "runtime": "crates/script-js/src/shim/traversal.js:58"
   },
   {
     "id": "cook-native-bound-table",
@@ -249,7 +214,7 @@
     "module": "event/webwalk/Navigator.js",
     "selector": "$add",
     "reason": "Host additionally exports its Navigator value as default.",
-    "runtime": "crates/script-js/src/shim/navigator.js:54",
+    "runtime": "crates/script-js/src/shim/navigator.js:55",
     "declaration": "export default Navigator;"
   },
   {
@@ -290,7 +255,7 @@
     "module": "runtime/Settings.js",
     "selector": "SettingsBag.values",
     "reason": "Host settings bag exposes the posted value map.",
-    "runtime": "crates/script-js/src/shim/settings.js:7",
+    "runtime": "crates/script-js/src/shim/settings.js:6",
     "declaration": "values: Record<string, unknown>;"
   },
   {
@@ -325,15 +290,6 @@
     "reason": "Host stock rows preserve an absent posted name as null.",
     "runtime": "crates/script-js/src/shim/shop.js:32",
     "declaration": "stock(): { name: string | null; count: number; slot: number }[];"
-  },
-  {
-    "id": "shop-posted-player-rows",
-    "module": "api/shop/Shop.js",
-    "selector": "Shop.player",
-    "add": true,
-    "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
-    "runtime": "crates/script-js/src/shim/shop.js:40",
-    "declaration": "player(): { name: string | null; count: number; slot: number }[];"
   },
   {
     "id": "hunting-prayer-site-advisory",
@@ -383,5 +339,22 @@
     "reason": "The selected-facts adapter resolves this revision's component id from the relative source lostcity-289/content/pack/interface.pack:350; the frozen numeric literal is not authoritative across selected content.",
     "runtime": "crates/script-js/src/shim/combat_style_logic.js:8",
     "declaration": "export const AUTO_TOGGLE_COM: number;"
+  },
+  {
+    "id": "native-fishing-gear-types",
+    "module": "shim/fishing_gear.js",
+    "selector": "$module",
+    "reason": "The fishing members of ToolAcquire.ts are served by this fishing-owned native adapter until the acquisition family serves that module; the declarations preserve the pinned ToolAcquire.ts signatures and caller-object identity.",
+    "runtime": "crates/script-js/src/shim/fishing_gear.js:1",
+    "declaration": "import Tile from '../geometry/Tile.js'; import type { FishingGearPiece, FishingMethod } from '../data/fishingMethods.js'; export interface ToolVendor { keeper: string; stand: Tile; bankStand: Tile; hopFrom?: Tile; hopLoc?: string; hopAction?: string; } export type ToolAcquirePlan = { kind: 'repair'; brokenName: string; label: 'pickaxe' | 'axe'; vendor: ToolVendor; prefer: string[]; } | { kind: 'buy'; name: string; cost: number; qty: number; vendor: ToolVendor; equip: boolean; reason: string; } | { kind: 'smith'; name: string; bar: string; smithLevel: number; vendorBank: Tile; anvilStand: Tile; equip: boolean; reason: string; }; export interface AcquireWorld { skillLevel: (skill: string) => number; heldCount: (name: string) => number; invCount: (name: string) => number; bankCount: (name: string) => number; worn: (name: string) => boolean; } export interface FishingVendorNear { x: number; z: number; } export interface PlanFishingGearOpts { near?: FishingVendorNear | null; baitQty?: number; } export type FishingGearBuyPlan = Extract<ToolAcquirePlan, { kind: 'buy'; }>; export const GERRANT_ONLY_FISHING: ReadonlySet<string>; export const FISHING_SHOP_COSTS: Readonly<Record<string, number>>; export const GERRANT_VENDOR: ToolVendor; export const HARRY_VENDOR: ToolVendor; export function fishingVendorFor(name: string, near?: FishingVendorNear | null): ToolVendor; export function fishingShopCost(name: string): number | null; export function isFishingBaitPiece(g: Pick<FishingGearPiece, 'name' | 'restock'>): boolean; export function withBaitTarget(method: Pick<FishingMethod, 'gear'>, baitQty: number): { gear: FishingGearPiece[]; }; export function planFishingGearBuys(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function planFishingGearAcquire(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): ToolAcquirePlan | null; export function buyPlansCost(plans: readonly Pick<FishingGearBuyPlan, 'cost'>[]): number; export function fishingGearShopCart(method: Pick<FishingMethod, 'gear'>, w: AcquireWorld, opts?: PlanFishingGearOpts): FishingGearBuyPlan[]; export function shopableMissingFishingGear(gear: readonly FishingGearPiece[], count: (name: string) => number): string[];"
+  },
+  {
+    "id": "reachability-native-probeable",
+    "module": "event/webwalk/geometry/Reachability.js",
+    "selector": "Reachability.probeable",
+    "add": true,
+    "reason": "The compatibility wrapper reads selected collision presence without path search, so blocked same-plane tiles remain probeable while absent planes and scene cells do not.",
+    "runtime": "crates/script-js/src/shim/reachability.js:29",
+    "declaration": "/** Whether selected collision evidence is present for this same-plane scene tile. */\nprobeable(dest: WorldTile): boolean;"
   }
 ]

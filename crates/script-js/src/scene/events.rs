@@ -1,9 +1,7 @@
-//! Isolate-thread producer for `skill.xp` and `inventory.changed`.
+//! Isolate-thread producer for script-visible events derived from posted snapshots.
 //!
-//! Diffs posted FlatBuffer inv/stats after decode into bounded last/current
-//! tables. JS only stores `this.on` callbacks. `observe` never executes
-//! subscriptions; `take_eligible` is the only emit, called from a
-//! generation/pause/budget-gated tick.
+//! Diffs posted FlatBuffer inventory, stats and varps after decode into bounded
+//! last/current tables. JS only stores `this.on` callbacks.
 
 use crate::wire::{Row, Snapshot, Stat};
 
@@ -34,6 +32,7 @@ struct XpState {
     index: i32,
     name: String,
     xp: i32,
+    level: i32,
 }
 
 /// One public event to deliver on a gated tick.
@@ -50,6 +49,15 @@ pub enum NativeEvent {
         xp: i32,
         delta: i32,
     },
+    SkillLevel {
+        skill: i32,
+        name: String,
+        level: i32,
+        previous: i32,
+    },
+    ScriptFinish {
+        reason: String,
+    },
     InventoryChanged {
         slot: i32,
         id: i32,
@@ -65,6 +73,8 @@ impl NativeEvent {
         match self {
             NativeEvent::ChatMessage { .. } => "chat.message",
             NativeEvent::SkillXp { .. } => "skill.xp",
+            NativeEvent::SkillLevel { .. } => "skill.level",
+            NativeEvent::ScriptFinish { .. } => "script.finish",
             NativeEvent::InventoryChanged { .. } => "inventory.changed",
         }
     }
@@ -89,12 +99,12 @@ pub struct NativeEventProducer {
     current_inv: Option<Vec<SlotState>>,
     current_inv_size: i32,
     current_xp: Option<Vec<XpState>>,
+    chat_seeded: bool,
     last_chat_seq: Option<i32>,
     current_chat: Option<(i32, i32, Option<String>, String)>,
     paused: bool,
     offline: bool,
 }
-
 impl NativeEventProducer {
     pub fn new() -> Self {
         Self::default()
@@ -118,7 +128,11 @@ impl NativeEventProducer {
     pub fn observe(&mut self, snap: &Snapshot<'_>) -> ObserveResult {
         if snap.has_ingame() && !snap.ingame() {
             self.offline = true;
+            let last_chat_seq = self.last_chat_seq;
             self.reset_baselines();
+            self.chat_seeded = true;
+            self.last_chat_seq = last_chat_seq;
+            // Compare the first online line with the last delivered sequence.
             return ObserveResult::default();
         }
         if self.offline {
@@ -138,10 +152,15 @@ impl NativeEventProducer {
             self.current_xp = Some(current);
         }
 
-        // Native Rust selects only the newest ring entry. Omitted chat_lines
-        // are a delta omission, not a repeated event.
+        // Seed the latest line for a new producer. A script must not receive
+        // chat that existed before its listeners started.
+        // Omitted chat_lines are a delta omission, not a repeated event.
         if snap.has_chat_lines() {
-            if let Some(line) = snap.chat_lines().and_then(|lines| lines.iter().next()) {
+            let line = snap.chat_lines().and_then(|lines| lines.iter().next());
+            if !self.chat_seeded {
+                self.chat_seeded = true;
+                self.last_chat_seq = line.map(|line| line.seq());
+            } else if let Some(line) = line {
                 self.current_chat = Some((
                     line.seq(),
                     line.type_(),
@@ -235,9 +254,7 @@ impl NativeEventProducer {
                 events.extend(diff_inv(last, cur));
                 self.last_inv = Some(cur.clone());
             }
-            (None, Some(cur)) => {
-                self.last_inv = Some(cur.clone());
-            }
+            (None, Some(cur)) => self.last_inv = Some(cur.clone()),
             _ => {}
         }
         ObserveResult {
@@ -252,6 +269,7 @@ impl NativeEventProducer {
         self.last_xp = None;
         self.reset_inv_family();
         self.current_xp = None;
+        self.chat_seeded = false;
         self.last_chat_seq = None;
         self.current_chat = None;
     }
@@ -273,6 +291,7 @@ fn collect_xp(snap: &Snapshot<'_>) -> Vec<XpState> {
             index: s.index(),
             name: s.name().unwrap_or_default().to_string(),
             xp: s.xp(),
+            level: s.base(),
         })
         .collect()
 }
@@ -287,6 +306,14 @@ fn diff_xp(last: &[XpState], current: &[XpState]) -> Vec<NativeEvent> {
                     name: cur.name.clone(),
                     xp: cur.xp,
                     delta: cur.xp - prev.xp,
+                });
+            }
+            if prev.level > 0 && cur.level != prev.level {
+                events.push(NativeEvent::SkillLevel {
+                    skill: cur.index,
+                    name: cur.name.clone(),
+                    level: cur.level,
+                    previous: prev.level,
                 });
             }
         }
@@ -362,7 +389,9 @@ mod tests {
     use super::*;
     use {
         crate::wire::{encode_snapshot, encode_snapshot_delta},
-        script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, StatInput},
+        script::native::snapshot_source::{
+            ChatLineInput, ItemRowInput, ReachViewInput, SnapshotInput, StatInput,
+        },
     };
 
     fn base<'a>() -> SnapshotInput<'a> {
@@ -464,6 +493,15 @@ mod tests {
         }
     }
 
+    fn chat_line(seq: i32, text: &'static str) -> ChatLineInput<'static> {
+        ChatLineInput {
+            seq,
+            text,
+            type_: 0,
+            username: None,
+        }
+    }
+
     fn absorb(p: &mut NativeEventProducer, bytes: &[u8]) -> ObserveResult {
         let snap = Snapshot::from_bytes(bytes).expect("snapshot bytes");
         p.observe(&snap)
@@ -480,6 +518,76 @@ mod tests {
 
     fn bones_25() -> Vec<ItemRowInput<'static>> {
         (0..25).map(bone).collect()
+    }
+
+    #[test]
+    fn chat_initial_snapshot_and_reconnect_seed_existing_lines() {
+        let existing = [chat_line(7, "before start")];
+        let after_start = [chat_line(8, "after start")];
+        let after_reconnect = [chat_line(9, "after reconnect")];
+        let mut snap = base();
+        let mut producer = NativeEventProducer::new();
+
+        snap.chat_lines = &existing;
+        assert!(observe(&mut producer, &encode_snapshot(&snap))
+            .events
+            .is_empty());
+
+        snap.tick += 1;
+        snap.chat_lines = &after_start;
+        assert_eq!(
+            observe(&mut producer, &encode_snapshot(&snap)).events,
+            vec![NativeEvent::ChatMessage {
+                type_: 0,
+                username: None,
+                text: "after start".into(),
+            }]
+        );
+
+        snap.tick += 1;
+        snap.ingame = false;
+        assert!(observe(&mut producer, &encode_snapshot(&snap))
+            .events
+            .is_empty());
+
+        snap.tick += 1;
+        snap.ingame = true;
+        assert!(observe(&mut producer, &encode_snapshot(&snap))
+            .events
+            .is_empty());
+
+        snap.tick += 1;
+        snap.chat_lines = &after_reconnect;
+        assert_eq!(
+            observe(&mut producer, &encode_snapshot(&snap)).events,
+            vec![NativeEvent::ChatMessage {
+                type_: 0,
+                username: None,
+                text: "after reconnect".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn first_chat_after_an_empty_seed_is_delivered() {
+        let first = [chat_line(1, "first chat")];
+        let mut snap = base();
+        let mut producer = NativeEventProducer::new();
+
+        assert!(observe(&mut producer, &encode_snapshot(&snap))
+            .events
+            .is_empty());
+
+        snap.tick += 1;
+        snap.chat_lines = &first;
+        assert_eq!(
+            observe(&mut producer, &encode_snapshot(&snap)).events,
+            vec![NativeEvent::ChatMessage {
+                type_: 0,
+                username: None,
+                text: "first chat".into(),
+            }]
+        );
     }
 
     #[test]

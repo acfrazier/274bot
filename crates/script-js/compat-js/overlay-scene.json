@@ -4,7 +4,7 @@
     "module": "adapter/ClientAdapter.js",
     "selector": "$add",
     "reason": "The V8 SceneEntity writer posts flat x/z/level/actions, the nested tile and common combat fields; it does not expose the FlatBuffer-only shape or angle fields. ClientAdapter returns these posted rows unchanged.",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:104",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:109",
     "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; }"
   },
   {
@@ -38,15 +38,6 @@
     "reason": "Ground-item rows have the shared posted flat scene shape and no count field (crates/host-play/src/script_snapshot.rs:696-719; crates/script-js/src/runtime/snapshot.rs:1424-1504); GroundItem reads the flat coordinates/actions and defaults an absent count to one (crates/script-js/src/shim/grounditems.js:18-32).",
     "runtime": "crates/script-js/src/shim/grounditems.js:6",
     "declaration": "export interface GroundItemSnapshot extends PostedSceneEntity { health: number; }"
-  },
-  {
-    "id": "scene-reader-self-target",
-    "module": "adapter/ClientAdapter.js",
-    "selector": "reader.selfTarget",
-    "add": true,
-    "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script-js/src/shim/client_adapter.js:185-191).",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:185",
-    "declaration": "selfTarget(): { kind: number; index: number };"
   },
   {
     "id": "scene-npc-row-field",
@@ -128,14 +119,5 @@
     "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script-js/src/shim/query.js:7-17,39-41).",
     "runtime": "crates/script-js/src/shim/query.js:7",
     "declaration": "export default class EntityQuery<E extends QueryableEntity> { supplySnaps: () => readonly EntitySnapView[]; wrap: (s: EntitySnapView) => E; snapFilters: ((s: EntitySnapView & { ops: readonly (string | null)[]; tile: WorldTile }) => boolean)[]; entityFilters: ((e: E) => boolean)[]; constructor(supplySnaps: () => readonly EntitySnapView[], wrap: (s: EntitySnapView) => E); /** @internal Snapshot-first query: common filters run before `wrap`. `S` exposes the raw posted name/actions/x/z/level/distance row. */ static fromSnapshots<S extends EntitySnapView, E extends QueryableEntity>(supply: () => readonly S[], wrap: (s: S) => E): EntityQuery<E>; name(...names: string[]): this; action(action: string): this; within(dist: number): this; /** Chebyshev disk around any tile; planar distance does not require an origin level. */ withinOf(origin: { x: number; z: number; level?: number }, dist: number): this; inside(area: { minX: number; maxX: number; minZ: number; maxZ: number }): this; /** Entity-level predicate (runs after wrap). */ where(pred: (e: E) => boolean): this; results(): E[]; nearest(): E | null; /** Nearest to the player among results. */ nearestPreferLocal(preferRadius: number): E | null; first(): E | null; exists(): boolean; count(): number; /** Every match in supply order; `seen` true stops the walk. */ forEachMatch(seen: (e: E) => boolean): void; }"
-  },
-  {
-    "id": "scene-players-all",
-    "module": "api/players/Players.js",
-    "selector": "Players.all",
-    "add": true,
-    "reason": "Players.all wraps the original rows paired with the decoded native player page using the exported Player class; it is runtime-only in the frozen query facade (crates/script-js/src/shim/players.js:55-57).",
-    "runtime": "crates/script-js/src/shim/players.js:55",
-    "declaration": "all(): Player[];"
   }
 ]

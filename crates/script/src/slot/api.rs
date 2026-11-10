@@ -15,6 +15,9 @@ use std::sync::Mutex;
 #[path = "progress.rs"]
 mod progress;
 use progress::ProgressSeat;
+#[path = "cast_npc.rs"]
+mod cast_npc;
+use cast_npc::{complete_api_cast_npc, CastNpcSeat};
 
 #[path = "combat.rs"]
 mod combat;
@@ -31,6 +34,7 @@ pub(super) struct ApiSeat {
     pub(super) combat_terminal: Option<CombatEnd>,
     progress: ProgressSeat,
     pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
+    cast_npc: CastNpcSeat,
     progress_retiring: Vec<progress::ProgressJob>,
     compat_walk: CompatWalkSeat,
     #[cfg(feature = "test-hooks")]
@@ -178,10 +182,23 @@ impl ApiSeat {
         }
     }
 
+    pub(super) fn result_values<'a>(
+        &'a self,
+        results: &[crate::native::seat::SeatResult],
+        output: &mut [crate::native::seat_rows::SeatResultValue<'a>],
+    ) -> usize {
+        self.cast_npc.result_values(results, output)
+    }
+    #[cfg(test)]
+    pub(super) fn cast_npc_token(&self) -> Option<u64> {
+        self.cast_npc.token()
+    }
+
     /// Any live API session: they share the slot's one foreground.
     fn busy(&self) -> bool {
         self.gather.token().is_some()
             || self.combat.token().is_some()
+            || self.cast_npc.token().is_some()
             || self.progress.token().is_some()
             || self.compat_walk.active()
     }
@@ -226,6 +243,9 @@ impl ApiSeat {
                 )
             }
             _ => {}
+        }
+        if self.cast_npc.token() == Some(token) {
+            return Some(NativePhase::Working);
         }
         match &self.progress {
             ProgressSeat::AwaitingAdmission { token: live, .. }
@@ -398,22 +418,38 @@ impl SlotScript {
         self.api.as_ref().is_some_and(|seat| seat.busy())
     }
 
-    /// A live Gather or Combat session: work in the world that manual
-    /// movement takes over, with or without a walk in flight. A quest
-    /// progress read moves nothing and is not included.
+    /// A live Gather, Combat, or pending CastNpc request: work in the world
+    /// that manual input takes over. A quest progress read moves nothing and
+    /// is not included.
     pub fn api_session_takes_manual_input(&self) -> bool {
-        self.api
-            .as_ref()
-            .is_some_and(|seat| seat.gather.token().is_some() || seat.combat.token().is_some())
+        self.api.as_ref().is_some_and(|seat| {
+            seat.gather.token().is_some()
+                || seat.combat.token().is_some()
+                || seat.cast_npc.token().is_some()
+        })
     }
 
     /// Manual movement took over the slot: every live Gather or Combat
-    /// session learns it, whether or not a walk was in flight.
+    /// session learns it, and a pending CastNpc request settles false.
     pub(super) fn api_user_input(&mut self) {
         self.cancel_api_combat(Cancel::UserInput);
         let Some(seat) = self.api.as_mut() else {
             return;
         };
+        if let Some(token) = seat.cast_npc.token() {
+            seat.cast_npc.cancel(token);
+            if let Ok(id) = RequestId::isolate(token) {
+                complete_api_cast_npc(
+                    self.seat
+                        .as_deref_mut()
+                        .expect("CastNpc request is admitted"),
+                    seat,
+                    &mut self.pending_logs,
+                    id,
+                    false,
+                );
+            }
+        }
         match &mut seat.gather {
             GatherSeat::Idle => {}
             GatherSeat::AwaitingAdmission { user_input, .. }
@@ -466,13 +502,16 @@ impl SlotScript {
     }
 
     pub(super) fn api_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
-        match &self.api.as_ref()?.gather {
-            GatherSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
-            _ => match &self.api.as_ref()?.combat {
-                CombatSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
-                _ => self.api.as_ref()?.progress.selected(),
-            },
+        let seat = self.api.as_ref()?;
+        if let GatherSeat::Running { run, .. } = &seat.gather {
+            return Some(Arc::clone(&run.selected));
         }
+        if let CombatSeat::Running { run, .. } = &seat.combat {
+            return Some(Arc::clone(&run.selected));
+        }
+        seat.progress
+            .selected()
+            .or_else(|| seat.cast_npc.selected())
     }
 
     /// Permissions from a running Load API Gather card's committed config.
@@ -508,8 +547,12 @@ impl SlotScript {
             crate::interact::InteractReq::CombatStop { request_id } => {
                 self.stop_api_combat(*request_id)
             }
-            crate::interact::InteractReq::ProgressRead { request_id, name } => {
-                self.start_api_progress(*request_id, name, None);
+            crate::interact::InteractReq::ProgressRead {
+                request_id,
+                name,
+                journal_only,
+            } => {
+                self.start_api_progress(*request_id, name, *journal_only, None);
             }
             _ => unreachable!("API control admission"),
         }
@@ -576,7 +619,10 @@ impl SlotScript {
             )
         });
         let progress = families.progress_page.as_ref().and_then(|page| match page {
-            crate::api_progress::ProgressPage::Done { token, .. } => Some((*token, End::Done)),
+            crate::api_progress::ProgressPage::Done { token, .. }
+            | crate::api_progress::ProgressPage::JournalDone { token, .. } => {
+                Some((*token, End::Done))
+            }
             crate::api_progress::ProgressPage::Refused { token, .. } => Some((*token, End::Failed)),
             crate::api_progress::ProgressPage::Reading { .. } => None,
         });
@@ -608,23 +654,32 @@ impl SlotScript {
     /// Session, without replacing that result with a family `Stopped` page.
     pub(super) fn stop_cancelled_api_work(&mut self) {
         use api::script_contract::AuthorityStatus;
-        let (Some(families), Some(seat)) = (self.api.as_ref(), self.seat.as_ref()) else {
-            return;
+        let (gather, combat, cast_npc, progress, compat_walk) = {
+            let (Some(families), Some(seat)) = (self.api.as_ref(), self.seat.as_ref()) else {
+                return;
+            };
+            let cancelled = |token: Option<u64>| {
+                token.filter(|token| {
+                    RequestId::isolate(*token)
+                        .is_ok_and(|id| seat.lookup(id) != AuthorityStatus::Live)
+                })
+            };
+            (
+                cancelled(families.gather.token()),
+                cancelled(families.combat.token()),
+                cancelled(families.cast_npc.token()),
+                cancelled(families.progress.token()),
+                cancelled(
+                    families
+                        .compat_walk
+                        .request_id()
+                        .map(|request_id| request_id.get()),
+                ),
+            )
         };
-        let cancelled = |token: Option<u64>| {
-            token.filter(|token| {
-                RequestId::isolate(*token).is_ok_and(|id| seat.lookup(id) != AuthorityStatus::Live)
-            })
-        };
-        let gather = cancelled(families.gather.token());
-        let combat = cancelled(families.combat.token());
-        let progress = cancelled(families.progress.token());
-        let compat_walk = cancelled(
-            families
-                .compat_walk
-                .request_id()
-                .map(|request_id| request_id.get()),
-        );
+        if let (Some(families), Some(seat)) = (self.api.as_mut(), self.seat.as_ref()) {
+            families.cast_npc.retain_results(seat.results());
+        }
         if let Some(token) = gather {
             self.stop_api_gather(token);
             self.api.as_mut().expect("family seat").terminal = None;
@@ -632,6 +687,13 @@ impl SlotScript {
         if let Some(token) = combat {
             self.stop_api_combat(token);
             self.api.as_mut().expect("family seat").combat_terminal = None;
+        }
+        if let Some(token) = cast_npc {
+            self.api
+                .as_mut()
+                .expect("family seat")
+                .cast_npc
+                .cancel(token);
         }
         if progress.is_some() {
             let families = self.api.as_mut().expect("family seat");
@@ -871,6 +933,7 @@ impl SlotScript {
             }
         }
         self.tick_api_combat(&mut seat, ctx);
+        self.tick_api_cast_npc(&mut seat, ctx);
         self.tick_api_compat_walk(&mut seat, ctx);
         if let GatherSeat::Running { token, run } = &mut seat.gather {
             ctx.compiled.interacts = None;
@@ -1040,6 +1103,7 @@ impl SlotScript {
                     }
                 }
                 seat.progress.rekey(self.work_epoch);
+                seat.cast_npc.rekey(self.work_epoch);
             }
         } else if let Some(seat) = self.api.as_mut() {
             match std::mem::take(&mut seat.gather) {
@@ -1056,6 +1120,7 @@ impl SlotScript {
             seat.progress_page = None;
             seat.page = None;
             seat.terminal = None;
+            seat.cast_npc.reset();
         }
     }
 
@@ -1082,6 +1147,7 @@ impl SlotScript {
             CombatSeat::Idle | CombatSeat::Preparing { .. } => {}
         }
         seat.progress.rekey(session);
+        seat.cast_npc.rekey(session);
     }
 
     pub(super) fn teardown_api(&mut self, reason: StopReason) {

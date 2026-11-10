@@ -238,16 +238,20 @@ pub struct StatView {
     pub used: bool,
 }
 
-/// Whether the client's skill table uses stat slot `index`
-/// (`Skill::used`). Unused slots always post base 0.
-pub fn stat_used(index: usize) -> bool {
-    Skill::used.get(index).copied().unwrap_or(false)
+/// The number of slots in the client's fixed skill table.
+pub fn stat_count() -> usize {
+    Skill::names.len()
 }
 
 /// The client's name for stat slot `index` (`Skill::names`); empty outside
 /// the table.
 pub fn stat_name(index: usize) -> &'static str {
     Skill::names.get(index).copied().unwrap_or("")
+}
+
+/// Whether the client's skill table uses stat slot `index` (`Skill::used`).
+pub fn stat_used(index: usize) -> bool {
+    Skill::used.get(index).copied().unwrap_or(false)
 }
 
 /// One varp's value from the client's `var` table (the m8aq
@@ -349,6 +353,9 @@ pub struct WidgetView {
     pub height: i32,
     pub scroll_height: i32,
     pub scroll_position: i32,
+    /// Whether the component has a transmitting inventory with a full packet
+    /// generation in the current client session.
+    pub inventory_ready: bool,
     pub hidden: bool,
     pub text: Option<String>,
     pub alternate_text: Option<String>,
@@ -645,6 +652,47 @@ pub struct SceneView {
     pub height: i32,
     pub collision_flags: Vec<i32>,
 }
+/// Bounded projection inputs for the synchronous ClientAdapter world readers.
+/// These are native-only and intentionally omitted from snapshot JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProjectionSceneView {
+    pub available: bool,
+    pub level: i32,
+    pub camera_x: i32,
+    pub camera_y: i32,
+    pub camera_z: i32,
+    pub sin_pitch: i32,
+    pub cos_pitch: i32,
+    pub sin_yaw: i32,
+    pub cos_yaw: i32,
+    /// Ground heights for `level`, flattened as `x * 105 + z`.
+    pub heights: std::sync::Arc<[i32]>,
+    /// Ground heights for `level + 1`, empty on the top plane.
+    pub heights_above: std::sync::Arc<[i32]>,
+    /// LinkBelow flags for tiles, flattened as `x * 104 + z`.
+    pub link_below: std::sync::Arc<[u8]>,
+    /// Geometry paired by index with the scene's `LocView` rows.
+    pub locs: std::sync::Arc<[ProjectionLocView]>,
+}
+
+/// Scene-space geometry and identity needed to project one placed location's hull.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProjectionLocView {
+    pub id: i32,
+    pub name: Option<std::sync::Arc<str>>,
+    pub level: i32,
+    /// Wall, ground-scene, wall-decoration, ground-decoration precedence.
+    pub rank: i32,
+    pub scene_x: i32,
+    pub scene_z: i32,
+    pub min_tile_x: i32,
+    pub max_tile_x: i32,
+    pub min_tile_z: i32,
+    pub max_tile_z: i32,
+    pub half_width: i32,
+    pub half_length: i32,
+    pub top_height: i32,
+}
 
 /// The client's world scalars (the m8aq `WorldStateSnapshot`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -685,6 +733,7 @@ pub struct MapFlagView {
 pub struct HintTileView {
     pub x: i32,
     pub z: i32,
+    pub level: i32,
 }
 
 #[cfg(test)]

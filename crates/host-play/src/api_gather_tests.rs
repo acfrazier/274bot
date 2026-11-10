@@ -254,6 +254,7 @@ fn start_source(
         }
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "test card",
                 source.into(),
                 script_js::LoadShape::NativeTick,
                 vec![],
@@ -316,6 +317,7 @@ fn observe_frame(
         false,
         false,
         false,
+        None,
         None,
         None,
         Some(Arc::clone(cache)),
@@ -586,6 +588,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         false,
         None,
         None,
+        None,
         Some(Arc::clone(&rig.cache)),
         Some(Arc::clone(&rig.names)),
         Some(&sender),
@@ -707,6 +710,7 @@ fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state()
                     allow_teleports: false,
                     allow_wilderness: false,
                     allow_bank_fetch: false,
+                    max_expansions: None,
                     avoid: vec![],
                     cross: vec![],
                     request_id: 9,
@@ -952,7 +956,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
-            slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+            slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
             scripts
                 .lock()
                 .unwrap()

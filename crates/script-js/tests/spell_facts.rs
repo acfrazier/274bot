@@ -362,6 +362,7 @@ export default class T extends LoopingBot {
             z: 0,
             level: 0,
             index: None,
+            target_id: None,
         }]
     );
     assert_eq!(iso.probe("__landed").unwrap(), serde_json::Value::Null);

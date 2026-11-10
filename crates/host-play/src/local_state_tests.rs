@@ -10,7 +10,7 @@ use api::loadout::Loadout;
 use api::local_state::{
     AccountKey, AuditCommit, AuditOrigin, BankHint, CommitAction, ContentScope, DomainEdit,
     DomainIdentity, ErrorCode, FailureReason, LoadoutEdit, LocalStateDomain, PreferencesEdit,
-    StoreVersion, SubmitReceipt, ValidationReason,
+    RuntimeSettingsEdit, StoreVersion, SubmitReceipt, ValidationReason,
 };
 use script::IsolatedEnv;
 
@@ -2620,6 +2620,192 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
         Arc::new(RequestIdMinter::new()),
     )
     .preferences()
+}
+
+/// A runtime settings service and its account/content-bound file.
+fn runtime_settings_at(
+    scratch: &IsolatedEnv,
+    case: &str,
+) -> (Arc<LocalStateService>, DomainIdentity, std::path::PathBuf) {
+    let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let identity = identity(LocalStateDomain::ScriptRuntimeSettings, "alice");
+    let path = root.script_runtime_settings_file(
+        identity.account().profile(),
+        identity.account().account(),
+        identity.scope().revision().as_i32(),
+        identity.scope().content(),
+    );
+    let service = LocalStateService::open(
+        root,
+        &[LocalStateDomain::ScriptRuntimeSettings],
+        Arc::new(RequestIdMinter::new()),
+    );
+    (service, identity, path)
+}
+
+#[test]
+fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-round-trip");
+    let (service, identity, path) = runtime_settings_at(&scratch, "settings");
+    let edit = RuntimeSettingsEdit::try_set(
+        identity.clone(),
+        None,
+        "catalog:ChickenKiller",
+        "buryBones",
+        "false",
+    )
+    .unwrap();
+    let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
+    completed(&service, request);
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "schema_version": 1,
+            "profile": PROFILE,
+            "account": "alice",
+            "revision": 289,
+            "content": CONTENT,
+            "rows": [{
+                "namespace": "catalog:ChickenKiller",
+                "key": "buryBones",
+                "raw": "false"
+            }]
+        })
+    );
+
+    let lease = service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the write created a settings file");
+    let rows = lease
+        .snapshot()
+        .as_script_runtime_settings()
+        .expect("script settings snapshot");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].namespace(), "catalog:ChickenKiller");
+    assert_eq!(rows[0].key(), "buryBones");
+    assert_eq!(rows[0].raw(), "false");
+}
+
+/// WalkTo saves `customTile`, and its change listener saves `destination`
+/// in the same call; a MapPicker row is written just before. All three
+/// writes queue back to back. After they settle, the file and every read
+/// hold all three rows (the restart in the WalkTo live cell found only
+/// `destination`).
+#[test]
+fn back_to_back_runtime_settings_writes_keep_every_row() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-back-to-back");
+    let (service, identity, path) = runtime_settings_at(&scratch, "settings");
+    service
+        .readback_lease(&identity, WAIT)
+        .expect("an absent file is ready");
+    let rows = [
+        ("MapPicker", "showBasemap", "false"),
+        ("WalkTo", "customTile", "3110,3106,0"),
+        ("WalkTo", "destination", "Map pick"),
+    ];
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(namespace, key, raw)| {
+            let edit =
+                RuntimeSettingsEdit::try_set(identity.clone(), None, namespace, key, raw).unwrap();
+            request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)))
+        })
+        .collect();
+    for request in requests {
+        completed(&service, request);
+    }
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        document["rows"],
+        serde_json::json!([
+            { "namespace": "MapPicker", "key": "showBasemap", "raw": "false" },
+            { "namespace": "WalkTo", "key": "customTile", "raw": "3110,3106,0" },
+            { "namespace": "WalkTo", "key": "destination", "raw": "Map pick" },
+        ]),
+        "the file keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads from the settled cache"
+        );
+    }
+    let lease = service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the writes created a settings file");
+    assert_eq!(
+        lease.snapshot().as_script_runtime_settings().unwrap().len(),
+        3,
+        "a later readback keeps every row"
+    );
+    for (namespace, key, raw) in rows {
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            Some(raw.to_string()),
+            "{namespace}.{key} reads after a readback"
+        );
+    }
+}
+
+#[test]
+fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-quarantine");
+    for (case, bytes) in [
+        ("not-json", b"{not valid json".to_vec()),
+        ("not-an-object", b"[1, 2, 3]".to_vec()),
+    ] {
+        let (service, identity, path) = runtime_settings_at(&scratch, case);
+        write_private(&path, &bytes);
+        let notices = quarantine_lines(&service);
+
+        assert!(service.readback_lease(&identity, WAIT).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(siblings(&path), std::slice::from_ref(&name));
+
+        let edit = RuntimeSettingsEdit::try_set(
+            identity.clone(),
+            None,
+            "catalog:ChickenKiller",
+            "buryBones",
+            "false",
+        )
+        .unwrap();
+        let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
+        completed(&service, request);
+
+        let names = siblings(&path);
+        assert_eq!(names.len(), 2, "{case}: {names:?}");
+        let quarantined = path.with_file_name(&names[1]);
+        assert!(
+            names[1].starts_with(&format!("{name}.corrupt-")),
+            "{case}: {names:?}"
+        );
+        assert_eq!(std::fs::read(&quarantined).unwrap(), bytes);
+        let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+        let rows = lease.snapshot().as_script_runtime_settings().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].raw(), "false");
+        let notices = notices.lock().unwrap();
+        assert_eq!(notices.len(), 2, "{case}: {notices:?}");
+        assert_eq!(notices[0].0, Level::Warn);
+        assert_eq!(notices[1].0, Level::Info);
+        assert!(
+            notices[1].1.starts_with(
+                "audit domain=script-runtime-settings action=script-runtime-settings-quarantine"
+            ),
+            "{case}: {notices:?}"
+        );
+    }
 }
 
 #[test]

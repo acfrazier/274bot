@@ -246,8 +246,6 @@ EXCLUDED_SCRIPTS = {
     "MarketMaker": ("excluded_script", "market-maker planner is not imported into the native runner"),
     "WalkToBot": ("excluded_script", "native navigation; it stays outside the foreign catalog rows"),
 }
-BANK_SORTER = ("operator_decision", "UNAVAILABLE_BY_OPERATOR_DECISION: no native sorter; cases and history are "
-                                    "retained, nothing is replaced or silently removed")
 
 # Manual reference cases never selected by a level (reference semantics, retained).
 MANUAL_NOTE = "manual in the reference manifest; reachable only through --only"
@@ -642,9 +640,6 @@ def main():
             if script in EXCLUDED_SCRIPTS:
                 unavailable = EXCLUDED_SCRIPTS[script]
                 break
-            if script in ("BankSorter",):
-                unavailable = BANK_SORTER
-                break
         if unavailable is None:
             if c["manual"]:
                 unavailable = ("unmapped_reference", MANUAL_NOTE)
@@ -756,7 +751,7 @@ def main():
                               "every runnable case is reachable"),
         ])),
         ("intended_scripts", intended),
-        ("unavailable_by_operator_decision", ["BankSorter"]),
+        ("unavailable_by_operator_decision", []),
         ("cases", rows),
     ])
 

@@ -33,8 +33,21 @@ assert.deepEqual(facts.journals[1].rules[0].proves, { min: 3, max: 13 });
 assert.deepEqual(quests.rows.find((row) => row.id === 'priestperil')!.stage_domain, { min: 0, max: 61 });
 assert.deepEqual(facts.journals[2].establishes.values, { min: 9, max: 61 });
 assert.deepEqual(facts.journals[2].rules[0].proves, { min: 9, max: 61 });
+assert.deepEqual(facts.journals[2].rules.map((rule) => rule.proves), [
+    { min: 9, max: 61 },
+    { min: 5, max: 5 },
+    { min: 6, max: 6 },
+    { min: 7, max: 7 },
+    { min: 8, max: 8 },
+    { min: 10, max: 59 },
+]);
 assert.deepEqual(facts.journals[2].after, [
     { proves: { min: 9, max: 61 }, after: { min: 9, max: 61 } },
+    { proves: { min: 5, max: 5 }, after: { min: 5, max: 61 } },
+    { proves: { min: 6, max: 6 }, after: { min: 6, max: 61 } },
+    { proves: { min: 7, max: 7 }, after: { min: 7, max: 61 } },
+    { proves: { min: 8, max: 8 }, after: { min: 8, max: 61 } },
+    { proves: { min: 10, max: 59 }, after: { min: 10, max: 61 } },
 ]);
 assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.transmission, 'not_transmitted');
 assert.deepEqual(quests.rows.find((row) => row.id === 'druidspirit')!.stage_domain, { min: 0, max: 110 });

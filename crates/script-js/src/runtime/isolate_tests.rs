@@ -946,6 +946,93 @@ fn wait_ready(iso: &LoadIsolate) {
     }
 }
 
+fn frame_listener_isolate() -> LoadIsolate {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+loop() {
+    if (globalThis.__subscribed) return;
+    globalThis.__subscribed = true;
+    globalThis.__frames = 0;
+    BotHost.addFrameListener(() => ++globalThis.__frames);
+}
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    wait_ready(&iso);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__frames").unwrap(), 0);
+    iso
+}
+
+/// The host path allocates no dispatch handle per frame. Only the
+/// `begin_client_frame` call is measured, on this thread; the isolate
+/// thread's work and the acknowledgement wait are outside the measure.
+#[test]
+fn warmed_client_frame_dispatch_handles_allocate_nothing_per_frame() {
+    let mut iso = frame_listener_isolate();
+    const FRAMES: u64 = 64;
+    let mut allocated = 0;
+    let mut handles: Vec<Arc<dyn script::surface::ClientFrameDispatch>> = Vec::new();
+    for _ in 0..FRAMES {
+        let mut dispatch = None;
+        let allocations = allocation_counter::measure(|| {
+            dispatch = iso.begin_client_frame();
+        });
+        allocated += allocations.count_total;
+        let dispatch = dispatch.expect("a registered listener receives the frame");
+        assert!(
+            dispatch.wait_for_ack(),
+            "the isolate acknowledges the frame"
+        );
+        handles.push(dispatch);
+    }
+    drop(handles);
+    // The command channel allocates one block per 31 sends; a dispatch
+    // handle built per frame would allocate at least once on every frame.
+    assert!(
+        allocated <= FRAMES / 16,
+        "{FRAMES} warmed client frames allocated {allocated} times"
+    );
+    assert_eq!(iso.probe("__frames").unwrap(), FRAMES);
+    iso.join();
+}
+
+/// The host path: every delivered frame hands out the isolate's one
+/// dispatch handle, so a frame allocates no new `FrameDispatch`.
+#[test]
+fn begin_client_frame_reuses_one_dispatch_handle() {
+    let mut iso = frame_listener_isolate();
+    const FRAMES: i64 = 16;
+    // Keep every handle alive: a fresh allocation per frame could otherwise
+    // reuse the address of the previous frame's dropped handle.
+    let mut handles: Vec<Arc<dyn script::surface::ClientFrameDispatch>> = Vec::new();
+    for _ in 0..FRAMES {
+        let dispatch = iso
+            .begin_client_frame()
+            .expect("a registered listener receives the frame");
+        assert!(
+            dispatch.wait_for_ack(),
+            "the isolate acknowledges the frame"
+        );
+        if let Some(first) = handles.first() {
+            assert!(
+                Arc::ptr_eq(first, &dispatch),
+                "a frame built a new dispatch handle"
+            );
+        }
+        handles.push(dispatch);
+    }
+    drop(handles);
+    assert_eq!(iso.probe("__frames").unwrap(), FRAMES);
+    iso.join();
+}
+
 #[test]
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
     let t0 = Instant::now();
@@ -1355,7 +1442,7 @@ fn bank_call_sync_members_preserve_values_promises_and_thrown_identity() {
     }
     assert_eq!(
         cases.len(),
-        9,
+        10,
         "all frozen synchronous bank callback members need the three outcomes"
     );
 
@@ -1544,6 +1631,7 @@ fn bank_start_args(family: &str) -> serde_json::Value {
             serde_json::json!({ "access": { "name": "Bank chest", "op": "Open" } })
         }
         "bank_wait" => serde_json::json!({ "kind": "ready" }),
+        "bank_task" => serde_json::json!({ "kind": "purge", "keep": [] }),
         _ => panic!("no bank prompt test arguments for {family}"),
     }
 }
@@ -2336,11 +2424,10 @@ fn journal_slot(source: &str) -> script::SlotScript {
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(1);
     let (shape, family) = crate::resolve_api_family(source).expect("an API v2 card");
-    slot.bind_surface_factory(std::sync::Arc::new(
-        crate::surface::JsSurfaceFactory::default(),
-    ));
+    slot.bind_surface_factory(std::sync::Arc::new(crate::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: std::sync::Arc::new(crate::surface::JsStartCard {
+            card_name: "test".into(),
             source: source.into(),
             shape,
             siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
@@ -2350,6 +2437,7 @@ fn journal_slot(source: &str) -> script::SlotScript {
         game_data: None,
         named_banks: std::sync::Arc::default(),
         loadouts: std::sync::Arc::default(),
+        wilderness_rules: script::surface::no_wilderness(),
     })
     .expect("start the JS surface");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -2770,7 +2858,8 @@ export function tick(api) {
     assert_eq!(start.kind, NativeKind::QuestProgress);
     assert!(matches!(
         &start.args,
-        SeatStartArgs::QuestProgress(name) if name == "Cook's Assistant"
+        SeatStartArgs::QuestProgress { name, journal_only }
+            if name == "Cook's Assistant" && !journal_only
     ));
     assert_eq!((start.run, start.session), (28, 0));
     assert_eq!(pending[0].batch.consumed_terminal_seq, 0);
@@ -3381,10 +3470,118 @@ export function tick() {{}}
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            script::surface::no_wilderness(),
+            None,
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            "test card",
         )
     })
     .unwrap();
     runtime
+}
+fn script_activity_runtime() -> Runtime {
+    crate::runtime::platform::bootstrap_test_v8_platform();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
+    let source = r#"
+import { ScriptActivity } from '../../runtime/ScriptActivity.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+import { Scheduler } from '../../runtime/Scheduler.js';
+
+globalThis.__checkRuntimeShapes = () => {
+    const hasFast = new Function('value', 'return %HasFastProperties(value)');
+    const activity = new ScriptActivity(() => {});
+    const context = ScriptRunner.ctx;
+    const active = Scheduler.active;
+    const keys = Object.keys(context);
+    const descriptors = Object.getOwnPropertyDescriptors(context);
+    return {
+        activityFast: hasFast(activity),
+        contextFast: hasFast(context),
+        sameRunView: context === active && active === Scheduler.active,
+        activityKeys: Object.keys(activity),
+        contextKeys: keys,
+        accessors: keys.slice(0, 5).every((key) => typeof descriptors[key].get === 'function')
+            && typeof descriptors.abortWaiters.value === 'function',
+    };
+};
+globalThis.__repeatRuntimeHandles = (count) => {
+    for (let index = 0; index < count; index++) {
+        globalThis.__lastActivity = new ScriptActivity(() => {});
+        globalThis.__lastContext = Scheduler.active;
+    }
+    globalThis.__lastActivity = null;
+    globalThis.__lastContext = null;
+};
+export default class RuntimeShapeProbe extends LoopingBot {}
+"#;
+    crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
+        wire_runtime(
+            runtime,
+            source,
+            LoadShape::CompatClass,
+            &[],
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            script::surface::no_wilderness(),
+            None,
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            "test card",
+        )
+    })
+    .unwrap();
+    let context = std::sync::Arc::new(script::surface::ScriptRuntimeContext::new(71));
+    context.set_state(script::surface::RuntimeRunState::Running);
+    super::super::lifecycle_v8::bind_runtime_context(&mut runtime, std::sync::Arc::clone(&context))
+        .unwrap();
+    super::super::activity_v8::bind_runtime_context(&mut runtime, context).unwrap();
+    runtime
+}
+
+#[test]
+fn script_activity_context_views_and_handles_have_fast_properties() {
+    const CHILD_ENV: &str = "SCRIPT_ACTIVITY_FAST_PROPERTIES_CHILD";
+    const TEST_NAME: &str =
+        "runtime::isolate::tests::script_activity_context_views_and_handles_have_fast_properties";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        run_exact_child(TEST_NAME, CHILD_ENV);
+        return;
+    }
+    rustyscript::deno_core::v8::V8::set_flags_from_string("--allow-natives-syntax");
+    let mut runtime = script_activity_runtime();
+    let facts: serde_json::Value = runtime.eval("__checkRuntimeShapes()").unwrap();
+    assert_eq!(
+        facts,
+        serde_json::json!({
+            "activityFast": true,
+            "contextFast": true,
+            "sameRunView": true,
+            "activityKeys": [],
+            "contextKeys": ["state", "aborted", "stopReason", "activeEvent", "watchdogHold", "abortWaiters"],
+            "accessors": true,
+        }),
+        "ScriptActivity handles and the generation-cached run facade retain stable V8 shapes"
+    );
+}
+
+#[test]
+fn repeated_script_activity_handles_have_bounded_post_gc_heap() {
+    let mut runtime = script_activity_runtime();
+    runtime.eval::<()>("__repeatRuntimeHandles(1000)").unwrap();
+    let baseline = collected_heap(&mut runtime).0;
+    runtime.eval::<()>("__repeatRuntimeHandles(25000)").unwrap();
+    let after = collected_heap(&mut runtime).0;
+    let growth = after.saturating_sub(baseline);
+    const LIMIT: usize = 64 * 1024;
+    println!(
+        "ScriptActivity post-GC V8 heap baseline={baseline} after={after} growth={growth} limit={LIMIT}"
+    );
+    assert!(
+        growth <= LIMIT,
+        "transient ScriptActivity/context handle reads grew post-GC V8 heap by {growth} bytes; limit {LIMIT}"
+    );
 }
 
 /// V8 used and total heap after a full collection.

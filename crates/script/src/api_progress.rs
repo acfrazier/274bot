@@ -1,15 +1,15 @@
 //! Shared host-side wire and output types for API quest progress.
 
-use api::quest_progress::{EvidenceStamp, ProgressFlag};
+use api::quest_progress::{EvidenceStamp, JournalRead, ProgressFlag};
 use api::selected::{Knowledge, Truth};
 use api::snapshot::QuestListStatus;
 use serde::Serialize;
 use std::sync::Arc;
 
-/// One progress page published by the host for a script-API request.
+/// One progress page published by the host for an API request.
 ///
-/// `Reading` acknowledges admission but is not a terminal result. `Done` and
-/// `Refused` settle the request and replace any prior page.
+/// `Reading` acknowledges admission. `Done`, `Refused` and `JournalDone`
+/// settle the request and replace the previous page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProgressPage {
     Reading {
@@ -23,23 +23,30 @@ pub enum ProgressPage {
         token: u64,
         reason: Arc<str>,
     },
+    /// A journal-only read. `None` is a missing quest or an unclickable row.
+    JournalDone {
+        token: u64,
+        result: Option<Arc<JournalEvidence>>,
+    },
 }
 
 impl ProgressPage {
     pub const fn token(&self) -> u64 {
         match self {
-            Self::Reading { token } | Self::Done { token, .. } | Self::Refused { token, .. } => {
-                *token
-            }
+            Self::Reading { token }
+            | Self::Done { token, .. }
+            | Self::Refused { token, .. }
+            | Self::JournalDone { token, .. } => *token,
         }
     }
 
-    /// FlatBuffer page kind: reading, done, refused.
+    /// FlatBuffer page kind: reading, done, refused, journal done.
     pub const fn kind(&self) -> u8 {
         match self {
             Self::Reading { .. } => 1,
             Self::Done { .. } => 2,
             Self::Refused { .. } => 3,
+            Self::JournalDone { .. } => 4,
         }
     }
 }
@@ -58,6 +65,57 @@ pub struct QuestProgressRow {
     pub journal_read: bool,
     pub binding: Arc<str>,
     pub role: Option<Arc<str>>,
+}
+/// Identity and receipt fields retained for one compatibility journal read.
+///
+/// The public `Quests.journal` result only exposes `lines`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalEvidence {
+    pub quest: Arc<str>,
+    pub root: i32,
+    pub lines: Arc<[Arc<str>]>,
+    pub colour: Option<i32>,
+    pub acquired: EvidenceStamp,
+    pub closed: EvidenceStamp,
+}
+
+impl JournalEvidence {
+    pub fn from_read(read: &JournalRead) -> Self {
+        Self {
+            quest: Arc::clone(&read.quest.0),
+            root: read.root,
+            lines: Arc::clone(&read.lines),
+            colour: read.colour,
+            acquired: read.acquired,
+            closed: read.closed,
+        }
+    }
+}
+
+fn evidence_value(evidence: EvidenceStamp) -> serde_json::Value {
+    serde_json::json!({
+        "slot": evidence.run.slot,
+        "run": evidence.run.run,
+        "session": evidence.run.session,
+        "tick": evidence.tick,
+        "sequence": evidence.sequence,
+    })
+}
+
+fn journal_value(journal: &JournalEvidence) -> serde_json::Value {
+    let lines = journal
+        .lines
+        .iter()
+        .map(|line| line.as_ref())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "quest": journal.quest.as_ref(),
+        "root": journal.root,
+        "lines": lines,
+        "colour": journal.colour,
+        "acquired": evidence_value(journal.acquired),
+        "closed": evidence_value(journal.closed),
+    })
 }
 
 /// One released quest Path exposed to API v2.
@@ -85,6 +143,11 @@ impl From<ProgressPage> for serde_json::Value {
                 "end": "refused",
                 "token": token,
                 "reason": reason,
+            }),
+            ProgressPage::JournalDone { token, result } => serde_json::json!({
+                "end": "done",
+                "token": token,
+                "journal": result.as_deref().map(journal_value),
             }),
         }
     }

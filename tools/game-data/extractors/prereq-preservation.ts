@@ -673,7 +673,11 @@ function equalRange(left: RangeWire, right: RangeWire) { return left.min === rig
 
 function computedAfter(row: { id: string }, initial: RangeWire, graph: ScriptGraph, variable: string, constants: ReadonlyMap<string, number>, stageDomain: RangeWire) {
     let result = { ...initial };
-    for (let pass = 0; pass <= graph.writers.length; pass += 1) {
+    // Each pass that does not converge widens the hull by at least one stage,
+    // and a hull that leaves the stage domain throws, so the domain width plus
+    // one is a complete pass bound. An add(%var, 1) loop climbs one stage a pass.
+    const passLimit = Math.max(graph.writers.length, Math.min(stageDomain.max - stageDomain.min, 65535) + 1);
+    for (let pass = 0; pass <= passLimit; pass += 1) {
         const additions: number[] = [];
         for (const writer of graph.writers) {
             const paths = feasiblePaths(writer, graph, variable, result, constants);

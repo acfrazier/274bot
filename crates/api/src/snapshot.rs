@@ -12,6 +12,13 @@ mod attack_marks;
 pub use attack_marks::AttackMarks;
 mod views;
 pub use views::*;
+mod client_adapter_cache;
+#[cfg(feature = "test-support")]
+pub use client_adapter_cache::{
+    clear_client_adapter_cache_for_tests, set_client_adapter_cache_for_tests,
+};
+#[doc(hidden)]
+pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
 mod native;
 pub use native::{
     chat_page_fingerprint, chat_page_matches, ChatLines, ChatModalView, CombatView,
@@ -72,6 +79,10 @@ pub struct GameSnapshot {
     /// Hitmarks and their cycle are refreshed with the local actor every read.
     hitmarks: Option<HitmarksView>,
     stats: Vec<StatView>,
+    /// True only when each used skill has a per-session stat update receipt.
+    /// The pinned client exposes no exact per-skill receipt, so this is false.
+    #[serde(skip)]
+    stats_ready: bool,
     runenergy: i32,
     /// The scene origin (`map_build_base_x/z`); `None` before a world
     /// build. The mainland-seed gate reads it (the tutorial island build
@@ -81,6 +92,10 @@ pub struct GameSnapshot {
     /// first `PLAYER_INFO`. Tile level is not decoded on the body yet
     /// (gaps.md), so this is always level 0.
     tile: Option<(i32, i32, i32)>,
+    /// Last non-empty scene-local path observed from the client pathfinder.
+    /// It remains available after arrival until another successful path.
+    #[serde(skip)]
+    last_walk_path_local: Vec<(i32, i32)>,
     /// The local player's slot (`Client.self_slot`, -1 before `UPDATE_PID`).
     self_slot: i32,
     /// The host game-tick count this snapshot reflects: one bump per
@@ -104,6 +119,21 @@ pub struct GameSnapshot {
     ground_item: Vec<GroundItemView>,
     /// The built scene's collision grid from the last scene rebuild.
     scene: SceneView,
+    /// Native-only bounded camera/height/loc data for synchronous projection.
+    /// Built only while a live script reader asks for it (about 99 KB of
+    /// height and link grids per scene, plus the loc list).
+    #[serde(skip)]
+    projection_scene: ProjectionSceneView,
+    /// Whether the projection scene and loc list are requested by a live
+    /// script reader.
+    #[serde(skip)]
+    projection_locs_wanted: bool,
+    /// Whether the projection loc list is settled for the current wanted state.
+    #[serde(skip)]
+    projection_locs_built: bool,
+    /// The wanted state the projection scene was last published for.
+    #[serde(skip)]
+    projection_scene_wanted: bool,
     /// The client's world scalars from the last world rebuild.
     world: WorldStateView,
     /// The camera state from the last camera rebuild.
@@ -168,6 +198,29 @@ pub struct GameSnapshot {
     /// Latest received inventory packet revision for the bank-side component.
     #[serde(skip)]
     bank_side_packet_generation: Option<u64>,
+    /// Whether the inv-tab component is transmitting and has received a full
+    /// update (`login_logout/login.rs2:98` `inv_transmit(inv, inventory:inv)`;
+    /// the m8aq `inventorySnapshotReady`).
+    #[serde(skip)]
+    inventory_ready: bool,
+    /// Whether the open bank's side (deposit) component is transmitting a
+    /// full update received at or after this bank session opened
+    /// (`interface_bank/scripts/bank.rs2:20` `inv_transmit(inv, bank_side:inv)`;
+    /// the m8aq `bankSideSnapshotReady`).
+    #[serde(skip)]
+    bank_side_ready: bool,
+    #[serde(skip)]
+    bank_side_com: i32,
+    #[serde(skip)]
+    bank_side_last_generation: u64,
+    #[serde(skip)]
+    bank_side_last_full_observation: u64,
+    #[serde(skip)]
+    bank_side_full_generation: u64,
+    #[serde(skip)]
+    bank_prev_side_com: i32,
+    #[serde(skip)]
+    bank_prev_side_generation: u64,
     /// The inv tab component's slot count (the m8aq `inventorySize`);
     /// 0 until the inv tab loads.
     inventory_size: i32,
@@ -313,9 +366,11 @@ impl Default for GameSnapshot {
             projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
             hitmarks: None,
             stats: Vec::new(),
+            stats_ready: false,
             runenergy: 0,
             base: None,
             tile: None,
+            last_walk_path_local: Vec::new(),
             self_slot: -1,
             tick: 0,
             inv: Vec::new(),
@@ -326,6 +381,10 @@ impl Default for GameSnapshot {
             loc: Vec::new(),
             ground_item: Vec::new(),
             scene: SceneView::default(),
+            projection_scene: ProjectionSceneView::default(),
+            projection_locs_wanted: false,
+            projection_locs_built: false,
+            projection_scene_wanted: false,
             world: WorldStateView::default(),
             camera: CameraView::default(),
             map_flag: None,
@@ -346,6 +405,14 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_packet_generation: None,
             bank_side_packet_generation: None,
+            inventory_ready: false,
+            bank_side_ready: false,
+            bank_side_com: -1,
+            bank_side_last_generation: 0,
+            bank_side_last_full_observation: 0,
+            bank_side_full_generation: 0,
+            bank_prev_side_com: -1,
+            bank_prev_side_generation: 0,
             inventory_size: 0,
             bank_component_id: -1,
             bank_size: 0,
@@ -419,6 +486,11 @@ impl GameSnapshot {
         Self::default()
     }
 
+    /// Request or release the expensive loc list used by the client-adapter
+    /// projection reader. The next loc-family rebuild reflects this setting.
+    pub fn set_loc_projection_wanted(&mut self, wanted: bool) {
+        self.projection_locs_wanted = wanted;
+    }
     /// Offline fixture seed: an in-game frame. Production rebuilds never
     /// call this; readiness getters then observe empty families instead of
     /// treating a disconnected default as an empty world.
@@ -488,6 +560,11 @@ impl GameSnapshot {
         self.inventory_packet_generation = main;
         self.bank_side_packet_generation = side;
     }
+    /// Offline fixture observation of inventory and bank-side transmission readiness.
+    pub fn seed_transmission_ready(&mut self, inventory: bool, bank_side: bool) {
+        self.inventory_ready = inventory;
+        self.bank_side_ready = bank_side;
+    }
     /// Offline fixture observation of the equipment packet revision.
     pub fn seed_equipment_packet_generation(&mut self, generation: Option<u64>) {
         self.equipment_packet_generation = generation;
@@ -526,6 +603,9 @@ impl GameSnapshot {
             _ => 0,
         };
         self.bank = rows.unwrap_or_default();
+        // A fixture bank posts its side pack with the opening, as the
+        // content does (`bank.rs2:20-22`).
+        self.bank_side_ready = component_id >= 0;
         self.bank_side = side;
         self.modals.side = if component_id < 0 {
             -1
@@ -799,6 +879,7 @@ impl GameSnapshot {
     /// `session` and `invalidations` remain the [`Self::reset_session`]
     /// watermark; the host handles session changes before this rebuild.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+        client_adapter_cache::publish(&client.cache);
         let player_info_ticks = if player_info {
             client.gens.player_info.wrapping_sub(self.gens.player_info)
         } else {
@@ -928,6 +1009,11 @@ impl GameSnapshot {
         &self.stats
     }
 
+    /// Whether every used skill has an exact stat update receipt for this login.
+    pub fn stats_ready(&self) -> bool {
+        self.stats_ready
+    }
+
     /// The client's varp table from the last varp rebuild, one view per
     /// definition (unset values read 0).
     pub fn varps(&self) -> &[VarpView] {
@@ -943,6 +1029,10 @@ impl GameSnapshot {
     /// rebuild; `None` before any world built.
     pub fn base(&self) -> Option<(i32, i32)> {
         self.base
+    }
+    /// Last non-empty local path captured from the client pathfinder.
+    pub fn last_walk_path_local(&self) -> &[(i32, i32)] {
+        &self.last_walk_path_local
     }
 
     /// The local player's world tile `(x, z, level)` from the last
@@ -1043,6 +1133,10 @@ impl GameSnapshot {
     pub fn scene(&self) -> &SceneView {
         &self.scene
     }
+    /// Bounded native-only projection inputs for ClientAdapter readers.
+    pub fn projection_scene(&self) -> &ProjectionSceneView {
+        &self.projection_scene
+    }
 
     /// The client's world scalars from the last world rebuild.
     pub fn world(&self) -> &WorldStateView {
@@ -1082,6 +1176,11 @@ impl GameSnapshot {
     /// has been observed.
     pub fn inventory_packet_generation(&self) -> Option<u64> {
         self.inventory_packet_generation
+    }
+
+    /// Whether the inv-tab component is transmitting and has a full update.
+    pub fn inventory_ready(&self) -> bool {
+        self.inventory_ready
     }
 
     /// Worn-items views from the last equipment rebuild, in slot order.
@@ -1172,6 +1271,13 @@ impl GameSnapshot {
     /// has been observed.
     pub fn bank_side_packet_generation(&self) -> Option<u64> {
         self.bank_side_packet_generation
+    }
+
+    /// Whether the bank-side component carries a full update current for the
+    /// open bank session. Callers still check that the bank and its side root
+    /// are open.
+    pub fn bank_side_ready(&self) -> bool {
+        self.bank_side_ready
     }
 
     /// The trade state (offer/confirm open, the four containers, partner).

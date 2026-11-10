@@ -38,9 +38,11 @@ start a service, build, log in, play or mutate anything — including the run di
 | `--manifest PATH` | manifest override (default: the tracked fixture, embedded at compile time) |
 | `--json` | machine-readable `list`/`dry-run` output |
 
-Selection is not execution authorization. Reference cases with no native adapter, excluded
-scripts and `BankSorter` (unavailable by operator decision) stay visible with their
-reason and are recorded `unavailable`; nothing is substituted or silently dropped.
+Selection is not execution authorization. Reference cases with no native adapter and excluded
+scripts stay visible with their reason and are recorded `unavailable`; nothing is substituted
+or silently dropped. BankSorter is covered by the host-play compatibility cells
+(`crates/host-play/tests/compat_bank_live.rs`); the e2e suite has no BankSorter scenario yet,
+so its frozen reference rows remain `unmapped_reference`, not runnable native cases.
 `--only` matching several cases is intentional, not an error.
 
 ## Configuration

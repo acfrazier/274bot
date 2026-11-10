@@ -218,6 +218,14 @@ pub struct Combat {
     oos_retries: u8,
     /// Consecutive "Someone else is already fighting your opponent." lines.
     single_way_lines: u8,
+    /// The tick at which the open refusal window (`SW_WINDOW` in `flags2`)
+    /// closes.
+    single_way_until: u16,
+    /// The engaged NPC's slot and its health (`g1`, 0-255) on the previous poll
+    /// of an NPC fight; `SW_COMBAT` in `flags2` is its health-bar window on that
+    /// poll. They show a fresh hit on it (`npc_hit_landed`).
+    hit_index: u16,
+    hit_health: u8,
     /// "The duel has not started yet!" lines seen this engagement.
     duel_wait_lines: u8,
     /// `PVP_*` bits; `flags` has all sixteen bits in use.
@@ -273,13 +281,27 @@ const PVP_HOLD: u16 = 1;
 const PVP_KILL_LINE: u16 = 2;
 /// A swing onset of ours was observed this tick (consumed by the switch step).
 const PVP_SWING: u16 = 4;
+/// The engaged NPC's health-bar window was open on the previous poll.
+const SW_COMBAT: u16 = 8;
+/// A single-way refusal window is open (`single_way_until`).
+const SW_WINDOW: u16 = 16;
 /// Ticks an attack row stays held after a single-way line (`add(%lastcombat, 8)`,
 /// `skill_combat/scripts/pvp/pvp_combat.rs2:102`).
 const SINGLE_WAY_WINDOW: u16 = 8;
 /// Out-of-scope refusal lines tolerated before `Aborted(Unattackable)`.
 const OOS_RETRY: u8 = 3;
-/// Consecutive "already fighting your opponent" lines that end the run.
+/// Windows in a row with a refusal and no landed hit that end the run:
+/// "already fighting your opponent" lines for a player (each line counts),
+/// engine windows (`SINGLE_WAY_WINDOW` ticks) with an "already under attack"
+/// line for an NPC (one count per window).
 const SINGLE_WAY_END: u8 = 3;
+/// The refusal lines an attack on an NPC gets in single-way combat: the
+/// revision-289 `player_in_combat_check` text (`player_combat.rs2:112,116`)
+/// and the text with no mark that `player_in_combat_check2` sends
+/// (`player_combat.rs2:137,141`) and the revision-377 `player_in_combat_check`
+/// sends (its `player_combat.rs2:79,83`). The PvP line has a period and stays
+/// in `pvp_line`.
+const SINGLE_WAY_NPC_LINES: [&str; 2] = ["I'm already under attack!", "I'm already under attack"];
 /// "The duel has not started yet!" lines that end the run.
 const DUEL_WAIT_END: u8 = 3;
 const POTION_PREP_SHIFT: u32 = 42;
@@ -394,6 +416,9 @@ impl NativeMachine for Combat {
             pvp_hold_until: 0,
             oos_retries: 0,
             single_way_lines: 0,
+            single_way_until: 0,
+            hit_index: u16::MAX,
+            hit_health: 0,
             duel_wait_lines: 0,
             flags2: 0,
             active: provisional,
@@ -670,6 +695,27 @@ impl NativeMachine for Combat {
             for line in chat.value.iter() {
                 self.pvp_line(&frame, tick, &line.text);
             }
+        } else if self
+            .engaged
+            .is_some_and(|actor| actor.kind == ActorKind::Npc)
+        {
+            // The run of refusals ends only on a confirmed attack: a hit that
+            // landed on the engaged NPC. The player's target is not that proof;
+            // a refused click leaves the target on the refused NPC.
+            if self.npc_hit_landed(&frame) {
+                self.single_way_lines = 0;
+                self.flags2 &= !SW_WINDOW;
+            }
+            self.single_way_window_close(tick);
+            if chat
+                .value
+                .iter()
+                .any(|line| SINGLE_WAY_NPC_LINES.contains(&line.text.as_str()))
+            {
+                self.npc_single_way_refusal(&frame, tick);
+            }
+        } else {
+            self.hit_index = u16::MAX;
         }
         if self.phase == Phase::Escape {
             if let Fallback::Retreat { tile } = self.request.fallback {
@@ -990,6 +1036,102 @@ impl Combat {
     fn hold_attack(&mut self, tick: u16, ticks: u16) {
         self.pvp_hold_until = tick.wrapping_add(ticks);
         self.flags2 |= PVP_HOLD;
+    }
+    /// A hit landed on the engaged NPC since the previous poll, while the bot
+    /// targets it. The client applies a hit (including a 0) to an NPC with
+    /// `combat_cycle = loop_cycle + 400` and the new `health` bytes
+    /// (`vendor/fr-client-rust/crates/client/src/client/client.rs:10300-10303`,
+    /// `:10371-10374`), so the NPC's health-bar window opening (`in_combat`,
+    /// `api/src/snapshot/decode.rs:1509`) or its health dropping is that hit.
+    /// A hit while the window is already open and the health is unchanged (a
+    /// miss) shows neither; the next real hit does.
+    fn npc_hit_landed(&mut self, frame: &Frame<'_>) -> bool {
+        let Some(actor) = self.engaged.filter(|actor| actor.kind == ActorKind::Npc) else {
+            self.hit_index = u16::MAX;
+            return false;
+        };
+        let Some(row) = frame
+            .npcs
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
+        else {
+            self.hit_index = u16::MAX;
+            return false;
+        };
+        let health = u8::try_from(row.health.max(0)).unwrap_or(u8::MAX);
+        let seen = self.hit_index == actor.index;
+        let was_open = self.flags2 & SW_COMBAT != 0;
+        let was_health = self.hit_health;
+        self.hit_index = actor.index;
+        self.hit_health = health;
+        if row.in_combat {
+            self.flags2 |= SW_COMBAT;
+        } else {
+            self.flags2 &= !SW_COMBAT;
+        }
+        seen && frame
+            .in_combat
+            .target
+            .is_some_and(|target| actor.matches(target))
+            && ((row.in_combat && !was_open) || health < was_health)
+    }
+    /// An attack on an NPC was refused by single-way combat. The content lets
+    /// the bot attack only the NPC that last attacked it while that attack is
+    /// less than 8 ticks old (`player_combat.rs2:115`; `npc_combat.rs2:367-370`
+    /// sets it on every NPC attack), and that NPC changes from tick to tick
+    /// when several NPCs hit the bot. So the reaction follows the content:
+    /// attack an NPC that is hitting the bot and that the request may fight,
+    /// or hold the attack for the window and send it again.
+    ///
+    /// The budget measures the engine's window, not raw refusals. The first
+    /// refusal opens a window of `SINGLE_WAY_WINDOW` observed ticks and counts
+    /// once; refusals inside it retarget but do not count. The fight ends
+    /// (`single_way_window_close`) when the third window with a refusal closes
+    /// and no hit landed on the engaged NPC in between. Refusals that arrive
+    /// while a hold is running belong to the attack the hold already answers.
+    fn npc_single_way_refusal(&mut self, frame: &Frame<'_>, tick: u16) {
+        // Only a fight that sends attacks reacts: a refusal read after the
+        // fight ended or while it prepares belongs to no attack of this run.
+        if !matches!(self.phase, Phase::Engage | Phase::Fight) || self.flags2 & PVP_HOLD != 0 {
+            return;
+        }
+        if self.flags2 & SW_WINDOW == 0 {
+            self.single_way_lines = self.single_way_lines.saturating_add(1);
+            self.single_way_until = tick.wrapping_add(SINGLE_WAY_WINDOW);
+            self.flags2 |= SW_WINDOW;
+        }
+        let attacker = select::single_way_attacker(
+            &self.request,
+            self.switch.pending().unwrap_or(self.active),
+            frame,
+            &self.threats,
+            self.engaged,
+        );
+        if let Some(actor) = attacker {
+            self.engage(actor, frame);
+            // The refused click began no attack cycle, and the new target is a
+            // fresh engagement: its attack goes out now under the Engage rules.
+            self.schedule.refused(OpKind::Attack);
+            self.phase = Phase::Engage;
+            self.flags &= !ENGAGEMENT_ATTACK;
+        } else {
+            // Hold to the end of the window, never past it.
+            self.pvp_hold_until = self.single_way_until;
+            self.flags2 |= PVP_HOLD;
+        }
+    }
+    /// Close the refusal window once its ticks have passed. The fight ends as
+    /// `SingleWayBlocked` when this was the third window in a row with a
+    /// refusal and no landed hit: about three windows (24 ticks) without
+    /// progress. A landed hit clears the window and the count first.
+    fn single_way_window_close(&mut self, tick: u16) {
+        if self.flags2 & SW_WINDOW == 0 || !reached(tick, self.single_way_until) {
+            return;
+        }
+        self.flags2 &= !SW_WINDOW;
+        if self.single_way_lines >= SINGLE_WAY_END {
+            self.finish(CombatEnd::Aborted(AbortReason::SingleWayBlocked), tick);
+        }
     }
     fn magic_refusal(&mut self, line: &str) {
         let Some(index) = self.magic().selected else {
@@ -3521,6 +3663,7 @@ impl Combat {
                         z: tile.z,
                         level: tile.level,
                         index: Some(i32::from(actor.index)),
+                        target_id: None,
                     }
                 }
                 RowKind::Attack => {

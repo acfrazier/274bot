@@ -89,6 +89,31 @@ pub(crate) fn nearest_surface(
     best.map(|(surface, _)| surface)
 }
 
+/// Frozen `nearestCookingRange(origin, maxCheb)` (`data/cookingRanges.ts:50-71`) over the selected placements:
+/// among the surfaces named `Range` (`COOKING_RANGE_LOCS`, `:29-31`), the one with the least Chebyshev distance
+/// not above `max_cheb`; the first wins a tie. `distance` answers a surface's distance from the caller's origin,
+/// or `None` when it is on another plane, and may fail (a script getter threw). A NaN distance is never above the
+/// radius and never replaces an earlier pick, as in the frozen `d > maxCheb` / `d < best.d` tests.
+pub(crate) fn nearest_range<E>(
+    surfaces: &[CookSurface],
+    max_cheb: f64,
+    mut distance: impl FnMut(&CookSurface) -> Result<Option<f64>, E>,
+) -> Result<Option<(&CookSurface, f64)>, E> {
+    let mut best: Option<(&CookSurface, f64)> = None;
+    for surface in surfaces.iter().filter(|surface| surface.name == "Range") {
+        let Some(d) = distance(surface)? else {
+            continue;
+        };
+        if d > max_cheb {
+            continue;
+        }
+        if best.is_none_or(|(_, current)| d < current) {
+            best = Some((surface, d));
+        }
+    }
+    Ok(best)
+}
+
 /// Frozen `derivePlan` (`data/cookLocations.ts:80-89`; the stand is one tile
 /// south, `rangeStandFromLoc`, `data/cookingRanges.ts:35-37`).
 fn derived(surface: &CookSurface, arrive_radius: i32) -> CookPlan {
@@ -277,5 +302,52 @@ mod tests {
             (camp.stand, camp.loc, 0)
         );
         assert!(built[0].verified);
+    }
+    /// Frozen `nearestCookingRange`: only `Range` placements, the radius is inclusive, the first of equal
+    /// distances wins, and a placement on another plane never competes.
+    #[test]
+    fn the_nearest_range_is_the_first_closest_within_the_radius() {
+        let mut ranges = vec![
+            surface(10, 10, 0, CookSurfaceKind::Oven),
+            surface(14, 10, 0, CookSurfaceKind::Oven),
+            surface(6, 10, 0, CookSurfaceKind::Oven),
+            surface(11, 10, 1, CookSurfaceKind::Oven),
+        ];
+        ranges.push(surface(12, 10, 0, CookSurfaceKind::Fire));
+        let from = |ranges: &[CookSurface], max: f64| {
+            nearest_range(ranges, max, |surface| {
+                Ok::<_, std::convert::Infallible>(
+                    (surface.level == 0)
+                        .then(|| f64::from((12 - surface.x).abs().max((10 - surface.z).abs()))),
+                )
+            })
+            .unwrap()
+            .map(|(surface, d)| (surface.x, d))
+        };
+        assert_eq!(
+            from(&ranges, 64.0),
+            Some((10, 2.0)),
+            "the first of two equally near wins"
+        );
+        assert_eq!(
+            from(&ranges, 2.0),
+            Some((10, 2.0)),
+            "the radius is inclusive"
+        );
+        assert_eq!(from(&ranges, 1.0), None);
+        assert_eq!(
+            from(&ranges[3..], 64.0),
+            None,
+            "another plane never competes, and a Fireplace is no Range"
+        );
+        let nan = nearest_range(&ranges, 64.0, |_| {
+            Ok::<_, std::convert::Infallible>(Some(f64::NAN))
+        })
+        .unwrap();
+        assert_eq!(
+            nan.map(|(surface, _)| surface.x),
+            Some(10),
+            "a NaN distance picks the first row and keeps it"
+        );
     }
 }

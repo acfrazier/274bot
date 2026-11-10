@@ -1451,13 +1451,24 @@ impl SlotScript {
             RunState::Paused
         };
         if self.want_run {
-            self.native_input.publish_live();
+            self.runtime_context.native_input().publish_live();
         }
     }
 
     pub fn observe_lifecycle(&mut self) {
         self.poll_compiled();
         self.observe_surface_lifecycle();
+        match self.runtime_context.take_control_request() {
+            Some(RuntimeControlRequest::Pause)
+                if matches!(self.state, RunState::Starting | RunState::Running) =>
+            {
+                self.pause();
+            }
+            Some(RuntimeControlRequest::Resume) if self.state == RunState::Paused => {
+                self.resume();
+            }
+            Some(_) | None => {}
+        }
     }
 
     pub fn native_run(&self) -> Option<RunKey> {

@@ -11,6 +11,13 @@ function jive(op, ...args) {
     }
     return fn(op, ...args);
 }
+function paint(op, ...args) {
+    const fn = globalThis.__rs2b0t_paint_chrome;
+    if (typeof fn !== 'function') {
+        throw notImpl('paintLogic.' + op);
+    }
+    return fn(op, ...args);
+}
 
 export function fmtDuration(minutes) {
     return jive('fmtDuration', minutes);
@@ -44,8 +51,8 @@ export function hitRegion(regions, x, y) {
     throw notImpl('hitRegion');
 }
 
-export function clipText(cols, text) {
-    throw notImpl('clipText');
+export function clipText(text, cols) {
+    return paint('clipText', String(text), cols);
 }
 
 export function paintCols(w, pad, charW) {
@@ -65,11 +72,11 @@ export function listScroll(len, rows, state, wheel, focus) {
 }
 
 export function paintClip(text, max = 52) {
-    throw notImpl('paintClip');
+    return paint('paintClip', String(text), max);
 }
 
 export function gatherPaintAccent(kind) {
-    throw notImpl('gatherPaintAccent');
+    return paint('gatherPaintAccent', kind);
 }
 
 export function stripSegments(w, tabWidths, brandWidth, pad) {
@@ -86,7 +93,7 @@ export function statColumns(panelW, railW, pad, columns) {
 
 export class PaintState {
     constructor() {
-        throw notImpl('PaintState');
+        paint('stateNew', this, false);
     }
 
     publishRegions(regions) {
@@ -122,11 +129,11 @@ export class PaintState {
     }
 
     get(key, fallback) {
-        throw notImpl('PaintState.get');
+        return paint('stateGet', this, String(key), fallback);
     }
 
     set(key, value) {
-        throw notImpl('PaintState.set');
+        return paint('stateSet', this, String(key), String(value));
     }
 
     reset() {
@@ -134,5 +141,8 @@ export class PaintState {
     }
 }
 
-export const paintState = notImplValue('paintState');
+// paintState is the exported singleton; Rust binds it to the chrome store.
+const paintState = Object.create(PaintState.prototype);
+paint('stateNew', paintState, true);
+export { paintState };
 export const WHEEL_ROWS = notImplValue('WHEEL_ROWS');

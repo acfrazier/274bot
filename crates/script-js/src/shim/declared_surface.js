@@ -4,6 +4,8 @@ import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';
 
 export const defineBot = globalThis.defineBot;
 
+export { registerScript } from '../../runtime/ScriptRegistry.js';
+
 export { Game } from '../../api/game/Game.js';
 export { Inventory, InvItem } from '../../api/inventory/Inventory.js';
 export { Skills } from '../../api/skills/Skills.js';
@@ -14,7 +16,7 @@ export { reader } from '../../adapter/ClientAdapter.js';
 export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
-export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
+export { LoopingBot, TaskBot, TreeBot, AbstractBot, BranchTask, LeafTask } from '../../api/bot/Bot.js';
 export { Special } from '../../api/combat/Special.js';
 export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export { Quests } from '../../api/ui/questlog/Quests.js';
@@ -33,12 +35,16 @@ export { default as EntityQuery } from '../../api/query/Query.js';
 export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';
 export { NAV_PURE_WALK, NAV_WITH_TELES } from '../../api/walking/Traversal.js';
 export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';
-export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';
+export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile, WOODCUTTING_LOCATIONS, WOODCUTTING_LOCATION_OPTIONS, resolveWoodcuttingLocation } from '../../data/woodcuttingLocations.js';
+export { MINING_LOCATIONS, MINING_LOCATION_OPTIONS, MINING_LOCATION_OPTION_LABELS, miningLocationLabel, resolveMiningLocation } from '../../data/miningLocations.js';
+export { FISHING_LOCATIONS, FISHING_LOCATION_OPTIONS, resolveFishingLocation } from '../../data/fishingLocations.js';
+export { WHIRLPOOL_IDS, FISHING_METHODS, FISHING_METHOD_OPTIONS, ALL_FISHING_GEAR_NAMES, resolveFishMethod, gearKeepNames, hasFishingGear, missingFishingGear, gearLabel, fishingRestockPlan, spotMatchesMethod } from '../../data/fishingMethods.js';
+export { FISHING_SHOP_COSTS, GERRANT_ONLY_FISHING, fishingVendorFor, fishingShopCost, isFishingBaitPiece, withBaitTarget, planFishingGearBuys, planFishingGearAcquire, buyPlansCost, fishingGearShopCart, shopableMissingFishingGear } from '../../shim/fishing_gear.js';
 export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';
 export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';
 export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';
+export { WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination } from '../../api/map/WalkDestinations.js';
 
-export const ALL_FISHING_GEAR_NAMES = notImplValue('ALL_FISHING_GEAR_NAMES');
 export const AXE_BAR_FOR = notImplValue('AXE_BAR_FOR');
 export const AXE_SHOP_COSTS = notImplValue('AXE_SHOP_COSTS');
 export const AXE_SMITH_LEVEL = notImplValue('AXE_SMITH_LEVEL');
@@ -49,80 +55,34 @@ export class AcquireTask {
 }
 export const BOB_VENDOR = notImplValue('BOB_VENDOR');
 export const BROKEN_AXE = notImplValue('BROKEN_AXE');
-export class BranchTask {
-    failure() { throw notImpl('BranchTask.failure'); }
-    success() { throw notImpl('BranchTask.success'); }
-    validate() { throw notImpl('BranchTask.validate'); }
-    constructor() {}
-}
 export const COINS = notImplValue('COINS');
-export const FISHING_LOCATIONS = notImplValue('FISHING_LOCATIONS');
-export const FISHING_LOCATION_OPTIONS = notImplValue('FISHING_LOCATION_OPTIONS');
-export const FISHING_METHODS = notImplValue('FISHING_METHODS');
-export const FISHING_METHOD_OPTIONS = notImplValue('FISHING_METHOD_OPTIONS');
-export const FISHING_SHOP_COSTS = notImplValue('FISHING_SHOP_COSTS');
 export const FORGETFUL_BANK_ODDS = notImplValue('FORGETFUL_BANK_ODDS');
 export const FORGETFUL_BANK_SETTING = notImplValue('FORGETFUL_BANK_SETTING');
-export const GERRANT_ONLY_FISHING = notImplValue('GERRANT_ONLY_FISHING');
 export const GERRANT_VENDOR = notImplValue('GERRANT_VENDOR');
 export const HARRY_VENDOR = notImplValue('HARRY_VENDOR');
-export class LeafTask {
-    execute() { throw notImpl('LeafTask.execute'); }
-    constructor() {}
-}
-export const MINING_LOCATIONS = notImplValue('MINING_LOCATIONS');
-export const MINING_LOCATION_OPTIONS = notImplValue('MINING_LOCATION_OPTIONS');
-export const MINING_LOCATION_OPTION_LABELS = notImplValue('MINING_LOCATION_OPTION_LABELS');
 export const NURMOF_VENDOR = notImplValue('NURMOF_VENDOR');
 export const PICKAXE_SHOP_COSTS = notImplValue('PICKAXE_SHOP_COSTS');
 export const TOOL_ACQUIRE_OPTIONS = notImplValue('TOOL_ACQUIRE_OPTIONS');
 export const TOOL_ACQUIRE_SETTING = notImplValue('TOOL_ACQUIRE_SETTING');
 export const VARROCK_ANVIL_BANK = notImplValue('VARROCK_ANVIL_BANK');
 export const VARROCK_ANVIL_STAND = notImplValue('VARROCK_ANVIL_STAND');
-export const WALK_DESTINATIONS = notImplValue('WALK_DESTINATIONS');
-export const WALK_OPTIONS = notImplValue('WALK_OPTIONS');
-export const WHIRLPOOL_IDS = notImplValue('WHIRLPOOL_IDS');
-export const WOODCUTTING_LOCATIONS = notImplValue('WOODCUTTING_LOCATIONS');
-export const WOODCUTTING_LOCATION_OPTIONS = notImplValue('WOODCUTTING_LOCATION_OPTIONS');
 export function acquireKeepNames() { throw notImpl('acquireKeepNames'); }
 export const apiVersion = 1;
 export function axeShopOffers() { throw notImpl('axeShopOffers'); }
 export function bestAffordableShopTier() { throw notImpl('bestAffordableShopTier'); }
 export function bestOwnedTier() { throw notImpl('bestOwnedTier'); }
 export function bestSmithableAxe() { throw notImpl('bestSmithableAxe'); }
-export function buyPlansCost() { throw notImpl('buyPlansCost'); }
 export function canFundPlan() { throw notImpl('canFundPlan'); }
 export function coinsToWithdraw() { throw notImpl('coinsToWithdraw'); }
 export const events = proxy('events', {
-    off() { throw notImpl('events.off'); },
-    on() { throw notImpl('events.on'); },
+    off(event, cb) { globalThis.__rs2b0t_native_event_off(event, cb); },
+    on(event, cb) { const id = globalThis.__rs2b0t_native_event_on(event, cb); return () => globalThis.__rs2b0t_native_event_off(id); },
 });
-export function fishingGearShopCart() { throw notImpl('fishingGearShopCart'); }
-export function fishingRestockPlan() { throw notImpl('fishingRestockPlan'); }
-export function fishingShopCost() { throw notImpl('fishingShopCost'); }
-export function fishingVendorFor() { throw notImpl('fishingVendorFor'); }
-export function gearKeepNames() { throw notImpl('gearKeepNames'); }
-export function gearLabel() { throw notImpl('gearLabel'); }
 export function hasAll() { throw notImpl('hasAll'); }
-export function hasFishingGear() { throw notImpl('hasFishingGear'); }
 export function held() { throw notImpl('held'); }
-export function isFishingBaitPiece() { throw notImpl('isFishingBaitPiece'); }
-export function miningLocationLabel() { throw notImpl('miningLocationLabel'); }
-export function missingFishingGear() { throw notImpl('missingFishingGear'); }
 export function parseToolAcquireMode() { throw notImpl('parseToolAcquireMode'); }
 export function pickaxeShopOffers() { throw notImpl('pickaxeShopOffers'); }
 export function planAxeAcquire() { throw notImpl('planAxeAcquire'); }
 export function planBrokenToolRepair() { throw notImpl('planBrokenToolRepair'); }
-export function planFishingGearAcquire() { throw notImpl('planFishingGearAcquire'); }
-export function planFishingGearBuys() { throw notImpl('planFishingGearBuys'); }
 export function planGatherToolAcquire() { throw notImpl('planGatherToolAcquire'); }
 export function planPickaxeAcquire() { throw notImpl('planPickaxeAcquire'); }
-export function registerScript() { throw notImpl('registerScript'); }
-export function resolveDestination() { throw notImpl('resolveDestination'); }
-export function resolveFishMethod() { throw notImpl('resolveFishMethod'); }
-export function resolveFishingLocation() { throw notImpl('resolveFishingLocation'); }
-export function resolveMiningLocation() { throw notImpl('resolveMiningLocation'); }
-export function resolveWoodcuttingLocation() { throw notImpl('resolveWoodcuttingLocation'); }
-export function shopableMissingFishingGear() { throw notImpl('shopableMissingFishingGear'); }
-export function spotMatchesMethod() { throw notImpl('spotMatchesMethod'); }
-export function withBaitTarget() { throw notImpl('withBaitTarget'); }

@@ -1,0 +1,19 @@
+{
+  "stage": "sheep:0",
+  "stand": [
+    3189,
+    3273,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [
+    [
+      "coins",
+      100
+    ]
+  ],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}

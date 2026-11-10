@@ -58,25 +58,28 @@ pub enum LocalStateDomain {
     LoadoutsReferences,
     /// Source-proven quest knowledge.
     Knowledge,
+    /// One slot's raw script settings, across namespaces.
+    ScriptRuntimeSettings,
 }
 
 impl LocalStateDomain {
     /// Every domain, for exhaustive checks.
-    pub const ALL: [LocalStateDomain; 4] = [
+    pub const ALL: [LocalStateDomain; 5] = [
         LocalStateDomain::Preferences,
         LocalStateDomain::BankHints,
         LocalStateDomain::LoadoutsReferences,
         LocalStateDomain::Knowledge,
+        LocalStateDomain::ScriptRuntimeSettings,
     ];
 
-    /// The canonical code: `preferences`, `bank-hints`,
-    /// `loadouts-references` or `knowledge`.
+    /// The canonical domain code.
     pub const fn code(self) -> &'static str {
         match self {
             LocalStateDomain::Preferences => "preferences",
             LocalStateDomain::BankHints => "bank-hints",
             LocalStateDomain::LoadoutsReferences => "loadouts-references",
             LocalStateDomain::Knowledge => "knowledge",
+            LocalStateDomain::ScriptRuntimeSettings => "script-runtime-settings",
         }
     }
 
@@ -87,11 +90,11 @@ impl LocalStateDomain {
             "bank-hints" => Some(LocalStateDomain::BankHints),
             "loadouts-references" => Some(LocalStateDomain::LoadoutsReferences),
             "knowledge" => Some(LocalStateDomain::Knowledge),
+            "script-runtime-settings" => Some(LocalStateDomain::ScriptRuntimeSettings),
             _ => None,
         }
     }
 }
-
 impl fmt::Display for LocalStateDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.code())
@@ -569,6 +572,8 @@ pub enum LeaseSnapshot {
     LoadoutsReferences(Vec<Loadout>),
     /// Knowledge records, each within the key, schema and payload caps.
     Knowledge(Vec<KnowledgeRecord>),
+    /// Raw script settings across namespaces.
+    ScriptRuntimeSettings(Vec<RuntimeSettingsRow>),
 }
 
 impl LeaseSnapshot {
@@ -598,6 +603,11 @@ impl LeaseSnapshot {
         Self::Knowledge(rows)
     }
 
+    /// Snapshot raw script settings `rows`.
+    pub fn script_runtime_settings(rows: Vec<RuntimeSettingsRow>) -> Self {
+        Self::ScriptRuntimeSettings(rows)
+    }
+
     /// The domain this snapshot reads.
     pub const fn domain(&self) -> LocalStateDomain {
         match self {
@@ -605,6 +615,7 @@ impl LeaseSnapshot {
             LeaseSnapshot::BankHints(_) => LocalStateDomain::BankHints,
             LeaseSnapshot::LoadoutsReferences(_) => LocalStateDomain::LoadoutsReferences,
             LeaseSnapshot::Knowledge(_) => LocalStateDomain::Knowledge,
+            LeaseSnapshot::ScriptRuntimeSettings(_) => LocalStateDomain::ScriptRuntimeSettings,
         }
     }
 
@@ -638,6 +649,14 @@ impl LeaseSnapshot {
             _ => None,
         }
     }
+
+    /// The raw settings rows, if this is a `script-runtime-settings` snapshot.
+    pub fn as_script_runtime_settings(&self) -> Option<&[RuntimeSettingsRow]> {
+        match self {
+            LeaseSnapshot::ScriptRuntimeSettings(rows) => Some(rows),
+            _ => None,
+        }
+    }
 }
 
 /// An immutable, bounded, versioned read-cache lease: what the state
@@ -657,9 +676,8 @@ pub struct DomainLease {
 impl DomainLease {
     /// Lease `identity` at `version`, observed `at`, carrying `snapshot`.
     /// The snapshot must read the leased domain, or the lease is an
-    /// identity mismatch and nothing is leased. A knowledge snapshot must
-    /// carry only the leased identity's own records: every record's
-    /// identity equals the lease identity, or the whole lease is refused.
+    /// identity mismatch and nothing is leased. Knowledge and script-settings
+    /// snapshots carry only the leased identity's own records.
     pub fn try_new(
         identity: DomainIdentity,
         version: StoreVersion,
@@ -674,6 +692,14 @@ impl DomainLease {
         }
         if let LeaseSnapshot::Knowledge(records) = &snapshot {
             if records.iter().any(|record| record.identity() != &identity) {
+                return Err(ErrorCode::Validation {
+                    domain: identity.domain(),
+                    reason: ValidationReason::Identity,
+                });
+            }
+        }
+        if let LeaseSnapshot::ScriptRuntimeSettings(rows) = &snapshot {
+            if rows.iter().any(|row| !row.matches_identity(&identity)) {
                 return Err(ErrorCode::Validation {
                     domain: identity.domain(),
                     reason: ValidationReason::Identity,
@@ -821,6 +847,33 @@ pub trait LocalStatePort {
     /// been read is `Ok` with an empty [`LeaseSnapshot`] at a real version,
     /// never the same signal as cold.
     fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode>;
+    /// The exact raw script setting visible in this store. Process services
+    /// include accepted writes still in flight; the default reads its lease.
+    fn runtime_setting_raw(
+        &self,
+        identity: &DomainIdentity,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Option<String>, ErrorCode> {
+        let domain = identity.domain();
+        if domain != LocalStateDomain::ScriptRuntimeSettings {
+            return Err(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::Identity,
+            });
+        }
+        let lease = self.lease(identity)?;
+        let Some(rows) = lease.snapshot().as_script_runtime_settings() else {
+            return Err(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::Identity,
+            });
+        };
+        Ok(rows
+            .iter()
+            .find(|row| row.namespace() == namespace && row.key() == key)
+            .map(|row| row.raw().to_owned()))
+    }
 
     /// Submit `edit` without blocking: [`SubmitReceipt::Accepted`] carries
     /// the request to observe, [`SubmitReceipt::Refused`] carries `Busy`
@@ -846,6 +899,8 @@ pub enum DomainEdit {
     Bank(BankHint),
     /// A source-proven knowledge fact.
     Knowledge(KnowledgeRecord),
+    /// One raw script setting write.
+    ScriptRuntimeSettings(RuntimeSettingsEdit),
 }
 
 impl DomainEdit {
@@ -856,6 +911,7 @@ impl DomainEdit {
             DomainEdit::Loadout(edit) => edit.identity(),
             DomainEdit::Bank(edit) => edit.identity(),
             DomainEdit::Knowledge(edit) => edit.identity(),
+            DomainEdit::ScriptRuntimeSettings(edit) => edit.identity(),
         }
     }
 
@@ -866,6 +922,7 @@ impl DomainEdit {
             DomainEdit::Loadout(edit) => edit.expected(),
             DomainEdit::Bank(edit) => edit.expected(),
             DomainEdit::Knowledge(edit) => edit.expected(),
+            DomainEdit::ScriptRuntimeSettings(edit) => edit.expected(),
         }
     }
 
@@ -877,6 +934,7 @@ impl DomainEdit {
             DomainEdit::Loadout(edit) => edit.applies_to(current),
             DomainEdit::Bank(edit) => edit.applies_to(current),
             DomainEdit::Knowledge(edit) => edit.applies_to(current),
+            DomainEdit::ScriptRuntimeSettings(edit) => edit.applies_to(current),
         }
     }
 }
@@ -893,6 +951,162 @@ pub const MAX_PREF_EDIT_CHANGES: usize = 1 << 16;
 /// Most key and value bytes one [`PreferencesEdit`] carries, summed over
 /// its changes (the preferences file's own bound).
 pub const MAX_PREF_EDIT_BYTES: usize = 1 << 20;
+
+/// Maximum rows retained by the box-scoped script settings domain.
+pub const MAX_RUNTIME_SETTINGS_ROWS: usize = 8_192;
+
+/// Maximum UTF-8 bytes in a script settings namespace or key.
+pub const MAX_RUNTIME_SETTING_NAME_BYTES: usize = 128;
+
+/// Maximum UTF-8 bytes in one script settings raw value.
+pub const MAX_RUNTIME_SETTING_VALUE_BYTES: usize = 64 * 1024;
+
+/// One accepted box-scoped raw script setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSettingsRow {
+    identity: DomainIdentity,
+    namespace: String,
+    key: String,
+    raw: String,
+}
+
+impl RuntimeSettingsRow {
+    /// A raw setting row. Names are exact UTF-8 strings; each is bounded.
+    pub fn try_new(
+        identity: &DomainIdentity,
+        namespace: &str,
+        key: &str,
+        raw: &str,
+    ) -> Result<Self, ErrorCode> {
+        check_runtime_setting(identity, namespace, key, raw)?;
+        Ok(Self {
+            identity: identity.clone(),
+            namespace: namespace.to_string(),
+            key: key.to_string(),
+            raw: raw.to_string(),
+        })
+    }
+
+    /// The row's local-state identity.
+    pub fn identity(&self) -> &DomainIdentity {
+        &self.identity
+    }
+
+    /// The exact namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// The exact key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The exact raw string.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Whether this row belongs to `identity`.
+    pub fn matches_identity(&self, identity: &DomainIdentity) -> bool {
+        &self.identity == identity
+    }
+}
+
+fn check_runtime_setting(
+    identity: &DomainIdentity,
+    namespace: &str,
+    key: &str,
+    raw: &str,
+) -> Result<(), ErrorCode> {
+    if identity.domain() != LocalStateDomain::ScriptRuntimeSettings {
+        return Err(ErrorCode::Validation {
+            domain: identity.domain(),
+            reason: ValidationReason::Identity,
+        });
+    }
+    for name in [namespace, key] {
+        if name.is_empty() {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::ScriptRuntimeSettings,
+                reason: ValidationReason::Empty,
+            });
+        }
+        if name.len() > MAX_RUNTIME_SETTING_NAME_BYTES {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::ScriptRuntimeSettings,
+                reason: ValidationReason::TooLong,
+            });
+        }
+    }
+    if raw.len() > MAX_RUNTIME_SETTING_VALUE_BYTES {
+        return Err(ErrorCode::Validation {
+            domain: LocalStateDomain::ScriptRuntimeSettings,
+            reason: ValidationReason::TooLong,
+        });
+    }
+    Ok(())
+}
+
+/// One accepted raw script setting write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSettingsEdit {
+    identity: DomainIdentity,
+    expected: Option<StoreVersion>,
+    namespace: String,
+    key: String,
+    raw: String,
+}
+
+impl RuntimeSettingsEdit {
+    /// Set `namespace`/`key` to the exact raw string.
+    pub fn try_set(
+        identity: DomainIdentity,
+        expected: Option<StoreVersion>,
+        namespace: &str,
+        key: &str,
+        raw: &str,
+    ) -> Result<Self, ErrorCode> {
+        check_runtime_setting(&identity, namespace, key, raw)?;
+        Ok(Self {
+            identity,
+            expected,
+            namespace: namespace.to_string(),
+            key: key.to_string(),
+            raw: raw.to_string(),
+        })
+    }
+
+    /// The identity this edit writes.
+    pub fn identity(&self) -> &DomainIdentity {
+        &self.identity
+    }
+
+    /// The version this edit was written against, if any.
+    pub fn expected(&self) -> Option<StoreVersion> {
+        self.expected
+    }
+
+    /// Whether this edit may write `current`.
+    pub fn applies_to(&self, current: StoreVersion) -> bool {
+        self.expected.is_none_or(|expected| expected == current)
+    }
+
+    /// The exact namespace.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// The exact key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The exact raw string.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+}
 
 /// One change of a [`PreferencesEdit`]: set a key (`<member>`, or
 /// `<member>.<nested>` for one member of an object) to a JSON value, or
@@ -1451,6 +1665,8 @@ pub enum CommitAction {
     BankHintWrite,
     /// A source-proven knowledge fact.
     KnowledgeWrite,
+    /// A raw script settings write.
+    ScriptRuntimeSettingsWrite,
 }
 
 impl CommitAction {
@@ -1461,6 +1677,7 @@ impl CommitAction {
             CommitAction::LoadoutWrite => "loadout-write",
             CommitAction::BankHintWrite => "bank-hint-write",
             CommitAction::KnowledgeWrite => "knowledge-write",
+            CommitAction::ScriptRuntimeSettingsWrite => "script-runtime-settings-write",
         }
     }
 }

@@ -156,6 +156,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and ring slots to the wear positions the game uses. Before, the machine
   looked for those items in the wrong positions, never saw them worn, and the
   step could end as unresponsive.
+- When single-way combat refuses an attack on an NPC with "I'm already under
+  attack" because another NPC is hitting the bot, the fight now attacks the NPC
+  that hit it most recently if it may, or holds the attack for the game's
+  8-tick window. The first attack also takes an NPC that is already hitting the
+  bot over a nearer idle one. Refusals inside one 8-tick window count once;
+  after three windows in a row with a refusal and no hit landing on the target
+  (about 24 ticks), the fight ends with `single-way-blocked` instead of
+  repeating the click without end.
+- Selected combat facts now include all NPC combat levels, signed bonuses,
+  player defence inputs, weapon style slots, and declared NPC damage defaults.
+  Missing required defaults stop data generation.
 
 ### Survival
 
@@ -184,6 +195,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   when the game applies a click late.
 - After a bite or a closed page that leaves nothing more to do, the Quester
   goes back to its step in the same game tick.
+- Route planning now reuses each bot's unchanged eligibility facts between
+  observations. It refreshes those facts when their source data changes.
+  Queued routes keep the facts captured when they start.
 
 ### Gatherer
 
@@ -360,6 +374,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.
   The receipt records confirmed kills across re-engagements.
+- Quester combat steps that need several chance drops keep fighting after a
+  kill without the drop, up to a limit of 281 kills, instead of stopping. This
+  fixes Doric's Quest stopping after the first iron ore. The step still fails
+  at the limit and reports the last combat result.
 - After an advancing step's settle timeout, the Quester rereads quest progress
   before it retries. Steps can also set their own attempt limit and a named
   stop.
@@ -471,6 +489,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   finish lines instead of being dropped after the run's first 32 different
   lines. A new run starts that budget again for the current stage. Repeated
   lines still fold into one line with a count.
+- The Quester now eats during quest steps with declared damage, including
+  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
+  Each guide cites the game's own script for its damage bound.
+- The Quester waits for Hitpoints data before it checks if a step hazard is
+  survivable.
+- The Quester clears the old hazard after a run change, a death, a session end,
+  or when no step is selected.
 
 ### Navigation
 
@@ -637,6 +662,112 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   no other waiting script step and spends none of the tick's interaction
   budget. This closes the known issue "`Bank.depositAllMatching` checks about
   one item per game tick".
+- Selected rs2b0t compatibility helpers now support GatheringBot anchors,
+  Jive bank restocking, MarketMaker name resolution, and paint rendering.
+- Native compatibility shop actions now use measured settle bounds for item
+  acquisition, by-ID purchases and closing the shop.
+- Compatibility `probeDest` calls now use the host's full route-search
+  budget; an upstream `maxExpansions` argument cannot lower it.
+- `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
+  bank session and item generation. Their arrays, rows, and nested `ops`
+  lists are read-only; `Bank.ready()` still returns a boolean.
+- rs2b0t scripts can use four more banking helpers. `purgePackAtBank` empties
+  the pack of everything except the item names you keep: the bot opens the
+  bank, deposits, closes the bank and then checks the pack. `withdrawCoins`
+  withdraws coins until the pack holds the amount you ask for; it reads the
+  coins in the pack and the bank itself. `sortBank` sorts the open bank by
+  category, drags one item per game tick and puts the swap/insert mode back as
+  it was. `findQuestJunk` lists banked quest items and the status of each quest;
+  it never drops anything. `Bank.backpackReady` and
+  `Bank.normalBackpackSnapshot` now work too. `reader.bankItems` lists the
+  rows of the open bank (an empty list when the bank is closed).
+- `bankPace` now pauses for exactly one game tick. It never picks a random
+  length.
+- `Banking.open` and `purgePackAtBank` accept the `obstacles` option when they
+  walk to a bank stand; before, a stand with obstacles stopped with `not impl`.
+  The bot opens the doors and gates on its route as on any other walk.
+- Removed the unused private exports `nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator` and
+  `bankPaceTicks`, which only reported `not impl`, and the 274bot-only
+  `Bank.depositAllExcept`, `Bank.openNearestWorld` and `Players.all`.
+  `Banking.depositAllExcept` stays; use `Players.query().results()` instead of
+  `Players.all()`.
+- rs2b0t scripts can use the mining, woodcutting, gathering, cooking and
+  fishing modules. The camp, method, vendor and cook tables, the fishing-gear
+  calculations, the radius helpers and the constants come from the game data
+  that 274bot selects. `GERRANT_VENDOR` and `HARRY_VENDOR` still report
+  `not impl`.
+- The catalog script BankSorter is no longer dimmed in the script picker. It
+  sorts the bank with the built-in bank sorter and reports the quest items
+  left in the bank. The Woodcutter, Miner and Fisher cards of GatheringBot
+  stay dimmed: the built-in Gatherer replaces them.
+- rs2b0t scripts can read the game client through `ClientAdapter`. Its reader
+  returns what 274bot already observes, for example stats, the open bank, the
+  count dialog, nearby NPCs and locations, and interface components. Its
+  supported actions go through the normal action queue.
+- `ChatDialog.makeOne` makes one item from a make dialog, for example one
+  Shortbow from logs and a knife. It returns `false` when an input item is
+  missing. If you stop the script while its click is in flight, the bot makes
+  at most one item.
+- `Game.castOnNpc` casts a spell on an NPC. It returns `false` when the runes
+  are missing.
+- `Quests.journal` opens and reads the journal of the quest that you name. It
+  refuses a different quest and a window that is not that journal.
+- `BotHost.addFrameListener` calls its listener on each 20 ms client frame
+  while the script runs or is paused. The function that it returns removes the
+  listener. A stopped script gets no more frames.
+- `ScriptRunner.state`, `pause`, `resume`, `ctx` and `meta` work. `pause` and
+  `resume` ask the bot to pause or resume the script, as the Pause and Resume
+  buttons do.
+- `SettingsStore.save` and `SettingsStore.onChange` work. A saved script
+  setting is kept for each account and game revision in
+  `.274bot/script-runtime-settings/`, and the next start of the script reads
+  it. Each listener hears a save at once, before `save` returns.
+- `ScriptRegistry`, `registerScript`, `isBotManifest`, `Scheduler`,
+  `ScriptActivity` and `stepOffCandidates` work. A tree script can extend
+  `BranchTask` and `LeafTask` and override their hooks.
+- `events.on` and `events.off` deliver chat messages, inventory changes and
+  skill XP to the script.
+- A start preloads the four eager shims (`Execution.js`, `Tile.js`, `Bot.js`
+  and `ScriptRunner.js`), the shape main module, and its reachable static and
+  literal dynamic import closure. A dynamic import can still load any served
+  shim outside that closure on demand. Direct `eval` and `Function` calls
+  preload all gated shims as a fast path; indirect and generated code use the
+  same on-demand loader.
+- Removed unused members that only reported `not impl`:
+  `resolveLoopCadence`, `resolveRunPolicy`, `shouldEnableRun`,
+  `loopReadyOrDetached`, `stopReasonOf`, `settingOptionLabel`; the settings
+  tables `GLOBAL_SETTINGS_CORE`, `GLOBAL_SETTINGS`, `NAV_SETTINGS`,
+  `MAP_PICKER_SETTINGS`, `MAP_PICKER_SETTINGS_NS`, `LOADOUT_SETTINGS`,
+  `LOADOUT_SETTINGS_NS`, `PRICE_BOOK_SETTINGS` and `PRICE_BOOK_SETTINGS_NS`;
+  the `Input` methods `useItemOnLoc`, `useItemOnNpc`, `useItemOnObj`,
+  `useItemOnItem`, `castOnNpc`, `castOnLoc`, `castOnItem` and
+  `continueDialog` (use the `Game` and `ChatDialog` methods instead); and the
+  `ClientAdapter` members `attach`, `detach`, `setPacketListener`,
+  `invalidateLocSnapshots`, `resetObjCatalog`, `activeStatsReady`,
+  `currentLoginStatsReady`, `locHullHeight`, `resolveLocModelExtents`,
+  `readRetaliateControls`, `readModalButtons`,
+  `readSelectButtonLabelsByVarp`, `combatShowingThreshold` and
+  `WELCOME_SCREEN`.
+- Removed the 274bot-only members `Game.autoRetaliate` (use
+  `Game.autoRetaliateOn`), `EventSignal.ignoredRandoms` and
+  `reader.selfTarget` (use `reader.selfFaceEntity`).
+- `Traversal.remaining` returns the distance left on the bot's current walk,
+  and `Traversal.requestRepath` asks the walk to plan its route again.
+  `WalkExecutor.lastOutcome` reports the result of the last walk, and
+  `WalkExecutor.probeDest` tests whether a route to a tile exists.
+- `WALK_DESTINATIONS`, `WALK_OPTIONS` and `resolveDestination` list the named
+  walk destinations and turn a name into its tile.
+- `Reachability.probeable` tells whether the bot has collision data for a
+  tile. `wildernessLevelAt` returns the Wilderness level at a tile, and
+  `inEssMine` tells whether a tile is in the Rune Essence mine.
+- `Shop.buyById` buys a quantity of one exact item from the open shop and
+  returns how many it bought. It stops when the shop closes, the stock runs
+  out, the inventory is full or you have too few coins.
+- `unitPrice`, `shopBuyPrice` and `buyoutCost` calculate shop prices.
+- `stableClosedPoll` waits until a trade window stays closed. It uses the
+  clock that you give it, or game ticks.
+- Removed `Shop.player`, which only reported `not impl`.
 
 ### Grinch
 
@@ -676,6 +807,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   folder guide headlessly and record game-tick stage changes, completion, debug
   logs and CPU screenshots. A partial guide can declare an exact boundary and
   record a `gap-reached` result. Campaign runs avoid danger zones by default.
+- Rust integrations now use the native script crate for interaction, paint and
+  snapshot types. JavaScript runtime types stay in the separate JS crate.
+  This removes the temporary import aliases without changing script behavior.
 
 ### Fixed during development
 
@@ -712,6 +846,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   tree or rock before it arms the technique again. It arms at once when it
   already stands where the replacement can be worked.
 
+#### Quester
+
+- The Quester's Tourist Trap guide no longer walks to the rocks of the slope
+  outside the cell. It sends the "Climb-to" action from where it stands, and
+  the game walks the player, as it does for a human player. Before, the guide
+  asked for a walk that cannot exist and stopped on the first rock.
+
 #### Scripting
 
 - A script's quest-journal read keeps the run button held from each click it
@@ -729,213 +870,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   The host now clears only the old walk's own work, so the assessment still
   answers once. If the host itself cancels a live assessment (a pause or a
   relog), the script now gets one refusal that says so.
-
-### Not in this release
-
-- Legends Guild bank gate is conservative (completion instead of the door's
-  stage-50 threshold). This is a navigation correctness follow-up for work after
-  0.2.9.
-- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
-  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
-  are **Planned**, not included here. These calls still report `not impl`;
-  moving existing banking into the native seat does not implement them. 0.2.4 to
-  0.2.8 have the same problem.
-- Caller-supplied bank-cost routers (`nearestWalkableBank`,
-  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
-  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
-  unavailable. The host does not recreate the foreign router or random pacing.
-  0.2.4 to 0.2.8 have the same problem.
-- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
-  bones reliably. In long fights it can run out of food before the dragon dies
-  and return to the bank without the bones. A fix is planned with the native
-  hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
-- A bot can't get through a door that another player closes again on every tick,
-  when that player's moves are handled before the bot's. The bot tries the door
-  until its retries run out and then stops at the door. Finding another way
-  around, changing worlds when allowed, and a clear "door held shut" result are
-  planned for a later release. 0.2.5 to 0.2.8 have the same problem.
-- Sherlock was meant to be a native clue solver. In practice it runs on the clue
-  machine ported for rs2b0t clue scripts, so it is available only in builds that
-  include the JS script runtime (every release build does). A native clue solver
-  is planned. 0.1.8 to 0.2.8 have the same problem.
-- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
-  and a chance-gated crossing that the bot does not yet support. There are still
-  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.8 have
-  the same problem.
-- After a super antipoison the bot counts only the ordinary immunity time (120
-  game ticks instead of 570), so it may drink again sooner than needed. It is
-  still immune for the real time. Counting the super immunity is planned for a
-  later release. 0.2.7 to 0.2.8 have the same problem.
-- Fetching a cure or food when the bot would otherwise die is planned for a
-  later release. In this release a native script that would die of poison with
-  no cure held pauses its work and names what it needs.
-- Buying a cure from a shop is planned, not included here.
-- Taking a cure from a ground spawn, or making one from held supplies, is
-  planned for a later release.
-- The serialization and date libraries retain compatibility versions until the
-  JavaScript runtime libraries can be updated together. The recorded date-parser
-  advisory is not reachable: the calendar dependency does not enable date
-  parsing or formatting.
-- The Knife tick technique is offered for oak and higher trees only. Normal
-  trees still use the ordinary gathering cadence.
-- Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
-  applies; the Gatherer fishes it at the ordinary cadence.
-- A sustained tick schedule based on auto-retaliate flinches is not offered. An
-  NPC hit can change the skill delay, but that schedule has not been traced or
-  designed.
-- The rs2b0t four-tick fly re-click and iron-cadence re-click methods give no
-  gain in revision 289 and are not offered.
-- A rune pickaxe already mines every three ticks, which matches the Knife cycle.
-  Knife turns itself off with no-gain for that tool; ordinary mining continues.
-- Eating uses the existing checked eat action and pauses the Knife technique for
-  one cycle. A food-based tick arm is not offered; it needs per-food delay facts
-  and a live probe before its design is complete.
-
-### Known issues
-
-- **Navigation:** With the default Danger routing setting, **When survivable**,
-  bots can refuse walks and bank trips through dangerous monsters instead of
-  checking whether the account can survive the trip. For example, a bot at Rock
-  Crabs can report that no bank is reachable instead of walking to Seers'
-  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
-  zones). This permits dangerous routes. Use it only when the account can handle
-  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
-- **Quester:** These Quester guides are drafts, and release builds do not start
-  them: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau,
-  The Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat,
-  Jungle Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest
-  the Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
-  Tree Gnome Village, Scorpion Catcher, Observatory Quest, Shield of Arrav,
-  Hero's Quest, Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest,
-  Biohazard, Murder Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf
-  Cannon, Family Crest, Fight Arena, The Grand Tree, Dragon Slayer, Horror from
-  the Deep, Shilo Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the
-  Myreque, Troll Stronghold, Eadgar's Ruse, Troll Romance, Throne of
-  Miscellania, Waterfall Quest, Legends Quest, Sheep Herder, Underground Pass,
-  Regicide, Shades of Mort'ton, The Fremennik Trials and Monkey Madness. 0.2.0
-  to 0.2.8 have the same problem.
-- **Quester:** When the Quester cannot start a walk between quest steps, it can
-  stop the quest at once instead of trying again, and asks you to resolve the
-  condition and restart the Quester. 0.2.0 to 0.2.8 have the same problem.
-- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
-  it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
-  problem.
-- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
-  than the game requires after each stun, so it gains Thieving XP more slowly
-  than it could. A fix is planned with the native thieving rework. 0.2.4 to
-  0.2.8 have the same problem.
-- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
-  requires The Tourist Trap complete. Bank mode refuses this site because the
-  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.8 have the
-  same problem.
-- **Scripts:** With "Pause script on manual movement" off, a script that acts in
-  place can continue after you move the bot yourself. This affects rs2b0t
-  scripts without a Gather or Combat session and built-in scripts other than
-  Quester fights. With the setting on, any running rs2b0t script pauses. A
-  built-in script pauses while it walks or acts, but not between actions. 0.2.6
-  to 0.2.8 have the same problem.
-- **Scripts:** A green poison hitsplat that the game shows without poison makes
-  the bot keep a poison reserve until the next poison message, poison tick or
-  cure. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** Strange fruit is recognized as a held cure and never fetched.
-  0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** When the game reports poison and the bot cannot see which
-  creature poisoned it, when the poison message and the creatures' update
-  arrived together so the bot cannot tell which game tick the message belongs
-  to, or when a poisoned bot takes any hit, the bot assumes the strongest poison
-  in the game (330 damage) until the next poison tick shows the real value. Each
-  poison tick then shows the true remaining value. A bot with a cure may drink
-  it earlier than it strictly needed to. A script with no cure held can pause on
-  a poison it would have survived. The pause ends within five poison ticks
-  (about 150 game ticks) of the first poison tick at which the bot's hitpoints
-  and food would have carried it through, which can be later than the message
-  when the bot is eating as it waits, and then the script continues on its own.
-  0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** When the game reports poison in a frame before its creatures'
-  update, the bot waits for that update before it decides which creature
-  poisoned it. A cure that is needed only for the worst case is then drunk one
-  game tick later. A cure that is needed at once is drunk at once. 0.2.7 to
-  0.2.8 have the same problem.
-- **Scripts:** The game does not say when a poison has ended. A paused script
-  whose hitpoints plus food are at or below the last poison tick's worst case (4
-  after the weakest tick) stays paused after the poison ran out, until it heals
-  past that or gets a cure.
-- **Scripts:** A paused script that is being hit by any creature stays paused
-  while the hits continue, because any hit can be a fresh poisoning. It does not
-  flee or fight back for that reason in this release.
-- **Scripts:** A native script that needs a cure while a bank deposit or
-  withdrawal is in flight lets that one transfer settle or time out first: eight
-  observed game ticks, without an elapsed-time minimum (twice that for a deposit
-  the game did not apply the first time). Then it closes the bank and drinks.
-  The Quester's own provisioning trips follow the same rule.
-- **Scripts:** When the bot reconnects while it is poisoned, it does not know it
-  is poisoned until the next poison tick, up to 30 game ticks later: the game
-  keeps the poison but does not repeat the poison message. In that time the bot
-  does not drink a held cure for that poison and does not eat early for it. A
-  bot whose hitpoints are at or below one poison tick's damage can die in that
-  tick. 0.2.7 to 0.2.8 have the same problem.
-- **Combat:** In a fight with no food left, a poisoned bot that holds an
-  antipoison can retreat or end the fight when its hitpoints are near the
-  poison-raised stop line, even though it drinks the antipoison in the same game
-  tick and would then be safe. 0.2.7 to 0.2.8 have the same problem.
-- **Navigation:** During a walk, a dialogue page that is open (for example a
-  level-up page or a gate's dialogue) can delay a drink or a bite until the walk
-  moves on and the page closes. An ordinary bite during a walk can go out in the
-  same game tick as a door or gate click. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** In Power mode, a Gatherer that finishes its last dose of an
-  antipoison keeps the empty vial. The vial takes a pack slot until you drop it.
-  Bank mode deposits it on the next bank trip.
-- **Panel and terminal app:** During a walk or a fight, the status row shows
-  that a cure or food is needed while the walk or the fight drinks or eats; it
-  does not show the drink or the bite itself.
-- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
-  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
-  that!" when the bot approaches Luthas or after he pays and before the boat
-  boards. The bot makes up to three attempts each time the bot goes to talk to
-  Luthas. If all three fail, the fare is not paid and the trip does not cross.
-  After payment, the fare is paid. In observed cases, the bot still boards. No
-  workaround is known. 0.2.8 has the same problem.
-- **Scripts:** When a script starts a trip to the mainland without the boat fare
-  from some places on Karamja, for example near the Brimhaven cart, the first
-  walk can fail at once. The bot then does not earn the fare and does not cross.
-  No workaround is known. 0.2.8 has the same problem.
-- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
-  last piece of food instead of leaving to bank, and it can attack a giant other
-  than the one hitting it. The bot can die in the fire giant room with an empty
-  pack. Watch the bot's food and stop the script when it runs low until the
-  script is fixed upstream. 0.2.6 to 0.2.8 have the same problem.
-- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
-  Strange fruit from a random event fills the last free backpack slot before it
-  holds a Magic log: it only goes to the bank when it holds logs. Clear one
-  backpack slot and the script resumes. The fix is in review upstream; update
-  your rs2b0t folder once it is merged. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** Some rs2b0t catalog scripts call script API members that 274bot
-  does not implement yet: `SettingsStore.save` and `onChange`,
-  `Bank.backpackReady` and `normalBackpackSnapshot`, `Reachability.probeable`,
-  `ScriptRunner.pause`, `resume`, `state` and `ctx`, and
-  `BotHost.addFrameListener`. Such a script stops with "not implemented" when it
-  reaches that call; for example, the current AutoFighter cannot start fighting.
-  Support is planned for 0.2.9. 0.2.0 to 0.2.8 have the same problem.
-- **Audio:** When music is on, a bot reads the music font once, at its first
-  song. Music is off in the default low-memory mode. 0.1.0 to 0.2.8 have the
-  same problem.
-- **Combat:** A combat step can end at its start with `prep-failed:weapon` even
-  though the weapon is in the pack. The server moves a worn weapon in one step,
-  but the game client applies the pack update and the worn update in separate
-  packets, so one frame can show the weapon in neither place. The machine reads
-  that frame as a missing weapon. A live run of the style switch showed the same
-  client behaviour; preparation has the same exposure and has not been seen to
-  fail yet. **Workaround:** run the combat step again; the weapon is worn by
-  then. 0.2.0 to 0.2.8 have the same problem.
-- **Terminal app:** Stopping the two bots after a paired Duel Arena fight can
-  time out before both clean logouts are acknowledged. The fight can work before
-  this stop failure. No verified workaround is recorded.
-- **Quester:** In Imp Catcher, the Quester can wrongly report that it has no way
-  out when it walks near the caged Lesser demon in the Wizards' Tower. The route
-  check treats the caged demon as free to chase the bot across a wide area, and
-  it ignores the cage, so it can refuse a walk that is safe. This does not
-  happen on every run; the release qualification run finished the quest. No
-  workaround is known. A fix is planned for after 0.2.9.
+- Compat loading now provides every named selected object row to the adapter.
+- Paint wrapping now indents only continuation lines.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

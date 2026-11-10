@@ -3014,12 +3014,13 @@ export default class NativeStop extends LoopingBot {{
 "#
         );
         let mut slot = script::SlotScript::new();
-        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let family = script_js::resolve_api_family(&source)
             .ok()
             .map(|(_, family)| family);
         slot.start_surface(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
+                card_name: "NativeStop".into(),
                 source: source.into(),
                 shape: script_js::LoadShape::CompatClass,
                 siblings: Arc::from([]),
@@ -3029,6 +3030,7 @@ export default class NativeStop extends LoopingBot {{
             game_data: None,
             named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
             loadouts: Arc::from([]),
+            wilderness_rules: script::surface::no_wilderness(),
         })
         .unwrap();
         let mut client = client::client::Client::new(client::client::ClientConfig {

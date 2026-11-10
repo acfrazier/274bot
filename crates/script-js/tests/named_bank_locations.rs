@@ -273,7 +273,7 @@ fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
 
     for (call, after) in [
         ("Banking.open()", 0),
-        ("Bank.openNearestWorld()", 0),
+        ("openClueBank()", 0),
         (
             "Banking.bankNearest({deposit: () => false, afterDeposit() { globalThis.__after++; }})",
             1,
@@ -283,6 +283,7 @@ fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
             r#"
 import {{ Bank }} from '../../api/bank/Bank.js';
 import {{ Banking }} from '../../api/bank/Banking.js';
+import {{ openClueBank }} from '../../api/ai/clues/bankAccess.js';
 globalThis.__after = 0; globalThis.__ok = null;
 export default class T extends LoopingBot {{
     async loop() {{

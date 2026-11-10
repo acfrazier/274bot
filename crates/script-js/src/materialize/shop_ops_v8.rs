@@ -11,7 +11,8 @@ const SHOP_STEPS: [i32; 3] = [10, 5, 1];
 const SELL_STACK_STEP: i32 = 10;
 
 pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    cb::install(runtime, "__rs2b0t_shop_op_batch", shop_op_batch)
+    cb::install(runtime, "__rs2b0t_shop_op_batch", shop_op_batch)?;
+    cb::install(runtime, "__rs2b0t_shop_price", shop_price)
 }
 
 fn shop_op_batch<'s>(
@@ -62,6 +63,103 @@ fn run<'s>(
         remaining = cb::sub(scope, remaining, size_value)?;
     }
     Ok(batch.into())
+}
+
+fn shop_price<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = run_price(scope, &args);
+    cb::finish(scope, rv, result);
+}
+
+fn run_price<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let export = cb::to_string(scope, args.get(0))?;
+    let price = match export.as_str() {
+        "unitPrice" => {
+            let item = args.get(1);
+            let shop = args.get(2);
+            let stock = cb::number(scope, args.get(3))?;
+            let baseline_value = cb::get(scope, item, "baseline")?;
+            let baseline = cb::number(scope, baseline_value)?;
+            let delta_value = cb::get(scope, shop, "delta")?;
+            let delta = cb::number(scope, delta_value)?;
+            let sell_value = cb::get(scope, shop, "sell")?;
+            let sell = cb::number(scope, sell_value)?;
+            let cost_value = cb::get(scope, item, "cost")?;
+            let cost = cb::number(scope, cost_value)?;
+            match (
+                price_i32(cost),
+                price_i32(baseline),
+                price_i32(sell),
+                price_i32(delta),
+                price_i32(stock),
+            ) {
+                (Some(cost), Some(baseline), Some(sell), Some(delta), Some(stock)) => {
+                    api::shop_facts::unit_price_values(cost, baseline, sell, delta, stock) as f64
+                }
+                _ => f64::NAN,
+            }
+        }
+        "shopBuyPrice" => {
+            let cost = cb::number(scope, args.get(1))?;
+            let bought = cb::number(scope, args.get(2))?;
+            let sell = cb::number(scope, args.get(3))?;
+            let delta = cb::number(scope, args.get(4))?;
+            match (
+                price_i32(cost),
+                price_i32(bought),
+                price_i32(sell),
+                price_i32(delta),
+            ) {
+                (Some(cost), Some(bought), Some(sell), Some(delta)) => {
+                    api::shop_facts::shop_buy_price(cost, bought, sell, delta) as f64
+                }
+                _ => f64::NAN,
+            }
+        }
+        "buyoutCost" => {
+            let cost = cb::number(scope, args.get(1))?;
+            let stock = cb::number(scope, args.get(2))?;
+            let sell = cb::number(scope, args.get(3))?;
+            let delta = cb::number(scope, args.get(4))?;
+            match (
+                price_i32(cost),
+                price_stock(stock),
+                price_i32(sell),
+                price_i32(delta),
+            ) {
+                (Some(cost), Some(stock), Some(sell), Some(delta)) => {
+                    api::shop_facts::buyout_cost(cost, stock, sell, delta) as f64
+                }
+                _ => f64::NAN,
+            }
+        }
+        _ => return Err(cb::type_error(scope, "unknown native shop price operation")),
+    };
+    Ok(cb::num(scope, price))
+}
+
+fn price_i32(value: f64) -> Option<i32> {
+    (value.is_finite()
+        && value.fract() == 0.0
+        && value >= f64::from(i32::MIN)
+        && value <= f64::from(i32::MAX))
+    .then_some(value as i32)
+}
+
+fn price_stock(value: f64) -> Option<i32> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value <= 0.0 {
+        return Some(0);
+    }
+    Some(value.ceil().min(f64::from(i32::MAX)) as i32)
 }
 
 fn has_shop_op<'s>(

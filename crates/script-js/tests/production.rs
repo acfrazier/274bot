@@ -495,32 +495,6 @@ fn pause_hold_and_session_reset_abort_a_parked_make_x() {
     iso.join();
 }
 
-#[test]
-fn make_one_stays_not_impl() {
-    let src = r#"
-import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__one = null;
-        try { globalThis.__one = await ChatDialog.makeOne('Flax'); }
-        catch (e) { globalThis.__one = String(e.message || e); }
-    }
-}
-"#;
-    let iso = spawn(src);
-    post(&iso, &base(), Some(&[]));
-    tick(&iso, 1);
-    let one = iso.probe("__one").unwrap();
-    assert!(
-        one.as_str().unwrap_or("").contains("not impl"),
-        "makeOne stays not impl, got {one:?}"
-    );
-    assert!(iso.drain_interacts().is_empty());
-    iso.join();
-}
-
 const PANEL: &str = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export default class T extends LoopingBot {

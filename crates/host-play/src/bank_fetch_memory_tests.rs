@@ -540,6 +540,7 @@ export default class T extends LoopingBot {
                 None,
                 None,
                 None,
+                None,
                 crate::script_channels::BrokerWorld::Unavailable,
                 None,
                 None,

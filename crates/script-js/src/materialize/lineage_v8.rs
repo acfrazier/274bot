@@ -19,9 +19,13 @@ pub(crate) enum Lineage {
     Token(Handle),
     Foreign,
 }
+/// Opaque ScriptActivity identity carried in V8's continuation context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ActivityId(pub(crate) u64);
 
 struct CarrierState {
     key: v8::Global<v8::Symbol>,
+    activity_key: v8::Global<v8::Symbol>,
     hooks: RefCell<Vec<Handle>>,
     captured_lineages: RefCell<Vec<CapturedLineage>>,
     interact_gate_enabled: bool,
@@ -84,6 +88,7 @@ pub(crate) fn install(runtime: &mut Runtime, interact_gate_enabled: bool) -> Res
     let state = {
         let mut scope = runtime.deno_runtime().handle_scope();
         let key = v8::Symbol::new(&mut scope, None);
+        let activity_key = v8::Symbol::new(&mut scope, None);
         let op_key = v8::String::new(&mut scope, "op")
             .ok_or_else(|| "lineage interact op key".to_string())?;
         let request_id_key = v8::String::new(&mut scope, "request_id")
@@ -98,6 +103,7 @@ pub(crate) fn install(runtime: &mut Runtime, interact_gate_enabled: bool) -> Res
             .ok_or_else(|| "lineage interact length key".to_string())?;
         Rc::new(CarrierState {
             key: v8::Global::new(&mut scope, key),
+            activity_key: v8::Global::new(&mut scope, activity_key),
             hooks: RefCell::new(Vec::new()),
             captured_lineages: RefCell::new(Vec::with_capacity(capacity)),
             interact_gate_enabled,
@@ -165,6 +171,7 @@ pub(crate) fn read_lineage(scope: &mut v8::HandleScope) -> Lineage {
         return Lineage::Foreign;
     }
     let key = v8::Local::new(scope, &state.key);
+    let activity_key = v8::Local::new(scope, &state.activity_key);
     let parsed = callback_v8::catching(scope, |scope| {
         if mapping.has_own_property(scope, key.into())? {
             let value = mapping.get(scope, key.into())?;
@@ -176,7 +183,11 @@ pub(crate) fn read_lineage(scope: &mut v8::HandleScope) -> Lineage {
                 Lineage::Foreign
             });
         }
-        Some(Lineage::Foreign)
+        Some(if mapping.has_own_property(scope, activity_key.into())? {
+            Lineage::Root
+        } else {
+            Lineage::Foreign
+        })
     });
     match parsed {
         Ok(lineage) => lineage,
@@ -757,8 +768,10 @@ pub(crate) fn clear_interact_lineages(runtime: &mut Runtime) {
 fn copy_context<'s>(
     scope: &mut v8::HandleScope<'s>,
     previous: v8::Local<'s, v8::Value>,
-    key: v8::Local<'s, v8::Symbol>,
-    handle: Handle,
+    machine_key: v8::Local<'s, v8::Symbol>,
+    activity_key: v8::Local<'s, v8::Symbol>,
+    machine_handle: Option<Handle>,
+    activity_id: Option<ActivityId>,
 ) -> Option<v8::Local<'s, v8::Value>> {
     let mapping = v8::Object::new(scope);
     let null = v8::null(scope);
@@ -782,10 +795,26 @@ fn copy_context<'s>(
                 return None;
             }
         }
+        for key in [machine_key.into(), activity_key.into()] {
+            if previous.has_own_property(scope, key)? {
+                let value = previous.get(scope, key.into())?;
+                if !mapping.set(scope, key.into(), value)? {
+                    return None;
+                }
+            }
+        }
     }
-    let token = v8::BigInt::new_from_u64(scope, handle);
-    if !mapping.set(scope, key.into(), token.into())? {
-        return None;
+    if let Some(handle) = machine_handle {
+        let token = v8::BigInt::new_from_u64(scope, handle);
+        if !mapping.set(scope, machine_key.into(), token.into())? {
+            return None;
+        }
+    }
+    if let Some(activity_id) = activity_id {
+        let id = v8::BigInt::new_from_u64(scope, activity_id.0);
+        if !mapping.set(scope, activity_key.into(), id.into())? {
+            return None;
+        }
     }
     Some(mapping.into())
 }
@@ -802,10 +831,69 @@ pub(crate) fn enter_hook<'s, R>(
     let previous = scope.get_continuation_preserved_embedder_data();
     let _entry = EntryGuard::new(&state);
     let _hook = HookGuard::new(&state, handle);
-    let key = v8::Local::new(scope, &state.key);
-    let mapping = callback_v8::catching(scope, |scope| copy_context(scope, previous, key, handle))?;
+    let machine_key = v8::Local::new(scope, &state.key);
+    let activity_key = v8::Local::new(scope, &state.activity_key);
+    let mapping = callback_v8::catching(scope, |scope| {
+        copy_context(
+            scope,
+            previous,
+            machine_key,
+            activity_key,
+            Some(handle),
+            None,
+        )
+    })?;
     scope.set_continuation_preserved_embedder_data(mapping);
 
+    let result = catch_unwind(AssertUnwindSafe(|| call(scope)));
+    scope.set_continuation_preserved_embedder_data(previous);
+    match result {
+        Ok(value) => Ok(value),
+        Err(panic) => resume_unwind(panic),
+    }
+}
+
+/// Return the current child activity identity, if this call is inside one.
+pub(crate) fn current_activity_id(scope: &mut v8::HandleScope) -> Option<ActivityId> {
+    let state = state_for_scope(scope)?;
+    let current = scope.get_continuation_preserved_embedder_data();
+    let Ok(mapping) = v8::Local::<v8::Object>::try_from(current) else {
+        return None;
+    };
+    if mapping.is_proxy() {
+        return None;
+    }
+    let key = v8::Local::new(scope, &state.activity_key);
+    callback_v8::catching(scope, |scope| {
+        if !mapping.has_own_property(scope, key.into())? {
+            return Some(None);
+        }
+        let value = mapping.get(scope, key.into())?;
+        let id = v8::Local::<v8::BigInt>::try_from(value).ok()?;
+        let (id, lossless) = id.u64_value();
+        Some(lossless.then_some(ActivityId(id)))
+    })
+    .ok()
+    .flatten()
+}
+
+/// Run one activity-owned callback while preserving machine lineage in CPED.
+pub(crate) fn enter_activity<'s, R>(
+    scope: &mut v8::HandleScope<'s>,
+    id: ActivityId,
+    call: impl FnOnce(&mut v8::HandleScope<'s>) -> R,
+) -> Result<R, Throw<'s>> {
+    let Some(state) = state_for_scope(scope) else {
+        return Err(Throw::Terminated);
+    };
+    let previous = scope.get_continuation_preserved_embedder_data();
+    let _entry = EntryGuard::new(&state);
+    let machine_key = v8::Local::new(scope, &state.key);
+    let activity_key = v8::Local::new(scope, &state.activity_key);
+    let mapping = callback_v8::catching(scope, |scope| {
+        copy_context(scope, previous, machine_key, activity_key, None, Some(id))
+    })?;
+    scope.set_continuation_preserved_embedder_data(mapping);
     let result = catch_unwind(AssertUnwindSafe(|| call(scope)));
     scope.set_continuation_preserved_embedder_data(previous);
     match result {

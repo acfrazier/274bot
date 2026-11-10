@@ -210,6 +210,7 @@ fn run_reach<'s>(
     let kind = js_to_string(scope, args.get(0))?;
     match kind.as_str() {
         "walkable" => v1_walkable(scope, args.get(1)),
+        "probeable" => v1_probeable(scope, args.get(1)),
         "canStep" => v1_can_step(scope, args.get(1), args.get(2)),
         "canReach" => v1_can_reach(scope, args.get(1), args.get(2)),
         "v2-walkable" => v2_walkable(scope, args.get(1)),
@@ -218,6 +219,16 @@ fn run_reach<'s>(
         "arrived" => v1_arrived(scope, args.get(1), args.get(2)),
         _ => Err("invalid-args".into()),
     }
+}
+
+fn v1_probeable<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(tile) = tile_or_none(scope, tile)? else {
+        return bool_val(scope, false);
+    };
+    bool_val(scope, with_view(|view| view.probeable(tile)))
 }
 
 fn v1_walkable<'s>(

@@ -128,6 +128,69 @@ impl<M: Moment> CloseDriver<M> {
     }
 }
 
+/// One native predicate returned by `stableClosedPoll`.
+///
+/// An explicit clock keeps the frozen millisecond comparison. Production calls
+/// use posted game ticks and require one full inactive tick.
+#[derive(Debug, Clone, Copy)]
+pub struct StableClosedPoll {
+    inactive_since_ms: f64,
+    inactive_since_tick: f64,
+}
+
+impl Default for StableClosedPoll {
+    fn default() -> Self {
+        Self {
+            inactive_since_ms: -1.0,
+            inactive_since_tick: -1.0,
+        }
+    }
+}
+
+impl StableClosedPoll {
+    pub fn from_baselines(inactive_since_ms: f64, inactive_since_tick: f64) -> Self {
+        Self {
+            inactive_since_ms,
+            inactive_since_tick,
+        }
+    }
+
+    pub fn baselines(self) -> (f64, f64) {
+        (self.inactive_since_ms, self.inactive_since_tick)
+    }
+
+    pub fn reset(&mut self) {
+        self.inactive_since_ms = -1.0;
+        self.inactive_since_tick = -1.0;
+    }
+
+    pub fn poll_at(&mut self, screen: ScreenKind, now_ms: f64, min_ms: f64) -> bool {
+        if screen.active() {
+            self.reset();
+            return false;
+        }
+        if self.inactive_since_ms < 0.0 {
+            self.inactive_since_ms = now_ms;
+        }
+        now_ms - self.inactive_since_ms >= min_ms
+    }
+
+    pub fn poll_tick(&mut self, screen: ScreenKind, tick: f64, min_ms: f64) -> bool {
+        if screen.active() {
+            self.reset();
+            return false;
+        }
+        if self.inactive_since_tick < 0.0 {
+            self.inactive_since_tick = tick;
+        }
+        tick - self.inactive_since_tick >= Self::observed_ticks_for_min_ms(min_ms)
+    }
+
+    fn observed_ticks_for_min_ms(min_ms: f64) -> f64 {
+        (min_ms / 600.0).ceil().max(1.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitEnd {
     Waiting,
@@ -207,6 +270,14 @@ mod tests {
             driver.poll(ScreenKind::Closed, now + Duration::from_millis(1300), false),
             WaitEnd::Closed
         );
+    }
+
+    #[test]
+    fn tick_clock_covers_non_default_minimum_ms() {
+        let mut poll = StableClosedPoll::default();
+        assert!(!poll.poll_tick(ScreenKind::Closed, 7.0, 1_201.0));
+        assert!(!poll.poll_tick(ScreenKind::Closed, 9.0, 1_201.0));
+        assert!(poll.poll_tick(ScreenKind::Closed, 10.0, 1_201.0));
     }
 
     #[test]

@@ -14,6 +14,13 @@ fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
 }
 
+fn probe_bool(iso: &LoadIsolate, expression: &str) -> bool {
+    iso.probe(expression)
+        .expect("probe expression evaluates")
+        .as_bool()
+        .expect("probe result is boolean")
+}
+
 fn row<'a>(
     name: &'a str,
     id: i32,
@@ -178,6 +185,27 @@ export default class T extends LoopingBot {
         } catch (e) {
             ev.push('threw:' + (e && e.message));
         }
+    }
+}
+"#;
+
+const STABLE_CLOSED_POLL: &str = r#"
+import { stableClosedPoll } from '../../api/trade/drivePartnerTrade.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__poll) return;
+        globalThis.__calls = 0;
+        globalThis.__otherCalls = 0;
+        globalThis.__now = 100;
+        globalThis.__poll = stableClosedPoll(600, () => {
+            globalThis.__calls++;
+            return globalThis.__now;
+        });
+        globalThis.__defaultPoll = stableClosedPoll();
+        globalThis.__makeOther = () => stableClosedPoll(300, () => {
+            globalThis.__otherCalls++;
+            return globalThis.__now;
+        });
     }
 }
 "#;
@@ -552,5 +580,91 @@ fn a_verifying_giver_declines_a_stranger_before_offering() {
             "end",
         ])
     );
+    iso.join();
+}
+
+#[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
+fn compat_v1_trade__stableclosedpoll__contract() {
+    let iso = spawn(STABLE_CLOSED_POLL);
+    let mut snap = base();
+    post(&iso, &snap);
+    tick(&iso, 1);
+
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 1);
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+    set(&iso, "globalThis.__now = 699");
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 2);
+    set(&iso, "globalThis.__now = 700");
+    assert!(probe_bool(&iso, "__poll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 3);
+
+    snap.tick = 2;
+    snap.trade_offer_open = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        3,
+        "an active offer resets closure state without calling the supplied clock"
+    );
+
+    snap.tick = 3;
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 3);
+
+    snap.tick = 4;
+    snap.trade_confirm_open = false;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    set(&iso, "globalThis.__now = 900");
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 4);
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    set(&iso, "globalThis.__now = 1500");
+    assert!(probe_bool(&iso, "__poll()"));
+    assert!(probe_bool(&iso, "__defaultPoll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 5);
+
+    set(&iso, "globalThis.__other = globalThis.__makeOther()");
+    assert!(!probe_bool(&iso, "__other()"));
+    assert_eq!(iso.probe("__otherCalls").unwrap(), 1);
+
+    snap.tick = 6;
+    snap.trade_offer_open = true;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert!(!probe_bool(&iso, "__poll()"));
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+
+    snap.tick = 7;
+    snap.trade_offer_open = false;
+    post(&iso, &snap);
+    tick(&iso, 7);
+    set(&iso, "globalThis.__now = 1800");
+    assert!(
+        !probe_bool(&iso, "__poll()"),
+        "the original closure starts a new inactive baseline after activity"
+    );
+    assert!(probe_bool(&iso, "__other()"));
+    assert_eq!(iso.probe("__otherCalls").unwrap(), 2);
+    assert!(!probe_bool(&iso, "__defaultPoll()"));
+    snap.tick = 8;
+    post(&iso, &snap);
+    tick(&iso, 8);
+    assert!(probe_bool(&iso, "__defaultPoll()"));
+    assert_eq!(iso.probe("__calls").unwrap(), 6);
     iso.join();
 }

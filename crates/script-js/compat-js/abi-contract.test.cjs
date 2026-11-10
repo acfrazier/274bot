@@ -19,7 +19,7 @@ const {
 const here = __dirname;
 const crate = path.resolve(here, '..');
 const frozenRoot = process.env.RS2B0T ? fs.realpathSync(process.env.RS2B0T) : null;
-const frozenRevision = '90a69240a4617155f280f098958c3cd7f044f234';
+const frozenRevision = 'ae56ccc95ba5681b12f1f66ec2adea14427fe497';
 const frozenRepository = 'https://github.com/rs2b2t/rs2b0t.git';
 const contractText = fs.readFileSync(path.join(here, 'abi-contract.json'), 'utf8');
 const predecessorText = fs.readFileSync(path.join(here, 'family-predecessors.json'), 'utf8');
@@ -49,6 +49,97 @@ test('the generated ABI contract and family graph are complete', () => {
         ['acquisition', 'bank', 'clues', 'duel', 'hunt', 'quests', 'runtime', 'shop', 'tasks', 'thieving', 'walking'],
         'nav families are exactly those reached from served or declared ABI sources and called native backends',
     );
+});
+
+test('unpublished refusal members have no declaration or refusal overlay', () => {
+    const removed = [
+        ['api/ai/quests/exec/primitives.js', 'gotoNpc'],
+        ['api/ai/quests/exec/primitives.js', 'talkChoosingBy'],
+        ['api/combat/hunting/supply.js', 'walkApproach'],
+        ['api/combat/hunting/combat.js', 'Fight.hasChaseTarget'],
+        ['api/duel/ClueDuel.js', 'ClueDuelSearch.tick'],
+        ['api/ai/clues/duelTravel.js', 'resetClueDuelSearch'],
+        ['api/market/catalog.js', 'buildCatalog'],
+        ['api/market/catalog.js', 'searchCatalog'],
+        ['api/market/catalog.js', 'resetLiveCatalog'],
+        ['api/ai/clues/ClueExecutor.js', 'trailWalkOpts'],
+        ['api/ai/clues/data/toolAcquire.js', 'extraItemShop'],
+        ['api/ai/clues/data/toolAcquire.js', 'gateItemShop'],
+        ['api/ai/quests/defs/murder/areas.js', 'suspectOrder'],
+        ['paint/paintLogic.js', 'resolveDock'],
+        ['paint/paintLogic.js', 'toCanvasPoint'],
+        ['paint/paintLogic.js', 'cycleOption'],
+        ['paint/paintLogic.js', 'hitRegion'],
+        ['paint/paintLogic.js', 'paintCols'],
+        ['paint/paintLogic.js', 'cellWidths'],
+        ['paint/paintLogic.js', 'gridRows'],
+        ['paint/paintLogic.js', 'listScroll'],
+        ['paint/paintLogic.js', 'stripSegments'],
+        ['paint/paintLogic.js', 'railRows'],
+        ['paint/paintLogic.js', 'statColumns'],
+        ['paint/paintLogic.js', 'PaintState.publishRegions'],
+        ['paint/paintLogic.js', 'PaintState.pointerDown'],
+        ['paint/paintLogic.js', 'PaintState.pointerMove'],
+        ['paint/paintLogic.js', 'PaintState.pointerIsInside'],
+        ['paint/paintLogic.js', 'PaintState.consumeClick'],
+        ['paint/paintLogic.js', 'PaintState.wheel'],
+        ['paint/paintLogic.js', 'PaintState.consumeWheel'],
+        ['paint/paintLogic.js', 'PaintState.isHovered'],
+        ['paint/paintLogic.js', 'PaintState.reset'],
+    ];
+    const moduleBlocks = new Map(
+        ts.createSourceFile('compat-index.d.ts', currentIndex, ts.ScriptTarget.Latest, true).statements
+            .filter(statement => ts.isModuleDeclaration(statement) && ts.isStringLiteral(statement.name))
+            .map(statement => [statement.name.text.slice(1), statement.body]),
+    );
+    const nameOf = node => node.name && (node.name.text || node.name.getText());
+    const membersOf = statement => {
+        if (ts.isClassDeclaration(statement) || ts.isInterfaceDeclaration(statement)) {
+            return statement.members;
+        }
+        if (ts.isVariableStatement(statement)) {
+            const declaration = statement.declarationList.declarations.find(item => item.type && ts.isTypeLiteralNode(item.type));
+            return declaration?.type.members || [];
+        }
+        if (ts.isTypeAliasDeclaration(statement) && ts.isTypeLiteralNode(statement.type)) {
+            return statement.type.members;
+        }
+        return [];
+    };
+    const exportedNames = statement =>
+        ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)
+            ? statement.exportClause.elements.map(element => (element.propertyName || element.name).text)
+            : [];
+
+    assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(here, 'overlay-not-impl.json'), 'utf8')),
+        [],
+        'implemented rows use frozen signatures, and excluded rows are not refusal overlays',
+    );
+    for (const [module, selector] of removed) {
+        const block = moduleBlocks.get(module);
+        assert.ok(block && ts.isModuleBlock(block), `missing declaration module ${module}`);
+        const [owner, member] = selector.split('.');
+        const declarations = block.statements.filter(statement =>
+            nameOf(statement) === owner ||
+            (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(item => nameOf(item) === owner)),
+        );
+        if (member) {
+            assert.ok(
+                !declarations.some(statement => membersOf(statement).some(item => nameOf(item) === member)),
+                `${module} still declares ${selector}`,
+            );
+        } else {
+            assert.ok(
+                !block.statements.some(statement => nameOf(statement) === owner || exportedNames(statement).includes(owner)),
+                `${module} still declares ${selector}`,
+            );
+        }
+        assert.ok(
+            !contract.not_impl_debt.some(row => row.module === module && row.selector === selector),
+            `${module} still records refusal debt for ${selector}`,
+        );
+    }
 });
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
@@ -162,6 +253,11 @@ test('the entity family is completely activated with both query refusal debts re
 });
 
 test('inventory root and public module declarations expose exact consumer types', () => {
+    assert.match(
+        currentIndex,
+        /export function registerScript\(manifest: import\('\*runtime\/defineBot\.js'\)\.BotManifestInput, origin\?: string\): void;/,
+        'the generated root declaration keeps registerScript tied to BotManifestInput',
+    );
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-inventory-consumer-'));
     try {
         const consumer = path.join(scratch, 'consumer.ts');
@@ -170,6 +266,7 @@ import {
     Inventory as RootInventory,
     InvItem as RootInvItem,
     Equipment as RootEquipment,
+    registerScript,
 } from '@rs2b0t/api';
 import * as RootInventoryModule from '@rs2b0t/api';
 import {
@@ -194,12 +291,16 @@ import type { Loc } from '#/bot/api/model/Loc.js';
 import type { Npc } from '#/bot/api/model/Npc.js';
 import type { Player } from '#/bot/api/model/Player.js';
 import type { GroundItem } from '#/bot/api/grounditems/GroundItems.js';
+import type { BotManifestInput } from '#/bot/runtime/defineBot.js';
 
 declare const row: InvItemSnapshot;
 declare const loc: Loc;
 declare const npc: Npc;
 declare const player: Player;
 declare const groundItem: GroundItem;
+declare const manifest: BotManifestInput;
+
+registerScript(manifest);
 
 const moduleRows: InvItemSnapshot[] = backpackSnapshots();
 const moduleCapacity: number = backpackCapacity();
@@ -439,7 +540,8 @@ test('native callback ownership follows the registered shim callers', () => {
     assert.equal(nativeFamilyFamilies.get('hunt-key'), 'hunt');
     assert.equal(nativeFamilyFamilies.get('periodic_bank'), 'tasks');
     assert.equal(nativeFamilyFamilies.get('bank_nearest'), 'bank');
-    assert.equal(nativeFamilyFamilies.get('bank_withdraw_to'), 'thieving');
+    // The hunt supply wrapper now calls this shared backend directly.
+    assert.equal(nativeFamilyFamilies.get('bank_withdraw_to'), 'hunt');
     assert.equal(nativeFamilyFamilies.get('bank_close_confirm'), 'thieving');
 });
 test('registered callback-free backends participate in navigation classification', () => {
@@ -534,7 +636,7 @@ test('callback source citations resolve and identify each member', { skip: !froz
         assert.ok(normalizedEvidence.includes(memberToken), `${row.member} appears at a cited source line`);
     }
     assert.ok(citationCount > 0);
-    assert.equal(citationCount, 219, 'checked callback citation range parts');
+    assert.equal(citationCount, 223, 'checked callback citation range parts');
 });
 
 
@@ -556,7 +658,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 196);
+    assert.equal(contract.not_impl_debt.length, 48);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
@@ -564,17 +666,17 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         'BranchTask.success',
         'BranchTask.failure',
         'LeafTask.execute',
-        'resolveWoodcuttingLocation',
+        'events.on',
+        'events.off',
+        'registerScript',
     ]) {
-        assert.equal(selectors.filter(value => value === selector).length, 1, selector);
+        assert.equal(selectors.includes(selector), false, selector);
     }
     const newRefusals = [
-        ['runtime/Settings.js', ['GLOBAL_SETTINGS_CORE', 'NAV_SETTINGS', 'GLOBAL_SETTINGS', 'MAP_PICKER_SETTINGS_NS', 'MAP_PICKER_SETTINGS', 'LOADOUT_SETTINGS_NS', 'LOADOUT_SETTINGS', 'PRICE_BOOK_SETTINGS_NS', 'PRICE_BOOK_SETTINGS']],
         ['api/ai/quests/defs/murder/areas.js', ['ARHEIN', 'GUARD_START', 'GUARD_HANDIN', 'SALESMAN', 'SUSPECTS', 'MURDER_EVIDENCE']],
         ['api/ai/clues/data/toolAcquire.js', ['SPADE_SPAWNS', 'PROFESSOR', 'MURPHY', 'KOJO', 'KOJO_EXIT']],
         ['api/ai/quests/engine/QuestEngine.js', ['COIN_FLOAT', 'PROVISION_BANK', 'QuestEngine']],
-        ['paint/paintLogic.js', ['paintState', 'WHEEL_ROWS']],
-        ['adapter/ClientAdapter.js', ['WELCOME_SCREEN']],
+        ['paint/paintLogic.js', ['WHEEL_ROWS']],
     ];
     for (const [module, members] of newRefusals) {
         for (const member of members) {
@@ -583,8 +685,8 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
             assert.ok(row.source.includes('crates/script-js/src/shim/'), `${member} names its source file`);
         }
     }
-    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 26);
-    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 28);
+    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 15);
+    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 15);
 });
 
 test('an unclassified source module fails closed', () => {

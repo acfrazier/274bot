@@ -316,6 +316,9 @@ pub struct Play {
     /// pack at construction (see [`default_pack_path`]); `None` when no
     /// pack loads, and `ctx.walk` then refuses to arm.
     world: Option<Arc<NavWorld>>,
+    /// Shared wilderness rules from the loaded pack.
+    #[cfg(feature = "js")]
+    wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
     /// Per-slot control wake ends: [`SlotWake::wake`] kicks a parked slot
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.

@@ -107,7 +107,7 @@ fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
 }
 
 #[test]
-fn reader_returns_posted_local_overhead_and_coordinate_hint_unchanged() {
+fn reader_returns_posted_local_overhead_and_coordinate_hint_with_current_plane() {
     let iso =
         spawn("globalThis.__probe = { selfChat: reader.selfChat(), hintTile: reader.hintTile() };");
     let mut snap = base_snapshot();
@@ -122,7 +122,7 @@ fn reader_returns_posted_local_overhead_and_coordinate_hint_unchanged() {
     assert_eq!(value["selfChat"], "FIGHT!");
     assert_eq!(
         value["hintTile"],
-        serde_json::json!({ "x": 2761, "z": 9546 })
+        serde_json::json!({ "x": 2761, "z": 9546, "level": 3 })
     );
     iso.join();
 }
@@ -144,7 +144,7 @@ fn successive_snapshot_clears_overhead_and_hint_without_stale_retention() {
     assert_eq!(first["selfChat"], "3");
     assert_eq!(
         first["hintTile"],
-        serde_json::json!({ "x": 2800, "z": 9500 })
+        serde_json::json!({ "x": 2800, "z": 9500, "level": 3 })
     );
 
     snap.tick = 2;

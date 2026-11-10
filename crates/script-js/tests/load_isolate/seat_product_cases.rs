@@ -448,7 +448,11 @@ export function tick(api) {
         .find(|start| start.kind == NativeKind::QuestProgress)
         .expect("the real root questProgress API starts its native family");
     assert_eq!(progress.parent, None);
-    assert!(matches!(&progress.args, SeatStartArgs::QuestProgress(name) if name == "tick-root"));
+    assert!(matches!(
+        &progress.args,
+        SeatStartArgs::QuestProgress { name, journal_only }
+            if name == "tick-root" && !journal_only
+    ));
     let progress_id = progress.id;
     assert!(seat_starts(&batches)
         .filter(|start| start.kind == NativeKind::QuestProgress)
@@ -889,9 +893,11 @@ export function tick(api) {
         progress.parent, None,
         "a local Hunt hook is not a seat parent"
     );
-    assert!(
-        matches!(&progress.args, SeatStartArgs::QuestProgress(name) if name == "unlisted-product-fixture")
-    );
+    assert!(matches!(
+        &progress.args,
+        SeatStartArgs::QuestProgress { name, journal_only }
+            if name == "unlisted-product-fixture" && !journal_only
+    ));
     let progress_id = progress.id;
     let progress_token = progress_id.get();
 

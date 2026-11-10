@@ -7,10 +7,88 @@ use super::{
 use api::selected::QuestGate;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
+use nav_planner::contract::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+
+#[cfg(test)]
+mod anchor_policy_tests {
+    use super::*;
+
+    #[test]
+    fn gather_anchor_predicates_keep_frozen_thresholds() {
+        assert!(!should_walk_home_to_gather_anchor(None, None));
+        assert!(!should_walk_home_to_gather_anchor(Some(f64::NAN), None));
+        assert!(!should_walk_home_to_gather_anchor(Some(8.0), None));
+        assert!(should_walk_home_to_gather_anchor(Some(8.01), None));
+        assert!(!should_walk_home_to_gather_anchor(Some(0.0), Some(-3.0)));
+        assert!(should_walk_home_to_gather_anchor(Some(12.0), Some(11.9)));
+        assert!(should_walk_home_to_gather_anchor(
+            Some(12.0),
+            Some(f64::INFINITY)
+        ));
+
+        assert!(!should_soft_home_from_gather_miss(None, None));
+        assert!(!should_soft_home_from_gather_miss(Some(28.0), None));
+        assert!(should_soft_home_from_gather_miss(Some(28.01), None));
+        assert!(!should_soft_home_from_gather_miss(Some(20.0), Some(12.0)));
+        assert!(should_soft_home_from_gather_miss(Some(22.01), Some(22.9)));
+        assert!(!should_soft_home_from_gather_miss(Some(28.0), Some(40.0)));
+        assert!(!should_soft_home_from_gather_miss(
+            Some(28.0),
+            Some(f64::NAN)
+        ));
+    }
+}
+
+/// Whether gathering should walk home after a bank or a missing target.
+pub fn should_walk_home_to_gather_anchor(
+    distance: Option<f64>,
+    arrive_radius: Option<f64>,
+) -> bool {
+    let Some(distance) = distance.filter(|value| value.is_finite()) else {
+        return false;
+    };
+    let radius = arrive_radius
+        .filter(|value| value.is_finite())
+        .map_or(8.0, f64::floor)
+        .max(0.0);
+    distance > radius
+}
+
+/// Whether a gather miss is far enough from camp to use the soft return.
+pub fn should_soft_home_from_gather_miss(distance: Option<f64>, leash: Option<f64>) -> bool {
+    let Some(distance) = distance.filter(|value| value.is_finite()) else {
+        return false;
+    };
+    let leash = leash
+        .filter(|value| value.is_finite())
+        .unwrap_or(crate::gather_locations::DEFAULT_CAMP_RADIUS)
+        .floor()
+        .max(2.0);
+    let threshold = 20.0_f64.max(leash.min(28.0));
+    distance > threshold
+}
+
+/// Whether the tile belongs to the contract Rune Essence mine square.
+pub const fn in_ess_mine(x: i32, z: i32) -> bool {
+    x >> 6 == 45 && z >> 6 == 75
+}
+
+/// The selected named walk destinations in their user-visible order.
+pub fn walk_destinations() -> &'static [WalkDestination] {
+    WALK_DESTINATIONS
+}
+
+/// Resolve a trimmed, case-insensitive destination name.
+pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
+    let key = name.trim();
+    WALK_DESTINATIONS
+        .iter()
+        .find(|destination| destination.name.eq_ignore_ascii_case(key))
+}
 
 /// Eligible time a native walk may stay unsettled without a host terminal
 /// receipt before it ends `Failed` and revokes its host follow. The backstop
@@ -21,6 +99,36 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 /// Give unresolved gates one later tick for quest-list colour updates to
 /// reach the snapshot before reporting missing evidence.
 const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
+
+/// Clockwise adjacent tiles from east, stably ranked farthest from `away`.
+pub fn step_off_candidates(from: api::WorldTile, away: (i32, i32)) -> [api::WorldTile; 8] {
+    const COMPASS: [(i32, i32); 8] = [
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+    ];
+    let mut candidates = COMPASS.map(|(dx, dz)| api::WorldTile {
+        x: from.x + dx,
+        z: from.z + dz,
+        level: from.level,
+    });
+    let distance = |tile: api::WorldTile| tile.x.abs_diff(away.0).max(tile.z.abs_diff(away.1));
+    for index in 1..candidates.len() {
+        let candidate = candidates[index];
+        let score = distance(candidate);
+        let mut at = index;
+        while at > 0 && distance(candidates[at - 1]) < score {
+            candidates.swap(at - 1, at);
+            at -= 1;
+        }
+    }
+    candidates
+}
 
 pub struct Walk {
     // Retain only fields missing from the correlation core, which already
@@ -410,6 +518,7 @@ impl NativeMachine for Walk {
                 WalkEnd::Arrived | WalkEnd::RouteEnded | WalkEnd::Blocked
             ),
             blocked: receipt.end == WalkEnd::Blocked,
+            no_path: receipt.end == WalkEnd::NoPath,
             key,
         });
         let frame = Frame {

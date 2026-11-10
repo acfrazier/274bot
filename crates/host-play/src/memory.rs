@@ -19,6 +19,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -39,6 +40,665 @@ const PANEL_FRAME_BUCKETS: usize = 251;
 static PANEL_FRAME_MS: [AtomicU64; PANEL_FRAME_BUCKETS] =
     [const { AtomicU64::new(0) }; PANEL_FRAME_BUCKETS];
 static PANEL_FRAME_INTERVAL_MAX_NS: AtomicU64 = AtomicU64::new(0);
+const Q4_FRAME_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+const Q4_REMOVAL_DELAY: Duration = Duration::from_secs(20);
+const Q4_PAUSE_AFTER: Duration = Duration::from_secs(10);
+const Q4_PAUSE_FOR: Duration = Duration::from_secs(5);
+const Q4_PAUSE_RESUME_TIMEOUT: Duration = Duration::from_secs(5);
+const Q4_STOP_AFTER: Duration = Duration::from_secs(20);
+/// How long ten Load isolates may take to reap after Stop.
+const Q4_STOP_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const Q4_WORKLOAD_NAME: &str = "AccountLeveler-listener probe";
+const Q4_CATALOG_DEFERRED_REASON: &str = "Catalog AccountLeveler imports wave-4 quest modules, including readDragonProgress from api/ai/quests/defs/dragonslayer/journal.js; the catalog A/B moves to wave 4.";
+
+fn q4_run_record_metadata(value: &mut serde_json::Value) {
+    value["q4_workload"] = Q4_WORKLOAD_NAME.into();
+    value["q4_catalog_deferred_reason"] = Q4_CATALOG_DEFERRED_REASON.into();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Q4FrameArm {
+    Listener,
+    NoListener,
+}
+
+impl Q4FrameArm {
+    fn from_env(scenario: &str, workload: Workload) -> Result<Option<Self>, String> {
+        if scenario != "accountleveler_listener_probe" {
+            return Ok(None);
+        }
+        if workload != Workload::Active {
+            return Err("accountleveler_listener_probe requires the active memory workload".into());
+        }
+        match std::env::var("BOT_MEMORY_Q4_LISTENER").as_deref() {
+            Ok("1") => Ok(Some(Self::Listener)),
+            Ok("0") => Ok(Some(Self::NoListener)),
+            Ok(other) => Err(format!(
+                "BOT_MEMORY_Q4_LISTENER must be 0 or 1, got {other}"
+            )),
+            Err(std::env::VarError::NotPresent) => Err(
+                "BOT_MEMORY_Q4_LISTENER must be 0 or 1 for accountleveler_listener_probe".into(),
+            ),
+            Err(error) => Err(format!("BOT_MEMORY_Q4_LISTENER: {error}")),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Listener => "one_listener",
+            Self::NoListener => "zero_listeners",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Q4FrameCell {
+    ZeroListeners,
+    OneListener,
+    Removal,
+    Pause,
+    Stop,
+    BusyFullBankSampling,
+}
+
+impl Q4FrameCell {
+    fn from_env(arm: Q4FrameArm) -> Result<Self, String> {
+        let default = match arm {
+            Q4FrameArm::Listener => Self::BusyFullBankSampling,
+            Q4FrameArm::NoListener => Self::ZeroListeners,
+        };
+        let cell = match std::env::var("BOT_MEMORY_Q4_CELL") {
+            Ok(value) => match value.as_str() {
+                "zero_listeners" => Self::ZeroListeners,
+                "one_listener" => Self::OneListener,
+                "removal" => Self::Removal,
+                "pause" => Self::Pause,
+                "stop" => Self::Stop,
+                "busy_bank_65_row_sampling" => Self::BusyFullBankSampling,
+                _ => return Err(format!("unknown BOT_MEMORY_Q4_CELL {value}")),
+            },
+            Err(std::env::VarError::NotPresent) => default,
+            Err(error) => return Err(format!("BOT_MEMORY_Q4_CELL: {error}")),
+        };
+        if cell.has_listener() != (arm == Q4FrameArm::Listener) {
+            return Err(format!(
+                "BOT_MEMORY_Q4_CELL={} does not match BOT_MEMORY_Q4_LISTENER={}",
+                cell.as_str(),
+                arm.as_str()
+            ));
+        }
+        Ok(cell)
+    }
+
+    fn has_listener(self) -> bool {
+        self != Self::ZeroListeners
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ZeroListeners => "zero_listeners",
+            Self::OneListener => "one_listener",
+            Self::Removal => "removal",
+            Self::Pause => "pause",
+            Self::Stop => "stop",
+            Self::BusyFullBankSampling => "busy_bank_65_row_sampling",
+        }
+    }
+}
+
+#[derive(Default)]
+struct FrameDeliveryCounters {
+    attempted: u64,
+    delivered: u64,
+    pending: u64,
+    peak_pending: u64,
+    interval_attempted: u64,
+    interval_delivered: u64,
+    interval_peak_pending: u64,
+    interval_started: Option<Instant>,
+    last_bank_sample: Option<Instant>,
+    visible_bank_rows: Option<usize>,
+    bank_ready: bool,
+    bank_rows_from_script: Option<usize>,
+    script_bank_ready: bool,
+    observation_started: Option<Instant>,
+    observation_attempted: u64,
+    observation_delivered: u64,
+    observation_pending_start: u64,
+    observation_peak_pending: u64,
+    /// Lifetime delivered frames when the probe reported its listener
+    /// removal. Lifetime, not observation-window: with a staggered fleet a
+    /// bot can remove its listener before the observation starts.
+    listener_removed_delivered: Option<u64>,
+}
+
+static FRAME_DELIVERY_ACTIVE: AtomicBool = AtomicBool::new(false);
+static FRAME_DELIVERY: Mutex<Option<HashMap<String, FrameDeliveryCounters>>> = Mutex::new(None);
+
+fn configure_frame_delivery(names: &[String]) {
+    FRAME_DELIVERY_ACTIVE.store(false, Relaxed);
+    let now = Instant::now();
+    let mut slots = names
+        .iter()
+        .cloned()
+        .map(|name| {
+            let counters = FrameDeliveryCounters {
+                interval_started: Some(now),
+                ..FrameDeliveryCounters::default()
+            };
+            (name, counters)
+        })
+        .collect::<HashMap<_, _>>();
+    slots.shrink_to_fit();
+    *FRAME_DELIVERY.lock().unwrap() = Some(slots);
+    FRAME_DELIVERY_ACTIVE.store(true, Relaxed);
+}
+
+fn clear_frame_delivery() {
+    FRAME_DELIVERY_ACTIVE.store(false, Relaxed);
+    *FRAME_DELIVERY.lock().unwrap() = None;
+}
+
+/// Mark entry to the synchronous client-frame delivery path.
+///
+/// The caller invokes this only in memory-profile builds. The atomic guard
+/// returns before locking or allocating when no Q4 run owns the counters.
+pub(crate) fn frame_dispatch_begin(name: &str) {
+    if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
+        return;
+    }
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) else {
+        return;
+    };
+    counters.attempted += 1;
+    counters.interval_attempted += 1;
+    counters.pending += 1;
+    counters.peak_pending = counters.peak_pending.max(counters.pending);
+    counters.interval_peak_pending = counters.interval_peak_pending.max(counters.pending);
+    if counters.observation_started.is_some() {
+        counters.observation_attempted += 1;
+        counters.observation_peak_pending = counters.observation_peak_pending.max(counters.pending);
+    }
+}
+
+/// Mark completion of the synchronous client-frame delivery path.
+pub(crate) fn frame_dispatch_end(name: &str, delivered: bool) {
+    if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
+        return;
+    }
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) else {
+        return;
+    };
+    counters.pending = counters.pending.saturating_sub(1);
+    if delivered {
+        counters.delivered += 1;
+        counters.interval_delivered += 1;
+        if counters.observation_started.is_some() {
+            counters.observation_delivered += 1;
+        }
+    }
+}
+
+fn observe_frame_bank(c: &client::client::Client, name: &str) {
+    if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
+        return;
+    }
+    let now = Instant::now();
+    let due = {
+        let mut delivery = FRAME_DELIVERY.lock().unwrap();
+        let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) else {
+            return;
+        };
+        if counters
+            .last_bank_sample
+            .is_some_and(|last| now.duration_since(last) < Q4_FRAME_SAMPLE_INTERVAL)
+        {
+            false
+        } else {
+            counters.last_bank_sample = Some(now);
+            true
+        }
+    };
+    if due {
+        let (rows, ready) = accountleveler_bank_state(c);
+        let mut delivery = FRAME_DELIVERY.lock().unwrap();
+        if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
+            counters.visible_bank_rows = Some(rows);
+            counters.bank_ready = ready;
+        }
+    }
+}
+
+fn accountleveler_bank_state(c: &client::client::Client) -> (usize, bool) {
+    fn find_withdraw_grid(c: &client::client::Client, id: i32) -> Option<i32> {
+        if id < 0 {
+            return None;
+        }
+        let component = c.if_(id as usize)?;
+        if component.r#type == client::config::if_type::ComponentType::TYPE_INV
+            && component
+                .iop
+                .first()
+                .and_then(Option::as_deref)
+                .is_some_and(|ops| {
+                    ops.as_bytes().windows(8).any(|window| {
+                        window
+                            .iter()
+                            .zip(b"withdraw")
+                            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+                    })
+                })
+        {
+            return Some(id);
+        }
+        for child in component.children.as_deref().unwrap_or_default() {
+            if let Some(found) = find_withdraw_grid(c, *child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    if c.main_modal_id < 0 {
+        return (0, false);
+    }
+    let Some(bank_id) = find_withdraw_grid(c, c.main_modal_id) else {
+        return (0, false);
+    };
+    let Some(component) = c.if_(bank_id as usize) else {
+        return (0, false);
+    };
+    let (Some(ids), Some(_counts)) = (&component.link_obj_type, &component.link_obj_number) else {
+        return (0, false);
+    };
+    let rows = ids.iter().filter(|id| **id > 0).count();
+    (rows, rows > 0)
+}
+
+/// Record one Q4 probe marker line from slot `name`'s script log.
+fn collect_script_bank_row(name: &str, line: &str) {
+    let listener_removed = line.contains("MEMAB_LISTENER_REMOVED");
+    let bank_rows = line.find("MEMAB_BANK_ROWS:").and_then(|marker| {
+        let value = line[marker + "MEMAB_BANK_ROWS:".len()..]
+            .split_whitespace()
+            .next()
+            .unwrap_or_default();
+        let (ready, rows) = value.split_once(':')?;
+        let ready = ready.parse::<u8>().ok()?;
+        let rows = rows.parse::<usize>().ok()?;
+        Some((ready == 1, rows))
+    });
+    if !listener_removed && bank_rows.is_none() {
+        return;
+    }
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    if let Some(counters) = delivery.as_mut().and_then(|slots| slots.get_mut(name)) {
+        if listener_removed && counters.listener_removed_delivered.is_none() {
+            counters.listener_removed_delivered = Some(counters.delivered);
+        }
+        if let Some((ready, rows)) = bank_rows {
+            counters.script_bank_ready = ready;
+            counters.bank_rows_from_script = Some(rows);
+        }
+    }
+}
+
+fn frame_delivery_pending_zero() -> bool {
+    if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
+        return true;
+    }
+    FRAME_DELIVERY
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_none_or(|slots| slots.values().all(|counters| counters.pending == 0))
+}
+
+fn frame_delivery_bank_rows(names: &[String]) -> Option<usize> {
+    if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
+        return None;
+    }
+    let delivery = FRAME_DELIVERY.lock().unwrap();
+    let slots = delivery.as_ref()?;
+    let mut expected = None;
+    for name in names {
+        let counters = slots.get(name)?;
+        let visible_rows = counters.visible_bank_rows?;
+        let rows = counters.bank_rows_from_script?;
+        if !counters.bank_ready
+            || visible_rows == 0
+            || !counters.script_bank_ready
+            || rows == 0
+            || expected.is_some_and(|expected| expected != rows)
+        {
+            return None;
+        }
+        expected = Some(rows);
+    }
+    expected
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrameDeliveryObservation {
+    attempted: u64,
+    delivered: u64,
+    pending: u64,
+    peak_pending: u64,
+}
+
+fn frame_delivery_observations(
+    names: &[String],
+) -> Option<HashMap<String, FrameDeliveryObservation>> {
+    let delivery = FRAME_DELIVERY.lock().unwrap();
+    let slots = delivery.as_ref()?;
+    let mut observations = HashMap::with_capacity(names.len());
+    for name in names {
+        let counters = slots.get(name)?;
+        observations.insert(
+            name.clone(),
+            FrameDeliveryObservation {
+                attempted: counters.observation_attempted,
+                delivered: counters.observation_delivered,
+                pending: counters.pending,
+                peak_pending: counters.observation_peak_pending,
+            },
+        );
+    }
+    Some(observations)
+}
+
+/// `Some(true)` once every slot reported its listener removal after at
+/// least one delivered frame and no frame was delivered after it.
+fn frame_delivery_removal_stable(names: &[String]) -> Option<bool> {
+    let delivery = FRAME_DELIVERY.lock().unwrap();
+    let slots = delivery.as_ref()?;
+    let mut all_removed = true;
+    for name in names {
+        let counters = slots.get(name)?;
+        let Some(delivered_at_removal) = counters.listener_removed_delivered else {
+            all_removed = false;
+            continue;
+        };
+        if delivered_at_removal == 0 || counters.delivered != delivered_at_removal {
+            return Some(false);
+        }
+    }
+    all_removed.then_some(true)
+}
+
+fn frame_delivery_samples(now: Instant) -> serde_json::Value {
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    let Some(slots) = delivery.as_mut() else {
+        return serde_json::Value::Null;
+    };
+    let mut samples = Vec::with_capacity(slots.len());
+    for (name, counters) in slots {
+        let interval_s = counters
+            .interval_started
+            .replace(now)
+            .map(|started| now.duration_since(started).as_secs_f64())
+            .unwrap_or(0.0)
+            .max(0.001);
+        let attempted = std::mem::take(&mut counters.interval_attempted);
+        let delivered = std::mem::take(&mut counters.interval_delivered);
+        let peak_pending = std::mem::replace(&mut counters.interval_peak_pending, counters.pending);
+        samples.push(serde_json::json!({
+            "account": name,
+            "attempted_frames": attempted,
+            "delivered_frames": delivered,
+            "attempted_frames_per_s": attempted as f64 / interval_s,
+            "delivered_frames_per_s": delivered as f64 / interval_s,
+            "pending_frame_work": counters.pending,
+            "pending_frame_work_high_water": peak_pending,
+            "visible_bank_rows": counters.visible_bank_rows,
+            "bank_ready": counters.bank_ready,
+            "bank_rows_from_script": counters.bank_rows_from_script,
+            "script_bank_ready": counters.script_bank_ready,
+            "listener_removed": counters.listener_removed_delivered.is_some(),
+            "listener_removed_delivered_frames": counters.listener_removed_delivered,
+        }));
+    }
+    serde_json::Value::Array(samples)
+}
+
+fn frame_delivery_qualification(now: Instant, start: bool) -> serde_json::Value {
+    let mut delivery = FRAME_DELIVERY.lock().unwrap();
+    let Some(slots) = delivery.as_mut() else {
+        return serde_json::Value::Null;
+    };
+    let mut rows = Vec::with_capacity(slots.len());
+    for (name, counters) in slots {
+        if start {
+            counters.observation_started = Some(now);
+            counters.observation_attempted = 0;
+            counters.observation_delivered = 0;
+            counters.observation_pending_start = counters.pending;
+            counters.observation_peak_pending = counters.pending;
+            counters.interval_started = Some(now);
+            counters.interval_attempted = 0;
+            counters.interval_delivered = 0;
+            counters.interval_peak_pending = counters.pending;
+        }
+        let seconds = counters
+            .observation_started
+            .map(|started| now.duration_since(started).as_secs_f64())
+            .unwrap_or(0.0)
+            .max(0.001);
+        rows.push(serde_json::json!({
+            "account": name,
+            "observation_attempted_frames": counters.observation_attempted,
+            "observation_delivered_frames": counters.observation_delivered,
+            "observation_frames_per_s": counters.observation_delivered as f64 / seconds,
+            "pending_frame_work_start": counters.observation_pending_start,
+            "pending_frame_work": counters.pending,
+            "pending_frame_work_high_water": counters.observation_peak_pending,
+            "visible_bank_rows": counters.visible_bank_rows,
+            "bank_ready": counters.bank_ready,
+            "script_bank_ready": counters.script_bank_ready,
+            "listener_removed": counters.listener_removed_delivered.is_some(),
+            "listener_removed_delivered_frames": counters.listener_removed_delivered,
+            "attempted_frames_total": counters.attempted,
+            "delivered_frames_total": counters.delivered,
+            "pending_frame_work_total_high_water": counters.peak_pending,
+        }));
+    }
+    serde_json::Value::Array(rows)
+}
+
+fn q4_accountleveler_probe_scenario() -> scenario::Scenario {
+    let mut scenario = scenario::thiever_sustained_scenario();
+    let seed_step = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "seed stats, food, and tele to the guard stand")
+        .expect("Thiever seed step");
+    scenario.steps.truncate(seed_step);
+    let bank_open = || scenario::Wait {
+        arm: scenario::Proof::BankOpen,
+        budget_ticks: 200,
+    };
+    scenario.name = "accountleveler_listener_probe";
+    scenario.steps.extend([
+        scenario::Step {
+            name: "seed and open this account's full bank",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|client, _| {
+                    cheat(client, "~bank_f2p");
+                    cheat(client, "~bank");
+                    true
+                }),
+            },
+            wait: bank_open(),
+        },
+        scenario::Step {
+            name: "start the AccountLeveler-listener probe on the full bank",
+            kind: scenario::StepKind::StartScript,
+            wait: bank_open(),
+        },
+        scenario::Step {
+            name: "hold the full bank while the listener probe runs",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: bank_open(),
+        },
+    ]);
+    scenario.proof = scenario::Proof::BankOpen;
+    scenario.settings.start_script = Some("AccountLevelerListenerProbe");
+    scenario.settings.script_settings_inject = None;
+    scenario.settings.fixture_loadouts = None;
+    scenario.settings.require_mainland_base = false;
+    scenario.settings.terminal_shot = None;
+    scenario
+}
+
+// The probe imports what AccountLeveler.ts imports for its listener block;
+// a compat-class card has no `Bank`, `BotHost`, `ScriptRunner` or `Game`
+// globals (the first guest pilot failed with "Bank is not defined").
+const Q4_ACCOUNTLEVELER_PROBE_SOURCE: &str = r##"import { Bank } from '../../api/bank/Bank.js';
+import { Game } from '../../api/game/Game.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+export default class AccountLevelerListenerProbe extends LoopingBot {
+    override loopDelay = 100;
+
+    private phase = 'train';
+    private status = 'sampling';
+    private detail = '';
+    private lastLoggedAt = 0;
+    private loopIterations = 0;
+    private stopObserving: (() => void) | null = null;
+    private readonly stock = {
+        rows: 0,
+        ready: false,
+        observations: 0,
+        observe(items: unknown[], ready: boolean): void {
+            this.rows = items.length;
+            this.ready = ready;
+            this.observations = Math.min(this.observations + 1, 0xffff_ffff);
+        },
+    };
+    private readonly session = {
+        workSamples: 0,
+        sampleWork(_at: number, _isWork: boolean): void {
+            this.workSamples = Math.min(this.workSamples + 1, 0xffff_ffff);
+        },
+    };
+
+    override async onStart(): Promise<void> {
+        this.lastLoggedAt = Date.now();
+        const items = Bank.items();
+        const ready = Bank.ready();
+        this.stock.observe(items, ready);
+        super.log(`MEMAB_BANK_ROWS:${ready ? 1 : 0}:${items.length}`);
+        this.stopObserving = BotHost.addFrameListener(() => {
+            this.stock.observe(Bank.items(), Bank.ready());
+            this.session.sampleWork(Date.now(), this.phase === 'train' && ScriptRunner.state === 'running' && !Bank.isOpen() && (Game.animating() || Game.inCombat()));
+            if (ScriptRunner.state === 'running' && Date.now() - this.lastLoggedAt >= 30000) {
+                const tile = Game.tile();
+                this.log(`Still ${this.status}${this.detail ? `; ${this.detail}` : ''}; position ${tile ? `(${tile.x},${tile.z},${tile.level})` : 'unknown'}`);
+            }
+        });
+    }
+
+    override log(message: string): void {
+        this.lastLoggedAt = Date.now();
+        super.log(message);
+    }
+
+    override async loop(): Promise<void> {
+        if (!Game.sceneReady()) return;
+        this.loopIterations = (this.loopIterations + 1) % 1_000_000;
+    }
+
+    override onStop(): void {
+        this.stopObserving?.();
+        this.stopObserving = null;
+    }
+}"##;
+
+fn q4_accountleveler_probe_source(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<String, String> {
+    let listener_start = "        this.stopObserving = BotHost.addFrameListener(() => {\n";
+    if cell.has_listener() != (arm == Q4FrameArm::Listener) {
+        return Err("Q4 cell and listener arm do not match".into());
+    }
+    let listener_matches = Q4_ACCOUNTLEVELER_PROBE_SOURCE
+        .matches(listener_start)
+        .count();
+    if listener_matches != 1 {
+        return Err(format!(
+            "AccountLeveler-listener probe expected one registration, found {listener_matches}"
+        ));
+    }
+    let registration_matches = Q4_ACCOUNTLEVELER_PROBE_SOURCE
+        .matches("BotHost.addFrameListener(")
+        .count();
+    if registration_matches != 1 {
+        return Err(format!(
+            "AccountLeveler-listener probe expected one listener, found {registration_matches}"
+        ));
+    }
+    let end_marker = "\n        });";
+    let listener_start_at = Q4_ACCOUNTLEVELER_PROBE_SOURCE
+        .find(listener_start)
+        .expect("listener anchor count checked");
+    let listener_end_at = Q4_ACCOUNTLEVELER_PROBE_SOURCE[listener_start_at..]
+        .find(end_marker)
+        .map(|offset| listener_start_at + offset + end_marker.len())
+        .ok_or("AccountLeveler-listener probe block was incomplete")?;
+    let listener_source = &Q4_ACCOUNTLEVELER_PROBE_SOURCE[listener_start_at..listener_end_at];
+    if listener_source.matches("Bank.items()").count() != 1
+        || listener_source.matches("Bank.ready()").count() != 1
+        || listener_source
+            .find("this.stock.observe")
+            .unwrap_or(usize::MAX)
+            >= listener_source
+                .find("this.session.sampleWork")
+                .unwrap_or(usize::MAX)
+        || listener_source
+            .find("this.session.sampleWork")
+            .unwrap_or(usize::MAX)
+            >= listener_source.find("Game.tile()").unwrap_or(usize::MAX)
+    {
+        return Err(
+            "AccountLeveler-listener probe body does not match the pinned call order".into(),
+        );
+    }
+    let mut transformed = Q4_ACCOUNTLEVELER_PROBE_SOURCE.to_owned();
+    match cell {
+        Q4FrameCell::ZeroListeners => {
+            transformed.replace_range(listener_start_at..listener_end_at, "");
+        }
+        Q4FrameCell::Removal => {
+            let removal_after_ms = Q4_REMOVAL_DELAY.as_millis();
+            let removal_at =
+                format!("        const memabRemovalAt = Date.now() + {removal_after_ms};\n");
+            transformed.insert_str(listener_start_at, &removal_at);
+            let guard_anchor = "            this.stock.observe";
+            let guard_at = transformed
+                .find(guard_anchor)
+                .ok_or("AccountLeveler-listener probe removal anchor was missing")?;
+            transformed.insert_str(
+                guard_at,
+                concat!(
+                    "            if (Date.now() >= memabRemovalAt) {\n",
+                    "                this.stopObserving?.();\n",
+                    "                this.log(\"MEMAB_LISTENER_REMOVED\");\n",
+                    "                return;\n",
+                    "            }\n",
+                ),
+            );
+        }
+        Q4FrameCell::OneListener
+        | Q4FrameCell::Pause
+        | Q4FrameCell::Stop
+        | Q4FrameCell::BusyFullBankSampling => {}
+    }
+    Ok(transformed)
+}
 
 const READY_SETTLE: Duration = Duration::from_secs(2);
 
@@ -627,6 +1287,7 @@ pub(crate) fn client_frame(
     run_state: Option<script::RunState>,
 ) {
     mark_startup(StartupMark::FirstClientFrame);
+    observe_frame_bank(c, name);
     crate::memory_diagnostics::gatherer_frame(c, name, run_state);
     crate::memory_diagnostics::frame(c, name, hold);
     observe_gameplay_phase(c, name, run_state == Some(script::RunState::Running));
@@ -1465,6 +2126,22 @@ fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Arc<[api::loadout
         .into()
 }
 
+fn q4_accountleveler_probe_card(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<ScriptCard, String> {
+    let source = q4_accountleveler_probe_source(arm, cell)?;
+    let js = script_js::transpile_ts(&source)?;
+    let bag = script::settings_store::merge_bag(&[], &serde_json::Map::new(), None);
+    Ok(ScriptCard {
+        catalog: Some(crate::script_runtime::js_start_card(
+            "Q4 Accountleveler Probe",
+            js,
+            script_js::LoadShape::CompatClass,
+            Vec::new(),
+        )),
+        bag: Arc::new(bag),
+        loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+    })
+}
+
 /// Prepared memory-benchmark run shared by panel-play and tui-play.
 pub struct Run {
     pub config: Config,
@@ -1483,6 +2160,18 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     scenario_name: Option<String>,
+    q4_frame_arm: Option<Q4FrameArm>,
+    q4_frame_cell: Option<Q4FrameCell>,
+    q4_bank_rows: Option<usize>,
+    q4_pause_started_at: Option<Instant>,
+    q4_pause_request_at: Option<Instant>,
+    q4_pause_resume_requested_at: Option<Instant>,
+    q4_pause_counts: Option<HashMap<String, FrameDeliveryObservation>>,
+    q4_resume_counts: Option<HashMap<String, FrameDeliveryObservation>>,
+    q4_stop_counts: Option<HashMap<String, FrameDeliveryObservation>>,
+    /// Set from the Stop request until every slot reports Idle.
+    q4_stop_requested_at: Option<Instant>,
+    q4_lifecycle_events: Vec<serde_json::Value>,
     output: BufWriter<std::fs::File>,
     diagnostics: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
@@ -1574,12 +2263,21 @@ impl Run {
         // A frontend `main` marks the epoch first; this only guarantees the
         // epoch predates this run's own timer for any other caller.
         mark_process_start();
+        clear_frame_delivery();
         // Fail closed on panel-only / conflicting flags before minting vaults.
         let render_policy = parse_render_policy(frontend)?;
         let single_renderer = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
         let sustain = std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1");
         let requested_scenario =
             std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string());
+        let q4_frame_arm = Q4FrameArm::from_env(&requested_scenario, config.workload)?;
+        let q4_frame_cell = if let Some(arm) = q4_frame_arm {
+            Some(Q4FrameCell::from_env(arm)?)
+        } else if std::env::var_os("BOT_MEMORY_Q4_CELL").is_some() {
+            return Err("BOT_MEMORY_Q4_CELL requires accountleveler_listener_probe".into());
+        } else {
+            None
+        };
         if sustain
             && (!matches!(config.workload, Workload::Active | Workload::Lifecycle)
                 || requested_scenario != "thiever")
@@ -1648,56 +2346,68 @@ impl Run {
             Some(requested_scenario)
         };
         let card = if let Some(scenario_name) = scenario_name.as_deref() {
-            let benchmark = scenario::get(scenario_name)
-                .ok_or_else(|| format!("unknown BOT_MEMORY_SCENARIO {scenario_name}"))?;
-            let card_name = benchmark.settings.start_script.ok_or_else(|| {
-                format!("BOT_MEMORY_SCENARIO {scenario_name} has no catalog script")
-            })?;
-            let inject = scenario::settings_inject_map(benchmark.settings.script_settings_inject);
-            if scenario_name == "gatherer" && config.n > 1 {
-                Some(ScriptCard {
-                    catalog: None,
-                    bag: Arc::new(script::settings_store::merge_bag(
-                        (script::gatherer::CARD.schema)(),
+            if scenario_name == "accountleveler_listener_probe" {
+                Some(q4_accountleveler_probe_card(
+                    q4_frame_arm
+                        .ok_or("accountleveler_listener_probe requires a Q4 listener arm")?,
+                    q4_frame_cell.ok_or("accountleveler_listener_probe requires a Q4 cell")?,
+                )?)
+            } else {
+                let benchmark = scenario::get(scenario_name)
+                    .ok_or_else(|| format!("unknown BOT_MEMORY_SCENARIO {scenario_name}"))?;
+                let card_name = benchmark.settings.start_script.ok_or_else(|| {
+                    format!("BOT_MEMORY_SCENARIO {scenario_name} has no catalog script")
+                })?;
+                let inject =
+                    scenario::settings_inject_map(benchmark.settings.script_settings_inject);
+                if scenario_name == "gatherer" && config.n > 1 {
+                    Some(ScriptCard {
+                        catalog: None,
+                        bag: Arc::new(script::settings_store::merge_bag(
+                            (script::gatherer::CARD.schema)(),
+                            &serde_json::Map::new(),
+                            inject.as_ref(),
+                        )),
+                        loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+                    })
+                } else {
+                    let root = std::env::var_os("RS2B0T")
+                        .map(PathBuf::from)
+                        .ok_or("RS2B0T is required for the active memory benchmark")?;
+                    let mut library = script_js::JsLibrary::new(dir.join("scripts.json"));
+                    library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
+                    library.ensure_js(script::ScriptSource::Catalog, card_name)?;
+                    let card = library
+                        .get(script::ScriptSource::Catalog, card_name)
+                        .cloned()
+                        .ok_or_else(|| format!("missing catalog card {card_name}"))?;
+                    let bag = script::settings_store::merge_bag(
+                        &card.settings_schema,
                         &serde_json::Map::new(),
                         inject.as_ref(),
-                    )),
-                    loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
-                })
-            } else {
-                let root = std::env::var_os("RS2B0T")
-                    .map(PathBuf::from)
-                    .ok_or("RS2B0T is required for the active memory benchmark")?;
-                let mut library = script_js::JsLibrary::new(dir.join("scripts.json"));
-                library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
-                library.ensure_js(script::ScriptSource::Catalog, card_name)?;
-                let card = library
-                    .get(script::ScriptSource::Catalog, card_name)
-                    .cloned()
-                    .ok_or_else(|| format!("missing catalog card {card_name}"))?;
-                let bag = script::settings_store::merge_bag(
-                    &card.settings_schema,
-                    &serde_json::Map::new(),
-                    inject.as_ref(),
-                );
-                let siblings = script_js::resolve_sibling_modules(
-                    &card.path,
-                    &card.origin,
-                    library.cache(),
-                    script_js::CacheMeta {
-                        kind: card.kind,
-                        source: card.source,
-                        shape: None,
-                        api_family: Some(card.api_family.as_str().into()),
-                    },
-                )?;
-                Some(ScriptCard {
-                    catalog: Some(crate::script_runtime::js_start_card(
-                        card.js, card.shape, siblings,
-                    )),
-                    bag: Arc::new(bag),
-                    loadouts: scenario_loadouts(&benchmark.settings),
-                })
+                    );
+                    let siblings = script_js::resolve_sibling_modules(
+                        &card.path,
+                        &card.origin,
+                        library.cache(),
+                        script_js::CacheMeta {
+                            kind: card.kind,
+                            source: card.source,
+                            shape: None,
+                            api_family: Some(card.api_family.as_str().into()),
+                        },
+                    )?;
+                    Some(ScriptCard {
+                        catalog: Some(crate::script_runtime::js_start_card(
+                            card.name.clone(),
+                            card.js,
+                            card.shape,
+                            siblings,
+                        )),
+                        bag: Arc::new(bag),
+                        loadouts: scenario_loadouts(&benchmark.settings),
+                    })
+                }
             }
         } else {
             None
@@ -1747,6 +2457,9 @@ impl Run {
                 .collect(),
         }));
         *GAMEPLAY_PHASES.lock().unwrap() = Some(Arc::clone(&gameplay_phases));
+        if q4_frame_arm.is_some() {
+            configure_frame_delivery(&names);
+        }
         Ok(Self {
             config,
             names,
@@ -1764,6 +2477,17 @@ impl Run {
             teardown: None,
             card,
             scenario_name,
+            q4_frame_arm,
+            q4_frame_cell,
+            q4_bank_rows: None,
+            q4_pause_started_at: None,
+            q4_pause_request_at: None,
+            q4_pause_resume_requested_at: None,
+            q4_pause_counts: None,
+            q4_resume_counts: None,
+            q4_stop_counts: None,
+            q4_stop_requested_at: None,
+            q4_lifecycle_events: Vec::with_capacity(2),
             output,
             diagnostics,
             diagnostic_output,
@@ -1815,7 +2539,9 @@ impl Run {
             );
         }
         for (slot, name) in self.names.iter().enumerate() {
-            let mut scenario = if self.config.workload == Workload::SeededIdle {
+            let mut scenario = if self.q4_frame_arm.is_some() {
+                q4_accountleveler_probe_scenario()
+            } else if self.config.workload == Workload::SeededIdle {
                 seeded_idle_scenario()
             } else if self.scenario_name.as_deref() == Some("thiever")
                 && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
@@ -1910,12 +2636,13 @@ impl Run {
             let mut slot = slot.lock().unwrap();
             let loadouts: Arc<[api::loadout::Loadout]> =
                 vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)].into();
-            let start = crate::script_runtime::js_surface_start(
+            let start = crate::script_runtime::js_surface_start_with_wilderness_rules(
                 Arc::clone(card),
                 Some(Arc::new(bag)),
                 play.game_data(),
                 play.named_banks(),
                 loadouts,
+                Arc::clone(&play.wilderness_rules),
             );
             slot.start_surface(start)
                 .map_err(|error| error.to_string())?;
@@ -1926,12 +2653,13 @@ impl Run {
         // Fixtures must not read the operator's saved loadouts.
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
-        let start = crate::script_runtime::js_surface_start(
+        let start = crate::script_runtime::js_surface_start_with_wilderness_rules(
             Arc::clone(card),
             Some(Arc::clone(card_bag)),
             play.game_data(),
             play.named_banks(),
             Arc::clone(loadouts),
+            Arc::clone(&play.wilderness_rules),
         );
         slot.start_surface(start)
             .map_err(|error| error.to_string())?;
@@ -1959,6 +2687,284 @@ impl Run {
         );
     }
 
+    fn q4_scripts_are(&self, play: &Play, expected: script::RunState) -> bool {
+        self.names
+            .iter()
+            .all(|name| play.script_state(name) == expected)
+    }
+
+    fn record_q4_lifecycle_event(&mut self, play: &Play, now: Instant, event: &str) {
+        let scripts = self
+            .names
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "account": name,
+                    "state": format!("{:?}", play.script_state(name)),
+                })
+            })
+            .collect::<Vec<_>>();
+        let elapsed_s = self
+            .observing
+            .map(|started| now.duration_since(started).as_secs_f64());
+        self.q4_lifecycle_events.push(serde_json::json!({
+            "event": event,
+            "elapsed_s": elapsed_s,
+            "scripts": scripts,
+            "frame_delivery": frame_delivery_qualification(now, false),
+        }));
+    }
+
+    fn drive_q4_lifecycle(
+        &mut self,
+        play: &Play,
+        now: Instant,
+        observing: Instant,
+    ) -> Result<(), String> {
+        match self.q4_frame_cell {
+            Some(Q4FrameCell::Pause) => {
+                let elapsed = now.duration_since(observing);
+                if self.q4_pause_request_at.is_none() && elapsed >= Q4_PAUSE_AFTER {
+                    if !self.q4_scripts_are(play, script::RunState::Running) {
+                        return Err("q4_pause_started_from_nonrunning_script".into());
+                    }
+                    self.record_q4_lifecycle_event(play, now, "pause_requested");
+                    for name in &self.names {
+                        play.script_pause(name);
+                    }
+                    self.q4_pause_request_at = Some(now);
+                }
+                if let Some(requested) = self.q4_pause_request_at {
+                    if self.q4_pause_started_at.is_none() {
+                        if self.q4_scripts_are(play, script::RunState::Paused) {
+                            self.q4_pause_started_at = Some(now);
+                            self.q4_pause_counts = Some(
+                                frame_delivery_observations(&self.names)
+                                    .ok_or("q4_pause_counters_unavailable")?,
+                            );
+                            self.record_q4_lifecycle_event(play, now, "paused");
+                        } else if now.duration_since(requested) >= Q4_PAUSE_RESUME_TIMEOUT {
+                            return Err("q4_pause_state_not_observed".into());
+                        }
+                    }
+                }
+                if let Some(paused_at) = self.q4_pause_started_at {
+                    if self.q4_pause_resume_requested_at.is_none()
+                        && now.duration_since(paused_at) >= Q4_PAUSE_FOR
+                    {
+                        if !self.q4_scripts_are(play, script::RunState::Paused) {
+                            return Err("q4_script_left_paused_state_before_resume".into());
+                        }
+                        // Operator pause parks ScriptRunner work, not BotHost
+                        // client frames: upstream `BotHost.onFrame` fires every
+                        // client loop (`BotHost.ts:48-55`), AccountLeveler's
+                        // listener checks `ScriptRunner.state` itself, and the
+                        // runtime contract test says so (`compat_v1_runtime.rs`
+                        // "operator pause parks ScriptRunner work, not BotHost
+                        // client frames"). Every bot keeps receiving frames.
+                        let before = self
+                            .q4_pause_counts
+                            .as_ref()
+                            .ok_or("q4_pause_counters_unavailable")?;
+                        let during = frame_delivery_observations(&self.names)
+                            .ok_or("q4_pause_counters_unavailable")?;
+                        if before.iter().any(|(name, observation)| {
+                            during
+                                .get(name)
+                                .is_none_or(|current| current.delivered <= observation.delivered)
+                        }) {
+                            return Err("q4_listener_not_delivered_while_script_paused".into());
+                        }
+                        self.record_q4_lifecycle_event(play, now, "resume_requested");
+                        for name in &self.names {
+                            play.script_resume(name);
+                        }
+                        self.q4_pause_resume_requested_at = Some(now);
+                    }
+                }
+                if let Some(requested) = self.q4_pause_resume_requested_at {
+                    if self.q4_resume_counts.is_none() {
+                        if self.q4_scripts_are(play, script::RunState::Running) {
+                            self.q4_resume_counts = Some(
+                                frame_delivery_observations(&self.names)
+                                    .ok_or("q4_resume_counters_unavailable")?,
+                            );
+                            self.record_q4_lifecycle_event(play, now, "resumed");
+                        } else if now.duration_since(requested) >= Q4_PAUSE_RESUME_TIMEOUT {
+                            return Err("q4_resume_state_not_observed".into());
+                        }
+                    }
+                }
+            }
+            Some(Q4FrameCell::Stop) => {
+                if self.q4_stop_counts.is_none() && now.duration_since(observing) >= Q4_STOP_AFTER {
+                    if !self.q4_scripts_are(play, script::RunState::Running) {
+                        return Err("q4_stop_started_from_nonrunning_script".into());
+                    }
+                    self.record_q4_lifecycle_event(play, now, "stop_requested");
+                    for name in &self.names {
+                        play.script_stop(name);
+                    }
+                    // A Load slot reaps its isolate asynchronously (Stopping,
+                    // then Idle); the host delivers no client frame to a
+                    // Stopping slot, so the counts at the request are final.
+                    self.q4_stop_counts = Some(
+                        frame_delivery_observations(&self.names)
+                            .ok_or("q4_stop_counters_unavailable")?,
+                    );
+                    self.q4_stop_requested_at = Some(now);
+                }
+                if let Some(requested) = self.q4_stop_requested_at {
+                    if self.q4_scripts_are(play, script::RunState::Idle) {
+                        self.q4_stop_requested_at = None;
+                        self.record_q4_lifecycle_event(play, now, "stopped");
+                    } else if now.duration_since(requested) >= Q4_STOP_IDLE_TIMEOUT {
+                        return Err("q4_script_idle_state_not_observed_after_stop".into());
+                    }
+                }
+            }
+            Some(
+                Q4FrameCell::ZeroListeners
+                | Q4FrameCell::OneListener
+                | Q4FrameCell::Removal
+                | Q4FrameCell::BusyFullBankSampling,
+            )
+            | None => {}
+        }
+        Ok(())
+    }
+
+    fn q4_expected_active(&self) -> Option<usize> {
+        Self::q4_expected_active_for(
+            self.q4_frame_cell,
+            self.config.n,
+            self.q4_pause_request_at.is_some(),
+            self.q4_pause_started_at.is_some(),
+            self.q4_pause_resume_requested_at.is_some(),
+            self.q4_resume_counts.is_some(),
+            self.q4_stop_counts.is_some(),
+        )
+    }
+
+    fn q4_expected_active_for(
+        cell: Option<Q4FrameCell>,
+        bot_count: usize,
+        pause_requested: bool,
+        pause_started: bool,
+        resume_requested: bool,
+        resume_counts: bool,
+        stop_counts: bool,
+    ) -> Option<usize> {
+        match cell {
+            Some(Q4FrameCell::Pause) if !pause_requested => Some(bot_count),
+            Some(Q4FrameCell::Pause) if !pause_started || (resume_requested && !resume_counts) => {
+                None
+            }
+            Some(Q4FrameCell::Pause) if resume_counts => Some(bot_count),
+            Some(Q4FrameCell::Pause) => Some(0),
+            Some(Q4FrameCell::Stop) if stop_counts => Some(0),
+            Some(_) | None => Some(bot_count),
+        }
+    }
+
+    fn validate_q4_cell_end(&self, play: &Play) -> Result<(), String> {
+        let cell = self.q4_frame_cell.ok_or("q4_cell_missing")?;
+        let observations =
+            frame_delivery_observations(&self.names).ok_or("q4_frame_counters_unavailable")?;
+        if observations
+            .values()
+            .any(|observation| observation.pending != 0)
+        {
+            return Err("q4_pending_frame_work_at_observe_end".into());
+        }
+        match cell {
+            Q4FrameCell::ZeroListeners => {
+                if observations
+                    .values()
+                    .any(|observation| observation.attempted == 0 || observation.delivered != 0)
+                {
+                    return Err("q4_zero_listener_delivery_mismatch".into());
+                }
+            }
+            Q4FrameCell::OneListener | Q4FrameCell::BusyFullBankSampling => {
+                if observations.values().any(|observation| {
+                    observation.attempted == 0 || observation.delivered != observation.attempted
+                }) {
+                    return Err("q4_one_listener_delivery_mismatch".into());
+                }
+            }
+            Q4FrameCell::Removal => {
+                // The removal delay counts from each bot's script start, so
+                // in a staggered fleet an early bot can remove its listener
+                // before the observation starts (0 frames delivered in the
+                // window). The proof uses lifetime counts: delivered before
+                // removal, none after, frames still attempted, still Running.
+                if frame_delivery_removal_stable(&self.names) != Some(true)
+                    || observations
+                        .values()
+                        .any(|observation| observation.attempted <= observation.delivered)
+                    || !self.q4_scripts_are(play, script::RunState::Running)
+                {
+                    return Err("q4_listener_removal_not_proven".into());
+                }
+            }
+            Q4FrameCell::Pause => {
+                let resumed = self
+                    .q4_resume_counts
+                    .as_ref()
+                    .ok_or("q4_pause_resume_not_proven")?;
+                if !self.q4_scripts_are(play, script::RunState::Running)
+                    || observations.iter().any(|(name, observation)| {
+                        resumed
+                            .get(name)
+                            .is_none_or(|after| observation.delivered <= after.delivered)
+                    })
+                {
+                    return Err("q4_listener_not_delivered_after_resume".into());
+                }
+            }
+            Q4FrameCell::Stop => {
+                let stopped = self.q4_stop_counts.as_ref().ok_or("q4_stop_not_proven")?;
+                if !self.q4_scripts_are(play, script::RunState::Idle)
+                    || observations.iter().any(|(name, observation)| {
+                        stopped
+                            .get(name)
+                            .is_none_or(|at_stop| observation.delivered != at_stop.delivered)
+                    })
+                {
+                    return Err("q4_listener_delivered_after_stop".into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Record the Q4 probe markers in the script lines the frontend session
+    /// took on its last poll (`(slot, line)`). The session drains every
+    /// slot's pending script logs on each poll, so the run reads that copy
+    /// rather than draining the logs itself (it would see none of them).
+    pub fn observe_script_lines(&self, lines: &[(String, String)]) {
+        if self.q4_frame_arm.is_none() {
+            return;
+        }
+        for (name, line) in lines {
+            if self.names.contains(name) {
+                collect_script_bank_row(name, line);
+            }
+        }
+    }
+
+    /// Return the script-reported bank row count observed by a test run.
+    #[cfg(feature = "test-support")]
+    pub fn observed_script_bank_rows_for_test(&self, name: &str) -> Option<usize> {
+        FRAME_DELIVERY
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|slots| slots.get(name))
+            .and_then(|counters| counters.bank_rows_from_script)
+    }
+
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.
@@ -1979,6 +2985,22 @@ impl Run {
 
     fn poll_inner(&mut self, play: &Play) -> Result<bool, String> {
         let now = Instant::now();
+        let sample_due = self
+            .last_sample
+            .is_none_or(|sample| now.duration_since(sample) >= Duration::from_secs(1));
+        if self.q4_frame_arm.is_some() && sample_due {
+            let observed_rows = frame_delivery_bank_rows(&self.names);
+            if self.observing.is_some() {
+                if observed_rows != self.q4_bank_rows {
+                    return Err(format!(
+                        "q4_full_bank_rows_changed: expected={:?} observed={observed_rows:?}",
+                        self.q4_bank_rows
+                    ));
+                }
+            } else {
+                self.q4_bank_rows = observed_rows;
+            }
+        }
         let statuses = play.statuses();
         self.ready_latch.observe(&statuses, now);
         let ready = statuses
@@ -2122,6 +3144,8 @@ impl Run {
             .iter()
             .filter(|name| play.script_state(name) == script::RunState::Running)
             .count();
+        let q4_bank_rows = self.q4_bank_rows;
+        let q4_ready = self.q4_frame_arm.is_none() || q4_bank_rows.is_some();
 
         // Unseeded idle: stable ingame readiness only. Seeded idle: seed
         // completed, no scripts. Active/lifecycle: all ready, seeded,
@@ -2136,6 +3160,7 @@ impl Run {
                 && proved == self.config.n
                 && active == self.config.n
         };
+        let established = established && q4_ready;
 
         if self.qualification_complete.is_none() && established {
             if let Some(all_ingame) = self.all_ingame {
@@ -2158,6 +3183,9 @@ impl Run {
         } else {
             true
         };
+        let frame_boundary_ready = self.observing.is_some()
+            || self.q4_frame_arm.is_none()
+            || frame_delivery_pending_zero();
         let qualify_bound = if self.scenario_name.as_deref() == Some("duel_arena") {
             DUEL_FLEET_DEADLINE
         } else {
@@ -2178,6 +3206,7 @@ impl Run {
         }
         if self.observing.is_none()
             && phase_ready
+            && frame_boundary_ready
             && self
                 .qualification_complete
                 .is_some_and(|t| t.elapsed() >= self.config.warmup)
@@ -2185,10 +3214,37 @@ impl Run {
             if !established {
                 return Err("workload did not remain ready through warmup".into());
             }
+            if self.q4_frame_arm.is_some() {
+                self.q4_bank_rows = q4_bank_rows;
+            }
             self.write_qualification(play, "observe-start")?;
             self.observing = Some(now);
         }
         if let Some(observing) = self.observing {
+            if self.q4_frame_arm.is_some() && self.teardown.is_none() {
+                self.drive_q4_lifecycle(play, now, observing)?;
+                let active_now = self
+                    .names
+                    .iter()
+                    .filter(|name| play.script_state(name) == script::RunState::Running)
+                    .count();
+                if self
+                    .q4_expected_active()
+                    .is_some_and(|expected| active_now != expected)
+                {
+                    return Err(format!(
+                        "q4_listener_probe_state_mismatch: cell={:?} active={active_now} expected={:?}",
+                        self.q4_frame_cell,
+                        self.q4_expected_active()
+                    ));
+                }
+                if self.q4_frame_cell == Some(Q4FrameCell::Removal)
+                    && sample_due
+                    && frame_delivery_removal_stable(&self.names) == Some(false)
+                {
+                    return Err("q4_listener_delivered_after_removal".into());
+                }
+            }
             if self.config.workload == Workload::Lifecycle
                 && self.teardown.is_none()
                 && observing.elapsed() < self.config.observe
@@ -2228,6 +3284,12 @@ impl Run {
                 {
                     return Err("gatherer_restart_incomplete_at_observe_end".into());
                 }
+                if self.q4_frame_arm.is_some() && !frame_delivery_pending_zero() {
+                    return Ok(false);
+                }
+                if self.q4_frame_arm.is_some() {
+                    self.validate_q4_cell_end(play)?;
+                }
                 self.write_qualification(play, "observe-end")?;
                 for name in &self.names {
                     play.script_stop(name);
@@ -2237,10 +3299,7 @@ impl Run {
             }
         }
 
-        if self
-            .last_sample
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
-        {
+        if sample_due {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
             let metrics = script_js::runtime::memory_profile::snapshots();
             let sum = |key: &str| metrics.iter().filter_map(|m| m[key].as_u64()).sum::<u64>();
@@ -2296,6 +3355,19 @@ impl Run {
                 gpu_tracked_bytes: Some(gpu.buffers + gpu.textures),
             };
             let mut value = sample.to_json();
+            if let Some(arm) = self.q4_frame_arm {
+                q4_run_record_metadata(&mut value);
+                value["frame_listener_arm"] = arm.as_str().into();
+                value["q4_full_bank_rows_expected"] = self.q4_bank_rows.into();
+                value["frame_delivery"] = frame_delivery_samples(now);
+                if let Some(cell) = self.q4_frame_cell {
+                    value["q4_frame_cell"] = cell.as_str().into();
+                    // Running scripts this row must show: the pause and stop
+                    // cells park them on purpose (0 while paused or after
+                    // stop, null in a transition the run itself bounds).
+                    value["q4_expected_active"] = self.q4_expected_active().into();
+                }
+            }
             let cpu = process_cpu_seconds();
             value["process_cpu_user_s"] = cpu.map(|v| v.0).into();
             value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
@@ -2482,6 +3554,18 @@ impl Run {
         });
         phases.record(&mut value, warmup_game_ticks(self.config.warmup));
         drop(phases);
+        if let Some(arm) = self.q4_frame_arm {
+            q4_run_record_metadata(&mut value);
+            value["frame_listener_arm"] = arm.as_str().into();
+            value["q4_full_bank_rows_expected"] = self.q4_bank_rows.into();
+            value["frame_delivery"] =
+                frame_delivery_qualification(Instant::now(), phase == "observe-start");
+            if let Some(cell) = self.q4_frame_cell {
+                value["q4_frame_cell"] = cell.as_str().into();
+            }
+            value["q4_lifecycle_events"] =
+                serde_json::Value::Array(self.q4_lifecycle_events.clone());
+        }
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
@@ -2527,6 +3611,17 @@ impl Run {
             "ready_ever": self.ready_latch.ever(),
             "slots": slots,
         });
+        if let Some(arm) = self.q4_frame_arm {
+            q4_run_record_metadata(&mut value);
+            value["frame_listener_arm"] = arm.as_str().into();
+            value["q4_full_bank_rows_expected"] = self.q4_bank_rows.into();
+            value["frame_delivery"] = frame_delivery_qualification(Instant::now(), false);
+            if let Some(cell) = self.q4_frame_cell {
+                value["q4_frame_cell"] = cell.as_str().into();
+            }
+            value["q4_lifecycle_events"] =
+                serde_json::Value::Array(self.q4_lifecycle_events.clone());
+        }
         self.gameplay_phases
             .lock()
             .unwrap()
@@ -2574,6 +3669,14 @@ impl Run {
     }
 }
 
+impl Drop for Run {
+    fn drop(&mut self) {
+        if self.q4_frame_arm.is_some() {
+            clear_frame_delivery();
+        }
+    }
+}
+
 /// One sidecar row in a single write. JSON's `Display` emits token-sized
 /// writes, which cost a measured frame when a sidecar row lands inside the
 /// observed window; one `write_all` per row also leaves nothing buffered
@@ -2617,6 +3720,377 @@ mod tests {
                 std::env::remove_var(k);
             }
         }
+    }
+    struct FrameDeliveryGuard;
+
+    impl Drop for FrameDeliveryGuard {
+        fn drop(&mut self) {
+            clear_frame_delivery();
+        }
+    }
+
+    #[test]
+    fn q4_arm_requires_an_explicit_active_listener_choice() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = EnvGuard::clear(&["BOT_MEMORY_Q4_LISTENER", "BOT_MEMORY_Q4_CELL"]);
+
+        assert_eq!(
+            Q4FrameArm::from_env("thiever", Workload::Active).unwrap(),
+            None
+        );
+        assert!(
+            Q4FrameArm::from_env("accountleveler_listener_probe", Workload::SeededIdle).is_err()
+        );
+        assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err());
+
+        std::env::set_var("BOT_MEMORY_Q4_LISTENER", "1");
+        let listener = Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active)
+            .unwrap()
+            .expect("listener arm");
+        assert_eq!(
+            Q4FrameCell::from_env(listener).unwrap(),
+            Q4FrameCell::BusyFullBankSampling
+        );
+        assert_eq!(
+            Q4FrameCell::BusyFullBankSampling.as_str(),
+            "busy_bank_65_row_sampling"
+        );
+        std::env::set_var("BOT_MEMORY_Q4_CELL", "pause");
+        assert_eq!(Q4FrameCell::from_env(listener).unwrap(), Q4FrameCell::Pause);
+        std::env::set_var("BOT_MEMORY_Q4_CELL", "zero_listeners");
+        assert!(Q4FrameCell::from_env(listener).is_err());
+        std::env::set_var("BOT_MEMORY_Q4_LISTENER", "0");
+        let zero = Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active)
+            .unwrap()
+            .expect("zero-listener arm");
+        assert_eq!(
+            Q4FrameCell::from_env(zero).unwrap(),
+            Q4FrameCell::ZeroListeners
+        );
+        std::env::set_var("BOT_MEMORY_Q4_CELL", "busy_bank_65_row_sampling");
+        assert!(Q4FrameCell::from_env(zero).is_err());
+        std::env::set_var("BOT_MEMORY_Q4_CELL", "unknown");
+        assert!(Q4FrameCell::from_env(zero).is_err());
+        std::env::set_var("BOT_MEMORY_Q4_LISTENER", "invalid");
+        assert!(Q4FrameArm::from_env("accountleveler_listener_probe", Workload::Active).is_err());
+    }
+
+    #[test]
+    fn q4_expected_active_tracks_pause_resume_and_stop_confirmations() {
+        let n = 3;
+        let expected = Run::q4_expected_active_for;
+        assert_eq!(
+            expected(None, n, false, false, false, false, false),
+            Some(n)
+        );
+        assert_eq!(
+            expected(
+                Some(Q4FrameCell::Pause),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(n)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, false, false, false),
+            Some(0)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, true, false, false),
+            None
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Pause), n, true, true, true, true, false),
+            Some(n)
+        );
+        assert_eq!(
+            expected(Some(Q4FrameCell::Stop), n, false, false, false, false, true),
+            Some(0)
+        );
+        assert_eq!(
+            expected(
+                Some(Q4FrameCell::Stop),
+                n,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(n)
+        );
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn q4_probe_variants_start_through_the_normal_compat_load_path() {
+        use crate::script_runtime::{script_slot_or_insert, ScriptWall, SettledStart};
+
+        let cases = [
+            (Q4FrameArm::NoListener, Q4FrameCell::ZeroListeners),
+            (Q4FrameArm::Listener, Q4FrameCell::OneListener),
+            (Q4FrameArm::Listener, Q4FrameCell::Removal),
+            (Q4FrameArm::Listener, Q4FrameCell::Pause),
+            (Q4FrameArm::Listener, Q4FrameCell::Stop),
+            (Q4FrameArm::Listener, Q4FrameCell::BusyFullBankSampling),
+        ];
+        // A compat-class card has no catalog globals, and a missing one fails
+        // only when the body runs (the first guest pilot: "Bank is not
+        // defined" at tick 16), so check the imports the probe body needs.
+        for name in ["Bank", "Game", "BotHost", "ScriptRunner"] {
+            assert!(
+                Q4_ACCOUNTLEVELER_PROBE_SOURCE.contains(&format!("import {{ {name} }} from ")),
+                "Q4 probe must import {name}"
+            );
+        }
+        for (index, (arm, cell)) in cases.into_iter().enumerate() {
+            let card = q4_accountleveler_probe_card(arm, cell)
+                .unwrap_or_else(|error| panic!("construct {cell:?} Q4 probe: {error}"));
+            let start = card
+                .catalog
+                .expect("Q4 probe must use the normal compat-class Load card");
+            let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+            script_slot_or_insert(&scripts, &format!("memab-q4-{index}"))
+                .lock()
+                .unwrap()
+                .start_load_settled(
+                    start.source.to_string(),
+                    start.shape,
+                    start.siblings.as_ref().to_vec(),
+                )
+                .unwrap_or_else(|error| panic!("start {cell:?} Q4 probe: {error}"));
+        }
+    }
+
+    #[test]
+    fn q4_scenario_keeps_live_seed_steps_and_proves_an_open_bank() {
+        let thiever = scenario::thiever_sustained_scenario();
+        let seed_step = thiever
+            .steps
+            .iter()
+            .position(|step| step.name == "seed stats, food, and tele to the guard stand")
+            .expect("Thiever seed step");
+        let q4 = q4_accountleveler_probe_scenario();
+        assert_eq!(q4.name, "accountleveler_listener_probe");
+
+        assert_eq!(q4.steps.len(), seed_step + 3);
+        for (actual, expected) in q4.steps.iter().zip(&thiever.steps).take(seed_step) {
+            assert_eq!(actual.name, expected.name);
+        }
+        assert_eq!(
+            q4.steps[seed_step].name,
+            "seed and open this account's full bank"
+        );
+        assert_eq!(
+            q4.steps[seed_step + 1].name,
+            "start the AccountLeveler-listener probe on the full bank"
+        );
+        assert_eq!(q4.proof, scenario::Proof::BankOpen);
+        assert_eq!(
+            q4.settings.start_script,
+            Some("AccountLevelerListenerProbe")
+        );
+    }
+
+    #[test]
+    fn q4_bank_state_counts_nonempty_rows_in_the_withdraw_grid() {
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.main_modal_id = 600;
+        client.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [
+                    Some("Withdraw 1".into()),
+                    Some("Withdraw 5".into()),
+                    Some("Withdraw 10".into()),
+                    Some("Withdraw All".into()),
+                    Some("Withdraw X".into()),
+                ],
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 0, 3, 0]),
+                link_obj_number: Some(vec![10, 0, 1, 0]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(accountleveler_bank_state(&client), (2, true));
+
+        client.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![0, 0]),
+                link_obj_number: Some(vec![0, 0]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(accountleveler_bank_state(&client), (0, false));
+        client.main_modal_id = -1;
+        assert_eq!(accountleveler_bank_state(&client), (0, false));
+    }
+
+    #[test]
+    fn q4_frame_counters_capture_listener_delivery_and_bank_qualification() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = FrameDeliveryGuard;
+        let names = vec!["alice".to_string()];
+        configure_frame_delivery(&names);
+
+        frame_dispatch_begin("alice");
+        frame_dispatch_end("alice", true);
+        let start_at = Instant::now();
+        let start = frame_delivery_qualification(start_at, true);
+        assert_eq!(start[0]["pending_frame_work_start"], 0);
+
+        frame_dispatch_begin("alice");
+        assert!(!frame_delivery_pending_zero());
+        frame_dispatch_end("alice", true);
+        frame_dispatch_begin("alice");
+        frame_dispatch_end("alice", false);
+        assert!(frame_delivery_pending_zero());
+
+        let end = frame_delivery_qualification(start_at + Duration::from_secs(1), false);
+        assert_eq!(end[0]["observation_attempted_frames"], 2);
+        assert_eq!(end[0]["observation_delivered_frames"], 1);
+        assert_eq!(end[0]["pending_frame_work"], 0);
+        assert_eq!(end[0]["pending_frame_work_high_water"], 1);
+        assert_eq!(end[0]["pending_frame_work_total_high_water"], 1);
+
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let counters = delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters");
+            counters.visible_bank_rows = Some(2);
+            counters.bank_ready = true;
+            counters.bank_rows_from_script = Some(27);
+            counters.script_bank_ready = true;
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), Some(27));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters")
+                .bank_rows_from_script = Some(26);
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), Some(26));
+
+        let sample = frame_delivery_samples(start_at + Duration::from_secs(2));
+        assert_eq!(sample[0]["attempted_frames"], 2);
+        assert_eq!(sample[0]["delivered_frames"], 1);
+        assert_eq!(sample[0]["pending_frame_work"], 0);
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let counters = delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters");
+            // Removed before the observation window: 0 frames delivered in
+            // the window, 1 over the bot's lifetime, none after removal.
+            counters.delivered = 1;
+            counters.listener_removed_delivered = Some(1);
+            counters.observation_delivered = 0;
+        }
+        assert_eq!(frame_delivery_removal_stable(&names), Some(true));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters")
+                .delivered = 2;
+        }
+        assert_eq!(frame_delivery_removal_stable(&names), Some(false));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let counters = delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("alice"))
+                .expect("configured account counters");
+            // Removed before any delivery: the listener was never proven live.
+            counters.delivered = 0;
+            counters.listener_removed_delivered = Some(0);
+        }
+        assert_eq!(frame_delivery_removal_stable(&names), Some(false));
+    }
+
+    #[test]
+    fn q4_bank_rows_require_a_matching_full_array_from_every_account() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = FrameDeliveryGuard;
+        let names = vec!["alice".to_string(), "bob".to_string()];
+        configure_frame_delivery(&names);
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let slots = delivery.as_mut().expect("configured account counters");
+            for counters in slots.values_mut() {
+                counters.visible_bank_rows = Some(2);
+                counters.bank_ready = true;
+                counters.bank_rows_from_script = Some(27);
+                counters.script_bank_ready = true;
+            }
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), Some(27));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("bob"))
+                .expect("bob's account counters")
+                .bank_rows_from_script = Some(26);
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), None);
+    }
+
+    /// The run reads the probe's markers from the frontend's copy of each
+    /// poll's script lines, with whatever prefix the log line carries.
+    #[test]
+    fn q4_script_markers_record_bank_rows_and_listener_removal() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = FrameDeliveryGuard;
+        let names = vec!["alice".to_string()];
+        configure_frame_delivery(&names);
+        collect_script_bank_row("alice", "unrelated line");
+        collect_script_bank_row("bob", "MEMAB_BANK_ROWS:1:27");
+        collect_script_bank_row("alice", "[script] MEMAB_BANK_ROWS:1:27");
+        collect_script_bank_row("alice", "MEMAB_LISTENER_REMOVED");
+        let delivery = FRAME_DELIVERY.lock().unwrap();
+        let counters = delivery
+            .as_ref()
+            .and_then(|slots| slots.get("alice"))
+            .expect("configured account counters");
+        assert_eq!(counters.bank_rows_from_script, Some(27));
+        assert!(counters.script_bank_ready);
+        assert_eq!(counters.listener_removed_delivered, Some(0));
     }
 
     #[test]
@@ -3539,6 +5013,7 @@ mod tests {
             .clone();
         run.card = Some(ScriptCard {
             catalog: Some(crate::script_runtime::js_start_card(
+                card.name,
                 card.js,
                 card.shape,
                 vec![],

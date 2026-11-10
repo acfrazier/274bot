@@ -19,10 +19,12 @@ export function facingPlayer(faceEntity) {
     return globalThis.rustyscript.functions.__rs2b0t_facing_player(Number(faceEntity));
 }
 
+const clientFacts = (kind, method, ...args) =>
+    globalThis.__rs2b0t_selected_facts(kind, method, ...args);
+
 /** The posted combat-tab style buttons, or null until the tab has loaded. */
 function offeredCombatModes() {
-    const labels = reader.selectButtonLabelsByVarp(-1, COM_MODE_VARP);
-    return labels.length > 0 ? labels : null;
+    return clientFacts('client-adapter-reader', 'combatStyleLabels');
 }
 
 /** The isolate's registered Rust functions. */
@@ -40,8 +42,9 @@ function matchCombatRow(style) {
 }
 
 function selectCombatMode(mode) {
-    const btn = reader.selectButtonByVarp(-1, COM_MODE_VARP, mode);
-    return btn !== -1 && actions.ifButton(btn);
+    // One native decision: the posted style button for `mode`, else null.
+    const btn = clientFacts('client-adapter-action', 'selectCombatMode', mode);
+    return btn !== null && actions.ifButton(btn);
 }
 
 /** One Rust call: the posted magic-tab component for `spell`, else -1. */
@@ -70,12 +73,8 @@ export const Game = new Proxy(
             if (snap().run_enabled !== undefined) return snap().run_enabled === true;
             return reader.varp(RUN_VARP) === 1;
         },
-        autoRetaliate() {
-            if (snap().retaliate_enabled !== undefined) return snap().retaliate_enabled === true;
-            return reader.varp(RETALIATE_VARP) === 0;
-        },
         autoRetaliateOn() {
-            return Game.autoRetaliate();
+            return snap().retaliate_enabled === true;
         },
         myName() {
             return optionalText(snap().my_name);
@@ -204,8 +203,14 @@ export const Game = new Proxy(
         attackedByPlayer() {
             return snap().attacked_by_player === true;
         },
-        async castOnNpc() {
-            throw notImpl('Game.castOnNpc');
+        async castOnNpc(spell, npc) {
+            // The native machine looks the spell's posted component up and
+            // starts the cast; an unknown spell or target is `false`.
+            const out = await runMachine('cast-npc', {
+                spell: String(spell ?? ''),
+                index: npc?.index ?? -1,
+            });
+            return out.kind === 'done' && out.value === true;
         },
     },
     {

@@ -129,6 +129,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         level: 0,
     };
     {
+        api::snapshot::clear_client_adapter_cache_for_tests(&rig.client.cache);
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
         let loc_index = usize::try_from(loc_id).unwrap();
         if cache.locs.len() <= loc_index {

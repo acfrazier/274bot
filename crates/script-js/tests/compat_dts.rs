@@ -34,14 +34,14 @@ fn drift_for_shim_replacement(suffix: &str, before: &str, after: &str) -> Vec<St
 fn drift_gate_rejects_async_to_sync_bank_member_mutation() {
     let drifts = drift_for_shim_replacement(
         "/api/bank/Bank.js",
-        "async depositAllExcept(",
-        "depositAllExcept(",
+        "async depositInventory(",
+        "depositInventory(",
     );
     assert!(
         drifts
             .iter()
-            .any(|drift| drift.contains("Bank.depositAllExcept async-ness")),
-        "a synchronous Bank.depositAllExcept must not satisfy a Promise declaration: {drifts:?}"
+            .any(|drift| drift.contains("Bank.depositInventory async-ness")),
+        "a synchronous Bank.depositInventory must not satisfy a Promise declaration: {drifts:?}"
     );
 }
 
@@ -144,6 +144,7 @@ fn preserve_members_rejects_an_unbacked_extra_member() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
     let drifts = drift_against_shim(
         &authored,
@@ -205,6 +206,7 @@ fn preserve_members_rejects_an_uninitialized_inventory_field() {
         is_async: false,
         allows_non_promise: true,
         is_static: false,
+        is_abstract: false,
     });
     let drifts = drift_against_shim(
         &authored,
@@ -236,13 +238,13 @@ fn preserve_members_rejects_an_emptied_class() {
 
 /// Re-run the frozen emitter and named runtime overlay without rewriting index.d.ts.
 /// The integration owner runs this with RS2B0T pointing at the frozen
-/// rs2b0t revision 90a69240a4617155f280f098958c3cd7f044f234 source.
+/// rs2b0t revision ae56ccc95ba5681b12f1f66ec2adea14427fe497 source.
 #[test]
 #[ignore = "requires RS2B0T set to the frozen rs2b0t source"]
 fn generator_check_matches_frozen_emit_and_overlay() {
     let rs2b0t = std::env::var_os("RS2B0T").unwrap_or_else(|| {
         panic!(
-            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t 90a69240a4617155f280f098958c3cd7f044f234 source before \
+            "RS2B0T is unset; set RS2B0T to the frozen rs2b0t ae56ccc95ba5681b12f1f66ec2adea14427fe497 source before \
              running `cargo test -p script --test compat_dts -- --include-ignored`"
         )
     });
@@ -274,7 +276,7 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[ignore = "requires npm, node, and RS2B0T set to the frozen rs2b0t source"]
 fn scratch_barrel_sidecar_extension_passes_freshness_and_drift_gates() {
     let rs2b0t = std::env::var_os("RS2B0T")
-        .expect("set RS2B0T to the frozen rs2b0t 90a69240a4617155f280f098958c3cd7f044f234 source");
+        .expect("set RS2B0T to the frozen rs2b0t ae56ccc95ba5681b12f1f66ec2adea14427fe497 source");
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let scratch = unique_temp_path("runtime-extension");
     let crate_copy = scratch.join("crate");
@@ -423,7 +425,7 @@ export const Gatherer: {
         .to_string();
     assert_ne!(
         actual_wrong_commit,
-        "90a69240a4617155f280f098958c3cd7f044f234"
+        "ae56ccc95ba5681b12f1f66ec2adea14427fe497"
     );
     let rejected = Command::new("node")
         .arg("generate.cjs")
@@ -438,7 +440,7 @@ export const Gatherer: {
     );
     assert!(
         stderr.contains(
-            "RS2B0T revision check failed: expected 90a69240 (90a69240a4617155f280f098958c3cd7f044f234)"
+            "RS2B0T revision check failed: expected ae56ccc95b (ae56ccc95ba5681b12f1f66ec2adea14427fe497)"
         ),
         "wrong-revision failure must have the stable prefix: {stderr}"
     );

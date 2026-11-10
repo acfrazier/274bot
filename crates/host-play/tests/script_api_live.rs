@@ -1038,6 +1038,145 @@ fn runtime_restart_cell() {
     runtime_cell(true);
 }
 
+const RUNTIME_COMPAT_SOURCE: &str = r#"
+import { LoopingBot } from '../../api/bot/Bot.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { Scheduler } from '../../runtime/Scheduler.js';
+import { ScriptActivity } from '../../runtime/ScriptActivity.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+class RuntimeActivityChild extends LoopingBot {
+    constructor(owner) {
+        super();
+        this.owner = owner;
+    }
+
+    onStart() {
+        this.owner.childMode = this.settings.str('mode');
+    }
+
+    loop() {
+        this.owner.childLoops += 1;
+        this.finish('activity complete');
+    }
+
+    onStop() {
+        this.owner.childStops += 1;
+    }
+}
+
+export default class RuntimeCompatProbe extends LoopingBot {
+    frameCount = 0;
+    childLoops = 0;
+    childStops = 0;
+    childMode = null;
+    activity = null;
+    removeFrame = null;
+    completed = false;
+
+    async onStart() {
+        this.removeFrame = BotHost.addFrameListener(() => {
+            this.frameCount += 1;
+        });
+        this.activity = new ScriptActivity(message => this.log(message));
+        const owner = this;
+        await this.activity.start({
+            name: 'Runtime activity child',
+            settingsSchema: { mode: { default: 'catalog' } },
+            create: () => new RuntimeActivityChild(owner),
+        }, { mode: 'override' });
+    }
+
+    async loop() {
+        if (this.completed || this.frameCount < 8) return;
+        await this.activity.loop();
+        const context = ScriptRunner.ctx;
+        const facts = {
+            frames: this.frameCount,
+            tickCount: BotHost.tickCount,
+            state: ScriptRunner.state,
+            contextState: context?.state ?? null,
+            contextStable: Scheduler.active === context,
+            activeEvent: context?.activeEvent ?? null,
+            runMeta: ScriptRunner.meta?.name ?? null,
+            childMode: this.childMode,
+            childLoops: this.childLoops,
+            childStops: this.childStops,
+            activityOutcome: this.activity.outcome,
+            activityChildReleased: this.activity.child === null,
+            currentTask: this.activity.currentTask,
+        };
+        if (facts.activityOutcome?.kind !== 'finished') return;
+        this.log('runtime-compat-pass: ' + JSON.stringify(facts));
+        this.removeFrame?.();
+        this.removeFrame = null;
+        this.completed = true;
+    }
+
+    onStop() {
+        this.removeFrame?.();
+        this.removeFrame = null;
+        this.activity?.stop();
+    }
+}
+"#;
+
+fn runtime_compat_cell() {
+    let (play, account, fixture) = start_fixture(false);
+    play.script_start_load(
+        &account,
+        RUNTIME_COMPAT_SOURCE.into(),
+        script_js::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .expect("start runtime compatibility probe");
+    let mut logs = Vec::new();
+    wait_for(&play, &account, &fixture, Duration::from_secs(45), |play| {
+        take_logs(play, &account, &mut logs);
+        play.script_state(&account) == script::RunState::Running
+            && logs
+                .iter()
+                .any(|line| line.contains("runtime-compat-pass: "))
+    });
+    let facts = logged(&logs, "runtime-compat-pass: ");
+    assert!(facts["frames"].as_u64().unwrap() >= 8, "{facts}");
+    assert!(
+        facts["frames"].as_u64().unwrap() > facts["tickCount"].as_u64().unwrap(),
+        "client-loop frames must not be a server-tick alias: {facts}"
+    );
+    assert_eq!(facts["state"], "running", "{facts}");
+    assert_eq!(facts["contextState"], "running", "{facts}");
+    assert_eq!(facts["contextStable"], true, "{facts}");
+    assert_eq!(facts["childMode"], "override", "{facts}");
+    assert_eq!(facts["childLoops"], 1, "{facts}");
+    assert_eq!(facts["childStops"], 1, "{facts}");
+    assert_eq!(
+        facts["activityOutcome"],
+        json!({"kind":"finished","reason":"activity complete"}),
+        "{facts}"
+    );
+    assert_eq!(facts["activityChildReleased"], true, "{facts}");
+    assert_eq!(facts["currentTask"], Value::Null, "{facts}");
+    play.script_stop(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        take_logs(play, &account, &mut logs);
+        play.script_state(&account) == script::RunState::Idle
+    });
+    take_logs(&play, &account, &mut logs);
+    no_drops(&account);
+    save(
+        "script-runtime-compat-receipt.json",
+        &json!({
+            "cell":"script_runtime_compat",
+            "account":account,
+            "facts":facts,
+            "logs":logs,
+            "script_stopped":true,
+        }),
+    );
+}
+
 fn owner_lifecycle_cell() {
     let (mut play, account, fixture) = start_fixture(false);
     let arm = play.arm(&account).expect("fixture owner arm");
@@ -1333,6 +1472,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         "script_api_gather_walk_options"
             | "script_runtime_load"
             | "script_runtime_restart"
+            | "script_runtime_compat"
             | "script_api_start_during_catalogue_refresh"
             | "owner_lifecycle"
             | "script_api_compat_journal_twice"
@@ -1398,6 +1538,15 @@ fn script_runtime_restart() {
     );
 }
 
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache, Engine L and baked R289 WORLD_NAV_PACK"]
+fn script_runtime_compat() {
+    run_captured(
+        "script_runtime_compat",
+        "script-runtime-compat-receipt.json",
+        runtime_compat_cell,
+    );
+}
 #[test]
 #[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
 fn owner_lifecycle() {

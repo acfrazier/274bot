@@ -27,8 +27,9 @@
 //! read from each.
 
 use crate::wire::{
-    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow,
-    QuestStatus, Row, SceneEntity, Snapshot, Stat,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle,
+    JournalEvidence as JournalEvidenceWire, QuestProgressRow, QuestStatus, Row, SceneEntity,
+    Snapshot, Stat,
 };
 use api::line_of_sight::CollisionQuery;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
@@ -36,7 +37,9 @@ use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use flatbuffers::{ForwardsUOffset, Vector};
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure};
-use script::api_progress::{ProgressPage, QuestProgressRow as ApiQuestProgressRow};
+use script::api_progress::{
+    JournalEvidence as ApiJournalEvidence, ProgressPage, QuestProgressRow as ApiQuestProgressRow,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
@@ -537,7 +540,7 @@ pub struct CarryRow {
     pub name: Option<Text>,
 }
 
-/// The host's last published walk outcome.
+/// The host's last published walk outcome and current matching route progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WalkOutcome {
     pub seq: u64,
@@ -549,6 +552,11 @@ pub struct WalkOutcome {
     pub allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub blocked: bool,
+    /// The host proved that no route exists.
+    pub no_path: bool,
+    /// Request id for the current Traveller progress value, or 0 when idle.
+    pub remaining_request_id: u64,
+    pub remaining: u64,
 }
 
 /// The latest posted live Gatherer page, retained only for request identity.
@@ -694,6 +702,10 @@ scene_pages! {
         inv_size: i32,
         bank_open: bool,
         bank_loaded: bool,
+        /// The m8aq `inventorySnapshotReady`.
+        inv_ready: bool,
+        /// The m8aq `bankSideSnapshotReady`.
+        bank_side_ready: bool,
         bank_generation: u64,
         bank_snapshot_generation: i64,
         bank_op_result_seq: u64,
@@ -958,8 +970,57 @@ fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
             token,
             reason: Arc::from(reason),
         }),
+        4 => {
+            let result = match page.journal() {
+                Some(row) => Some(Arc::new(read_journal_evidence(row)?)),
+                None => None,
+            };
+            Some(ProgressPage::JournalDone { token, result })
+        }
         _ => None,
     }
+}
+
+fn read_journal_evidence(row: JournalEvidenceWire<'_>) -> Option<ApiJournalEvidence> {
+    let quest = row.quest()?;
+    if quest.is_empty() || row.root() < 0 {
+        return None;
+    }
+    let lines = row
+        .lines()?
+        .iter()
+        .map(Arc::<str>::from)
+        .collect::<Vec<_>>()
+        .into();
+    let acquired = EvidenceStamp {
+        run: RunKey {
+            slot: row.acquired_slot(),
+            run: row.acquired_run(),
+            session: row.acquired_session(),
+        },
+        tick: row.acquired_tick(),
+        sequence: row.acquired_sequence(),
+    };
+    let closed = EvidenceStamp {
+        run: RunKey {
+            slot: row.closed_slot(),
+            run: row.closed_run(),
+            session: row.closed_session(),
+        },
+        tick: row.closed_tick(),
+        sequence: row.closed_sequence(),
+    };
+    if !closed.meets(acquired) || closed == acquired {
+        return None;
+    }
+    Some(ApiJournalEvidence {
+        quest: Arc::from(quest),
+        root: row.root(),
+        lines,
+        colour: row.has_colour().then_some(row.colour()),
+        acquired,
+        closed,
+    })
 }
 
 fn read_progress_row(row: QuestProgressRow<'_>) -> Option<ApiQuestProgressRow> {
@@ -1220,7 +1281,7 @@ impl Scene {
             p.chat_modal_id(snap.chat_modal_id());
         }
         if snap.has_side_modal_id() {
-            p.side_modal_id(snap.side_modal_id());
+            p.side_modal_id(snap.side_modal_id().unwrap_or(-1));
         }
         if snap.has_chat_open() {
             p.chat_open(snap.chat_open());
@@ -1239,6 +1300,12 @@ impl Scene {
         }
         if snap.has_bank_loaded() {
             p.bank_loaded(snap.bank_loaded());
+        }
+        if snap.has_inv_ready() {
+            p.inv_ready(snap.inv_ready());
+        }
+        if snap.has_bank_side_ready() {
+            p.bank_side_ready(snap.bank_side_ready());
         }
         if snap.has_bank_generation() {
             p.bank_generation(snap.bank_generation());
@@ -1630,6 +1697,9 @@ impl Scene {
                 radius: snap.walk_outcome_radius(),
                 allow_teleports: snap.walk_outcome_allow_teleports(),
                 blocked: snap.walk_outcome_blocked(),
+                no_path: snap.walk_outcome_no_path(),
+                remaining_request_id: snap.walk_remaining_request_id(),
+                remaining: snap.walk_remaining(),
             });
             p.walk_outcome_cancel_reason(snap.walk_outcome_cancel_reason());
         }

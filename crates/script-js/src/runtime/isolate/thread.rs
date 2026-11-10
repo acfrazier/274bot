@@ -25,6 +25,14 @@ fn reject_isolate_timer_op(op: rustyscript::deno_core::OpDecl) -> rustyscript::d
 
 rustyscript::deno_core::extension!(isolate_timer_guards, middleware = reject_isolate_timer_op,);
 
+struct LocProjectionInterestReset(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for LocProjectionInterestReset {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct MouseGestureIdentities {
     pub(super) pairs: VecDeque<u64>,
@@ -153,14 +161,6 @@ impl Drop for MachinesStop {
     }
 }
 
-/// Drops cached V8 object rows before their Runtime is destroyed.
-struct ObjRecordsStop;
-impl Drop for ObjRecordsStop {
-    fn drop(&mut self) {
-        crate::materialize::selected_facts_v8::reset_obj_records_cache();
-    }
-}
-
 /// Counts actual Runtime ownership, not merely live JoinHandles.
 struct RuntimeLifetime;
 
@@ -182,10 +182,12 @@ impl Drop for RuntimeLifetime {
 #[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
 pub(super) fn isolate_main(
     source: String,
+    card_name: std::sync::Arc<str>,
     shape: LoadShape,
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
     runtime_handle: tokio::runtime::Handle,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
@@ -195,12 +197,19 @@ pub(super) fn isolate_main(
     compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    frame_ack_tx: std::sync::mpsc::SyncSender<()>,
+    terminate_cell: std::sync::Arc<std::sync::OnceLock<v8::IsolateHandle>>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
         crate::runtime::memory_profile::Counters,
     >,
 ) {
+    let _loc_projection_reset = LocProjectionInterestReset(loc_projection_interest.clone());
     #[cfg(feature = "memory-profile")]
     let _heap_lifetime = crate::runtime::memory_profile::HeapLifetime(counters.clone());
     // Declared before `runtime` so the counter decrements only after the
@@ -214,6 +223,7 @@ pub(super) fn isolate_main(
             ],
             timeout: RUNTIME_TIMEOUT,
             max_heap_size: Some(MAX_HEAP),
+            import_provider: Some(crate::shim::shim_import_provider()),
             ..Default::default()
         },
         runtime_handle,
@@ -227,6 +237,7 @@ pub(super) fn isolate_main(
     _runtime_lifetime = RuntimeLifetime::enter();
     let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     let setup_handle = terminate.clone();
+    let _ = terminate_cell.set(setup_handle.clone());
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
     {
         let st = teardown.lock().unwrap();
@@ -237,7 +248,6 @@ pub(super) fn isolate_main(
     // Declared after `runtime`, so a failed wire (whose module code may
     // have started a machine) drops the rows before the isolate.
     let _machines = MachinesStop;
-    let _obj_records = ObjRecordsStop;
     crate::machine::set_walking_publication(walking_ownership);
     crate::machine::set_execution(execution);
     #[cfg(feature = "memory-profile")]
@@ -255,10 +265,25 @@ pub(super) fn isolate_main(
         return;
     }
     let wired = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
-        wire_runtime(runtime, &source, shape, &siblings, game_data, named_banks)
+        wire_runtime(
+            runtime,
+            &source,
+            shape,
+            &siblings,
+            game_data,
+            named_banks,
+            wilderness_rules,
+            local_state,
+            std::sync::Arc::clone(&frame_interest),
+            loc_projection_interest,
+            card_name.as_ref(),
+        )
     });
     if let Err(e) = wired {
         let _ = setup.send(SetupMessage::Ready(Err(e)));
+        crate::runtime::bindings::event_callbacks::clear_all();
+        super::super::lifecycle_v8::clear_all(&mut runtime);
+        super::super::activity_v8::clear_all(&mut runtime);
         return;
     }
     // The native-event consumer ships only with the compat runner
@@ -281,6 +306,7 @@ pub(super) fn isolate_main(
         );
     let _ =
         crate::materialize::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
+    frame_ready.store(true, std::sync::atomic::Ordering::Release);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
@@ -290,6 +316,8 @@ pub(super) fn isolate_main(
         compat_journal,
         paint_generation,
         teardown,
+        frame_interest,
+        frame_ack_tx,
         proof,
         v2_native,
         events_consumed,
@@ -839,13 +867,39 @@ fn finish_tick(
                 .to_string(),
         ));
     }
-    requested_stop(runtime)
+    if let Some((reason, request_finish)) = requested_stop(runtime) {
+        if request_finish {
+            let event = crate::scene::events::NativeEvent::ScriptFinish {
+                reason: reason.clone(),
+            };
+            if let Err(message) = super::super::snapshot::dispatch_native_events(runtime, &[event])
+            {
+                let _ = out.send(ThreadMsg::Log(format!("script.finish dispatch: {message}")));
+            } else {
+                let flush = call_interruptible(runtime, teardown, |runtime| {
+                    runtime.call_function_immediate::<()>(
+                        None,
+                        "__rs2b0t_flush_native_events",
+                        json_args!(),
+                    )
+                });
+                if let Err(message) = flush {
+                    let _ = out.send(ThreadMsg::Log(format!("script.finish flush: {message}")));
+                } else {
+                    pump_event_loop(runtime, out, n, generation, teardown);
+                }
+            }
+        }
+        Some(reason)
+    } else {
+        None
+    }
 }
 
-/// ScriptRunner.stop's flag and bounded reason, read off the host handle
-/// through V8 (no script).
-fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    crate::materialize::lineage_v8::enter_root(runtime, |runtime| {
+/// Read stop reason and whether AbstractBot.requestFinish requested the
+/// stop. ScriptRunner.stop shares the stop flag but does not emit script.finish.
+fn requested_stop(runtime: &mut Runtime) -> Option<(String, bool)> {
+    let requested = crate::materialize::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let host_key = key_string(scope, "__rs2b0t_host").ok()?;
@@ -860,8 +914,15 @@ fn requested_stop(runtime: &mut Runtime) -> Option<String> {
             .filter(|reason| reason.is_string())
             .map(|reason| reason.to_rust_string_lossy(scope))
             .unwrap_or_default();
-        Some(bounded_stop_reason(reason))
-    })
+        let request_finish = key_string(scope, "requestFinishRequested")
+            .ok()
+            .and_then(|key| host.get(scope, key.into()))
+            .is_some_and(|requested| requested.boolean_value(scope));
+        Some((bounded_stop_reason(reason), request_finish))
+    })?;
+    // Isolates may be reused for another Load after a clean stop.
+    let _ = set_host_field(runtime, "requestFinishRequested", HostValue::Null);
+    Some(requested)
 }
 
 /// The settle promise of a compat method invoker or a v1 native tick: it
@@ -1016,15 +1077,156 @@ fn report_interrupted_execution(
     let _ = out.send(ThreadMsg::ScriptCut);
 }
 
+fn arm_execution_watchdog(
+    runtime: &mut Runtime,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    out: &Sender<ThreadMsg>,
+) {
+    let (id, at) = {
+        let mut state = teardown.lock().unwrap();
+        let Some(started) = state.execution_started else {
+            return;
+        };
+        if state.phase != TeardownPhase::Running
+            || !state.execution_active
+            || state.execution_interrupt.is_some()
+            || state.execution_deadline_armed
+        {
+            return;
+        }
+        if state.execution_deadline_owner.is_none() {
+            state.execution_deadline_owner = Some(ExecutionInterrupt::Watchdog);
+        }
+        state.execution_deadline_armed = true;
+        (state.execution_id, started + EXECUTION_WATCHDOG_HORIZON)
+    };
+    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+    if let Err(error) = super::register_execution_deadline(
+        teardown,
+        handle.clone(),
+        id,
+        ExecutionInterrupt::Watchdog,
+        at,
+    ) {
+        let reason = match error {
+            super::LoadIsolateError::SupervisorCapacity => DeadlineRefusal::Capacity,
+            _ => DeadlineRefusal::Stopped,
+        };
+        let mut state = teardown.lock().unwrap();
+        if state.phase == TeardownPhase::Running
+            && state.execution_active
+            && state.execution_id == id
+            && state.execution_interrupt.is_none()
+        {
+            state.execution_interrupt = Some(InterruptedExecution {
+                owner: ExecutionInterrupt::NoDeadline(reason),
+                consumed: true,
+            });
+            handle.terminate_execution();
+        }
+        let _ = out.send(ThreadMsg::Log(error.to_string()));
+    }
+}
+
+fn report_interrupted_lifecycle_hook(
+    interrupt: Option<InterruptedExecution>,
+    out: &Sender<ThreadMsg>,
+    hook: &str,
+) {
+    let Some(interrupt) = interrupt.filter(|interrupt| interrupt.consumed) else {
+        return;
+    };
+    let reason = match interrupt.owner {
+        ExecutionInterrupt::Watchdog => "runaway execution interrupted by watchdog",
+        ExecutionInterrupt::Pause => "runaway execution interrupted by Pause deadline",
+        ExecutionInterrupt::SessionReset => {
+            "runaway execution interrupted by session-reset deadline"
+        }
+        ExecutionInterrupt::NoDeadline(DeadlineRefusal::Capacity) => {
+            "execution interrupted: JS deadline supervisor is at capacity"
+        }
+        ExecutionInterrupt::NoDeadline(DeadlineRefusal::Stopped) => {
+            "execution interrupted: JS deadline supervisor worker stopped"
+        }
+    };
+    let _ = out.send(ThreadMsg::Log(format!("{hook} interrupted: {reason}")));
+    let _ = out.send(ThreadMsg::ScriptCut);
+}
+
+fn fire_compat_lifecycle_hook(
+    runtime: &mut Runtime,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    out: &Sender<ThreadMsg>,
+    generation: u64,
+    hook: &str,
+    function: &str,
+) {
+    if !begin_lifecycle_hook_execution(teardown, generation) {
+        return;
+    }
+    arm_execution_watchdog(runtime, teardown, out);
+    let result = call_interruptible(runtime, teardown, |runtime| {
+        runtime.call_function_immediate::<Option<String>>(None, function, json_args!())
+    });
+    let interrupt = finish_interruptible_execution(runtime, teardown);
+    let was_cut = interrupt.is_some_and(|interrupt| interrupt.consumed);
+    report_interrupted_lifecycle_hook(interrupt, out, hook);
+    if !was_cut {
+        match result {
+            Ok(Some(message)) => {
+                let _ = out.send(ThreadMsg::Log(format!("{hook} threw: {message}")));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = out.send(ThreadMsg::Log(format!("{hook} failed: {error}")));
+            }
+        }
+        drain_bot_log(runtime, out);
+    }
+}
+
 fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
     let _ = call_interruptible(runtime, teardown, |runtime| {
-        runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_fire_tick_listeners",
-            json_args!(),
-        )?;
+        crate::runtime::bindings::event_callbacks::emit_no_args(
+            runtime,
+            crate::runtime::bindings::event_callbacks::BOT_TICK_EVENT,
+        )
+        .map_err(rustyscript::Error::Runtime)?;
         runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
     });
+}
+
+fn fire_frame_listeners(
+    runtime: &mut Runtime,
+    teardown: &Mutex<TeardownState>,
+    out: &Sender<ThreadMsg>,
+    frame_interest: &std::sync::atomic::AtomicUsize,
+    generation: u64,
+) {
+    if frame_interest.load(std::sync::atomic::Ordering::Acquire) == 0
+        || !begin_frame_execution(teardown, super::FRAME_CALLBACK_TICK, generation)
+    {
+        return;
+    }
+    let started = Instant::now();
+    let result = call_interruptible(runtime, teardown, |runtime| {
+        crate::runtime::bindings::event_callbacks::emit_no_args(runtime, "frame")
+            .map_err(rustyscript::Error::Runtime)
+    });
+    let interrupt = finish_interruptible_execution(runtime, teardown);
+    let was_cut = interrupt.is_some_and(|interrupt| interrupt.consumed);
+    report_interrupted_execution(interrupt, out, super::FRAME_CALLBACK_TICK, generation);
+    if !was_cut {
+        if let Err(error) = result {
+            let _ = out.send(ThreadMsg::Log(format!("frame listener dispatch: {error}")));
+        }
+        if started.elapsed() > EXECUTION_WATCHDOG_HORIZON {
+            let _ = out.send(ThreadMsg::Log(format!(
+                "slow client-frame callback: {:?}",
+                started.elapsed()
+            )));
+        }
+    }
 }
 
 /// One eligible non-v2 tick, in the phase order the isolate owns (the
@@ -1206,10 +1408,16 @@ return String((e && (e.message || e.stack)) || e);
   if (user) {
     ignored = [];
     try {
-      const b = globalThis.__rs_bot;
-      if (b && typeof b.ignoredRandoms === 'function') {
-        const l = b.ignoredRandoms();
-        if (Array.isArray(l)) ignored = l.filter((x) => typeof x === 'string');
+      const activity = globalThis.__rs2b0t_script_activity;
+      const child = typeof activity === 'function' ? activity('ignoredRandoms') : undefined;
+      if (child !== undefined) {
+        if (Array.isArray(child)) ignored = child.filter((x) => typeof x === 'string');
+      } else {
+        const b = globalThis.__rs_bot;
+        if (b && typeof b.ignoredRandoms === 'function') {
+          const l = b.ignoredRandoms();
+          if (Array.isArray(l)) ignored = l.filter((x) => typeof x === 'string');
+        }
       }
     } catch (_) {}
   }
@@ -1361,6 +1569,8 @@ fn tick_loop(
     compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
     events_consumed: bool,
@@ -2347,7 +2557,7 @@ fn tick_loop(
                 if let Err(e) = crate::materialize::chatbox_v8::reset_session(&mut runtime) {
                     let _ = out.send(ThreadMsg::Log(format!("chatbox reset: {e}")));
                 }
-                super::reach_query::on_reset();
+                crate::materialize::reach_query::on_reset();
                 if !keep_work {
                     crate::compat::cake_stall::on_reset();
                     crate::scene::walk_wait::on_reset();
@@ -2479,19 +2689,70 @@ fn tick_loop(
                     generation: reset_generation,
                 });
             }
+            IsolateCmd::ClientFrame => {
+                if frame_interest.load(std::sync::atomic::Ordering::Acquire) > 0 {
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_frame_listeners(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        &frame_interest,
+                        generation,
+                    );
+                }
+                let _ = frame_ack_tx.send(());
+            }
+            IsolateCmd::RuntimeContext(context) => {
+                let bind = super::super::lifecycle_v8::bind_runtime_context(
+                    &mut runtime,
+                    std::sync::Arc::clone(&context),
+                )
+                .and_then(|()| {
+                    super::super::activity_v8::bind_runtime_context(&mut runtime, context)
+                });
+                if let Err(error) = bind {
+                    let _ = out.send(ThreadMsg::Log(format!(
+                        "runtime context bind failed: {error}"
+                    )));
+                }
+            }
             IsolateCmd::Pause => {
+                let just_paused = !paused;
                 paused = true;
                 let _ = event_producer.set_paused(true);
                 sync_work_freeze(&mut work_frozen, true);
                 clear_unconsumed_paint_click(&mut runtime);
+                if compat && just_paused {
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_compat_lifecycle_hook(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        generation,
+                        "onPause",
+                        "__rs2b0t_compat_on_pause",
+                    );
+                }
             }
             IsolateCmd::ManualWalkTakeover(seq) => {
                 crate::machine::on_manual_walk_takeover(seq);
             }
             IsolateCmd::Resume => {
+                let was_paused = paused;
                 paused = false;
                 let _ = event_producer.set_paused(false);
                 sync_work_freeze(&mut work_frozen, session_held);
+                if compat && was_paused {
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    fire_compat_lifecycle_hook(
+                        &mut runtime,
+                        &teardown,
+                        &out,
+                        generation,
+                        "onResume",
+                        "__rs2b0t_compat_on_resume",
+                    );
+                }
             }
             IsolateCmd::PaintClick { id, generation } => {
                 if paused
@@ -2614,4 +2875,7 @@ fn tick_loop(
             }
         }
     }
+    super::super::lifecycle_v8::clear_all(&mut runtime);
+    super::super::activity_v8::clear_all(&mut runtime);
+    crate::runtime::bindings::event_callbacks::clear_all();
 }

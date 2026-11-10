@@ -40,6 +40,7 @@ export const Navigator = proxy('Navigator', {
             allow_teleports,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            max_expansions: opts.maxExpansions,
             avoid,
             request_id: token,
         });

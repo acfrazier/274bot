@@ -611,6 +611,14 @@ impl Traveller {
             .map(|a| a.tile)
             .or(Some(transport.to))
     }
+    /// Remaining tiles on the active walk hop after its last cleared tile.
+    /// Transport-only and idle runs have no walk tiles remaining.
+    pub fn remaining(&self) -> usize {
+        self.follow
+            .as_ref()
+            .and_then(|run| run.walk.as_ref())
+            .map_or(0, |walk| walk.tiles().len().saturating_sub(walk.cursor + 1))
+    }
 
     /// The active follow's wait reason, target tile, and target id, in that
     /// order. A wait target may be a transport anchor; [`Self::current_aim`]

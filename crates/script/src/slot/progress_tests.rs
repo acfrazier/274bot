@@ -22,6 +22,7 @@ fn load() -> SlotScript {
         game_data: Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
         named_banks: Arc::default(),
         loadouts: Arc::default(),
+        wilderness_rules: crate::surface::no_wilderness(),
     })
     .unwrap();
     factory
@@ -94,6 +95,14 @@ fn read(slot: &mut SlotScript, token: u64, quest: &str) {
     slot.consume_api_control(&InteractReq::ProgressRead {
         request_id: token,
         name: quest.into(),
+        journal_only: false,
+    });
+}
+fn read_journal(slot: &mut SlotScript, token: u64, quest: &str) {
+    slot.consume_api_control(&InteractReq::ProgressRead {
+        request_id: token,
+        name: quest.into(),
+        journal_only: true,
     });
 }
 fn settle_read(slot: &mut SlotScript, snapshot: &GameSnapshot) {
@@ -136,7 +145,8 @@ fn journal_fixture(slot: &mut SlotScript, token: u64) {
         prepared: PreparedProgress {
             selected,
             revision: api::selected::ClientRevision::R289,
-            path,
+            path: Some(path),
+            requested_name: None,
             quests,
         },
         since: None,
@@ -286,6 +296,67 @@ fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
     assert_eq!(row.evidence.tick, 5);
     slot.stop();
 }
+
+#[test]
+fn journal_only_reads_exact_quest_and_waits_for_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = load();
+    let mut snapshot = snapshot(0xf8f800);
+    read_journal(&mut slot, 30, "cOoK's Assistant");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drive_host(&mut slot, &snapshot, 1, false);
+        if slot.has_native_actions() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "journal-only preparation stalled"
+        );
+        std::thread::yield_now();
+    }
+    finish_journal(&mut slot, &mut snapshot, "Bring eggs: 12 eggs");
+    let Some(ProgressPage::JournalDone {
+        token,
+        result: Some(result),
+    }) = &slot.api.as_ref().unwrap().progress_page
+    else {
+        panic!("missing journal-only result");
+    };
+    assert_eq!(*token, 30);
+    assert_eq!(result.quest.as_ref(), "cook");
+    assert_eq!(result.root, 8134);
+    assert!(result
+        .lines
+        .iter()
+        .any(|line| line.as_ref() == "Bring eggs: 12 eggs"));
+    assert!(result.closed.meets(result.acquired));
+    assert_ne!(result.closed, result.acquired);
+    assert!(!slot.api_owns_foreground());
+
+    read_journal(&mut slot, 31, "not a quest");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drive_host(&mut slot, &snapshot, 6, false);
+        if matches!(
+            &slot.api.as_ref().unwrap().progress_page,
+            Some(ProgressPage::JournalDone {
+                token: 31,
+                result: None
+            })
+        ) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing quest did not settle");
+        std::thread::yield_now();
+    }
+    assert!(!slot.has_native_actions());
+    assert!(!slot.api_owns_foreground());
+    slot.stop();
+}
 #[test]
 fn journal_no_match_is_unknown_not_colour_fallback() {
     if !api::test_support::game_data_available() {
@@ -383,7 +454,10 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
                 run: run.run,
                 session: run.session,
                 kind: NativeKind::QuestProgress,
-                args: SeatStartArgs::QuestProgress("cook".into()),
+                args: SeatStartArgs::QuestProgress {
+                    name: "cook".into(),
+                    journal_only: false,
+                },
             }],
             decisions: Vec::new(),
             cancels: Vec::new(),

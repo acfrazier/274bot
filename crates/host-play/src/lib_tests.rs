@@ -16,6 +16,11 @@ use std::time::{Duration, Instant};
 fn no_frames() -> impl FnMut() -> Duration {
     || Duration::MAX
 }
+fn test_cache_mut(client: &mut Client) -> &mut client::config::Cache {
+    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
+    Arc::get_mut(&mut client.cache)
+        .expect("test cache is unique after clearing its adapter weak ref")
+}
 
 fn wait_for_permit(
     queue: &SharedLoginQueue,
@@ -5208,7 +5213,10 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         level: bot.walk_outcome_level,
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
-        blocked: false,
+        blocked: bot.walk_outcome_blocked,
+        no_path: bot.walk_outcome_no_path,
+        remaining_request_id: bot.walk_request_id,
+        remaining: bot.traveller.remaining() as u64,
         cancel_reason: bot.walk_outcome_cancel_reason,
         user_move_intent_seq: bot.user_move_intent_seq,
     }
@@ -8197,6 +8205,241 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
 
 #[cfg(feature = "js")]
 #[test]
+fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() {
+    fn bounded_slot_call<T: Send + 'static>(
+        slot: Arc<Mutex<script::SlotScript>>,
+        action: impl FnOnce(&mut script::SlotScript) -> T + Send + 'static,
+    ) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = {
+                let mut slot = slot.lock().unwrap();
+                action(&mut slot)
+            };
+            tx.send(result).unwrap();
+        });
+        let result = rx
+            .recv_timeout(Duration::from_millis(350))
+            .expect("slot action exceeded its bound");
+        worker.join().expect("slot action thread panicked");
+        result
+    }
+
+    fn wait_for_execution(slot: &Arc<Mutex<script::SlotScript>>, active: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) == active
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "surface execution did not become active={active}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_execution_end(slot: &Arc<Mutex<script::SlotScript>>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if !bounded_slot_call(Arc::clone(slot), |slot| slot.surface_execution_active()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn start_frame_wait(
+        slot: Arc<Mutex<script::SlotScript>>,
+    ) -> (thread::JoinHandle<()>, std::sync::mpsc::Receiver<bool>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            tx.send(crate::play_slots::dispatch_client_frame(&slot, "alice"))
+                .unwrap();
+        });
+        (worker, rx)
+    }
+
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+globalThis.__frameCalled = false;
+globalThis.__hangFrame = false;
+BotHost.addFrameListener(() => {
+    globalThis.__frameCalled = true;
+    if (globalThis.__hangFrame) {
+        globalThis.__hangFrame = false;
+        while (true) {}
+    }
+});
+export default class T extends LoopingBot {
+    loop() {}
+    onPause() {
+        globalThis.__pauseCalled = true;
+        while (true) {}
+    }
+    onResume() {
+        globalThis.__resumeCalled = true;
+        while (true) {}
+    }
+}
+"#
+        .to_string(),
+        script_js::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
+    let slot = script_slot(&play.scripts, "alice").expect("script slot exists");
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    while play.script_state("alice") != script::RunState::Running
+        && Instant::now() < startup_deadline
+    {
+        play.pump_script_lifecycle("alice");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        play.script_state("alice"),
+        script::RunState::Running,
+        "compat script did not finish setup"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| {
+        let mut driver = NavRec::default();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("true").expect("the first compat tick completes");
+    });
+    slot.lock()
+        .unwrap()
+        .probe("globalThis.__hangFrame = true")
+        .unwrap();
+
+    let (frame_thread, frame_done) = start_frame_wait(Arc::clone(&slot));
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while the frame listener is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "Pause returns while the frame listener is stuck"
+    );
+    assert!(
+        frame_done
+            .recv_timeout(Duration::from_secs(2))
+            .expect("frame listener watchdog did not release its dispatch"),
+        "the host receives the frame acknowledgement after the listener is cut"
+    );
+    frame_thread.join().unwrap();
+
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while onPause is stuck"
+    );
+    let on_pause_ended = wait_for_execution_end(&slot);
+    if !on_pause_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_pause_ended,
+        "onPause watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__frameCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "the frame listener ran before the watchdog cut its infinite loop"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__pauseCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onPause ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.resume());
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running
+    );
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Running,
+        "state remains readable while onResume is stuck"
+    );
+    let on_resume_ended = wait_for_execution_end(&slot);
+    if !on_resume_ended {
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    assert!(
+        on_resume_ended,
+        "onResume watchdog did not interrupt its non-returning hook"
+    );
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__resumeCalled")
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "onResume ran before the watchdog cut its infinite loop"
+    );
+
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.pause());
+    wait_for_execution(&slot, true);
+    assert_eq!(
+        bounded_slot_call(Arc::clone(&slot), |slot| slot.state()),
+        script::RunState::Paused,
+        "state remains readable while the second onPause is stuck"
+    );
+    bounded_slot_call(Arc::clone(&slot), |slot| slot.stop());
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn script_start_returns_before_setup_and_stop_before_reap() {
     let mut play = run_with_io(
         &PlayOptions {
@@ -8522,6 +8765,111 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
         std::slice::from_ref(&melee),
         "the compiled Start refreshed the rows its run leases"
     );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn a_js_start_hydrates_cold_script_runtime_settings_before_first_resolve() {
+    let scratch = script::IsolatedEnv::enter("script-settings-start-readback");
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = "local-289";
+    let content = "test-content";
+    let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
+    std::fs::create_dir_all(root.path()).unwrap();
+    let path = root.script_runtime_settings_file(profile, "alice", 289, content);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "profile": profile,
+        "account": "alice",
+        "revision": 289,
+        "content": content,
+        "rows": [{
+            "namespace": "WalkTo",
+            "key": "destination",
+            "raw": "Varrock"
+        }]
+    });
+    vault::write_private_file(
+        &path,
+        serde_json::to_vec_pretty(&document).unwrap().as_slice(),
+    )
+    .unwrap();
+    let service = local_state::LocalStateService::open(
+        root,
+        &[
+            api::local_state::LocalStateDomain::LoadoutsReferences,
+            api::local_state::LocalStateDomain::BankHints,
+            api::local_state::LocalStateDomain::ScriptRuntimeSettings,
+        ],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    let composition = Arc::new(local_state::StateComposition::new(
+        Arc::clone(&service),
+        profile,
+        api::local_state::ContentScope::try_new(client::io::ClientRevision::R289, content).unwrap(),
+    ));
+    play.local_state = Some(Arc::clone(&composition));
+    play.attach_arm("alice", SlotArm::new(7, false));
+    // Slot spawn binds the account's state capability (`play_slots.rs`);
+    // this offline Play spawns no slot, so bind it the same way here.
+    script_slot_or_insert(&play.scripts, "alice")
+        .lock()
+        .unwrap()
+        .bind_local_state(
+            composition
+                .slot_state("alice")
+                .expect("alice is a login identity"),
+        );
+
+    // The resolve runs at module evaluation, before the first tick. Read its
+    // result straight from the isolate: script log rows reach the panel only
+    // through the bot thread's observe drain, which this offline Play has not.
+    let source = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+const first = SettingsStore.resolve('WalkTo', {
+    destination: { type: 'string', default: 'Draynor' },
+});
+globalThis.__firstResolve = first.destination;
+export function tick(api) {}
+"#;
+    play.script_start_load(
+        "alice",
+        source.into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let first = {
+        let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
+        let slot = slot.lock().unwrap();
+        slot.probe("globalThis.__firstResolve ?? null")
+            .expect("the started isolate answers a probe")
+    };
+    assert_eq!(
+        first,
+        serde_json::json!("Varrock"),
+        "the first SettingsStore.resolve did not see persisted data: state={:?}, error={:?}",
+        play.script_state("alice"),
+        play.script_last_error("alice"),
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[cfg(feature = "js")]
@@ -9030,6 +9378,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         None,
         None,
+        None,
         #[cfg(feature = "js")]
         None,
         #[cfg(feature = "js")]
@@ -9157,6 +9506,7 @@ fn an_accepted_operator_cheat_resets_the_idle_counter_and_bookkeeping_does_not()
             false,
             false,
             false,
+            None,
             None,
             None,
             None,
@@ -9818,6 +10168,7 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
+            name,
             source.to_string(),
             script_js::LoadShape::CompatClass,
             vec![],
@@ -9903,6 +10254,7 @@ fn t23_bank_observe(
             hold,
             false,
             ours,
+            None,
             None,
             None,
             None,
@@ -10273,10 +10625,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.locs()
@@ -13623,15 +13972,12 @@ fn dispatch_script_interact_sends_held_item_bury() {
     let mut c = bank_fetch_client();
     // Bones (obj 1) has the `Bury` held op (`[opheld1,_bones]`).
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut c);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.inventory()
@@ -13940,10 +14286,7 @@ fn dispatch_script_interact_unequip_removes_the_worn_row() {
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let (navs, world) = empty_nav();
     assert_eq!(
         snap.equipment()
@@ -14208,7 +14551,7 @@ fn colocated_loc_use_fixture(wall_first: bool) -> (GameSnapshot, api::obj_names:
 
     let (mut client, mut snapshot) = colocated_wall_flax(wall_first);
     {
-        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut client);
         cache.objs.resize(433, ObjType::default());
         cache.objs[432].id = 432;
         cache.objs[432].name = "Chest key".into();
@@ -15680,15 +16023,12 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
 fn dispatch_script_interact_held_first_match_only() {
     let mut one = bank_fetch_client();
     {
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
+        let cache = test_cache_mut(&mut one);
         cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
     }
     let mut snap_one = GameSnapshot::new();
     snap_one.rebuild(&one);
-    let names = api::obj_names::ObjNames::from_objs(&{
-        let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
-        cache.objs.clone()
-    });
+    let names = api::obj_names::ObjNames::from_objs(&one.cache.objs);
     let (navs, world) = empty_nav();
     let before_one = one.out.pos;
     assert!(dispatch_script_interact(
@@ -19918,12 +20258,14 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     .unwrap();
     let mut snapshot = GameSnapshot::new();
     let mut fingerprint = None;
+    // The first observed chat line seeds this generation; later sequences are
+    // delivered in order, with duplicate sequences suppressed.
     for (tick, seq, kind, sender, events, requests) in [
-        (1, 11, 0, "Partner", 1, 0),
-        (2, 12, 4, "Stranger", 2, 0),
-        (3, 13, 4, "Partner", 3, 1),
-        (4, 13, 4, "Partner", 3, 1),
-        (5, 14, 4, "Partner", 4, 2),
+        (1, 11, 0, "Partner", 0, 0),
+        (2, 12, 4, "Stranger", 1, 0),
+        (3, 13, 4, "Partner", 2, 1),
+        (4, 13, 4, "Partner", 2, 1),
+        (5, 14, 4, "Partner", 3, 2),
     ] {
         c.chat_text[0] = "wishes to trade with you.".into();
         c.chat_type[0] = kind;
@@ -23104,6 +23446,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
+            None,
             #[cfg(feature = "js")]
             None,
             #[cfg(feature = "js")]
@@ -23230,6 +23573,7 @@ impl ReconnectRig {
             let mut slot = slot.lock().unwrap();
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
+                    "bank wake test",
                     source,
                     script_js::LoadShape::CompatClass,
                     vec![],
@@ -23356,6 +23700,7 @@ impl ReconnectRig {
             hold,
             guardian,
             false,
+            None,
             None,
             None,
             None,
@@ -29067,7 +29412,7 @@ pub(super) fn plant_nav_footprint_loc(
 ) {
     use client::config::LocType;
 
-    let cache = Arc::get_mut(&mut client.cache).expect("nav test owns its cache");
+    let cache = test_cache_mut(client);
     let id = cache.locs.len() as i32;
     cache.locs.push(LocType {
         id,
@@ -30580,7 +30925,7 @@ fn glory_edge() -> TransportEdge {
 /// shape `teleport_send` reads the rub's held item from.
 fn plant_inv_item(c: &mut Client, obj_id: i32) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = test_cache_mut(c);
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(client::config::ObjType::default());
         }
@@ -32050,6 +32395,7 @@ mod host_batch_tests {
                 None,
                 None,
                 None,
+                None,
                 #[cfg(feature = "js")]
                 None,
                 #[cfg(feature = "js")]
@@ -32594,6 +32940,7 @@ export default class T extends LoopingBot {
 "#;
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
+                "test card",
                 source.to_owned(),
                 script_js::LoadShape::CompatClass,
                 vec![],

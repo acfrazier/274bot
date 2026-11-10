@@ -334,6 +334,23 @@ impl<'a> SnapshotView<'a> {
             .flatten()
     }
 
+    /// The m8aq `bankSideSnapshotReady` while the bank and its side root are
+    /// open: the side component carries this session's full transmission.
+    pub fn bank_side_ready(&self) -> bool {
+        self.ingame().is_some_and(|snapshot| {
+            snapshot.bank_component_id() >= 0
+                && snapshot.modals().side >= 0
+                && snapshot.bank_side_ready()
+        })
+    }
+
+    /// The m8aq `inventorySnapshotReady`: the inv tab is transmitting a full
+    /// update.
+    pub fn inventory_ready(&self) -> bool {
+        self.snapshot
+            .is_some_and(|snapshot| snapshot.ingame() && snapshot.inventory_ready())
+    }
+
     /// Current shop modal and its posted stock/player containers.
     pub fn shop(&self) -> Option<Observed<&super::ShopView>> {
         let snapshot = self.ingame()?;
@@ -1375,6 +1392,7 @@ mod tests {
             width: 0,
             height: 0,
             scroll_height: 0,
+            inventory_ready: false,
             scroll_position: 0,
             hidden: false,
             text: Some(text.into()),

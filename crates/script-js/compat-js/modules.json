@@ -24,6 +24,14 @@
     "shim": "event_signal.js"
   },
   {
+    "module": "client/shell/Skill.js",
+    "shim": "client_skill.js"
+  },
+  {
+    "module": "client/config/worlds.js",
+    "shim": "worlds.js"
+  },
+  {
     "module": "adapter/ClientAdapter.js",
     "shim": "client_adapter.js"
   },
@@ -208,8 +216,36 @@
     "shim": "data/pickpocket_targets.js"
   },
   {
+    "module": "shim/gathering_locations.js",
+    "shim": "gathering_locations.js"
+  },
+  {
     "module": "data/woodcuttingLocations.js",
     "shim": "data/woodcutting_locations.js"
+  },
+  {
+    "module": "data/miningLocations.js",
+    "shim": "data/mining_locations.js"
+  },
+  {
+    "module": "data/gatheringLocations.js",
+    "shim": "data/gathering_locations.js"
+  },
+  {
+    "module": "data/fishingMethods.js",
+    "shim": "data/fishing_methods.js"
+  },
+  {
+    "module": "data/fishingLocations.js",
+    "shim": "data/fishing_locations.js"
+  },
+  {
+    "module": "data/cookingRanges.js",
+    "shim": "data/cooking_ranges.js"
+  },
+  {
+    "module": "shim/fishing_gear.js",
+    "shim": "fishing_gear.js"
   },
   {
     "module": "api/combat/CombatStyleLogic.js",
@@ -292,6 +328,10 @@
     "shim": "game_messages.js"
   },
   {
+    "module": "runtime/defineBot.js",
+    "shim": "define_bot.js"
+  },
+  {
     "module": "runtime/RecoveryHints.js",
     "shim": "recovery_hints.js"
   },
@@ -358,6 +398,10 @@
   {
     "module": "runtime/Settings.js",
     "shim": "settings.js"
+  },
+  {
+    "module": "runtime/randomevents/eventEvade.js",
+    "shim": "event_evade.js"
   },
   {
     "module": "api/ai/quests/engine/QuestEngine.js",
@@ -456,11 +500,43 @@
     "shim": "script_runner.js"
   },
   {
+    "module": "runtime/ScriptRegistry.js",
+    "shim": "script_registry.js"
+  },
+  {
     "module": "runtime/BotHost.js",
     "shim": "bot_host.js"
   },
   {
-    "module": "shim/gathering_locations.js",
-    "shim": "gathering_locations.js"
+    "module": "runtime/Scheduler.js",
+    "shim": "scheduler.js"
+  },
+  {
+    "module": "runtime/ScriptActivity.js",
+    "shim": "script_activity.js"
+  },
+  {
+    "module": "api/map/WalkDestinations.js",
+    "shim": "walk_destinations.js"
+  },
+  {
+    "module": "api/map/regions.js",
+    "shim": "regions.js"
+  },
+  {
+    "module": "event/webwalk/wilderness.js",
+    "shim": "wilderness.js"
+  },
+  {
+    "module": "event/webwalk/WalkExecutor.js",
+    "shim": "walk_executor.js"
+  },
+  {
+    "module": "api/shop/StockModel.js",
+    "shim": "stock_model.js"
+  },
+  {
+    "module": "api/shop/shopPrice.js",
+    "shim": "shop_price.js"
   }
 ]

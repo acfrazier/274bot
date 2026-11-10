@@ -208,14 +208,13 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn v1_self_target_npc_player_none() {
+fn v1_self_face_entity_npc_player_none() {
     let src = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
 import { Game } from '../../api/game/Game.js';
 export default class T extends LoopingBot {
     loop() {
         globalThis.__probe = {
-            target: reader.selfTarget(),
             raw: reader.selfFaceEntity(),
             attacked: Game.attackedByPlayer(),
         };
@@ -230,8 +229,6 @@ export default class T extends LoopingBot {
     iso.post_snapshot(encode_snapshot(&snap));
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe["target"]["kind"], 1);
-    assert_eq!(probe["target"]["index"], 42);
     assert_eq!(probe["raw"], 42);
     assert_eq!(probe["attacked"], false);
 
@@ -241,8 +238,6 @@ export default class T extends LoopingBot {
     iso.post_snapshot(encode_snapshot(&snap));
     iso.on_game_tick(2);
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe["target"]["kind"], 2);
-    assert_eq!(probe["target"]["index"], 7);
     assert_eq!(probe["raw"], 32775);
     assert_eq!(probe["attacked"], true);
 
@@ -252,8 +247,6 @@ export default class T extends LoopingBot {
     iso.post_snapshot(encode_snapshot(&snap));
     iso.on_game_tick(3);
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe["target"]["kind"], 0);
-    assert_eq!(probe["target"]["index"], -1);
     assert_eq!(probe["raw"], -1);
     assert_eq!(probe["attacked"], false);
     iso.join();

@@ -61,6 +61,10 @@ pub use runtime::isolate::{
 #[doc(hidden)]
 pub use runtime::isolate::ThreadBlock;
 
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use runtime::bindings::main_module_for_import_gate_test;
+
 pub use runtime::platform::bootstrap_v8_platform;
 
 pub use library::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};

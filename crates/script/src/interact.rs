@@ -131,6 +131,9 @@ pub enum InteractReq {
         cross: Vec<String>,
         #[serde(default)]
         request_id: u64,
+        /// Optional bounded expansion count for route inspection.
+        #[serde(default)]
+        max_expansions: Option<u64>,
     },
     /// Isolate-applied inspect consume-ack. Not a public JS request.
     /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
@@ -207,6 +210,19 @@ pub enum InteractReq {
         component: i32,
         generation: u64,
     },
+    /// Drag one bank row to `target_slot` (`INV_BUTTOND`). Host dispatch
+    /// re-resolves the exact posted bank row by id/slot/component under
+    /// `bank_generation`; `insert` is the client's mode byte, which the
+    /// server ignores in favour of `%bankinsert` (`bank.rs2:6-11`).
+    #[serde(rename = "bank-drag")]
+    BankDrag {
+        id: i32,
+        slot: i32,
+        component: i32,
+        target_slot: i32,
+        insert: bool,
+        bank_generation: u64,
+    },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,
@@ -272,6 +288,9 @@ pub enum InteractReq {
         z: i32,
         level: i32,
         index: Option<i32>,
+        /// Expected scene-entity type for fail-closed native targets.
+        #[serde(default)]
+        target_id: Option<i32>,
     },
     /// Continue the open chat dialog or an explicitly selected visible pause button.
     #[serde(rename = "continue")]
@@ -279,6 +298,10 @@ pub enum InteractReq {
         #[serde(default)]
         component_id: Option<i32>,
     },
+    /// Send a public message through the API's typed MESSAGE_PUBLIC builder
+    /// (`api::prot::Send::message_public`, colour/effect 0) and normal Driver dispatch.
+    #[serde(rename = "say-public")]
+    SayPublic { text: String },
     /// Answer the chat modal's `option`-th choice (1-based).
     #[serde(rename = "answer")]
     Answer { option: i32 },
@@ -364,7 +387,17 @@ pub enum InteractReq {
     CombatStop { request_id: u64 },
     /// Reserved native progress-family control; public JS interact rows cannot forge it.
     #[serde(rename = "progress-read", skip_deserializing)]
-    ProgressRead { request_id: u64, name: String },
+    ProgressRead {
+        request_id: u64,
+        name: String,
+        journal_only: bool,
+    },
+    /// Native cast-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "cast-npc", skip_deserializing)]
+    CastNpc {
+        request_id: u64,
+        request: crate::combat::CastNpcRequest,
+    },
     /// Native `RunManager.override` replacement. The V8 binding is the only
     /// producer; public JS interact rows cannot forge this host policy update.
     #[serde(rename = "run-policy", skip_deserializing)]
@@ -468,6 +501,7 @@ impl InteractReq {
                 | Self::CombatFight { .. }
                 | Self::CombatStop { .. }
                 | Self::ProgressRead { .. }
+                | Self::CastNpc { .. }
                 | Self::NoteProgress
                 | Self::LoopSettled
                 | Self::WaitEnqueued

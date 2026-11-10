@@ -492,8 +492,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Execution } from '../../api/execution/Execution.js';",
     },
     Reexport {
-        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot"],
-        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';",
+        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot", "BranchTask", "LeafTask"],
+        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot, BranchTask, LeafTask } from '../../api/bot/Bot.js';",
     },
     Reexport {
         names: &["Paint"],
@@ -581,8 +581,66 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';",
     },
     Reexport {
-        names: &["ENT_NPC_IDS", "ENT_LIFE_TICKS", "isEntNpcId", "entNpcOnTile"],
-        line: "export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';",
+        names: &[
+            "ENT_NPC_IDS",
+            "ENT_LIFE_TICKS",
+            "isEntNpcId",
+            "entNpcOnTile",
+            "WOODCUTTING_LOCATIONS",
+            "WOODCUTTING_LOCATION_OPTIONS",
+            "resolveWoodcuttingLocation",
+        ],
+        line: "export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile, WOODCUTTING_LOCATIONS, WOODCUTTING_LOCATION_OPTIONS, resolveWoodcuttingLocation } from '../../data/woodcuttingLocations.js';",
+    },
+    Reexport {
+        names: &[
+            "MINING_LOCATIONS",
+            "MINING_LOCATION_OPTIONS",
+            "MINING_LOCATION_OPTION_LABELS",
+            "miningLocationLabel",
+            "resolveMiningLocation",
+        ],
+        line: "export { MINING_LOCATIONS, MINING_LOCATION_OPTIONS, MINING_LOCATION_OPTION_LABELS, miningLocationLabel, resolveMiningLocation } from '../../data/miningLocations.js';",
+    },
+    Reexport {
+        names: &[
+            "FISHING_LOCATIONS",
+            "FISHING_LOCATION_OPTIONS",
+            "resolveFishingLocation",
+        ],
+        line: "export { FISHING_LOCATIONS, FISHING_LOCATION_OPTIONS, resolveFishingLocation } from '../../data/fishingLocations.js';",
+    },
+    Reexport {
+        names: &[
+            "WHIRLPOOL_IDS",
+            "FISHING_METHODS",
+            "FISHING_METHOD_OPTIONS",
+            "ALL_FISHING_GEAR_NAMES",
+            "resolveFishMethod",
+            "gearKeepNames",
+            "hasFishingGear",
+            "missingFishingGear",
+            "gearLabel",
+            "fishingRestockPlan",
+            "spotMatchesMethod",
+        ],
+        line: "export { WHIRLPOOL_IDS, FISHING_METHODS, FISHING_METHOD_OPTIONS, ALL_FISHING_GEAR_NAMES, resolveFishMethod, gearKeepNames, hasFishingGear, missingFishingGear, gearLabel, fishingRestockPlan, spotMatchesMethod } from '../../data/fishingMethods.js';",
+    },
+    Reexport {
+        names: &[
+            "FISHING_SHOP_COSTS",
+            "GERRANT_ONLY_FISHING",
+            "fishingVendorFor",
+            "fishingShopCost",
+            "isFishingBaitPiece",
+            "withBaitTarget",
+            "planFishingGearBuys",
+            "planFishingGearAcquire",
+            "buyPlansCost",
+            "fishingGearShopCart",
+            "shopableMissingFishingGear",
+        ],
+        line: "export { FISHING_SHOP_COSTS, GERRANT_ONLY_FISHING, fishingVendorFor, fishingShopCost, isFishingBaitPiece, withBaitTarget, planFishingGearBuys, planFishingGearAcquire, buyPlansCost, fishingGearShopCart, shopableMissingFishingGear } from '../../shim/fishing_gear.js';",
     },
     Reexport {
         names: &["ROCK_OPTIONS", "ROCK_TYPES", "GAS_ROCK_IDS", "GAS_ROCK_TICKS", "BROKEN_PICKAXE", "resolveRockIds"],
@@ -606,6 +664,10 @@ const REEXPORTS: &[Reexport] = &[
         names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],
         line: "export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';",
     },
+    Reexport {
+        names: &["WALK_DESTINATIONS", "WALK_OPTIONS", "resolveDestination"],
+        line: "export { WALK_DESTINATIONS, WALK_OPTIONS, resolveDestination } from '../../api/map/WalkDestinations.js';",
+    },
 ];
 
 /// Generate the `@rs2b0t/api` surface: re-export the names a shim module
@@ -621,6 +683,10 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
     covered.insert("defineBot");
+    if wanted.contains("registerScript") {
+        out.push_str("export { registerScript } from '../../runtime/ScriptRegistry.js';\n\n");
+        covered.insert("registerScript");
+    }
 
     for re in REEXPORTS {
         if re.names.iter().any(|n| wanted.contains(n)) {
@@ -655,6 +721,24 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                     exp.name, exp.name
                 ));
             }
+            DeclaredKind::Object if exp.name == "events" => {
+                out.push_str("export const events = proxy('events', {\n");
+                for member in &exp.members {
+                    match member.as_str() {
+                        "off" => out.push_str(
+                            "    off(event, cb) { globalThis.__rs2b0t_native_event_off(event, cb); },\n",
+                        ),
+                        "on" => out.push_str(
+                            "    on(event, cb) { const id = globalThis.__rs2b0t_native_event_on(event, cb); return () => globalThis.__rs2b0t_native_event_off(id); },\n",
+                        ),
+                        _ => out.push_str(&format!(
+                            "    {}() {{ throw notImpl('events.{}'); }},\n",
+                            member, member
+                        )),
+                    }
+                }
+                out.push_str("});\n");
+            }
             DeclaredKind::Object => {
                 out.push_str(&format!(
                     "export const {} = proxy('{}', {{\n",
@@ -684,6 +768,13 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                             "    static {}() {{ throw notImpl('{}.{}'); }}\n",
                             m, exp.name, m
                         ));
+                        continue;
+                    }
+                    if matches!(
+                        (exp.name.as_str(), m.as_str()),
+                        ("BranchTask", "validate" | "success" | "failure")
+                            | ("LeafTask", "execute")
+                    ) {
                         continue;
                     }
                     out.push_str(&format!(

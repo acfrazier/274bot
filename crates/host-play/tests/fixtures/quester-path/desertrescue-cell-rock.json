@@ -1,0 +1,22 @@
+{
+  "stage": "desertrescue:6",
+  "stand": [3282, 3035, 0],
+  "loadout": null,
+  "extra_items": [
+    ["rune_scimitar", 1],
+    ["lobster", 8],
+    ["shantay_pass", 4],
+    ["water_skin4", 4],
+    ["desert_shirt", 1],
+    ["desert_robe", 1],
+    ["desert_boots", 1],
+    ["bronze_bar", 4],
+    ["feather", 50],
+    ["hammer", 1],
+    ["coins", 1000]
+  ],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["desertrescue:7"],
+  "mode": "stage"
+}

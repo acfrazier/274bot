@@ -15,6 +15,23 @@ use crate::gatherer::oneop::{OneOpArgs, OneOpKind};
 use crate::native::ActionContext;
 use crate::survival::cure::{cure_choice, CureDecision, CureInputs, CureWhy};
 use crate::survival::math::{self, NeedWhy, SurvivalNeed};
+use crate::survival::StepHazard;
+
+/// The caller's eating floor and the selected step's own one-event damage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Upkeep {
+    pub eat_floor: i32,
+    pub hazard: Option<StepHazard>,
+}
+
+impl Upkeep {
+    pub const fn floor(eat_floor: i32) -> Self {
+        Self {
+            eat_floor,
+            hazard: None,
+        }
+    }
+}
 
 /// The last survival decision published by the owning native runner.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -106,8 +123,8 @@ const _: () = assert!(std::mem::size_of::<SurvivalStep>() <= 192);
 
 impl SurvivalStep {
     /// Observe threats and choose the cure, bite, or park trigger for this frame.
-    /// `eat_floor` is the caller's additional minimum eating line.
-    pub fn want(&mut self, cx: &ActionContext<'_>, eat_floor: i32) -> SurvivalWant {
+    /// `upkeep` adds the caller's floor and the selected step's damage.
+    pub fn want(&mut self, cx: &ActionContext<'_>, upkeep: Upkeep) -> SurvivalWant {
         let snapshot = cx.snapshot();
         let Some(frame) = Frame::borrow(snapshot) else {
             self.last = SurvivalReport::default();
@@ -129,13 +146,34 @@ impl SurvivalStep {
             // click in flight.
             return SurvivalWant::Hold;
         }
-        let danger = self.threats.danger(&frame, tables, tick, false, false);
+        let base = self.threats.danger(&frame, tables, tick, false, false);
+        let hp = frame
+            .stats
+            .iter()
+            .find(|stat| stat.index == 3)
+            .map(|stat| stat.effective);
+        let hp_max = frame
+            .stats
+            .iter()
+            .find(|stat| stat.index == 3)
+            .map_or(0, |stat| stat.base);
+        let hazard = upkeep
+            .hazard
+            .zip(hp)
+            .map(|(hazard, hp)| hazard.max_damage(hp, hp_max));
+        let danger = base.map(|danger| danger.saturating_add(hazard.unwrap_or(0)));
         let exposure = math::exposure(&self.threats, tables, tick);
         let condition = cx.condition();
         let q_unknown = cx.poison_unknown_pulse();
         let outlook = condition
             .map(|condition| poison_math::remaining(condition.poison, exposure, tick, q_unknown));
         let poison_fire = outlook.map_or(0, |outlook| i32::from(outlook.per_fire_now));
+        let hazard_floor = hazard.map_or(0, |damage| {
+            select::lines(Some(damage), hp_max)
+                .with_poison(poison_fire)
+                .eat
+        });
+        let eat_floor = upkeep.eat_floor.max(hazard_floor);
         let cure = cure_choice(&CureInputs {
             cond: condition,
             danger,
@@ -150,16 +188,6 @@ impl SurvivalStep {
             q_unknown,
             eat_floor,
         });
-        let hp = frame
-            .stats
-            .iter()
-            .find(|stat| stat.index == 3)
-            .map(|stat| stat.effective);
-        let hp_max = frame
-            .stats
-            .iter()
-            .find(|stat| stat.index == 3)
-            .map_or(0, |stat| stat.base);
         let eat_line = select::lines(danger, hp_max)
             .with_poison(poison_fire)
             .eat
@@ -227,6 +255,11 @@ impl SurvivalStep {
                 }
             ) && outlook.is_some_and(|outlook| outlook.pending);
             let held_allowed_cure = matches!(cure, CureDecision::Needed { held: true, .. });
+            // Keep the fail-closed bite on a hit window, but do not cancel
+            // work for a supply need that disappears at the next edge.
+            let unknown_window = base.is_none()
+                && self.threats.has_unattributed_event(tick)
+                && !self.threats.has_overflow(tick);
             self.last = SurvivalReport {
                 decision: if self.park.is_some() {
                     Decision::Parked
@@ -238,7 +271,12 @@ impl SurvivalStep {
                 tried: 0,
                 owner: Owner::Step,
             };
-            if self.park.is_none() && !report_only && !pending_lethal && !held_allowed_cure {
+            if self.park.is_none()
+                && !report_only
+                && !pending_lethal
+                && !held_allowed_cure
+                && !unknown_window
+            {
                 return SurvivalWant::Need(need);
             }
             return SurvivalWant::Nothing;
@@ -266,6 +304,36 @@ impl SurvivalStep {
             _ => SurvivalReport::default(),
         };
         SurvivalWant::Nothing
+    }
+
+    /// An unpriced kind-1 hit in the threat set's current unknown window.
+    pub(crate) fn unattributed_hit(&self, cx: &ActionContext<'_>) -> Option<i32> {
+        let frame = Frame::borrow(cx.snapshot())?;
+        if !self.threats.has_unattributed_event(frame.tick) {
+            return None;
+        }
+        frame
+            .hitmarks
+            .iter()
+            .filter(|mark| mark.kind == 1 && mark.cycle > frame.loop_cycle && mark.value > 0)
+            .map(|mark| mark.value)
+            .max()
+    }
+
+    /// A quiet recovery bound excludes live rows, overflow and poison.
+    /// The selected step's committed hit may occupy the unknown window.
+    pub(crate) fn quiet_hazard_recovery(&self, cx: &ActionContext<'_>) -> bool {
+        let Some(frame) = Frame::borrow(cx.snapshot()) else {
+            return false;
+        };
+        !self.threats.has_overflow(frame.tick)
+            && self.threats.iter(frame.tick).next().is_none()
+            && cx.condition().is_some_and(|condition| {
+                matches!(
+                    condition.poison,
+                    PoisonState::Clear | PoisonState::Immune { .. }
+                )
+            })
     }
 
     /// The server delays of the last survival click, replayed at its anchored
@@ -679,7 +747,7 @@ mod tests {
             tick.cx.condition = Some(*condition);
             tick.cx.poison_unknown_pulse = 11;
             tick.cx.cure_poison = policy;
-            step.want(&tick.cx, eat_floor)
+            step.want(&tick.cx, Upkeep::floor(eat_floor))
         })
     }
 
@@ -1030,6 +1098,310 @@ mod tests {
             SurvivalWant::Need(SurvivalNeed::Cure {
                 or_food: 39,
                 why: NeedWhy::Lethal,
+                ..
+            })
+        ));
+    }
+
+    fn hazard_constant(damage: i8) -> StepHazard {
+        StepHazard {
+            of: crate::survival::HazardStat::None,
+            mul: 0,
+            div: 1,
+            plus: damage,
+            cap: None,
+        }
+    }
+
+    fn hazard_frame(inventory: Vec<ItemView>, hp: u8, tick: u64) -> GameSnapshot {
+        let mut snapshot = snapshot(inventory);
+        snapshot.seed_tick(tick as u32);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 40,
+            effective: i32::from(hp),
+            xp: 0,
+            used: true,
+        }]);
+        snapshot
+    }
+
+    fn hazard_want(
+        step: &mut SurvivalStep,
+        snapshot: &GameSnapshot,
+        hp: u8,
+        poison: PoisonState,
+        hazard: Option<StepHazard>,
+        tick: u64,
+    ) -> SurvivalWant {
+        let mut condition = condition(hp, poison);
+        condition.hp_max = 40;
+        let mut ledger = None;
+        with_tick(snapshot, &mut ledger, tick, |native| {
+            native.cx.condition = Some(condition);
+            native.cx.cure_poison = CurePoison::WhenNeeded;
+            step.want(
+                &native.cx,
+                Upkeep {
+                    eat_floor: 0,
+                    hazard,
+                },
+            )
+        })
+    }
+
+    fn seed_hazard_hit(snapshot: &mut GameSnapshot, damage: i32) {
+        let mut marks = [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4];
+        marks[0] = HitmarkView {
+            value: damage,
+            kind: 1,
+            cycle: 630,
+        };
+        snapshot.seed_hitmarks(HitmarksView {
+            marks,
+            loop_cycle: 600,
+        });
+    }
+
+    fn seed_scorpions(snapshot: &mut GameSnapshot, count: usize) {
+        let world = crate::combat_session::tests::World::new("scorpion");
+        let template = world.snapshot.npcs()[0].clone();
+        let at = WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        };
+        snapshot.seed_npcs(
+            (0..count)
+                .map(|index| api::snapshot::NpcView {
+                    index: index + 1,
+                    tile: at,
+                    network: at,
+                    target: Some(api::snapshot::ActorTargetView {
+                        kind: api::snapshot::ActorKind::Player,
+                        index: 0,
+                    }),
+                    in_combat: true,
+                    ..template.clone()
+                })
+                .collect(),
+        );
+    }
+
+    #[test]
+    fn survival_step_adds_the_step_hazard_to_the_danger() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (rows, hp, bites) in [(0, 7, true), (0, 8, false), (1, 11, true), (1, 12, false)] {
+            let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
+            seed_scorpions(&mut snapshot, rows);
+            let mut step = SurvivalStep::default();
+            let outcome = hazard_want(
+                &mut step,
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                Some(hazard_constant(3)),
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites,
+                "{rows} scorpions, HP {hp}"
+            );
+            let mut ledger = None;
+            with_tick(&snapshot, &mut ledger, 20, |native| {
+                let frame = Frame::borrow(native.cx.snapshot()).unwrap();
+                assert_eq!(
+                    step.threats.danger(
+                        &frame,
+                        crate::combat::guard::shared_tables_ref().unwrap(),
+                        20,
+                        false,
+                        false
+                    ),
+                    Some(if rows == 0 { 0 } else { 2 })
+                );
+            });
+            if !bites {
+                assert!(matches!(outcome, SurvivalWant::Nothing));
+            }
+        }
+    }
+
+    #[test]
+    fn survival_step_keeps_a_known_hazard_as_a_floor_under_an_unknown_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (hp, overflow, bites) in [(25, false, true), (32, false, false), (25, true, true)] {
+            let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
+            if overflow {
+                seed_scorpions(&mut snapshot, 5);
+            } else {
+                seed_hazard_hit(&mut snapshot, 15);
+            }
+            let mut step = SurvivalStep::default();
+            let outcome = hazard_want(
+                &mut step,
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                Some(hazard_constant(15)),
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites
+            );
+            assert_eq!(step.threats.has_overflow(20), overflow);
+            if !bites {
+                assert!(matches!(outcome, SurvivalWant::Nothing));
+            }
+        }
+    }
+
+    #[test]
+    fn survival_step_reports_a_need_on_an_unattributed_hit_window_and_parks_at_the_next_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (hp, hazard, parks) in [(19, None, false), (7, Some(hazard_constant(3)), true)] {
+            let mut snapshot = hazard_frame(vec![], hp, 20);
+            seed_hazard_hit(&mut snapshot, 3);
+            let mut step = SurvivalStep::default();
+            assert!(matches!(
+                hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, hazard, 20),
+                SurvivalWant::Nothing
+            ));
+            assert_eq!(step.report().decision, Decision::Needed);
+            assert!(step.parked().is_none());
+            snapshot.seed_tick(21);
+            let next = hazard_want(&mut step, &snapshot, hp, PoisonState::Clear, hazard, 21);
+            assert_eq!(
+                matches!(
+                    next,
+                    SurvivalWant::Need(SurvivalNeed::Food { count: 1, .. })
+                ),
+                parks
+            );
+            if !parks {
+                assert!(matches!(next, SurvivalWant::Nothing));
+                assert_eq!(step.report().decision, Decision::None);
+            }
+        }
+    }
+
+    #[test]
+    fn survival_step_bites_on_the_hit_window_at_half_max() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (hp, bites) in [(19, true), (21, false)] {
+            let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
+            seed_hazard_hit(&mut snapshot, 3);
+            let outcome = hazard_want(
+                &mut SurvivalStep::default(),
+                &snapshot,
+                hp,
+                PoisonState::Clear,
+                None,
+                20,
+            );
+            assert_eq!(
+                matches!(
+                    outcome,
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                bites
+            );
+            if !bites {
+                assert!(matches!(outcome, SurvivalWant::Nothing));
+            }
+        }
+    }
+
+    #[test]
+    fn hazard_step_drink_precedes_the_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let id = dose_id();
+        let mut snapshot = hazard_frame(vec![held(id, "Antipoison"), lobster()], 7, 20);
+        let mut step = SurvivalStep::default();
+        let poison = PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        let SurvivalWant::Click(drink) = hazard_want(
+            &mut step,
+            &snapshot,
+            7,
+            poison,
+            Some(hazard_constant(3)),
+            20,
+        ) else {
+            panic!("the held cure precedes the bite");
+        };
+        assert!(matches!(drink.kind, OneOpKind::Drink { .. }));
+        record(&mut step, &snapshot, drink.kind, 20);
+        snapshot.seed_inventory(vec![lobster()], 28);
+        snapshot.seed_tick(21);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 21, |native| {
+            step.record_settled(true, &native.cx)
+        });
+        for tick in 21..=22 {
+            snapshot.seed_tick(tick);
+            assert!(
+                matches!(
+                    hazard_want(
+                        &mut step,
+                        &snapshot,
+                        7,
+                        PoisonState::Clear,
+                        Some(hazard_constant(3)),
+                        u64::from(tick)
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "tick {tick}"
+            );
+        }
+        snapshot.seed_tick(23);
+        assert!(matches!(
+            hazard_want(
+                &mut step,
+                &snapshot,
+                7,
+                PoisonState::Clear,
+                Some(hazard_constant(3)),
+                23
+            ),
+            SurvivalWant::Click(OneOpArgs {
+                kind: OneOpKind::Eat { .. },
                 ..
             })
         ));

@@ -3,12 +3,13 @@
 //! Only the running primitive owns a native action. The trip releases that
 //! action before afterDeposit, so a callback may start its own bank operation.
 use super::*;
-use crate::bank::ops::{self, NoteIntent};
+use crate::bank::ops::{self, NoteIntent, TRANSFER_OBSERVED_TICK_LIMIT};
 use crate::bank::request::{
-    BankSeatArgs, BankSeatOperation, BANK_NEAREST_HOOK_AFTER_DEPOSIT, BANK_NEAREST_HOOK_DEPOSIT,
-    BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
+    BankPackRow, BankSeatArgs, BankSeatOperation, BANK_NEAREST_HOOK_AFTER_DEPOSIT,
+    BANK_NEAREST_HOOK_DEPOSIT, BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
 };
 use crate::bank::seat_open::{Opening, OpeningArgs, OpeningValue};
+use crate::bank::seat_sort::{Sort, SortArgs};
 use crate::bank::seat_transfer::{
     Transfer, TransferAnswer, TransferArgs, TransferCall, TransferHooks, TransferValue,
 };
@@ -20,7 +21,8 @@ use crate::native_bank::{bank_value, PickKind, SelectedBank};
 use crate::quester::prereq::reach::PrereqOpening;
 use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::{BankPreferences, NamedBankFacts};
-use api::snapshot::WorldTile;
+use api::quest_progress::EvidenceStamp;
+use api::snapshot::{ItemView, SnapshotView, WorldTile};
 use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::task::Poll;
@@ -117,8 +119,46 @@ struct BankRow {
     family: &'static str,
     job: Job,
     trip: Option<Trip>,
+    /// Native transaction behind purgePackAtBank or withdrawCoins.
+    task: Option<Task>,
     hooks: Arc<Mutex<TransferHooks>>,
     prompt_posted: bool,
+}
+
+/// A multi-step native bank transaction run by this row's jobs.
+enum Task {
+    Purge(Purge),
+    Coins(Coins),
+}
+
+/// `purgePackAtBank` (`Banking.ts:62-111`): open, deposit every unkept row,
+/// close, then verify the remaining pack.
+struct Purge {
+    keep: Vec<String>,
+    log: bool,
+    stage: PurgeStage,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PurgeStage {
+    Opening,
+    Depositing,
+    Closing,
+}
+
+/// `withdrawCoins` (`Banking.ts:354-390`): the held target the fresh pack
+/// count must reach after the withdrawal.
+struct Coins {
+    coin: String,
+    target: i64,
+}
+
+/// `Bank.backpackReady` (`Bank.ts:124-146`) counted in observed ticks.
+struct BackpackWait {
+    expected: Option<Vec<BankPackRow>>,
+    log: bool,
+    matching: bool,
+    started_tick: Option<u64>,
 }
 
 struct Trip {
@@ -165,6 +205,30 @@ enum Job {
         walk: PrereqWalk,
         deadline: Duration,
     },
+    /// `bankPace`: the evidence accepted at the first poll; settles on the
+    /// next observed game tick of that run. A kept reconnect holds the pause
+    /// and re-accepts it on the new session's first observed tick.
+    Pace {
+        accepted: Option<EvidenceStamp>,
+    },
+    /// `Bank.backpackReady`: observation-only, no action is owned.
+    Backpack(BackpackWait),
+    /// `sortBank`.
+    Sort(ActionHandle<Sort>),
+    /// A sort held across a kept reconnect; it resumes at its cursor and
+    /// reports its retained progress through the closed-bank path.
+    ResumeSort {
+        kind: NativeKind,
+        handle: ActionHandle<Sort>,
+    },
+    /// Post one synchronous `log` notification, then continue with `then`.
+    Log {
+        message: String,
+        asked: bool,
+        then: Box<Job>,
+    },
+    /// A settled result that waits only for a preceding log.
+    Settled(Value),
     Finished,
 }
 
@@ -200,6 +264,11 @@ fn family(operation: BankSeatOperation) -> &'static str {
         BankSeatOperation::SetNoteMode => "bank_note_mode",
         BankSeatOperation::Close => "bank_close",
         BankSeatOperation::WaitReady | BankSeatOperation::WaitSnapshotAfter => "bank_wait",
+        BankSeatOperation::PurgePack
+        | BankSeatOperation::WithdrawCoins
+        | BankSeatOperation::Pace
+        | BankSeatOperation::BackpackReady
+        | BankSeatOperation::Sort => "bank_task",
         _ => "bank_op",
     }
 }
@@ -255,6 +324,7 @@ impl BankSeat {
             family,
             job: Job::Start(request),
             trip,
+            task: None,
             hooks: Arc::new(Mutex::new(TransferHooks::default())),
             prompt_posted: false,
         });
@@ -293,6 +363,24 @@ impl BankRow {
     }
 
     fn after_open(&mut self, ready: bool) -> Option<Value> {
+        if let Some(Task::Purge(purge)) = &mut self.task {
+            if purge.stage == PurgeStage::Opening {
+                if !ready {
+                    let log = purge.log;
+                    self.job = log_then(
+                        log,
+                        "start purge: could not open bank — leaving pack as-is".into(),
+                        Job::Settled(json!(false)),
+                    );
+                    return None;
+                }
+                purge.stage = PurgeStage::Depositing;
+                let mut request = BankSeatArgs::new(BankSeatOperation::DepositKeep);
+                request.keep_names = purge.keep.clone();
+                self.job = Job::Start(request);
+                return None;
+            }
+        }
         let Some(trip) = self.trip.as_ref().filter(|_| ready) else {
             return Some(json!(ready));
         };
@@ -318,6 +406,139 @@ impl BankRow {
         None
     }
 
+    /// The first poll of a bank task: decide from the posted facts, then hand
+    /// the shared open/transfer jobs their typed requests.
+    fn start_task(&mut self, request: BankSeatArgs, cx: &ActionContext<'_>) -> Job {
+        let log = request.hooks_present & HOOK_LOG != 0;
+        match request.operation {
+            BankSeatOperation::PurgePack => {
+                let snapshot = cx.snapshot();
+                let junk = purge_junk(snapshot, &request.keep_names);
+                if junk == 0 {
+                    return Job::Settled(json!(true));
+                }
+                let keep = if request.keep_names.is_empty() {
+                    "none".to_owned()
+                } else {
+                    request.keep_names.join(", ")
+                };
+                let message = format!("start purge: banking {junk} stack(s) (keep: {keep})");
+                let mut open = BankSeatArgs::new(BankSeatOperation::Open);
+                open.stand = request.stand;
+                open.destination = request.destination;
+                open.object_access = request.object_access;
+                open.prefer_nearby = request.prefer_nearby;
+                open.obstacles = request.obstacles;
+                open.hooks_present = if log { HOOK_LOG } else { 0 };
+                self.task = Some(Task::Purge(Purge {
+                    keep: request.keep_names,
+                    log,
+                    stage: PurgeStage::Opening,
+                }));
+                log_then(log, message, Job::Start(open))
+            }
+            BankSeatOperation::WithdrawCoins => {
+                let snapshot = cx.snapshot();
+                let coin = request.item_name.unwrap_or_else(|| "Coins".into());
+                let need = request.quantity.unwrap_or(0);
+                let held = i64::from(count_named(
+                    snapshot.inventory().map_or(&[][..], |pack| pack.value),
+                    &coin,
+                ));
+                let take = need.saturating_sub(held).max(0);
+                if take <= 0 {
+                    return Job::Settled(json!(true));
+                }
+                let open = snapshot
+                    .bank_session()
+                    .is_some_and(|session| session.value.open);
+                if !open {
+                    return Job::Settled(json!(false));
+                }
+                let banked = i64::from(
+                    snapshot
+                        .bank()
+                        .map_or(0, |rows| count_named(rows.value, &coin)),
+                );
+                if banked <= 0 {
+                    return log_then(
+                        log,
+                        format!("acquire: no coins in bank (need {need}gp)"),
+                        Job::Settled(json!(false)),
+                    );
+                }
+                let amount = take.min(banked).min(i64::from(i32::MAX));
+                let mut withdraw = BankSeatArgs::new(BankSeatOperation::WithdrawDelta);
+                withdraw.item_name = Some(coin.clone());
+                withdraw.quantity = Some(amount);
+                self.task = Some(Task::Coins(Coins {
+                    target: need.min(held.saturating_add(amount)),
+                    coin,
+                }));
+                log_then(
+                    log,
+                    format!("acquire: withdraw {amount}gp"),
+                    Job::Start(withdraw),
+                )
+            }
+            BankSeatOperation::Pace => Job::Pace { accepted: None },
+            BankSeatOperation::BackpackReady => Job::Backpack(BackpackWait {
+                expected: request.expected_pack,
+                log,
+                matching: false,
+                started_tick: None,
+            }),
+            _ => Job::Start(request),
+        }
+    }
+
+    /// A finished transfer inside a task: continue the transaction, or
+    /// `None` when this row has no task.
+    fn task_transfer_done(
+        &mut self,
+        result: Result<TransferValue, ActionError>,
+        cx: &ActionContext<'_>,
+    ) -> Option<Result<Job, ActionError>> {
+        match self.task.as_mut()? {
+            Task::Purge(purge) => match purge.stage {
+                PurgeStage::Opening => Some(Err(ActionError::Stale)),
+                PurgeStage::Depositing => {
+                    if let Err(error) = result {
+                        return Some(Err(error));
+                    }
+                    // Upstream ignores the close result (`Banking.ts:101`).
+                    purge.stage = PurgeStage::Closing;
+                    Some(Ok(Job::Start(BankSeatArgs::new(BankSeatOperation::Close))))
+                }
+                PurgeStage::Closing => {
+                    let left = purge_junk(cx.snapshot(), &purge.keep);
+                    let (message, clean) = if left > 0 {
+                        (
+                            format!(
+                                "start purge: still holding {left} junk stack(s) after deposit"
+                            ),
+                            false,
+                        )
+                    } else {
+                        ("start purge: pack cleared".to_owned(), true)
+                    };
+                    Some(Ok(log_then(purge.log, message, Job::Settled(json!(clean)))))
+                }
+            },
+            Task::Coins(coins) => match result {
+                Err(error) => Some(Err(error)),
+                Ok(TransferValue::Bool(true)) => {
+                    let held = cx
+                        .snapshot()
+                        .inventory()
+                        .map_or(0, |pack| count_named(pack.value, &coins.coin));
+                    Some(Ok(Job::Settled(json!(i64::from(held) >= coins.target))))
+                }
+                Ok(_) => Some(Ok(Job::Settled(json!(false)))),
+            },
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "The bank seat borrows its separate owners and selected facts without another context allocation."
@@ -338,6 +559,32 @@ impl BankRow {
             let job = std::mem::replace(&mut self.job, Job::Finished);
             match job {
                 Job::Start(request) => {
+                    if matches!(
+                        request.operation,
+                        BankSeatOperation::PurgePack
+                            | BankSeatOperation::WithdrawCoins
+                            | BankSeatOperation::Pace
+                            | BankSeatOperation::BackpackReady
+                    ) {
+                        self.job = self.start_task(request, cx);
+                        continue;
+                    }
+                    if request.operation == BankSeatOperation::Sort {
+                        if !cx.may_begin_this_tick() {
+                            self.job = Job::Start(request);
+                            return Poll::Pending;
+                        }
+                        let args = SortArgs {
+                            log: request.hooks_present & HOOK_LOG != 0,
+                            overrides: request.category_overrides,
+                            hooks: Arc::clone(&self.hooks),
+                        };
+                        match actions.begin::<Sort>(args, cx) {
+                            Ok(handle) => self.job = Job::Sort(handle),
+                            Err(error) => return Poll::Ready(Err(error)),
+                        }
+                        return Poll::Pending;
+                    }
                     let waiting = matches!(
                         request.operation,
                         BankSeatOperation::WaitReady | BankSeatOperation::WaitSnapshotAfter
@@ -514,7 +761,13 @@ impl BankRow {
                         return Poll::Pending;
                     }
                     Poll::Ready(result) => {
-                        if let Some(result) = self.transfer_done(result, note) {
+                        if self.task.is_some() {
+                            match self.task_transfer_done(result, cx) {
+                                Some(Ok(job)) => self.job = job,
+                                Some(Err(error)) => return Poll::Ready(Err(error)),
+                                None => return Poll::Ready(Err(ActionError::Stale)),
+                            }
+                        } else if let Some(result) = self.transfer_done(result, note) {
                             return Poll::Ready(result);
                         }
                     }
@@ -640,6 +893,163 @@ impl BankRow {
                     }
                     return Poll::Pending;
                 }
+                Job::Pace { accepted } => {
+                    let now = cx.evidence();
+                    let Some(accepted) = accepted else {
+                        self.job = Job::Pace {
+                            accepted: Some(now),
+                        };
+                        return Poll::Pending;
+                    };
+                    if now.run.slot != accepted.run.slot || now.run.run != accepted.run.run {
+                        // Another run never inherits this pause.
+                        return Poll::Ready(Err(ActionError::Cancelled));
+                    }
+                    if now.run.session != accepted.run.session {
+                        // A kept reconnect holds the request: the pause
+                        // restarts on the new session's own observed ticks.
+                        self.job = Job::Pace {
+                            accepted: Some(now),
+                        };
+                        return Poll::Pending;
+                    }
+                    if now.tick > accepted.tick {
+                        return Poll::Ready(Ok(Value::Null));
+                    }
+                    self.job = Job::Pace {
+                        accepted: Some(accepted),
+                    };
+                    return Poll::Pending;
+                }
+                Job::Backpack(mut wait) => {
+                    let snapshot = cx.snapshot();
+                    let tick = cx.evidence().tick;
+                    let open = snapshot
+                        .bank_session()
+                        .is_some_and(|session| session.value.open);
+                    let started = *wait.started_tick.get_or_insert(tick);
+                    let expired = tick.saturating_sub(started) >= TRANSFER_OBSERVED_TICK_LIMIT;
+                    let side_ready = open && snapshot.bank_side_ready();
+                    if !wait.matching {
+                        if side_ready {
+                            if wait.expected.is_none() {
+                                return Poll::Ready(Ok(json!(true)));
+                            }
+                            // The expectation gets its own observed-tick budget.
+                            wait.matching = true;
+                            wait.started_tick = Some(tick);
+                            self.job = Job::Backpack(wait);
+                            continue;
+                        }
+                        if !open || expired {
+                            self.job = log_then(
+                                wait.log,
+                                "bank: side backpack modal did not become ready".into(),
+                                Job::Settled(json!(false)),
+                            );
+                            continue;
+                        }
+                        self.job = Job::Backpack(wait);
+                        return Poll::Pending;
+                    }
+                    let matched = side_ready
+                        && wait.expected.as_deref().is_some_and(|expected| {
+                            snapshot
+                                .bank_side()
+                                .is_some_and(|side| same_backpack(side.value, expected))
+                        });
+                    if matched {
+                        return Poll::Ready(Ok(json!(true)));
+                    }
+                    if !open || expired {
+                        self.job = log_then(
+                            wait.log,
+                            "bank: side backpack did not match the pre-open backpack".into(),
+                            Job::Settled(json!(false)),
+                        );
+                        continue;
+                    }
+                    self.job = Job::Backpack(wait);
+                    return Poll::Pending;
+                }
+                Job::Sort(handle) => match actions.poll(&handle, cx) {
+                    Poll::Pending => {
+                        self.job = Job::Sort(handle);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Ok(value)) => return Poll::Ready(Ok(value)),
+                    // A replaced session or a cancelled owner ends the sort
+                    // as the upstream closed-bank round does, with the
+                    // progress the machine retained.
+                    Poll::Ready(Err(ActionError::Stale | ActionError::Cancelled)) => {
+                        return Poll::Ready(Ok(handle
+                            .inspect(Sort::closed_result)
+                            .unwrap_or_else(Sort::closed_empty)));
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                },
+                Job::ResumeSort { kind, mut handle } => {
+                    match actions.resume_kept(kind, &mut handle, cx) {
+                        Ok(()) => self.job = Job::Sort(handle),
+                        Err(
+                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
+                        ) => {
+                            self.job = Job::ResumeSort { kind, handle };
+                            return Poll::Pending;
+                        }
+                        Err(_) => {
+                            return Poll::Ready(Ok(handle
+                                .inspect(Sort::closed_result)
+                                .unwrap_or_else(Sort::closed_empty)));
+                        }
+                    }
+                }
+                Job::Log {
+                    message,
+                    asked,
+                    then,
+                } => {
+                    let mut hooks = self.hooks.lock().unwrap_or_else(|error| error.into_inner());
+                    if !asked {
+                        if hooks.pending.is_some() || hooks.answer.is_some() {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank callback mailbox is occupied",
+                            ))));
+                        }
+                        hooks.pending = Some(TransferCall {
+                            hook: "log",
+                            args: vec![json!(message)],
+                        });
+                        drop(hooks);
+                        self.job = Job::Log {
+                            message: String::new(),
+                            asked: true,
+                            then,
+                        };
+                        return Poll::Pending;
+                    }
+                    match hooks.answer.take() {
+                        None => {
+                            drop(hooks);
+                            self.job = Job::Log {
+                                message,
+                                asked: true,
+                                then,
+                            };
+                            return Poll::Pending;
+                        }
+                        Some(TransferAnswer::Failed) => {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank callback failed",
+                            ))));
+                        }
+                        Some(TransferAnswer::Value(_)) => {
+                            drop(hooks);
+                            self.job = *then;
+                        }
+                    }
+                }
+                Job::Settled(value) => return Poll::Ready(Ok(value)),
                 Job::Finished => return Poll::Ready(Err(ActionError::Stale)),
             }
         }
@@ -668,6 +1078,92 @@ impl BankRow {
     }
 }
 
+/// Post `message` to the task's `log` callback before `then`, when one was
+/// supplied.
+fn log_then(log: bool, message: String, then: Job) -> Job {
+    if log {
+        Job::Log {
+            message,
+            asked: false,
+            then: Box::new(then),
+        }
+    } else {
+        then
+    }
+}
+
+/// Posted pack stacks `depositAllExcept(keep)` would bank: a named row whose
+/// name is not a keep name, case-insensitively (`bankRules.ts:107-110`).
+fn purge_junk(snapshot: SnapshotView<'_>, keep: &[String]) -> usize {
+    snapshot.inventory().map_or(0, |pack| {
+        pack.value
+            .iter()
+            .filter(|row| row.count > 0)
+            .filter(|row| {
+                row.def.name.as_deref().is_some_and(|name| {
+                    !name.is_empty() && !keep.iter().any(|kept| ops::same_name(kept, name))
+                })
+            })
+            .count()
+    })
+}
+
+/// Held count of every row named `name`, case-insensitively.
+fn count_named(rows: &[ItemView], name: &str) -> i32 {
+    rows.iter()
+        .filter(|row| {
+            row.def
+                .name
+                .as_deref()
+                .is_some_and(|actual| ops::same_name(actual, name))
+        })
+        .fold(0i32, |sum, row| sum.saturating_add(row.count))
+}
+
+/// Upstream `sameBackpack` (`Bank.ts:25-37`): equal length, and every posted
+/// side row has an expected row with the same slot, id and count.
+fn same_backpack(side: &[ItemView], expected: &[BankPackRow]) -> bool {
+    side.len() == expected.len()
+        && side.iter().all(|row| {
+            expected.iter().any(|want| {
+                want.slot == row.slot && want.id == row.def.id && want.count == row.count
+            })
+        })
+}
+
+impl Job {
+    /// A resumable bank request across a kept reconnect (contract v5 R5-7,
+    /// R5-8.5): request state is held, session-bound primitives are re-keyed
+    /// or revalidated on the new session.
+    fn held_across_kept_reconnect(self, kind: NativeKind) -> Job {
+        match self {
+            Job::Opening { handle, args } | Job::ResumeOpening { handle, args, .. } => {
+                Job::ResumeOpening { kind, handle, args }
+            }
+            Job::PrereqOpening(action) | Job::ResumePrereqOpening { action, .. } => {
+                Job::ResumePrereqOpening { kind, action }
+            }
+            Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
+                Job::ResumeTransfer { kind, handle }
+            }
+            Job::ReturnWalk { walk, deadline } => {
+                // The old logical walk belongs to the dropped session. Retain
+                // the trip's return cursor and deadline, then revalidate a
+                // fresh follow.
+                drop(walk);
+                Job::Return {
+                    deadline: Some(deadline),
+                }
+            }
+            // A sort keeps its progress: the resumed machine sees the dropped
+            // bank session and settles as a closed-bank round with the moves
+            // it already sent.
+            Job::Sort(handle) | Job::ResumeSort { handle, .. } => Job::ResumeSort { kind, handle },
+            job => job,
+        }
+    }
+}
+
 impl SlotScript {
     pub(super) fn bank_session_boundary(&mut self, reconnect: bool) {
         if let Some(bank) = &mut self.bank {
@@ -687,27 +1183,8 @@ impl SlotScript {
                     }) else {
                         continue;
                     };
-                    row.job = match std::mem::replace(&mut row.job, Job::Finished) {
-                        Job::Opening { handle, args } | Job::ResumeOpening { handle, args, .. } => {
-                            Job::ResumeOpening { kind, handle, args }
-                        }
-                        Job::PrereqOpening(action) | Job::ResumePrereqOpening { action, .. } => {
-                            Job::ResumePrereqOpening { kind, action }
-                        }
-                        Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
-                            Job::ResumeTransfer { kind, handle }
-                        }
-                        Job::ReturnWalk { walk, deadline } => {
-                            // The old logical walk belongs to the dropped
-                            // session. Retain the trip's return cursor and
-                            // deadline, then revalidate a fresh follow.
-                            drop(walk);
-                            Job::Return {
-                                deadline: Some(deadline),
-                            }
-                        }
-                        job => job,
-                    };
+                    let job = std::mem::replace(&mut row.job, Job::Finished);
+                    row.job = job.held_across_kept_reconnect(kind);
                 }
             } else {
                 bank.clear_work();
@@ -859,6 +1336,7 @@ impl SlotScript {
                     | Job::PrereqOpening(_)
                     | Job::Transfer(_)
                     | Job::ReturnWalk { .. }
+                    | Job::Sort(_)
             ) {
                 bank.action_owner = Some(row.id);
             } else if bank.action_owner == Some(row.id) {
@@ -1089,3 +1567,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "bank_task_tests.rs"]
+mod task_tests;

@@ -82,7 +82,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
+| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
 | `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
 | `host.walk-no-route-live` | Run on aubaine against the 600 ms Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`, using its assigned lab scope and the per-cell I/O admission gate. The release command maps the read-only Engine L tree from `BOT_ENGINE_DIR` and uses the `NAV_PACK_289`, `NAV_FLAGS_289`, `BOT_CACHE_DIR`, and `CATALOG_ROOT` inputs for the local R289 client profile. It writes the test receipts under `LIVE_EVIDENCE_DIR`. |
@@ -120,12 +120,35 @@ the same generation. The Duel Arena case requires the naturally closed lid to
 open before the actual bank opens. It refuses an already-open shared chest
 without resetting world content.
 
+**Qualified Quester guides**
+
+Each cell is one full quest run of a guide whose `index.json` status is `qualified`. It uses
+`live_quester_path_smoke` in clean mode with a committed seed that holds only the account's own state
+(position, items, bank stock). The run succeeds when the quest tab shows the quest complete.
+
+| Cell | Seed and required result |
+|---|---|
+| `host.quester-cook-full-engine-q` | `cook-clean.json`: Cook's Assistant runs from a fresh account to the quest-tab completion (`801 game ticks at a fixed 300 ms`). |
+| `host.quester-sheep-full-engine-q` | `sheep-clean.json`: Sheep Shearer runs from a fresh account to the quest-tab completion (`1346 game ticks at a fixed 300 ms`). |
+| `host.quester-runemysteries-full-engine-q` | `runemysteries-clean.json`: Rune Mysteries runs from a fresh account to the quest-tab completion (`1300 game ticks at a fixed 300 ms`). |
+| `host.quester-romeojuliet-full-engine-q` | `romeojuliet-clean.json`: Romeo & Juliet runs from a fresh account to the quest-tab completion (`707 game ticks at a fixed 300 ms`). |
+| `host.quester-imp-full-engine-q` | `imp-clean.json`: Imp Catcher runs from a fresh account to the quest-tab completion (`80 game ticks at a fixed 300 ms`). |
+| `host.quester-vampire-full-engine-q` | `vampire-clean.json`: Vampire Slayer runs from a fresh account to the quest-tab completion (`1060 game ticks at a fixed 300 ms`). |
+| `host.quester-doric-full-engine-q` | `doric-clean.json`: Doric's Quest runs from a fresh account to the quest-tab completion (`733 game ticks at a fixed 300 ms`). |
+| `host.quester-gobdip-full-engine-q` | `gobdip-clean.json`: Goblin Diplomacy runs from a fresh account to the quest-tab completion (`2210 game ticks at a fixed 300 ms`). |
+| `host.quester-hetty-full-engine-q` | `hetty-clean.json`: Witch's Potion runs from a fresh account to the quest-tab completion (`573 game ticks at a fixed 300 ms`). |
+| `host.quester-demon-full-engine-q` | `demon-clean.json`: Demon Slayer runs from a fresh account to the quest-tab completion (`2384 game ticks at a fixed 300 ms`). |
+| `host.quester-hazeelcult-full-engine-q` | `hazeelcult-clean.json`: Hazeel Cult runs from a fresh account to the quest-tab completion (`785 game ticks at a fixed 300 ms`). |
+| `host.quester-priestperil-full-engine-q` | `priestperil-clean.json`: Priest in Peril runs from a fresh account to the quest-tab completion (`6130 game ticks at a fixed 300 ms`). |
+| `host.quester-drunkmonk-full-engine-q` | `drunkmonk-clean.json`: Monk's Friend runs from a fresh account to the quest-tab completion (`643 game ticks at a fixed 300 ms`). |
+
 **Draft release refusal**
 
 The exact draft files in the `script.release-path-refusal` row do not ship as
-runnable guides. This cell proves refusal only. It does not execute their quest
-bodies or qualify them for release. Run its paired qualified-Priest live cell as
-well.
+runnable guides. This cell proves refusal of those drafts and admission of every
+guide whose `index.json` status is `qualified`. It does not execute any quest
+body or qualify a guide for release. Each qualified guide's own live cell is
+listed above.
 
 The cell first builds `script` with `cargo build --release --locked --lib`.
 It selects the exact rlib and one rmeta from that invocation's Cargo artifact
@@ -136,8 +159,19 @@ The test-artifact, debug-assertion, `test-hooks` and ambiguous-rlib checks remai
 The external Rust consumer calls the public production queue entry point for
 each mapped draft, with both an explicit pick and an explicit priority. It
 requires the typed `UnqualifiedPath` reason and its complete display text, even
-when saved settings request draft inclusion. It also checks that Priest remains
-selectable. This uses the external-library proof pattern in
+when saved settings request draft inclusion. It then calls the same entry point
+for every qualified guide, with an explicit pick and an explicit priority, and
+requires success and that the guide is the next candidate. The default queue must
+pick exactly the qualified guides. The caller reads the qualified ids from
+`index.json` and the consumer requires that the production library's bundled
+index names the same set, so a guide that is qualified in one and not the other
+fails the cell. A row the index marks unavailable (it has no status and no
+guide file) is refused with its own reason by an explicit pick and is never
+picked by the default queue. Refused plus admitted is the whole index: the
+caller requires every index draft to be in the refusal map and the map to name
+nothing else, and the consumer requires every row of the bundled index to be in
+exactly one of the draft, unavailable and qualified lists. A new index row that
+nobody classified fails the cell. This uses the external-library proof pattern in
 `tools/architecture/nav_clippy.py`; no probe crate or product API is added.
 
 The second part runs the real shared picker model against every bundled draft.
@@ -151,7 +185,8 @@ Each draft's own run stays with the quest campaign. Before changing its status
 to qualified, that campaign must qualify it. The same diff must remove the exact
 file from refusal coverage and add its real quest cell. The production probe
 fails if a qualified row remains in the refusal map. A Priest pass does not
-substitute for that quest's live qualification.
+substitute for that quest's live qualification, and one guide's admission does not
+substitute for another's.
 
 `python3 -B tools/live-map/release_refusal.py --self-test` checks exact-path and
 artifact selection. `--verify-cells` lists only this cell's picker-test selector;
@@ -418,8 +453,8 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
-| `NAV_PACK_289` | Use the CI reference v18 pack for ordinary and reference-contract cells. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
-| `NAV_FLAGS_289` | Use the matching `274bot-289-v18.navflags` in the same reference-v18 directory as `NAV_PACK_289`. |
+| `NAV_PACK_289` | The v19 pack that `tools/local-data/build.py` writes, `target/local-data/nav/289/274bot.navpack` in the repository under test. `run_cells.py` uses it when the variable is unset. The stored v17 and v18 reference packs are refused by the current reader. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
+| `NAV_FLAGS_289` | The matching `target/local-data/nav/289/274bot.navflags`. `run_cells.py` uses it when the variable is unset. |
 | `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`, on chardonnay. |
 | `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`, on chardonnay. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
@@ -431,7 +466,7 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `QUESTER_PATH` | The map fixes `cook`, `sheep`, and `prince` for the Cook, sheep-spinning, and Prince-production cells. The caller does not choose it. |
 | `QUESTER_SEEDS` | The map points to the committed Cook, sheep-spin, and Prince-production seed files in `crates/host-play/tests/fixtures/quester-path/`. Run the command from the repository root. The caller does not supply seed data. |
 | `QUESTER_PATH_DIR` | Set to `${PWD}/crates/script/paths/289` from the composed repository root. The Zanaris Path source must be merged into the tested head. Do not substitute an unmerged external Path checkout. |
-| `NAV_PACK_274` | Use `274bot-274-v18.navpack` in the same reference-v18 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
+| `NAV_PACK_274` | The matching `target/local-data/nav/274/274bot.navpack`. `run_cells.py` uses it when the variable is unset. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
 | `GATHERER_ENGINE_DIR` | Use the absolute read-only client tree for the 600 ms Engine L service at `47594/3080`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine`; on chardonnay, use the local Engine L tree supplied as `BOT_ENGINE_DIR`. |
 | `GATHERER_TICK_EVIDENCE` | Each of the five native tick cells writes to a fresh, nonexistent absolute path below its `LIVE_EVIDENCE_DIR`; the map assigns a distinct subdirectory per cell and pass. |
@@ -599,7 +634,7 @@ pass's `LIVE_EVIDENCE_DIR`; writes in one pass do not change the seed or another
 pass's cache. The runner also creates per-cell unpack dirs and a kept panel home.
 It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
 `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the selected engine ports. Explicit caller
-engine and nav paths take precedence over discovered reference-v17 defaults.
+engine and nav paths take precedence over the repository's `target/local-data` defaults.
 It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
 for each cell and pass, so `isohome` keeps `HOME` under `BOT_EVIDENCE_DIR`
 (`crates/host-play/tests/script_api_live.rs:503-507`). Panel cells override this
@@ -611,18 +646,18 @@ to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
 
-Paired quest cells, including `host.quester-jonny-stand-engine-q`, also require
-`BOT_LIVE_PARTNER_NAME_PREFIX`. Export a distinct partner prefix in the same
-remote shell that invokes the runner (for example, partner `b2q` with
-`--prefix b29`). The runner inherits that value; a Merlot-only environment
-assignment is not forwarded by the lab wrapper. It still sets the primary
+Cells that run two real accounts (`host.quester-jonny-stand-engine-q`,
+`host.quester-partner-trade`) use `${BOT_LIVE_PARTNER_NAME_PREFIX}`. Pass the
+second account's prefix with `--partner-prefix` (1 to 4 characters, different
+from `--prefix`; for example `--prefix b29 --partner-prefix b2q`). When the flag
+is absent the runner reads the `BOT_LIVE_PARTNER_NAME_PREFIX` variable, and it
+refuses to start a two-account cell with neither. It still sets the primary
 prefix from `--prefix`.
 
-For batch proofs that require the composed head, export its canonical pack and
-matching flags/sidecars with the local-data build receipt. Do not substitute a
-discovered reference pack for those cells; the named reference pack remains
-valid only for ordinary and reference-contract cells. This identity requirement
-is artifact provenance, not quest-family binding.
+For batch proofs that require the composed head, use its canonical pack and
+matching flags/sidecars with the local-data build receipt (the runner's default
+is the repository's own `target/local-data/nav`). This identity requirement is
+artifact provenance, not quest-family binding.
 
 Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
 required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as

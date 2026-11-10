@@ -397,11 +397,13 @@ impl Family for CombatStop {
     }
 }
 
-/// One awaited read of a released quest Path's resolved progress.
+/// One awaited read of a released quest Path or a quest journal.
 #[derive(Deserialize)]
 pub(crate) struct ProgressQueryArgs {
     #[serde(default)]
     quest: String,
+    #[serde(default)]
+    journal_only: bool,
 }
 
 /// Requests one fresh host-side progress read. The query is exclusive so a
@@ -409,6 +411,7 @@ pub(crate) struct ProgressQueryArgs {
 pub(crate) struct ProgressQuery {
     token: u64,
     quest: String,
+    journal_only: bool,
     emitted_epoch: u64,
     acknowledged: bool,
 }
@@ -430,10 +433,12 @@ impl Family for ProgressQuery {
         cx.emit(InteractReq::ProgressRead {
             request_id: token,
             name: args.quest.clone(),
+            journal_only: args.journal_only,
         });
         Begin::Run(Self {
             token,
             quest: args.quest,
+            journal_only: args.journal_only,
             emitted_epoch,
             acknowledged: false,
         })
@@ -451,7 +456,11 @@ impl Family for ProgressQuery {
 
         match page {
             Some(ProgressPage::Reading { .. }) => self.acknowledged = true,
-            Some(page @ (ProgressPage::Done { .. } | ProgressPage::Refused { .. })) => {
+            Some(
+                page @ (ProgressPage::Done { .. }
+                | ProgressPage::Refused { .. }
+                | ProgressPage::JournalDone { .. }),
+            ) => {
                 return Step::Done(page);
             }
             None => {}
@@ -461,9 +470,50 @@ impl Family for ProgressQuery {
             cx.emit(InteractReq::ProgressRead {
                 request_id: self.token,
                 name: self.quest.clone(),
+                journal_only: self.journal_only,
             });
             self.emitted_epoch = epoch;
         }
+        Step::Wait
+    }
+}
+
+/// One awaited typed spell-on-NPC action; the host native machine owns all
+/// target validation, dispatch and receipt evidence. The spell's magic-tab
+/// component is looked up here, in the posted rows; a spell that is not posted
+/// or a negative target index finishes `false` without a request.
+#[derive(Deserialize)]
+pub(crate) struct CastNpcArgs {
+    spell: String,
+    index: i32,
+}
+
+pub(crate) struct CastNpc;
+
+impl Family for CastNpc {
+    const NAME: &'static str = "cast-npc";
+    type Args = CastNpcArgs;
+    type Output = bool;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        let component_id = crate::runtime::bindings::posted_spell_button_com(&args.spell);
+        if component_id < 0 || args.index < 0 {
+            return Begin::Done(false);
+        }
+        let Some(request_id) = cx.seat_token() else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        cx.emit(InteractReq::CastNpc {
+            request_id,
+            request: script::combat::CastNpcRequest {
+                component_id,
+                index: args.index,
+            },
+        });
+        Begin::Run(Self)
+    }
+
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Self::Output> {
         Step::Wait
     }
 }
