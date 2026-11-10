@@ -203,6 +203,7 @@ pub struct MenuEntryQuery {
 }
 
 impl MenuEntryQuery {
+    /// Returns whether this entry has the query's exact operation and target identity.
     pub fn matches(self, entry: MenuEntryView) -> bool {
         self.operation == entry.operation && self.target.matches(entry.target)
     }

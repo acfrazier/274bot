@@ -46,6 +46,61 @@ fn hans_query() -> MenuEntryQuery {
 }
 
 #[test]
+fn chat_accept_requests_do_not_claim_player_slot_zero() {
+    let mut client = client();
+    client.menu_num_entries = 2;
+    set_entry(&mut client, 0, MiniMenuAction::ACCEPT_DUELREQ, [0, 0, 0]);
+    set_entry(&mut client, 1, MiniMenuAction::ACCEPT_TRADEREQ, [0, 0, 0]);
+
+    let entries: Vec<_> = menu_entries(&client).collect();
+    assert_eq!(entries[0].target, MenuTargetView::Raw([0, 0, 0]));
+    assert_eq!(entries[1].target, MenuTargetView::Raw([0, 0, 0]));
+    for (operation, entry) in [
+        (MenuOperation::AcceptDuelRequest, entries[0]),
+        (MenuOperation::AcceptTradeRequest, entries[1]),
+    ] {
+        assert!(!MenuEntryQuery {
+            operation,
+            target: MenuTargetSelector::PlayerIndex(0),
+        }
+        .matches(entry));
+    }
+}
+
+#[test]
+fn loc_examine_decodes_typecode_from_packed_parameter() {
+    let mut client = client();
+    let loc_id = 0x1234;
+    client.menu_num_entries = 1;
+    set_entry(
+        &mut client,
+        0,
+        MiniMenuAction::OP_LOC6,
+        [loc_id << 14, 12, 34],
+    );
+
+    let entry = menu_entries(&client).next().unwrap();
+    assert_eq!(entry.operation, MenuOperation::LocExamine);
+    assert_eq!(
+        entry.target,
+        MenuTargetView::Loc {
+            typecode: loc_id,
+            x: 12,
+            z: 34,
+        }
+    );
+    assert!(MenuEntryQuery {
+        operation: MenuOperation::LocExamine,
+        target: MenuTargetSelector::Loc {
+            typecode: loc_id,
+            x: 12,
+            z: 34,
+        },
+    }
+    .matches(entry));
+}
+
+#[test]
 fn menu_entries_decode_operation_and_structured_target_identity() {
     let mut client = client();
     set_npc(&mut client, 7, 0);

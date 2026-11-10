@@ -102,15 +102,20 @@ pub fn menu_entries(client: &Client) -> impl Iterator<Item = MenuEntryView> + '_
                     .and_then(|type_id| i32::try_from(type_id).ok()),
             },
             MenuOperation::PlayerOption(_)
-            | MenuOperation::AcceptDuelRequest
-            | MenuOperation::AcceptTradeRequest
             | MenuOperation::PlayerTarget
             | MenuOperation::UseItemOnPlayer => MenuTargetView::Player { index: a },
+            MenuOperation::AcceptDuelRequest | MenuOperation::AcceptTradeRequest => {
+                MenuTargetView::Raw([a, b, c])
+            }
             MenuOperation::LocOption(_)
-            | MenuOperation::LocExamine
             | MenuOperation::LocTarget
             | MenuOperation::UseItemOnLoc => MenuTargetView::Loc {
                 typecode: a,
+                x: b,
+                z: c,
+            },
+            MenuOperation::LocExamine => MenuTargetView::Loc {
+                typecode: (a >> 14) & 0x7fff,
                 x: b,
                 z: c,
             },
