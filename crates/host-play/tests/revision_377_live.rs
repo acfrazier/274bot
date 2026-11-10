@@ -36,6 +36,8 @@ mod quester_imp;
 
 #[path = "revision_377_live/quester_doric.rs"]
 mod quester_doric;
+#[path = "revision_377_live/quester_folder.rs"]
+mod quester_folder;
 #[path = "revision_377_live/quester_journal.rs"]
 mod quester_journal;
 
@@ -175,6 +177,18 @@ fn load_bound_377() -> Result<Bound377, String> {
 }
 
 fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377, String> {
+    load_bound_377_with_server_config(game_port, asset_port, true)
+}
+
+fn load_bound_377_from_default_profile() -> Result<Bound377, String> {
+    load_bound_377_with_server_config(GAME_PORT, ASSET_PORT, false)
+}
+
+fn load_bound_377_with_server_config(
+    game_port: u16,
+    asset_port: u16,
+    write_servers: bool,
+) -> Result<Bound377, String> {
     require_live_guard()?;
     let engine_dir = required_path("ENGINE_DIR")?;
     let cache_dir = required_path("CLIENT_377_CACHE_DIR")?;
@@ -188,7 +202,9 @@ fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377
     path_is_file(&nav_flags, "NAV_FLAGS")?;
 
     let home = ScratchHome::new()?;
-    home.set_local_377_endpoints(game_port, asset_port)?;
+    if write_servers {
+        home.set_local_377_endpoints(game_port, asset_port)?;
+    }
     let environment = ProfileEnvironment {
         home: Some(home.0.clone()),
         engine_dir: Some(engine_dir.clone()),
