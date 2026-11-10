@@ -21,7 +21,7 @@ pub enum ReleasePathStatus {
 
 /// Label for a guide in a picker when live testing has not qualified it.
 pub const UNQUALIFIED_PATH_REASON: &str = "Path has not been qualified by live testing.";
-/// Label of the host-wide setting that lets unqualified guides run. Both
+/// Label of the per-bot setting that lets unqualified guides run. Both
 /// front ends show this text, and the Start refusal names it.
 pub const ALLOW_UNQUALIFIED_LABEL: &str = "Allow unqualified guides";
 
@@ -73,16 +73,16 @@ pub struct ReleasePath {
     pub name: Option<String>,
     #[serde(default)]
     pub unavailable: Option<String>,
-    /// Only Qualified rows enter release selection; test-hooks can admit drafts.
+    /// Release selection admits drafts only with the opt-in; test-hooks also admit them.
     #[serde(default)]
     pub status: Option<ReleasePathStatus>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueSettings {
-    /// Empty selects every available qualified row.
+    /// Empty selects every available qualified row, plus drafts when allowed.
     pub quests: Vec<String>,
-    /// Saved harness setting; release policy ignores it.
+    /// Saved per-bot opt-in for unqualified guides, including empty-list selection.
     pub include_draft_guides: bool,
     /// Explicit priority rows; remaining picked rows retain release-index order.
     pub order_override: Vec<String>,

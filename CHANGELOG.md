@@ -4,7 +4,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 
-## [Unreleased]
+## Unreleased
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 
@@ -14,17 +14,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Saved data in formats from before 0.2.8 no longer upgrades. Interactive users
   can move refused files aside and start fresh. Noninteractive runs stop without
   changing files. Supported 0.2.8 formats still load.
-- Release builds start only Quester guides that have passed a full live run.
-  In this release there are fourteen: Cook's Assistant, Demon Slayer, Doric's
-  Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend, Priest in
-  Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep Shearer,
-  Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released are now
-  drafts and no longer start: Prince Ali Rescue, Pirate's Treasure, The
-  Knight's Sword, Death Plateau, The Tourist Trap, Clock Tower and Plague City.
-  The quest picker does not offer drafts, and a saved choice of one shows why
-  it cannot start and names the guide. To run draft guides anyway, turn on
-  **Allow unqualified guides** in Script prefs with the Quester picked. It is off by default.
-  Known issues lists the draft guides.
+- By default, release builds start only Quester guides that passed a full live
+  run. In this release there are fourteen: Cook's Assistant, Demon Slayer,
+  Doric's Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend,
+  Priest in Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep
+  Shearer, Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released
+  are now drafts: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword,
+  Death Plateau, The Tourist Trap, Clock Tower and Plague City. By default, the
+  quest picker does not offer drafts. Start refuses a saved draft choice and
+  names the guide. To select and run drafts, turn on **Allow unqualified
+  guides** in Script prefs with the Quester picked. It is off by default.
+  Before Start, a warning names the unqualified guides. Known issues lists
+  the draft guides.
 
 ### Panel and terminal app
 
@@ -271,9 +272,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Quester
 
 - The Quester supports **The Restless Ghost**. Each of its fourteen release
-  guides now passes a full run on a live server. The quest picker offers only
-  those guides. A saved choice of a draft guide still loads. Start refuses it,
-  names the guide, and says how to allow it.
+  guides now passes a full run on a live server. By default, the quest picker
+  offers only those guides. A saved draft choice still loads. Start refuses it
+  unless **Allow unqualified guides** is on, and says how to allow it.
 - The Quester setting that 0.2.8 called "Include draft guides when no quests are
   picked" is back as **Allow unqualified guides**, in Script prefs of the panel
   and of the terminal app. It is off by default. When you turn it on, Start runs
@@ -953,11 +954,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
   zones). This permits dangerous routes. Use it only when the account can handle
   the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
-- **Quester:** These Quester guides are drafts, and release builds do not start
-  them: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau,
-  The Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat,
-  Jungle Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest
-  the Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
+- **Quester:** These Quester guides are drafts, and live testing has not shown
+  that they work. Release builds do not start them unless you turn on Allow
+  unqualified guides in Script prefs with the Quester picked. The guides are:
+  Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The
+  Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle
+  Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the
+  Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
   Tree Gnome Village, Scorpion Catcher, Observatory Quest, Shield of Arrav,
   Hero's Quest, Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest,
   Biohazard, Murder Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf
