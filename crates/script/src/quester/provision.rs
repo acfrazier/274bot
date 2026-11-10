@@ -2459,6 +2459,7 @@ mod tests {
         let tables = crate::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
         let mut usable = selected
             .items()
+            .iter()
             .filter_map(|item| {
                 let fact = tables.food(item.id)?;
                 (fact.heal > 0
@@ -2481,7 +2482,7 @@ mod tests {
             .find(|(id, _, _, _)| *id != protected_id && *id != expected_id)
             .map(|(id, _, _, _)| *id)
             .expect("the fixture has a third usable food kind");
-        let unusable = selected.items().find_map(|item| {
+        let unusable = selected.items().iter().find_map(|item| {
             let fact = tables.food(item.id)?;
             (fact.heal <= 0
                 || fact.eat_delay_arg != Some(2)
