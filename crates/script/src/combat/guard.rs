@@ -509,13 +509,15 @@ impl WalkGuard {
                 &frame,
                 &self.tables,
                 &self.schedule,
-                danger,
-                poison_fire,
-                hp,
-                hp_max,
-                tick,
+                policy::EatInputs {
+                    danger,
+                    poison_fire,
+                    hp,
+                    hp_max,
+                    tick,
+                    eat_floor: 0,
+                },
                 self.protected_items.as_deref().unwrap_or(&[]),
-                0,
             )
         } else {
             None

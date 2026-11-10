@@ -916,13 +916,15 @@ fn timeline_bound(
         // an upper bound of the real process, and so is the all-summed
         // schedule; the smaller of the two bounds is still an upper bound.
         let single = super::timeline::build_single_way_timeline(
-            path,
-            plan,
-            input,
-            context.combat,
-            context.risks,
+            super::timeline::TimelineInputs::new(
+                path,
+                plan,
+                input,
+                context.combat,
+                context.risks,
+                context.multiway,
+            ),
             poison,
-            context.multiway,
             events,
         );
         let single = match single {
