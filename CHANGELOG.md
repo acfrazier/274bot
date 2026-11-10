@@ -233,6 +233,36 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   stop at once.
 - When the bank does not open after three tries, the stop message now includes
   the last reason instead of only "bank did not open".
+- Gatherer can buy a missing gathering tool or bait from a reachable shop.
+  The new `buyTools` setting is on by default. A usable tool in the pack,
+  equipment or observed bank is used first; the bot does not buy an upgrade in
+  its place. A purchase picks the best tier your skill level can use that a
+  reachable shop sells within your budget. A tool bought for wearing must also
+  meet your wield requirement. Prices follow the game's own rule.
+- A supply shortage now parks the running Gatherer instead of stopping it.
+  The panel, terminal and fleet show the reason and the bank information used.
+  The Gatherer closes the bank and waits without repeated trips or purchase
+  clicks. New supply information, Resume, or a change to a relevant setting
+  starts one new plan. A saved bank hint alone does not. Pause, Stop, relog
+  handling and connection checks keep working while it is parked.
+- Bank-only navigation no longer loads the shop data. A script that uses shops
+  loads it before its first purchase.
+- When the server says "I can't reach that!" during a shop purchase, the bot
+  now tries the purchase again. A timeout alone still does not start another
+  trade while the first reply is unconfirmed.
+- Gatherer tries a failed walk again from the character's position when the
+  failure can be retried. Walks back to the bank and walks to a resource share
+  a budget of four failures across targets. A successful arrival or gather
+  resets the budget. When the budget ends, Gatherer stops with the last walk
+  failure's detail. When the game moves the character out of the way, Gatherer
+  waits for a newer game tick before it walks again, without skipping any
+  target or using up the budget. A target that the game refuses because of
+  poison is skipped for the rest of the session.
+- Walks to a bank or a shop share the same bounded retry for failures that can
+  be retried, each starting from the character's position. When the walk to a
+  shop uses up its budget, Gatherer can still try another reachable shop. A
+  clear refusal from the game and a walk blocked by a danger zone still stop
+  the trip.
 
 ### Quester
 
@@ -490,6 +520,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   survivable.
 - The Quester clears the old hazard after a run change, a death, a session end,
   or when no step is selected.
+- Added stock and pricing data for ten more shops that Quester paths use.
 
 ### Navigation
 
@@ -626,6 +657,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and a baked reachability atlas (movement components, directed links, loc
   stands), without a quest-family header. Older incompatible packs are refused
   with a rebake error. 274bot does not convert an old pack at run time.
+- A walk along a route now sends at most one movement packet per game tick. A
+  click that the game refuses, so that no packet goes out, does not use up that
+  tick's allowance.
 
 ### Scripting
 
@@ -835,6 +869,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - With the Knife technique on, the Gatherer finishes its walk to a replacement
   tree or rock before it arms the technique again. It arms at once when it
   already stands where the replacement can be worked.
+- Shop purchases no longer pick up an unrelated shop that is already open, and
+  no longer repeat a purchase whose result is unknown. After an unclear result
+  the bot talks to the same shopkeeper again and checks the fresh shop page
+  before it buys more. The quantity reported counts the units it saw arrive,
+  including purchases of more than 255 units.
+- Before it walks to a seller of bait, Gatherer now checks that the bait is
+  affordable at its lowest price. It no longer requires the full refill money
+  first.
+- When every shop that could sell an item is out of reach, the message now says
+  the shop cannot be reached from here and asks you to move closer. Before, it
+  said nobody sells the item.
+- Gatherer now shows whether its bank information was seen in this session or
+  saved from an earlier one, with its age at the last status update.
+- Supply trips use the same shared flow as other bank and shop work. A full
+  pack is still deposited before a missing supply is reported, and a tool in
+  the pack that can be wielded is wielded without a bank trip. A bank refusal
+  keeps its own reason. A refill can withdraw a lower usable tool tier when
+  that is what the bank holds.
+- Gatherer's bank status keeps the route kind and access tile it chose during
+  a supply trip.
 
 #### Quester
 
@@ -842,6 +896,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   outside the cell. It sends the "Climb-to" action from where it stands, and
   the game walks the player, as it does for a human player. Before, the guide
   asked for a walk that cannot exist and stopped on the first rock.
+- The Quester's status and its Start log line now include the comment of the
+  current step of the active Path.
 
 #### Scripting
 
@@ -862,94 +918,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   relog), the script now gets one refusal that says so.
 - Compat loading now provides every named selected object row to the adapter.
 - Paint wrapping now indents only continuation lines.
-
-### Gatherer
-
-- Gatherer can buy a missing gathering tool or bait from a reachable shop.
-  `buyTools` is on by default. A usable tool in the pack, equipment or observed
-  bank is used first; the bot does not buy an upgrade in its place. Shop
-  purchases choose the best skill-usable tier that a reachable vendor sells
-  within the account's budget. A tool bought for wearing must also meet the
-  account's wield requirement. Prices follow the content rule.
-- A supply shortage now parks the running card instead of stopping it.
-  The panel, terminal and fleet show the reason and the bank information used.
-  The card closes the bank and waits without repeated trips or purchase clicks.
-  Fresh supply evidence, Resume or a relevant setting change can start one
-  new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
-  connection checks remain active.
-- Bank-only navigation no longer loads the shop catalog. Shop users still
-  prepare the shared catalog before the first purchase.
-- A fresh "can't reach" reply now lets a shop purchase retry its rejected
-  Trade. A timeout alone still cannot start another Trade while the first
-  response is unconfirmed.
-- Gatherer retries eligible walk failures from the observed position. Return and
-  resource-approach failures share a four-failure budget across targets. A
-  successful arrival or gather resets the budget. Gatherer fails with the last
-  walk detail when the budget ends. A live host escape makes Gatherer wait for
-  a newer observed game tick before it resumes walking, without shunning any
-  target or spending the phase budget. A poison refusal shuns its target for
-  the session.
-- Bank and shop acquisition share bounded retries for eligible walk failures.
-  Retries start from the observed position. If a shop exhausts its walk budget,
-  an alternate reachable shop can still be tried. Typed refusals and
-  blocked-zone results remain terminal.
-- Gatherer allocates its acquisition owner only while a supply trip or park
-  close is active. Idle Gatherers stay within the existing 8 KiB heap limit
-  and the restored 1 KiB inline-size limit.
-
-### Quester
-
-- Added stock and pricing facts for ten more shops used by Quester paths.
-
-### Navigation
-
-- Active route walks send at most one movement packet per observed game tick.
-  A refused click that sends no packet does not use that tick's allowance.
-
-### Fixed during development
-
-#### Shop purchases
-
-- Native shop purchases no longer adopt an unrelated open shop or repeat an
-  unresolved buy. Recovery trades with the same keeper and checks the fresh
-  page before another purchase. Reported quantities count observed units,
-  including purchases above 255 units.
-- Shop acquisition checks whether required bait is affordable at the minimum
-  content price before walking to its seller. It does not require the full
-  refill reserve first.
-- When every eligible shop's access walk fails, the blocked reason now says
-  the shop cannot be reached from here and asks you to move closer, instead
-  of saying nobody sells the item.
-
-#### Banking
-
-- Gatherer now shows whether its bank information was seen this session or
-  saved from an earlier session, with its age at the last status update.
-- Gatherer supply trips now share the native acquisition flow. A full pack
-  is still deposited before a missing supply is reported, and a held tool
-  that can be wielded is equipped without a bank trip. Bank refusals keep
-  their specific reason. A refill can withdraw a lower usable tool tier when
-  that is what the bank holds.
-- Gatherer bank status retains the selected route kind and access tile during
-  supply trips.
-
-#### Quester
-
-- Quester status and its Start log include the active Path's step comment.
-
-#### Scenario checks
-
-- Gatherer's empty-bank reserve check now verifies the blocked supply stage
-  instead of an obsolete withdrawal stage. It still requires a selected,
-  loaded bank and no gathering progress.
-- Gatherer's named-site check recognizes the first walk to an unloaded
-  resource. It still checks the selected site, bank deposits, return walk
-  and fresh gathering progress.
-- Gatherer's bank checks distinguish equipping a held tool from closing a
-  bank. A real bank close still requires verified deposit evidence.
-- The park/relog live check now allows a temporary scene-loading hold. It still
-  requires the same blocked run, retained run intent and restored Running
-  readiness before the new-session clock can complete the check.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
