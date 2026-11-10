@@ -325,6 +325,16 @@ pub(crate) struct EatChoice {
     pub ordinary: Option<i32>,
     pub combo: Option<i32>,
 }
+/// The scalar state used to choose food for one observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EatInputs {
+    pub danger: Option<i32>,
+    pub poison_fire: i32,
+    pub hp: i32,
+    pub hp_max: i32,
+    pub tick: u16,
+    pub eat_floor: i32,
+}
 /// Shared food selection for Combat, WalkGuard and runner survival checks.
 /// The caller owns admission and pending-operation policy; this function only
 /// evaluates the current observation. `poison_fire` is the next poison
@@ -349,31 +359,32 @@ pub(crate) fn eat_choice(
         frame,
         tables,
         schedule,
+        EatInputs {
+            danger,
+            poison_fire,
+            hp,
+            hp_max,
+            tick,
+            eat_floor,
+        },
+        &[],
+    )
+}
+pub(crate) fn eat_choice_excluding(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    schedule: &Schedule,
+    inputs: EatInputs,
+    protected_items: &[i32],
+) -> Option<EatChoice> {
+    let EatInputs {
         danger,
         poison_fire,
         hp,
         hp_max,
         tick,
-        &[],
         eat_floor,
-    )
-}
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the frame, tables and schedule borrows plus danger, poison fire, HP, tick, protected ids and eat floor stay explicit"
-)]
-pub(crate) fn eat_choice_excluding(
-    frame: &Frame<'_>,
-    tables: &CombatTables,
-    schedule: &Schedule,
-    danger: Option<i32>,
-    poison_fire: i32,
-    hp: i32,
-    hp_max: i32,
-    tick: u16,
-    protected_items: &[i32],
-    eat_floor: i32,
-) -> Option<EatChoice> {
+    } = inputs;
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
     let eat_line = lines.eat.max(eat_floor);
     if hp <= 0

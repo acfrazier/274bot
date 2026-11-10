@@ -2329,13 +2329,15 @@ impl Combat {
             frame,
             &self.tables,
             &self.schedule,
-            danger,
-            poison_fire,
-            hp,
-            max,
-            tick,
+            policy::EatInputs {
+                danger,
+                poison_fire,
+                hp,
+                hp_max: max,
+                tick,
+                eat_floor: 0,
+            },
             protected_items,
-            0,
         ) else {
             return;
         };

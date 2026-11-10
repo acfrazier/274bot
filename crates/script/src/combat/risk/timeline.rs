@@ -24,6 +24,40 @@ pub(crate) struct TimelineSummary {
     /// all-summed schedule).
     pub single_way_rows: u16,
 }
+#[derive(Clone, Copy)]
+pub(crate) struct TimelineInputs<'a> {
+    path: RoutePath<'a>,
+    plan: &'a RoutePlan,
+    input: &'a RiskInput,
+    tables: &'a CombatTables,
+    risks: &'a RiskTables,
+    multiway: MultiwayView<'a>,
+}
+
+impl<'a> TimelineInputs<'a> {
+    pub(crate) fn new(
+        path: RoutePath<'a>,
+        plan: &'a RoutePlan,
+        input: &'a RiskInput,
+        tables: &'a CombatTables,
+        risks: &'a RiskTables,
+        multiway: MultiwayView<'a>,
+    ) -> Self {
+        Self {
+            path,
+            plan,
+            input,
+            tables,
+            risks,
+            multiway,
+        }
+    }
+}
+
+struct TimelineEvents<'a> {
+    out: &'a mut EventBuf,
+    summary: TimelineSummary,
+}
 
 thread_local! {
     static EVENT_BUFFER: RefCell<EventBuf> = RefCell::new(EventBuf::new());
@@ -159,10 +193,8 @@ fn kind_attack(
 }
 
 /// One row's own schedule: an attack every `rate` ticks over its interval.
-#[allow(clippy::too_many_arguments, reason = "one row's schedule parameters")]
 fn add_row_events(
-    out: &mut EventBuf,
-    summary: &mut TimelineSummary,
+    events: &mut TimelineEvents<'_>,
     row: &ZoneInterval,
     kind: EventKind,
     hit: HitChance,
@@ -172,7 +204,7 @@ fn add_row_events(
 ) -> Result<(), UnknownWhy> {
     let mut tick = start;
     while tick < end {
-        add_event(out, summary, tick, kind, row.max_hit, hit)?;
+        add_event(events.out, &mut events.summary, tick, kind, row.max_hit, hit)?;
         tick = tick
             .checked_add(i32::from(rate))
             .ok_or(UnknownWhy::Overflow)?;
@@ -191,13 +223,8 @@ pub(crate) fn build_timeline(
     out: &mut EventBuf,
 ) -> Result<TimelineSummary, UnknownWhy> {
     build(
-        path,
-        plan,
-        input,
-        tables,
-        risks,
+        TimelineInputs::new(path, plan, input, tables, risks, MultiwayView::none()),
         poison,
-        MultiwayView::none(),
         out,
     )
 }
@@ -225,21 +252,12 @@ pub(crate) fn build_timeline(
 /// misses; its hits are still `g` ticks apart (a hit sets the variables), so a
 /// cluster with such a member rolls damage on every one of those slots.
 /// The caller takes the smaller of this bound and the all-summed bound.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one schedule input per call, as `build_timeline`, plus the multiway table"
-)]
 pub(crate) fn build_single_way_timeline(
-    path: RoutePath<'_>,
-    plan: &RoutePlan,
-    input: &RiskInput,
-    tables: &CombatTables,
-    risks: &RiskTables,
+    schedule: TimelineInputs<'_>,
     poison: PoisonCharge,
-    multiway: MultiwayView<'_>,
     out: &mut EventBuf,
 ) -> Result<TimelineSummary, UnknownWhy> {
-    build(path, plan, input, tables, risks, poison, multiway, out)
+    build(schedule, poison, out)
 }
 
 /// The rows of one overlapping run that may attack in single-way combat.
@@ -296,23 +314,22 @@ fn candidate(row: &ZoneInterval, risks: &RiskTables, event: EventKind, rate: u8)
 
 /// Emit a merged run: one attacker at a time when it holds two rows or more,
 /// else the row's own schedule.
-#[allow(clippy::too_many_arguments, reason = "the schedule inputs of `build`")]
 fn emit_merged(
-    path: RoutePath<'_>,
-    plan: &RoutePlan,
-    input: &RiskInput,
-    tables: &CombatTables,
-    risks: &RiskTables,
+    schedule: &TimelineInputs<'_>,
     merged: &Merged,
-    out: &mut EventBuf,
-    summary: &mut TimelineSummary,
+    events: &mut TimelineEvents<'_>,
 ) -> Result<(), UnknownWhy> {
     if merged.rows < 2 {
-        let row = &plan.intervals[merged.first];
-        let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
-        let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
-        let end = path.interval_end_tick(row)?;
-        return add_row_events(out, summary, row, kind, hit, rate, start, end);
+        let row = &schedule.plan.intervals[merged.first];
+        let (kind, hit, rate) =
+            kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
+        let start = schedule
+            .path
+            .point(row.a)
+            .ok_or(UnknownWhy::Overflow)?
+            .tick;
+        let end = schedule.path.interval_end_tick(row)?;
+        return add_row_events(events, row, kind, hit, rate, start, end);
     }
     // At most one attack per interval over the union; a member that records
     // combat only on a hit makes every one of those slots a damage roll.
@@ -323,12 +340,20 @@ fn emit_merged(
     };
     let mut tick = merged.start;
     while tick < merged.end {
-        add_event(out, summary, tick, EventKind::Attack, merged.amount, hit)?;
+        add_event(
+            events.out,
+            &mut events.summary,
+            tick,
+            EventKind::Attack,
+            merged.amount,
+            hit,
+        )?;
         tick = tick
             .checked_add(i32::from(merged.rate))
             .ok_or(UnknownWhy::Overflow)?;
     }
-    summary.single_way_rows = summary
+    events.summary.single_way_rows = events
+        .summary
         .single_way_rows
         .saturating_add(u16::try_from(merged.rows).unwrap_or(u16::MAX));
     Ok(())
@@ -337,35 +362,41 @@ fn emit_merged(
 /// Emit a finished cluster. Its rows that are known to attack in single-way
 /// combat are merged by overlap again (a row on a multiway cell may have been
 /// the link); the others keep their own schedules.
-#[allow(clippy::too_many_arguments, reason = "the schedule inputs of `build`")]
 fn flush(
-    path: RoutePath<'_>,
-    plan: &RoutePlan,
-    risks: &RiskTables,
-    multiway: MultiwayView<'_>,
-    input: &RiskInput,
-    tables: &CombatTables,
+    schedule: &TimelineInputs<'_>,
     cluster: &Cluster,
-    out: &mut EventBuf,
-    summary: &mut TimelineSummary,
+    events: &mut TimelineEvents<'_>,
 ) -> Result<(), UnknownWhy> {
     let mut open: Option<Merged> = None;
     for index in cluster.first..=cluster.last {
-        let row = &plan.intervals[index];
+        let row = &schedule.plan.intervals[index];
         if row.hazard() {
             continue;
         }
-        let (event, hit, rate) = kind_attack(row, input, risks, tables)?;
-        if !candidate(row, risks, event, rate) {
+        let (event, hit, rate) =
+            kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
+        if !candidate(row, schedule.risks, event, rate) {
             continue;
         }
-        let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
-        let end = path.interval_end_tick(row)?;
-        if cluster.rows >= 2 && !row_is_single_way(path, row, risks, multiway)? {
-            add_row_events(out, summary, row, event, hit, rate, start, end)?;
+        let start = schedule
+            .path
+            .point(row.a)
+            .ok_or(UnknownWhy::Overflow)?
+            .tick;
+        let end = schedule.path.interval_end_tick(row)?;
+        if cluster.rows >= 2
+            && !row_is_single_way(
+                schedule.path,
+                row,
+                schedule.risks,
+                schedule.multiway,
+            )?
+        {
+            add_row_events(events, row, event, hit, rate, start, end)?;
             continue;
         }
-        let on_hit_only = risks
+        let on_hit_only = schedule
+            .risks
             .npc(row.ident())
             .is_some_and(|fact| fact.on_hit_only());
         match open.as_mut() {
@@ -381,7 +412,7 @@ fn flush(
             }
             _ => {
                 if let Some(done) = open.take() {
-                    emit_merged(path, plan, input, tables, risks, &done, out, summary)?;
+                    emit_merged(schedule, &done, events)?;
                 }
                 open = Some(Merged {
                     first: index,
@@ -397,43 +428,41 @@ fn flush(
         }
     }
     if let Some(done) = open {
-        emit_merged(path, plan, input, tables, risks, &done, out, summary)?;
+        emit_merged(schedule, &done, events)?;
     }
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one schedule input per call, as `build_timeline`, plus the multiway table"
-)]
 fn build(
-    path: RoutePath<'_>,
-    plan: &RoutePlan,
-    input: &RiskInput,
-    tables: &CombatTables,
-    risks: &RiskTables,
+    schedule: TimelineInputs<'_>,
     poison: PoisonCharge,
-    multiway: MultiwayView<'_>,
     out: &mut EventBuf,
 ) -> Result<TimelineSummary, UnknownWhy> {
     out.clear();
-    let mut summary = TimelineSummary {
-        attacks: 0,
-        fixed: 0,
-        ticks: 0,
-        single_way_rows: 0,
+    let mut events = TimelineEvents {
+        out,
+        summary: TimelineSummary {
+            attacks: 0,
+            fixed: 0,
+            ticks: 0,
+            single_way_rows: 0,
+        },
     };
-    let mut last_tick = path.ticks();
+    let mut last_tick = schedule.path.ticks();
 
     let mut open: Option<Cluster> = None;
-    for (index, row) in plan.intervals.iter().enumerate() {
-        let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
-        let end = path.interval_end_tick(row)?;
+    for (index, row) in schedule.plan.intervals.iter().enumerate() {
+        let start = schedule
+            .path
+            .point(row.a)
+            .ok_or(UnknownWhy::Overflow)?
+            .tick;
+        let end = schedule.path.interval_end_tick(row)?;
         last_tick = last_tick.max(end);
         if row.hazard() {
             add_event(
-                out,
-                &mut summary,
+                events.out,
+                &mut events.summary,
                 start,
                 EventKind::Certain,
                 row.max_hit,
@@ -441,9 +470,14 @@ fn build(
             )?;
             continue;
         }
-        let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
-        if !multiway.known() || !candidate(row, risks, kind, rate) {
-            add_row_events(out, &mut summary, row, kind, hit, rate, start, end)?;
+        let (kind, hit, rate) = kind_attack(
+            row,
+            schedule.input,
+            schedule.risks,
+            schedule.tables,
+        )?;
+        if !schedule.multiway.known() || !candidate(row, schedule.risks, kind, rate) {
+            add_row_events(&mut events, row, kind, hit, rate, start, end)?;
             continue;
         }
         match open.as_mut() {
@@ -454,17 +488,7 @@ fn build(
             }
             _ => {
                 if let Some(done) = open.take() {
-                    flush(
-                        path,
-                        plan,
-                        risks,
-                        multiway,
-                        input,
-                        tables,
-                        &done,
-                        out,
-                        &mut summary,
-                    )?;
+                    flush(&schedule, &done, &mut events)?;
                 }
                 open = Some(Cluster {
                     first: index,
@@ -476,83 +500,117 @@ fn build(
         }
     }
     if let Some(done) = open {
-        flush(
-            path,
-            plan,
-            risks,
-            multiway,
-            input,
-            tables,
-            &done,
-            out,
-            &mut summary,
-        )?;
+        flush(&schedule, &done, &mut events)?;
     }
 
-    for live in input.live_iter() {
-        let kind = risks.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
+    for live in schedule.input.live_iter() {
+        let kind = schedule
+            .risks
+            .npc(live.ident)
+            .ok_or(UnknownWhy::AlreadyEngaged)?;
         if kind.unknown_for().is_some() || live.rate == 0 {
             return Err(UnknownWhy::AlreadyEngaged);
         }
-        let duration = attack_duration(live, risks)?;
+        let duration = attack_duration(live, schedule.risks)?;
         last_tick = last_tick.max(duration);
         let (event_kind, hit) = if kind.shared_attack() {
             (
                 EventKind::Attack,
-                npc_hit(live.ident, kind.attack_roll, input, tables)?,
+                npc_hit(
+                    live.ident,
+                    kind.attack_roll,
+                    schedule.input,
+                    schedule.tables,
+                )?,
             )
         } else {
             (EventKind::Certain, HitChance::ceil_from(0.0))
         };
         let mut tick = 0;
         while tick < duration {
-            add_event(out, &mut summary, tick, event_kind, live.max_hit, hit)?;
+            add_event(
+                events.out,
+                &mut events.summary,
+                tick,
+                event_kind,
+                live.max_hit,
+                hit,
+            )?;
             tick = tick
                 .checked_add(i32::from(live.rate))
                 .ok_or(UnknownWhy::Overflow)?;
         }
         if let Some(due) = live.due() {
-            let due = i32::from(due.wrapping_sub(input.tick));
+            let due = i32::from(due.wrapping_sub(schedule.input.tick));
             last_tick = last_tick.max(due.saturating_add(1));
-            add_event(out, &mut summary, due, event_kind, live.max_hit, hit)?;
+            add_event(
+                events.out,
+                &mut events.summary,
+                due,
+                event_kind,
+                live.max_hit,
+                hit,
+            )?;
         }
     }
 
     let last_tick = u16::try_from(last_tick).map_err(|_| UnknownWhy::Overflow)?;
-    summary.ticks = last_tick;
-    if input.map_members() {
-        for live in input.live_iter() {
-            let kind = risks.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-            extend_poison(out, &mut summary, kind.poison, 0, i32::from(last_tick))?;
+    events.summary.ticks = last_tick;
+    if schedule.input.map_members() {
+        for live in schedule.input.live_iter() {
+            let kind = schedule
+                .risks
+                .npc(live.ident)
+                .ok_or(UnknownWhy::AlreadyEngaged)?;
+            extend_poison(
+                events.out,
+                &mut events.summary,
+                kind.poison,
+                0,
+                i32::from(last_tick),
+            )?;
         }
     }
-    for row in &plan.intervals {
-        if row.hazard() || !input.map_members() {
+    for row in &schedule.plan.intervals {
+        if row.hazard() || !schedule.input.map_members() {
             continue;
         }
-        let kind = risks.npc(row.ident()).ok_or(UnknownWhy::MissingFacts)?;
+        let kind = schedule
+            .risks
+            .npc(row.ident())
+            .ok_or(UnknownWhy::MissingFacts)?;
         if kind.poison == 0 {
             continue;
         }
-        let first = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
-        extend_poison(out, &mut summary, kind.poison, first, i32::from(last_tick))?;
+        let first = schedule
+            .path
+            .point(row.a)
+            .ok_or(UnknownWhy::Overflow)?
+            .tick;
+        extend_poison(
+            events.out,
+            &mut events.summary,
+            kind.poison,
+            first,
+            i32::from(last_tick),
+        )?;
     }
 
     match poison {
         PoisonCharge::None => {}
         PoisonCharge::Known { per_tick, first } => extend_poison(
-            out,
-            &mut summary,
+            events.out,
+            &mut events.summary,
             per_tick,
             i32::from(first),
             i32::from(last_tick),
         )?,
         PoisonCharge::Unknown { q } => {
-            extend_poison(out, &mut summary, q, 0, i32::from(last_tick))?
+            extend_poison(events.out, &mut events.summary, q, 0, i32::from(last_tick))?
         }
     }
 
-    Ok(summary)
+    Ok(events.summary)
 }
 
 pub(crate) fn known_poison_charge(
