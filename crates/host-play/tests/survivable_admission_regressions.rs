@@ -250,10 +250,7 @@ fn probe_held_middle_matches_never_for_every_preference_source() {
         (script, forbid),
     ] {
         let decision = middle.danger_decision(permissions, options, false);
-        assert_eq!(
-            decision,
-            never.danger_decision(permissions, options, false)
-        );
+        assert_eq!(decision, never.danger_decision(permissions, options, false));
         assert!(decision.permitted);
         assert_eq!(decision.policy, RiskPolicy::Avoid);
         assert!(decision.enforce);

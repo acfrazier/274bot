@@ -265,8 +265,7 @@ mod tests {
         let partial: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
         assert_eq!(partial.danger_level(), DangerLevel::Never);
 
-        let middle_json =
-            r#"{"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_danger_zones":false}"#;
+        let middle_json = r#"{"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_danger_zones":false}"#;
         let middle: NavSettings = serde_json::from_str(middle_json).unwrap();
         assert_eq!(middle.danger_level(), DangerLevel::WhenSurvivable);
         assert!(!middle.allow_danger_zones);
@@ -275,10 +274,9 @@ mod tests {
         assert_eq!(written["allow_danger_zones"], false);
         assert_eq!(written["survivable_routing"], true);
 
-        let both: NavSettings = serde_json::from_str(
-            r#"{"allow_danger_zones":true,"survivable_routing":true}"#,
-        )
-        .unwrap();
+        let both: NavSettings =
+            serde_json::from_str(r#"{"allow_danger_zones":true,"survivable_routing":true}"#)
+                .unwrap();
         assert_eq!(both.danger_level(), DangerLevel::Always);
         assert!(both.allow_danger_zones && both.survivable_routing);
 

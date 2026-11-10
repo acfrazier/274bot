@@ -61,10 +61,7 @@ impl Mark {
     fn from_snapshot(snapshot: &GameSnapshot) -> Option<Self> {
         // The observer loop and the scenario worker run independently. Both
         // must stamp the client cycle stored by the worker, not count reads.
-        Self::from_client_cycle(
-            snapshot.gens().player_info,
-            snapshot.hitmarks()?.loop_cycle,
-        )
+        Self::from_client_cycle(snapshot.gens().player_info, snapshot.hitmarks()?.loop_cycle)
     }
 
     fn gap(self, earlier: Self) -> i128 {

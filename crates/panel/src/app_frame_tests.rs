@@ -1815,7 +1815,9 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     let (mut session, _dir) = session_with_play("frame-danger-routing-middle", &["alice"]);
     session.nav_settings_open = true;
     let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
-        eprintln!("panel_driver_selects_when_survivable_from_the_open_dropdown: no headless GPU, skipped");
+        eprintln!(
+            "panel_driver_selects_when_survivable_from_the_open_dropdown: no headless GPU, skipped"
+        );
         return;
     };
     rig.frames_until("the panel preferences", |rig| {
@@ -1831,12 +1833,7 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
         .get(9)
         .copied()
         .expect("the real Nav config frame draws the Danger routing combo");
-    let center = |bounds: [f32; 4]| {
-        [
-            (bounds[0] + bounds[2]) * 0.5,
-            (bounds[1] + bounds[3]) * 0.5,
-        ]
-    };
+    let center = |bounds: [f32; 4]| [(bounds[0] + bounds[2]) * 0.5, (bounds[1] + bounds[3]) * 0.5];
     let combo_center = center(combo);
     for pressed in [false, true, false] {
         rig.frame_at(combo_center, pressed, Pointer::Away);
@@ -1865,7 +1862,10 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     for pressed in [false, false, true, false] {
         rig.frame_at(middle, pressed, Pointer::Away);
     }
-    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::WhenSurvivable);
+    assert_eq!(
+        rig.session().ui.nav.danger_level(),
+        DangerLevel::WhenSurvivable
+    );
     assert_eq!(
         crate::session::take_submitted_commands(),
         vec![frontend_core::OperatorCommand::SetDangerLevel(

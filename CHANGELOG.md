@@ -111,6 +111,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The unattackable-tree live fixture reads its own empty bank before its HP8
   setup. Stage-supply preparation stays enabled without a bank detour that
   would heal the fixture before the encounter.
+- The cell-rock upkeep live fixture uses the same native client-cycle clock
+  for observations and sends. Separate observer reads no longer advance it.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.

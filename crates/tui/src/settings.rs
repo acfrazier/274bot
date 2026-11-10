@@ -1654,11 +1654,8 @@ mod tests {
                         "height": h,
                         "text": text,
                     });
-                    std::fs::write(
-                        dir.join(name),
-                        serde_json::to_vec_pretty(&capture).unwrap(),
-                    )
-                    .unwrap();
+                    std::fs::write(dir.join(name), serde_json::to_vec_pretty(&capture).unwrap())
+                        .unwrap();
                 }
             }
         }

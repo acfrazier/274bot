@@ -4158,7 +4158,10 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
         serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
     assert_eq!(prefs["nav"]["allow_danger_zones"], true);
     assert_eq!(prefs["nav"]["survivable_routing"], false);
-    assert_eq!(app.walk_permissions.danger_level(), frontend_core::DangerLevel::Always);
+    assert_eq!(
+        app.walk_permissions.danger_level(),
+        frontend_core::DangerLevel::Always
+    );
     let _iso = iso;
 }
 

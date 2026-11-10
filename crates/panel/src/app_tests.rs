@@ -7394,9 +7394,7 @@ fn nav_danger_routing_drop_down_submits_when_survivable() {
     super::commit_nav_settings(&mut session, &before, nav).unwrap();
     assert_eq!(
         crate::session::take_submitted_commands(),
-        vec![OperatorCommand::SetDangerLevel(
-            DangerLevel::WhenSurvivable
-        )]
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::WhenSurvivable)]
     );
 }
 

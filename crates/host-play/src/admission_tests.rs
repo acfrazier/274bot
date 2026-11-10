@@ -725,7 +725,10 @@ fn request_only_lethal_crossing_is_refused_with_the_bound() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for level in [crate::DangerLevel::Never, crate::DangerLevel::WhenSurvivable] {
+    for level in [
+        crate::DangerLevel::Never,
+        crate::DangerLevel::WhenSurvivable,
+    ] {
         let (admission, decision) = decided_admission(level, true, false, input(1));
         assert_eq!(
             decision,
@@ -763,7 +766,10 @@ fn request_only_safe_crossing_is_admitted() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for level in [crate::DangerLevel::Never, crate::DangerLevel::WhenSurvivable] {
+    for level in [
+        crate::DangerLevel::Never,
+        crate::DangerLevel::WhenSurvivable,
+    ] {
         let (admission, decision) = decided_admission(level, true, false, input(99));
         assert_eq!(
             decision,
