@@ -1661,7 +1661,11 @@ their exact-name lookup.
 
 Native settings use the same per-account map, under `compiled_identity_key`,
 with envelopes `{"schema_version":N,"values":{...}}` (N is the card's schema
-version: 3 for Quester, 4 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+version: 3 for Quester, 5 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+A card also reads the older versions it lists in `reads_schema_versions`: their
+values load unchanged, and a setting they lack takes its default. Gatherer
+reads 0.2.8's schema 4 this way (schema 5 added `buyTools`). The next save
+stamps the current version.
 Missing entries use current defaults; legacy empty native entries mean schema
 1. Malformed or unknown versions remain unavailable and are never overwritten
 with defaults. Merge precedence remains defaults → account overrides → explicit

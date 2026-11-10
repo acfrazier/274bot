@@ -21,6 +21,7 @@ pub const CARD: CompiledCard = CompiledCard {
     description: "Runs authored quest Paths from live observation.",
     category: "Quests",
     schema_version: 3,
+    reads_schema_versions: &[],
     schema: settings_schema,
     per_account_settings: &["partner_account", "gang", "crest_gauntlets"],
     prepare,

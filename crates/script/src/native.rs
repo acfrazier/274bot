@@ -453,11 +453,22 @@ pub struct CompiledCard {
     pub description: &'static str,
     pub category: &'static str,
     pub schema_version: u16,
+    /// Saved settings schema versions older than `schema_version` that this
+    /// card reads as its own: their values load unchanged, and a setting
+    /// they lack takes its default. The next save stamps `schema_version`.
+    pub reads_schema_versions: &'static [u16],
     pub schema: fn() -> &'static [SettingDef],
     pub per_account_settings: &'static [&'static str],
     pub prepare: PrepareCard,
     pub create: CreateScript,
     pub lifecycle: Option<&'static CardLifecycle>,
+}
+
+impl CompiledCard {
+    /// Whether saved settings stamped `version` load for this card.
+    pub fn reads_saved_schema(&self, version: u16) -> bool {
+        version == self.schema_version || self.reads_schema_versions.contains(&version)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
