@@ -2242,15 +2242,41 @@ mod compact_final_route_tests {
         let mut food = wearable_item(379);
         food.container = api::snapshot::ItemContainer::Inventory;
         food.slot = 0;
-        food.count = 2;
-        snapshot.seed_inventory(vec![food], 28);
+        food.count = 1;
+        let second = api::snapshot::ItemView {
+            slot: 1,
+            ..food.clone()
+        };
+        snapshot.seed_inventory(vec![food, second], 28);
 
         let included = capture(&snapshot, false, None, false, None);
         assert_eq!(included.food_iter().collect::<Vec<_>>(), [(379, 2)]);
-        let excluded = capture_excluding(&snapshot, false, None, false, None, &[379]);
+        let excluded = capture_excluding(
+            &snapshot,
+            false,
+            None,
+            false,
+            None,
+            &[script::combat::FoodReserve { id: 379, qty: 2 }],
+        );
         assert_eq!(excluded.food_len, 0);
         assert_eq!(excluded.hp, included.hp);
         assert_eq!(excluded.missing_facts(), included.missing_facts());
+        assert_eq!(excluded.free_slots, included.free_slots);
+        assert_eq!(included.free_slots, 26);
+        let surplus = capture_excluding(
+            &snapshot,
+            false,
+            None,
+            false,
+            None,
+            &[
+                script::combat::FoodReserve { id: 379, qty: 1 },
+                script::combat::FoodReserve { id: 379, qty: 1 },
+            ],
+        );
+        assert_eq!(surplus.food_iter().collect::<Vec<_>>(), [(379, 1)]);
+        assert_eq!(surplus.free_slots, included.free_slots);
     }
 
     #[test]
@@ -2271,7 +2297,8 @@ mod compact_final_route_tests {
         bread.container = api::snapshot::ItemContainer::Inventory;
         bread.slot = 6;
         snapshot.seed_inventory(vec![lobster, bread], 28);
-        let protected: Arc<[i32]> = Arc::from([2309]);
+        let protected: Arc<[script::combat::FoodReserve]> =
+            Arc::from([script::combat::FoodReserve { id: 2309, qty: 1 }]);
         let included = capture(&snapshot, false, None, false, Some(&world));
         assert_eq!(
             included.food_len, 2,
@@ -2376,7 +2403,10 @@ mod compact_final_route_tests {
         bread.slot = 2;
         snapshot.seed_inventory(vec![food, bread], 28);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
-        bot.walk_protected_items = Some(Arc::from([2309]));
+        bot.walk_protected_items = Some(Arc::from([script::combat::FoodReserve {
+            id: 2309,
+            qty: 1,
+        }]));
 
         finish_carried_wear(&mut bot, &snapshot, &world, from);
 
@@ -2395,7 +2425,7 @@ mod compact_final_route_tests {
                 bot.condition.current(),
                 false,
                 None,
-                &[2309]
+                &[script::combat::FoodReserve { id: 2309, qty: 1 }]
             )
         );
         assert_eq!(after.input.hp, 70);

@@ -2269,7 +2269,7 @@ impl Combat {
         &self,
         frame: &Frame<'_>,
         danger: Option<i32>,
-        protected_items: &[i32],
+        protected_items: &[super::FoodReserve],
     ) -> bool {
         if !self.request.allow.food {
             return false;
@@ -2299,7 +2299,7 @@ impl Combat {
         frame: &Frame<'_>,
         tick: u16,
         gate: Option<i32>,
-        protected_items: &[i32],
+        protected_items: &[super::FoodReserve],
     ) -> Option<i32> {
         if !self.request.allow.food || self.pending_row(RowKind::Eat) {
             return None;
@@ -2315,7 +2315,7 @@ impl Combat {
         tick: u16,
         danger: Option<i32>,
         poison_fire: i32,
-        protected_items: &[i32],
+        protected_items: &[super::FoodReserve],
     ) {
         if plan.contains(RowKind::Eat)
             || self.pending_row(RowKind::Eat)
@@ -2361,7 +2361,7 @@ impl Combat {
         frame: &Frame<'_>,
         tick: u16,
         gate: i32,
-        protected_items: &[i32],
+        protected_items: &[super::FoodReserve],
     ) {
         if plan.closed(&self.tables)
             || !self.request.allow.potions

@@ -880,35 +880,39 @@ mod tests {
     }
 
     #[test]
-    fn survival_step_does_not_eat_protected_ordinary_food() {
+    fn survival_step_eats_only_surplus_above_the_declared_food_quantity() {
         if !api::test_support::game_data_available() {
             return;
         }
-        let food = lobster();
-        let food_id = food.def.id;
-        let snapshot = low_hp_snapshot(vec![food]);
+        let food_id = lobster().def.id;
         let condition = condition(5, PoisonState::Clear);
-        for protected in [false, true] {
+        for (held, reserved) in [(1, 0), (1, 1), (8, 4), (4, 4)] {
+            let pack = (0..held)
+                .map(|slot| ItemView { slot, ..lobster() })
+                .collect();
+            let snapshot = low_hp_snapshot(pack);
             let mut step = SurvivalStep::default();
             let mut ledger = None;
             let next = with_tick(&snapshot, &mut ledger, 20, |tick| {
                 tick.cx.condition = Some(condition);
                 tick.cx.cure_poison = CurePoison::Never;
-                if protected {
-                    tick.cx.protected_items = Some(std::sync::Arc::from([food_id]));
-                }
+                tick.cx.protected_items =
+                    Some(std::sync::Arc::from([crate::combat::FoodReserve {
+                        id: food_id,
+                        qty: reserved,
+                    }]));
                 step.want(&tick.cx, Upkeep::floor(GATHERER_FLOOR))
             });
-            if protected {
+            if held <= reserved as i32 {
                 assert!(
                     matches!(next, SurvivalWant::Need(SurvivalNeed::Food { .. })),
-                    "protected-only food is a supply need, not a bite"
+                    "required quest food is a supply need, not a bite"
                 );
             } else {
                 assert!(
                     matches!(next, SurvivalWant::Click(args)
                         if matches!(args.kind, OneOpKind::Eat { item_id, .. } if item_id == food_id)),
-                    "the same unprotected food is an available bite"
+                    "surplus of the same food remains an available bite"
                 );
             }
         }

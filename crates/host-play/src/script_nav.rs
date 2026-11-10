@@ -5131,8 +5131,8 @@ pub(crate) struct NavBot {
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
     pub(crate) compat_v1: bool,
     pub(crate) admission: Option<Box<crate::admission::Admission>>,
-    /// Shared Path food exclusions retained through publication and reroutes.
-    pub(crate) walk_protected_items: Option<Arc<[i32]>>,
+    /// Shared Path food reservations retained through publication and reroutes.
+    pub(crate) walk_protected_items: Option<Arc<[script::combat::FoodReserve]>>,
     pub(crate) assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     pub(crate) poison_hold: Option<crate::poison_hold::PoisonHold>,
     pub(crate) last_assessment: Option<Arc<script::combat::risk::RouteAssessment>>,

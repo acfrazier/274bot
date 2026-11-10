@@ -639,7 +639,7 @@ impl Provisioner {
                     &crate::combat::ThreatSet::default(),
                     poison,
                     false,
-                    &plan.carried_items,
+                    plan.food_reserves.as_deref().unwrap_or(&[]),
                 );
                 let target = survival
                     .plan(stage, stock, input, Some(plan))
@@ -2013,6 +2013,7 @@ mod tests {
         bank: Option<NamedBank>,
     ) -> CompiledProvisioning {
         let keep: Vec<_> = items.iter().map(|item| item.id).collect();
+        let food_reserves = super::super::compile::food_reserves(&items);
         CompiledProvisioning {
             path: FactKey::new("provision-test"),
             owns_inventory: false,
@@ -2028,6 +2029,7 @@ mod tests {
             loadout_carry: HashMap::new(),
             managed_items: Arc::from(keep.clone()),
             carried_items: Arc::from([]),
+            food_reserves,
             base_spillover_keep: Arc::from(keep),
             recipes: HashMap::new(),
             survival: None,

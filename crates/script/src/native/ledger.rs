@@ -130,7 +130,7 @@ pub struct HostAction {
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
     pub bank_deposit: Option<Arc<BankDepositTrace>>,
-    pub(crate) protected_items: Option<Arc<[i32]>>,
+    pub(crate) protected_items: Option<Arc<[crate::combat::FoodReserve]>>,
 }
 
 /// The owner of one queued host action, and the host's custody of a single
@@ -206,7 +206,7 @@ pub struct HostAuthority {
     owner: Arc<Owner>,
     request: NonZeroU64,
     walk: bool,
-    protected_items: Option<Arc<[i32]>>,
+    protected_items: Option<Arc<[crate::combat::FoodReserve]>>,
 }
 
 impl HostAuthority {
@@ -230,12 +230,12 @@ impl HostAuthority {
     pub fn action_id(&self) -> NonZeroU64 {
         self.owner.id
     }
-    /// Path items reserved from food selection for this authorized walk.
-    pub fn protected_items(&self) -> Option<&[i32]> {
+    /// Path counts reserved from food selection for this authorized walk.
+    pub fn protected_items(&self) -> Option<&[crate::combat::FoodReserve]> {
         self.protected_items.as_deref()
     }
     /// Share the compiled Path allocation with a persistent route guard.
-    pub fn clone_protected_items(&self) -> Option<Arc<[i32]>> {
+    pub fn clone_protected_items(&self) -> Option<Arc<[crate::combat::FoodReserve]>> {
         self.protected_items.as_ref().map(Arc::clone)
     }
     pub fn request_id(&self) -> NonZeroU64 {

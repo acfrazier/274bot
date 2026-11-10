@@ -2,7 +2,7 @@
 use super::compile::{CompileContext, CompileError, CompiledProvisioning, CompiledSequence};
 use crate::combat::risk::{self, Food, RiskInput, RiskTables, SupplyExposure, UnknownWhy};
 use crate::combat::tables::CombatTables;
-use crate::combat::{CompiledKit, Target};
+use crate::combat::{CompiledKit, FoodReserve, Target};
 use crate::native_bank::BankItem;
 use api::stock::Stock;
 use nav_planner::contract::ZoneTableView;
@@ -302,10 +302,11 @@ impl CompiledSurvival {
             } else {
                 let food = *food_candidate
                     .get_or_insert_with(|| self.food_candidate(stock, unknown.is_some(), owner));
-                self.food_need(stage, &candidate, unknown.is_some(), food)?
+                self.food_need(stage, &candidate, unknown.is_some(), food, owner)?
             };
             if let Some((item, target)) = &food {
                 let fact = self.tables.food(item.id).ok_or(UnknownWhy::MissingFacts)?;
+                let reserved = FoodReserve::reserved(food_reserves(owner), item.id);
                 let (value, why) = supply_score(risk::supply_bound(
                     &stage.exposures,
                     &candidate,
@@ -313,12 +314,16 @@ impl CompiledSurvival {
                     Food {
                         item: item.id,
                         heal: u8::try_from(fact.heal).map_err(|_| UnknownWhy::Overflow)?,
-                        count: stock
-                            .held(item.id)
-                            .unwrap_or(0)
-                            .saturating_add(stock.banked(item.id).unwrap_or(0))
-                            .min(*target)
-                            .clamp(0, 28) as u8,
+                        count: FoodReserve::spendable(
+                            food_reserves(owner),
+                            item.id,
+                            stock
+                                .held(item.id)
+                                .unwrap_or(0)
+                                .saturating_add(stock.banked(item.id).unwrap_or(0)),
+                        )
+                        .min(target.saturating_sub(reserved))
+                        .clamp(0, 28) as u8,
                     },
                 ));
                 unknown = unknown.or(why);
@@ -371,19 +376,25 @@ impl CompiledSurvival {
         owner: Option<&CompiledProvisioning>,
     ) -> Option<(i32, &str, i32, i32)> {
         // Retain one-kind sizing until the shared fight solver replaces it.
-        // Protected Path food is not a survival food kind.
+        // Only the authored must-have quantity is reserved.
         let held_food = stock
             .pack
             .into_iter()
             .flatten()
             .filter(|row| row.count > 0 && self.tables.food(row.def.id).is_some())
-            .filter(|row| owner.is_none_or(|owner| !owner.carried_items.contains(&row.def.id)))
+            .filter(|row| {
+                FoodReserve::spendable(
+                    food_reserves(owner),
+                    row.def.id,
+                    stock.held(row.def.id).unwrap_or(0),
+                ) > 0
+            })
             .map(|row| row.def.id)
             .next();
         let mut fallback = None;
         let mut available = None;
         for item in self.tables.selected().items() {
-            if owner.is_some_and(|owner| owner.carried_items.contains(&item.id)) {
+            if !item.stackable && FoodReserve::reserved(food_reserves(owner), item.id) >= 28 {
                 continue;
             }
             if !unknown && held_food.is_some_and(|id| id != item.id) {
@@ -408,11 +419,14 @@ impl CompiledSurvival {
             if fallback.is_none_or(|previous| food_candidate_better(candidate, previous)) {
                 fallback = Some(candidate);
             }
-            if stock
-                .held(item.id)
-                .unwrap_or(0)
-                .saturating_add(stock.banked(item.id).unwrap_or(0))
-                > 0
+            if FoodReserve::spendable(
+                food_reserves(owner),
+                item.id,
+                stock
+                    .held(item.id)
+                    .unwrap_or(0)
+                    .saturating_add(stock.banked(item.id).unwrap_or(0)),
+            ) > 0
                 && available.is_none_or(|previous| food_candidate_better(candidate, previous))
             {
                 available = Some(candidate);
@@ -427,21 +441,38 @@ impl CompiledSurvival {
         input: &RiskInput,
         unknown: bool,
         food: Option<(i32, &str, i32, i32)>,
+        owner: Option<&CompiledProvisioning>,
     ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
         let Some((id, name, heal, _)) = food else {
             return Ok(None);
         };
-        let count = if unknown {
+        let reserved = FoodReserve::reserved(food_reserves(owner), id);
+        let maximum = if self
+            .tables
+            .selected()
+            .item_by_id(id)
+            .ok_or(UnknownWhy::MissingFacts)?
+            .stackable
+        {
             28
         } else {
-            self.food_count(stage, input, id, heal, 28)?.unwrap_or(28)
+            28 - reserved.min(28) as u8
+        };
+        if maximum == 0 {
+            return Ok(None);
+        }
+        let count = if unknown {
+            maximum
+        } else {
+            self.food_count(stage, input, id, heal, maximum)?
+                .unwrap_or(maximum)
         };
         Ok(Some((
             BankItem {
                 id,
                 name: Arc::from(name),
             },
-            i32::from(count),
+            reserved.saturating_add(i32::from(count)),
         )))
     }
 
@@ -454,7 +485,11 @@ impl CompiledSurvival {
         let mut mixed = false;
         for row in stock.pack.into_iter().flatten() {
             if row.count <= 0
-                || owner.is_some_and(|owner| owner.carried_items.contains(&row.def.id))
+                || FoodReserve::spendable(
+                    food_reserves(owner),
+                    row.def.id,
+                    stock.held(row.def.id).unwrap_or(0),
+                ) == 0
             {
                 continue;
             }
@@ -660,6 +695,12 @@ fn walk_crossings(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
         }
         _ => {}
     }
+}
+
+fn food_reserves(owner: Option<&CompiledProvisioning>) -> &[FoodReserve] {
+    owner
+        .and_then(|owner| owner.food_reserves.as_deref())
+        .unwrap_or(&[])
 }
 
 pub(super) fn food_candidate_better(

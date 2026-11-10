@@ -285,10 +285,10 @@ fn can_protect_style(attack: StyleObs, protect: StyleObs) -> bool {
 pub(crate) fn food_by_excluding(
     hp: i32,
     hp_max: i32,
-    inventory: impl Iterator<Item = (i32, i32)>,
+    inventory: impl Iterator<Item = (i32, i32)> + Clone,
     tables: &CombatTables,
     gate: Option<i32>,
-    protected_items: &[i32],
+    protected_items: &[FoodReserve],
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
     if hp <= 0 || hp >= hp_max {
@@ -296,26 +296,66 @@ pub(crate) fn food_by_excluding(
     }
     let mut fitting: Option<(i32, i32)> = None;
     let mut smallest: Option<(i32, i32)> = None;
-    for (id, count) in inventory {
+    for (id, count) in inventory.clone() {
         let Some(food) = tables.food(id) else {
             continue;
         };
         let heal = food.heal;
         if count <= 0
-            || protected_items.contains(&id)
             || !eligible(food)
             || gate.is_some_and(|gate| hp.saturating_add(heal).min(hp_max) <= gate)
         {
             continue;
         }
-        if smallest.is_none_or(|(_, current)| heal < current) {
+        let fits = hp.saturating_add(heal) <= hp_max;
+        let replace_smallest = smallest.is_none_or(|(_, current)| heal < current);
+        let replace_fitting = fits && fitting.is_none_or(|(_, current)| heal > current);
+        if !replace_smallest && !replace_fitting {
+            continue;
+        }
+        let reserved = FoodReserve::reserved(protected_items, id);
+        if reserved > 0
+            && inventory
+                .clone()
+                .filter(|(held_id, _)| *held_id == id)
+                .fold(0i32, |sum, (_, count)| sum.saturating_add(count.max(0)))
+                <= reserved
+        {
+            continue;
+        }
+        if replace_smallest {
             smallest = Some((id, heal));
         }
-        if hp.saturating_add(heal) <= hp_max && fitting.is_none_or(|(_, current)| heal > current) {
+        if replace_fitting {
             fitting = Some((id, heal));
         }
     }
     fitting.or(smallest).map(|(id, _)| id)
+}
+
+/// An exact-ID minimum held count that survival food must leave untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoodReserve {
+    pub id: i32,
+    pub qty: u32,
+}
+
+impl FoodReserve {
+    /// Repeated declarations impose the largest minimum, not a sum.
+    pub fn reserved(reserves: &[Self], id: i32) -> i32 {
+        let qty = reserves
+            .iter()
+            .filter(|reserve| reserve.id == id)
+            .map(|reserve| reserve.qty)
+            .max()
+            .unwrap_or(0);
+        i32::try_from(qty).unwrap_or(i32::MAX)
+    }
+
+    /// Food credit and live consumption use the same unreserved held count.
+    pub fn spendable(reserves: &[Self], id: i32, held: i32) -> i32 {
+        held.saturating_sub(Self::reserved(reserves, id)).max(0)
+    }
 }
 
 /// Food chosen on one HP observation. Ordinary food follows the next-eat
@@ -374,7 +414,7 @@ pub(crate) fn eat_choice_excluding(
     tables: &CombatTables,
     schedule: &Schedule,
     inputs: EatInputs,
-    protected_items: &[i32],
+    protected_items: &[FoodReserve],
 ) -> Option<EatChoice> {
     let EatInputs {
         danger,

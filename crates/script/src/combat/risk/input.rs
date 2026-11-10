@@ -260,15 +260,15 @@ impl RiskInput {
         Self::capture_excluding(frame, tables, threats, poison, off_debt, &[])
     }
 
-    /// Exclude Path-owned food before food validation and bounded selection.
-    /// The items still occupy pack slots; they cannot supply survival healing.
+    /// Reserve declared Path quantities before food validation and selection.
+    /// Reserved units still occupy pack slots but cannot supply healing.
     pub fn capture_excluding(
         frame: &Frame<'_>,
         tables: &CombatTables,
         threats: &ThreatSet,
         poison: PoisonState,
         off_debt: bool,
-        protected_food: &[i32],
+        protected_food: &[super::super::FoodReserve],
     ) -> Self {
         let mut input = Self {
             pos: frame.here,
@@ -514,7 +514,7 @@ fn capture_inventory(
     frame: &Frame<'_>,
     tables: &CombatTables,
     input: &mut RiskInput,
-    protected_food: &[i32],
+    protected_food: &[super::super::FoodReserve],
 ) {
     const INVENTORY_SLOTS: usize = 28;
     let mut occupied = [false; INVENTORY_SLOTS];
@@ -549,7 +549,30 @@ fn capture_inventory(
     let mut len = 0usize;
     let mut more_food = false;
     for (index, item) in frame.inventory.iter().enumerate() {
-        if item.count <= 0 || protected_food.contains(&item.def.id) {
+        if item.count <= 0 {
+            continue;
+        }
+        if frame.inventory[..index]
+            .iter()
+            .any(|previous| previous.def.id == item.def.id && previous.count > 0)
+        {
+            continue;
+        }
+        let total = frame
+            .inventory
+            .iter()
+            .filter(|row| row.def.id == item.def.id)
+            .try_fold(0u32, |sum, row| {
+                let count = u32::try_from(row.count.max(0)).ok()?;
+                sum.checked_add(count)
+            });
+        let reserved = u32::try_from(super::super::FoodReserve::reserved(
+            protected_food,
+            item.def.id,
+        ))
+        .unwrap_or(u32::MAX);
+        let total = total.map(|total| total.saturating_sub(reserved));
+        if total == Some(0) {
             continue;
         }
         let Some(food) = tables.food(item.def.id) else {
@@ -567,20 +590,6 @@ fn capture_inventory(
             input.set_missing_facts(true);
             continue;
         }
-        if frame.inventory[..index]
-            .iter()
-            .any(|previous| previous.def.id == item.def.id && previous.count > 0)
-        {
-            continue;
-        }
-        let total = frame
-            .inventory
-            .iter()
-            .filter(|row| row.def.id == item.def.id)
-            .try_fold(0u32, |sum, row| {
-                let count = u32::try_from(row.count.max(0)).ok()?;
-                sum.checked_add(count)
-            });
         let count = match total {
             Some(total) if total <= u32::from(u8::MAX) => u8::try_from(total).unwrap_or(u8::MAX),
             Some(_) | None => {

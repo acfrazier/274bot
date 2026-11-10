@@ -91,7 +91,7 @@ pub(crate) fn food_by_excluding(
     frame: &Frame<'_>,
     tables: &CombatTables,
     gate: Option<i32>,
-    protected_items: &[i32],
+    protected_items: &[super::FoodReserve],
     eligible: impl Fn(&super::tables::FoodFact) -> bool,
 ) -> Option<i32> {
     let (hp, hp_max) = stat(frame, 3);

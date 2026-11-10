@@ -339,14 +339,14 @@ pub fn capture(
     capture_excluding(snapshot, map_members, condition, off_debt, world, &[])
 }
 
-/// Capture current admission facts while excluding Path-reserved food ids.
+/// Capture admission facts while reserving declared Path food quantities.
 pub fn capture_excluding(
     snapshot: &GameSnapshot,
     map_members: bool,
     condition: Option<&api::condition::BotCondition>,
     off_debt: bool,
     world: Option<&NavWorld>,
-    protected_items: &[i32],
+    protected_items: &[script::combat::FoodReserve],
 ) -> RiskInput {
     let poison = condition
         .filter(|fact| {

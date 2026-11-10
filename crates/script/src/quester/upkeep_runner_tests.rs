@@ -1471,7 +1471,7 @@ fn a_local_hazard_bite_precedes_automatic_stage_supply_banking() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for (held_food, protected) in [(1, false), (0, false), (1, true)] {
+    for (held_food, reserved) in [(1, 0), (0, 0), (1, 1), (8, 4), (4, 4)] {
         let hazard = StepHazard {
             of: HazardStat::None,
             mul: 0,
@@ -1489,6 +1489,15 @@ fn a_local_hazard_bite_precedes_automatic_stage_supply_banking() {
         header.coin_float = 0;
         header.loadouts.clear();
         header.owns_inventory = true;
+        if reserved > 0 {
+            header.items.push(super::super::path::QuestItemDocument {
+                obj: "lobster".into(),
+                qty: reserved as u32,
+                kind: super::super::path::QuestItemKindDocument::MustHave,
+                acquire: None,
+                from_stage: None,
+            });
+        }
         document.roles[0].sequences[0].cross = vec![super::super::path::RequiredZoneDocument {
             id: zone,
             name: "Ice warrior crossing".into(),
@@ -1508,15 +1517,23 @@ fn a_local_hazard_bite_precedes_automatic_stage_supply_banking() {
             .provisioning;
         *plan = compiled.provisioning;
         plan.bank = None;
-        if protected {
-            plan.carried_items = Arc::from([protected_id]);
-        }
+        assert_eq!(
+            crate::combat::FoodReserve::reserved(
+                plan.food_reserves.as_deref().unwrap_or(&[]),
+                protected_id,
+            ),
+            reserved
+        );
         assert!(plan.survival.is_some());
 
         let mut ledger = None;
         let mut output = CapturedOutput::default();
-        let can_bite = held_food > 0 && !protected;
-        let frames = [(20, 14, held_food), (21, 14, held_food), (22, 26, 0)];
+        let can_bite = held_food > reserved;
+        let frames = [
+            (20, 14, held_food),
+            (21, 14, held_food),
+            (22, 26, held_food - 1),
+        ];
         for &(tick, hp, food) in &frames[..if can_bite { 3 } else { 1 }] {
             let frame = TestFrame {
                 tick,

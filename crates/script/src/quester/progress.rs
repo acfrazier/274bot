@@ -719,6 +719,7 @@ mod tests {
                 loadout_carry: Default::default(),
                 managed_items: Arc::from([]),
                 carried_items: Arc::from([]),
+                food_reserves: None,
                 base_spillover_keep: Arc::from(Vec::new()),
                 recipes: Default::default(),
                 survival: None,

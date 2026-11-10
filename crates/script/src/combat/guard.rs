@@ -137,7 +137,7 @@ const _: () = assert!(std::mem::size_of::<Escape>() <= 64);
 pub struct WalkGuard {
     threats: ThreatSet,
     tables: Arc<CombatTables>,
-    protected_items: Option<Arc<[i32]>>,
+    protected_items: Option<Arc<[super::FoodReserve]>>,
     schedule: Schedule,
     last_tick: u16,
     follow_until: u16,
@@ -163,7 +163,7 @@ const FLAG_NO_POINTS_REPORTED: u8 = 8;
 const FLAG_FOOD_ONLY: u8 = 16;
 const FLAG_CURE_FRUIT: u8 = 32;
 
-// The 64-bit baseline measured 264 bytes; protected Path ids add a 16-byte
+// The 64-bit baseline measured 264 bytes; Path food reserves add a 16-byte
 // Arc slice handle, and a 344-byte cap preserves at least 64 bytes of headroom.
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 344);
 
@@ -240,12 +240,12 @@ impl WalkGuard {
         Self::begin_with_protected(request, snapshot, tables, None)
     }
 
-    /// Begin a protected route, sharing its Path item ids with the guard.
+    /// Begin a protected route, sharing its Path food reserves with the guard.
     pub fn begin_with_protected(
         request: &WalkRequest,
         snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
-        protected_items: Option<Arc<[i32]>>,
+        protected_items: Option<Arc<[super::FoodReserve]>>,
     ) -> Result<Self, GuardRefusal> {
         if !request.allow.prayer {
             return Err(GuardRefusal::PrayerDisallowed);
@@ -279,12 +279,12 @@ impl WalkGuard {
         Self::begin_food_only_with_protected(request, snapshot, tables, None)
     }
 
-    /// Begin food-only upkeep while preserving the Path's carried items.
+    /// Begin food-only upkeep while preserving the Path's required food counts.
     pub fn begin_food_only_with_protected(
         request: &WalkRequest,
         _snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
-        protected_items: Option<Arc<[i32]>>,
+        protected_items: Option<Arc<[super::FoodReserve]>>,
     ) -> Result<Self, GuardRefusal> {
         Ok(Self::new(tables, request.allow.food, true, protected_items))
     }
@@ -298,9 +298,12 @@ impl WalkGuard {
         let inventory = snapshot.inventory()?;
         let protected_items = self.protected_items.as_deref().unwrap_or(&[]);
         Some(inventory.value.iter().any(|row| {
-            row.count > 0
-                && !protected_items.contains(&row.def.id)
-                && self.tables.food(row.def.id).is_some()
+            self.tables.food(row.def.id).is_some()
+                && super::FoodReserve::spendable(
+                    protected_items,
+                    row.def.id,
+                    crate::bank::ops::count_id(inventory.value, row.def.id),
+                ) > 0
         }))
     }
 
@@ -313,7 +316,7 @@ impl WalkGuard {
         tables: Arc<CombatTables>,
         food_allowed: bool,
         food_only: bool,
-        protected_items: Option<Arc<[i32]>>,
+        protected_items: Option<Arc<[super::FoodReserve]>>,
     ) -> Self {
         Self {
             threats: ThreatSet::default(),
@@ -2923,7 +2926,10 @@ mod tests {
         if !api::test_support::game_data_available() {
             return;
         }
-        let protected: Arc<[i32]> = Arc::from([food_id("bread")]);
+        let protected: Arc<[super::FoodReserve]> = Arc::from([super::FoodReserve {
+            id: food_id("bread"),
+            qty: 1,
+        }]);
 
         let mut reserved_only = Scene::new(43);
         reserved_only.stats[3].effective = 1;
@@ -2967,6 +2973,39 @@ mod tests {
             ),
             Some(GuardOp::Eat { name }) if name.as_ref() == "Lobster"
         ));
+
+        let mut surplus = Scene::new(43);
+        surplus.stats[3].effective = 1;
+        surplus.launch_arrow();
+        surplus.add_food("bread", 0, 1);
+        surplus.add_food("bread", 1, 1);
+        let mut guard = WalkGuard::begin_food_only_with_protected(
+            &surplus.request(),
+            &surplus.view(),
+            Arc::clone(&surplus.tables),
+            Some(protected),
+        )
+        .unwrap();
+        assert_eq!(guard.has_food(&surplus.view()), Some(true));
+        assert!(matches!(
+            guard.tick(
+                &surplus.view_at(0),
+                surplus.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            ),
+            Some(GuardOp::Eat { name }) if name.as_ref() == "Bread"
+        ));
+        surplus.inventory.remove(0);
+        surplus.refresh();
+        assert_eq!(guard.has_food(&surplus.view()), Some(false));
+        assert_eq!(
+            guard.tick(
+                &surplus.view_at(4),
+                surplus.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            ),
+            None
+        );
     }
 
     fn food_id(alias: &str) -> i32 {

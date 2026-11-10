@@ -573,8 +573,14 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
             .quest
             .as_mut()
             .unwrap()
-            .tools
-            .push("obj:bread".into());
+            .items
+            .push(crate::quester::path::QuestItemDocument {
+                obj: "bread".into(),
+                qty: 1,
+                kind: crate::quester::path::QuestItemKindDocument::MustHave,
+                acquire: None,
+                from_stage: None,
+            });
         extra_step(
             document,
             "wait",
@@ -627,6 +633,59 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
         let need = &observed.provisioner.unmet_logged[0];
         assert_eq!(need.cause, UnmetCause::NoSupply);
         assert_eq!((need.need, need.have), (target, 8));
+    }
+}
+
+#[test]
+fn must_have_food_reserves_only_the_declared_quantity_in_survival_targets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut baseline = None;
+    for reserved in [0, 4] {
+        let (path, quests, mut snapshot) = survival_fixture_document(true, false, |document| {
+            owned(document);
+            if reserved > 0 {
+                document.quest.as_mut().unwrap().items.push(
+                    crate::quester::path::QuestItemDocument {
+                        obj: "lobster".into(),
+                        qty: reserved as u32,
+                        kind: crate::quester::path::QuestItemKindDocument::MustHave,
+                        acquire: None,
+                        from_stage: None,
+                    },
+                );
+            }
+        });
+        let held = reserved + 4;
+        snapshot.seed_inventory(
+            (0..held)
+                .map(|slot| item("lobster", slot, ItemContainer::Inventory))
+                .collect(),
+            28,
+        );
+        let model = path.provisioning.survival.as_ref().unwrap();
+        let need = model
+            .plan(
+                0,
+                snapshot_view(&snapshot, 0).stock(),
+                survival_input(&snapshot, model),
+                Some(&path.provisioning),
+            )
+            .unwrap();
+        assert!(need.unknown.is_none());
+        let target = need.food.as_ref().unwrap().1;
+        if let Some((ordinary_target, bound)) = baseline {
+            assert_eq!(target, reserved + ordinary_target.min(28 - reserved));
+            assert_eq!(
+                need.bound, bound,
+                "only four surplus lobsters earn food credit"
+            );
+            let observed = prepare(&path, &quests, &mut snapshot, bank_items(false));
+            assert_eq!(food_count(&observed), (target - held).max(0));
+        } else {
+            baseline = Some((target, need.bound));
+        }
     }
 }
 
@@ -721,7 +780,13 @@ fn protected_food_is_excluded_before_input_validation_and_the_food_row_cap() {
         .collect();
     foods.sort_by_key(|(item, heal)| (std::cmp::Reverse(*heal), item.id));
     assert!(foods.len() > 6);
-    let protected: Vec<_> = foods[..6].iter().map(|(item, _)| item.id).collect();
+    let protected: Vec<_> = foods[..6]
+        .iter()
+        .map(|(item, _)| crate::combat::FoodReserve {
+            id: item.id,
+            qty: 1,
+        })
+        .collect();
     let (ordinary, _) = foods.last().unwrap();
     let mut pack: Vec<_> = foods[..6]
         .iter()
@@ -744,7 +809,7 @@ fn protected_food_is_excluded_before_input_validation_and_the_food_row_cap() {
         row.slot = slot as i32;
     }
     snapshot.seed_inventory(pack.clone(), 28);
-    let capture = |snapshot: &GameSnapshot, excluded: &[i32]| {
+    let capture = |snapshot: &GameSnapshot, excluded: &[crate::combat::FoodReserve]| {
         let frame = crate::combat::frame::Frame::borrow(snapshot_view(snapshot, 1)).unwrap();
         crate::combat::risk::RiskInput::capture_excluding(
             &frame,
@@ -773,7 +838,14 @@ fn protected_food_is_excluded_before_input_validation_and_the_food_row_cap() {
     ordinary.slot = 1;
     snapshot.seed_inventory(vec![unknown, ordinary], 28);
     assert!(capture(&snapshot, &[]).missing_facts());
-    assert!(!capture(&snapshot, &[i32::MAX]).missing_facts());
+    assert!(!capture(
+        &snapshot,
+        &[crate::combat::FoodReserve {
+            id: i32::MAX,
+            qty: 1,
+        }]
+    )
+    .missing_facts());
 }
 
 #[test]

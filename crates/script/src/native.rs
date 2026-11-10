@@ -937,8 +937,8 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
-    /// Compiled Path items reserved for the active run's food decisions.
-    pub(crate) protected_items: Option<Arc<[i32]>>,
+    /// Declared Path counts reserved from the active run's survival food.
+    pub(crate) protected_items: Option<Arc<[crate::combat::FoodReserve]>>,
     /// The Wilderness levels the host lends for this frame; `None` when the
     /// host has no nav pack. The combat machine's zone gate treats `None` as
     /// "outside the wilderness".
@@ -1833,7 +1833,7 @@ impl<'a> ActionContext<'a> {
     pub fn cure_poison(&self) -> crate::survival::CurePoison {
         self.cure_poison
     }
-    pub(crate) fn protected_items(&self) -> &[i32] {
+    pub(crate) fn protected_items(&self) -> &[crate::combat::FoodReserve] {
         self.protected_items.as_deref().unwrap_or(&[])
     }
     pub fn retained(&mut self) -> &mut RetainedMemory {

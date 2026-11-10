@@ -336,9 +336,14 @@ Worn gear uses no inventory slots. Required quest items reserve their space
 next. Food then fills the remaining space, up to the model's target.
 
 The food calculation uses the live food guard's threshold and content timing.
-Food that the Path needs carried is excluded from survival credit and from
-automatic eating. The current sizing model supports one other ordinary food
-kind. A mixture reports a specific model limit, not missing combat facts.
+For each declared `must_have` item, the required quantity is excluded from
+survival credit and automatic eating. Surplus of the same food remains edible:
+eight lobsters with a required quantity of four provide four survival bites.
+Tools, step arguments, and predicates do not reserve a food quantity by ID alone.
+The schema does not yet distinguish survival supplies from quest-consumed food;
+the declared `must_have` quantity is the conservative reservation.
+The current sizing model supports one ordinary food kind. A mixture reports a
+specific model limit, not missing combat facts.
 There is no prayer, regeneration, or escape credit.
 
 A supply shortfall does not itself stop preparation. Status and the unmet-need

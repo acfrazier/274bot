@@ -112,7 +112,10 @@ pub(crate) struct CureInputs<'a> {
 }
 
 /// Select a cure without copying inventory rows or allocating.
-pub(crate) fn cure_choice(input: &CureInputs<'_>, protected_items: &[i32]) -> CureDecision {
+pub(crate) fn cure_choice(
+    input: &CureInputs<'_>,
+    protected_items: &[crate::combat::FoodReserve],
+) -> CureDecision {
     let Some(condition) = input.cond.filter(|condition| {
         condition.session == SessionMark::Live
             && condition.hp_known
@@ -209,14 +212,11 @@ fn held_dose(inventory: &[ItemView], tables: &CombatTables, kind: PotionKind) ->
 fn held_fruit(
     inventory: &[ItemView],
     tables: &CombatTables,
-    protected_items: &[i32],
+    protected_items: &[crate::combat::FoodReserve],
 ) -> Option<i32> {
     let item_id = tables.selected().item_by_alias("macro_triffidfruit")?.id;
-    (!protected_items.contains(&item_id)
-        && inventory
-            .iter()
-            .any(|item| item.count > 0 && item.def.id == item_id))
-    .then_some(item_id)
+    let held = crate::bank::ops::count_id(inventory, item_id);
+    (crate::combat::FoodReserve::spendable(protected_items, item_id, held) > 0).then_some(item_id)
 }
 
 /// Whether `item_id` is a dose of antipoison or super antipoison that
@@ -1118,7 +1118,10 @@ mod tests {
                     q_unknown: 11,
                     eat_floor: 0,
                 },
-                &[fruit_id],
+                &[crate::combat::FoodReserve {
+                    id: fruit_id,
+                    qty: 1
+                }],
             ),
             CureDecision::Needed {
                 why: CureWhy::Always,

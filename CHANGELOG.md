@@ -91,7 +91,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   space for the stage's items, and reports supply or capacity shortfalls.
   Quest item protection also works for Paths with more than 64 managed items.
   Crossing admission still makes the final survival decision.
-- Survival preparation excludes quest food from eating and survival credit.
+- Survival preparation and eating reserve only each declared `must_have`
+  quantity, not every held item with that ID. Surplus food remains available
+  for upkeep, combat, route guards, and crossing admission.
   It preserves held food during gear deposits and reports each shortfall
   once with its stage, NPCs, target and actual cause. Mixed survival food
   has a specific model-limit message. An unavailable calculation does not

@@ -252,6 +252,8 @@ pub struct CompiledProvisioning {
     pub managed_items: Arc<[i32]>,
     /// Managed items that a Path step or predicate requires in the pack.
     pub carried_items: Arc<[i32]>,
+    /// Exact must-have counts; carried-ID ownership is not a food exclusion.
+    pub food_reserves: Option<Arc<[crate::combat::FoodReserve]>>,
     /// Stage keys in compiled sequence order; item gates resolve against this.
     pub stages: Arc<[FactKey]>,
     pub tools: Arc<[BankItem]>,
@@ -263,6 +265,20 @@ pub struct CompiledProvisioning {
     pub base_spillover_keep: Arc<[i32]>,
     pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
     pub survival: Option<Arc<super::survival::CompiledSurvival>>,
+}
+
+pub(super) fn food_reserves(
+    items: &[CompiledQuestItem],
+) -> Option<Arc<[crate::combat::FoodReserve]>> {
+    let reserves: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind == CompiledItemKind::MustHave && item.qty > 0)
+        .map(|item| crate::combat::FoodReserve {
+            id: item.id,
+            qty: item.qty,
+        })
+        .collect();
+    (!reserves.is_empty()).then(|| Arc::from(reserves))
 }
 
 const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 416);
@@ -1516,6 +1532,7 @@ pub(super) fn compile_uncached(
             ))
         })
         .collect::<Result<_, CompileError>>()?;
+    let food_reserves = food_reserves(&compiled_items);
     let provisioning = CompiledProvisioning {
         path: document.id.clone(),
         owns_inventory: header.owns_inventory,
@@ -1530,6 +1547,7 @@ pub(super) fn compile_uncached(
         gather_tool_needs: Arc::from(gather_tool_needs),
         managed_items,
         carried_items,
+        food_reserves,
         keep_ids,
         coin_float,
         coin,
@@ -2734,6 +2752,42 @@ mod tests {
         assert_eq!(
             ids.into_iter().collect::<std::collections::BTreeSet<_>>(),
             expected
+        );
+    }
+
+    #[test]
+    fn food_reserves_include_only_authored_must_have_quantities() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items = vec![
+            QuestItemDocument {
+                obj: "bread".into(),
+                qty: 2,
+                kind: super::super::path::QuestItemKindDocument::MustHave,
+                acquire: None,
+                from_stage: None,
+            },
+            QuestItemDocument {
+                obj: "lobster".into(),
+                qty: 4,
+                kind: super::super::path::QuestItemKindDocument::Acquirable,
+                acquire: None,
+                from_stage: None,
+            },
+        ];
+        header.tools.push("obj:trout".into());
+        let data = selected();
+        let quests = quests(&data);
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert_eq!(
+            path.provisioning.food_reserves.as_deref(),
+            Some(
+                &[crate::combat::FoodReserve {
+                    id: data.item_by_alias("bread").unwrap().id,
+                    qty: 2,
+                }][..]
+            )
         );
     }
 

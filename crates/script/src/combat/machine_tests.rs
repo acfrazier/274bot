@@ -83,7 +83,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
-    protected_items: Option<Arc<[i32]>>,
+    protected_items: Option<Arc<[super::FoodReserve]>>,
     wilderness: Option<TestWilderness>,
 }
 impl Runtime {
@@ -1639,7 +1639,10 @@ fn path_food_reservation_never_eats_bread_and_uses_lobster_instead() {
     let bread = reserved_only.held("bread", 0);
     let bread_id = bread.def.id;
     let mut harness = fight(&mut reserved_only);
-    harness.runtime.protected_items = Some(Arc::from([bread_id]));
+    harness.runtime.protected_items = Some(Arc::from([super::FoodReserve {
+        id: bread_id,
+        qty: 1,
+    }]));
     reserved_only.stat(3, 12, 40);
     reserved_only.inventory.push(bread);
     reserved_only.refresh();
@@ -1657,7 +1660,10 @@ fn path_food_reservation_never_eats_bread_and_uses_lobster_instead() {
     let bread_id = bread.def.id;
     let lobster = mixed.held("lobster", 1);
     let mut harness = fight(&mut mixed);
-    harness.runtime.protected_items = Some(Arc::from([bread_id]));
+    harness.runtime.protected_items = Some(Arc::from([super::FoodReserve {
+        id: bread_id,
+        qty: 1,
+    }]));
     mixed.face_us();
     mixed.stat(3, 9, 40);
     mixed.inventory.extend([bread, lobster]);
