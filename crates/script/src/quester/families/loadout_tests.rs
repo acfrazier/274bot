@@ -1175,12 +1175,7 @@ fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
         return;
     }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let items = [
-        "bronze_full_helm",
-        "bronze_platebody",
-        "bronze_platelegs",
-    ]
-    .map(|alias| {
+    let items = ["bronze_full_helm", "bronze_platebody", "bronze_platelegs"].map(|alias| {
         let item = selected.item_by_alias(alias).unwrap();
         BankItem {
             id: item.id,

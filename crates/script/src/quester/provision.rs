@@ -680,12 +680,11 @@ impl Provisioner {
                                 items: &gear,
                                 bank: plan.bank,
                                 bank_required: plan.bank_required,
-                                keep_ids:
-                                    super::compile::inventory::capacity_keep_with_held_foods(
-                                        stock,
-                                        spillover_keep,
-                                        |id| survival.tables().food(id).is_some(),
-                                    ),
+                                keep_ids: super::compile::inventory::capacity_keep_with_held_foods(
+                                    stock,
+                                    spillover_keep,
+                                    |id| survival.tables().food(id).is_some(),
+                                ),
                                 carried_ids: Arc::clone(&plan.carried_items),
                                 equipment_slots: survival.equipment_slots(),
                                 protect_worn: true,
@@ -2492,12 +2491,16 @@ mod tests {
         if !api::test_support::game_data_available() {
             return;
         }
-        let (mut path, quests, mut snapshot) =
-            survival_fixture_document(true, true, |document| {
-                // Keep the configured kit available without Path claiming its slots.
-                let fight = &mut document.roles[0].sequences[0].steps[0];
-                assert!(fight.args.as_object_mut().unwrap().remove("loadout").is_some());
-            });
+        let (mut path, quests, mut snapshot) = survival_fixture_document(true, true, |document| {
+            // Keep the configured kit available without Path claiming its slots.
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            assert!(fight
+                .args
+                .as_object_mut()
+                .unwrap()
+                .remove("loadout")
+                .is_some());
+        });
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let equipment = [
             (0, "bronze_full_helm"),
