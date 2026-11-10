@@ -1077,3 +1077,16 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Survivable P1-D/E and S3 runtime estimate activation (review again for 0.3.0)"
+
+[[item]]
+id = "gatherer-gas-hazard-escape"
+kind = "known-issue"
+area = "Gatherer"
+text = """After Gatherer detects a gas hazard while mining, it can choose another
+  nearby rock without first walking away if that rock is ready to mine.
+  Do not rely on automatic escape from a gas hazard; stop the mining card if
+  one appears. A fix moves to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "medium"
+owner = "Gatherer hazard escape (review again for 0.3.0)"

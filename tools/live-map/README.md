@@ -70,6 +70,7 @@ Do not cite them as live proof.
 | Cell | Fixture defect | Repair needed |
 |---|---|---|
 | `host.gather-bait-stale-hint` | The fixture writes an unscoped bank hint. The supported hint format requires the active revision and content scope, so the loader correctly refuses it. The cell then fails its expectation that the hint loaded. | Write the active profile's revision and content scope into the hint before the run. |
+| `host.gatherer-wc-near-edge` | The fresh-XP check uses distance to the oak's origin tile, not its 3×3 footprint. A valid adjacent stand can be more than one tile from that origin, so the cell times out after the bot approaches and chops the tree. | Check XP against the target's full footprint and valid adjacent stand, not only its origin. |
 
 ## Quarantined ignored live tests
 
