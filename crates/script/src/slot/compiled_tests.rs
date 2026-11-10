@@ -1417,6 +1417,7 @@ fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
     static CARDS: [crate::native::CompiledCard; 1] = [crate::native::CompiledCard {
         id: PERMISSION_TEST_ID,
         schema_version: 1,
+        reads_schema_versions: &[],
         prepare: |_, revision, bag| {
             Ok(PreparedConfig::new(
                 PERMISSION_TEST_ID,

@@ -1091,6 +1091,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Fixed during development
 
+#### Saved data
+
+- 0.2.9 again reads all saved data that 0.2.8 read. Earlier 0.2.9 builds
+  offered to move these files aside as older than 0.2.8:
+  - bank memory files saved by older releases, which 0.2.8 still read;
+  - a vault last saved by an older release (for example, one without the
+    Cure poison setting);
+  - loadouts that hold worn gear as a plain list or carried items without a
+    quantity.
+- Gatherer again starts with settings saved by 0.2.8. Earlier 0.2.9 builds
+  refused them with "compiled schema 4 unavailable for Gatherer". The new
+  Buy tools setting is on for these settings until you change it.
+
 #### Navigation
 
 - Native Gatherer, acquisition and bank-opening selection can read a supported

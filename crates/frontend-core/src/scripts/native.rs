@@ -82,7 +82,7 @@ impl Scripts {
                         _ => "compiled settings are unavailable",
                     });
                 }
-                Ok((version, _)) if version != card.schema_version => {
+                Ok((version, _)) if !card.reads_saved_schema(version) => {
                     return SchemaView::Unavailable(
                         "saved compiled settings schema is unsupported",
                     );
@@ -291,7 +291,7 @@ fn compiled_values(
     };
     let (version, values) =
         vault::CompiledSettingsRecord::view(entry).map_err(|error| error.to_string())?;
-    if version != card.schema_version {
+    if !card.reads_saved_schema(version) {
         return Err(format!(
             "compiled schema {version} unavailable for {} (supported {})",
             id.0, card.schema_version

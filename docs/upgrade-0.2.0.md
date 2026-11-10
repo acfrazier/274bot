@@ -5,8 +5,13 @@
 Version 0.2.9 reads formats used by 0.2.8 and 0.2.9.
 A file with a supported format loads even if an older release wrote it.
 There is no writer-release marker.
-Formats that need an upgrade from before 0.2.8 no longer load.
-Supported 0.2.8 settings remain supported.
+A shape that 0.2.8 loaded without asking you is a supported format, even when
+an older release wrote it and 0.2.8 never rewrote it. Examples: a bank memory
+file without a game-content record, a vault profile without a setting that a
+later release added, and loadouts with worn gear as a plain list.
+Formats that 0.2.8 did not load, or converted at once, no longer load. In 0.2.9
+these are a bank memory file without `schema_version`, and `worlds.json` when
+there is no `servers.json`.
 
 Before normal startup, the application checks preferences, script settings,
 loadouts, all account hints and server settings, including normally lazy stores.
@@ -15,8 +20,9 @@ aside. Yes moves each file to a sibling named `<name>.pre-0.2.8`, with a numbere
 suffix if needed. Existing backups are never overwritten. Startup then treats
 the original paths as absent. No quits without changing any file.
 
-The vault is checked after decryption at unlock. If its format is unsupported,
-the same choice appears then. Yes moves it aside and returns to empty-vault
+The vault is checked after decryption at unlock. 0.2.9 reads every vault that
+0.2.8 read. A later release that stops reading an old vault shape shows the
+same choice at unlock. Yes moves the vault aside and returns to empty-vault
 setup. No leaves it unchanged and quits.
 
 Noninteractive live, smoke and agent runs do not ask or move files.
