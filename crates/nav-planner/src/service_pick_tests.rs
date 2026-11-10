@@ -351,6 +351,9 @@ fn cooperative_routed_request_owns_one_complete_target_set_with_teleports_off() 
 
 #[test]
 fn bank_only_binding_does_not_initialize_shop_keeper_catalog() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
@@ -371,6 +374,9 @@ fn bank_only_binding_does_not_initialize_shop_keeper_catalog() {
 
 #[test]
 fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::Arc;
 
     for revision in [

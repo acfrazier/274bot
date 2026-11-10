@@ -542,6 +542,9 @@ fn held_unworn_wielded_tool_plans_only_one_wear_and_worn_tool_is_satisfied() {
 
 #[test]
 fn planner_uses_a_banked_lower_acceptable_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const RUNE_AXE: i32 = 1359;
     const BRONZE_AXE: i32 = 1351;
     let need = tier_need(
@@ -1196,6 +1199,9 @@ fn max_shop_quote(
 
 #[test]
 fn shop_session_shortage_with_stocked_eligible_vendor_plans_purchase() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let harpoon = shop_item_id(&data, "harpoon");
     let request = shop_request(
@@ -1231,6 +1237,9 @@ fn shop_session_shortage_with_stocked_eligible_vendor_plans_purchase() {
 
 #[test]
 fn exact_harpoon_coin_shortage_keeps_the_typed_park() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let harpoon = shop_item_id(&data, "harpoon");
     let request = shop_request(
@@ -1263,6 +1272,9 @@ fn exact_harpoon_coin_shortage_keeps_the_typed_park() {
 
 #[test]
 fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
     assert!(vendors_for(&data, mithril_axe).next().is_none());
@@ -1315,6 +1327,9 @@ fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
 
 #[test]
 fn shop_membership_excludes_members_items_on_free_worlds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let papyrus = shop_item_id(&data, "papyrus");
     let fact = vendor_by_keeper_config(&data, "aemad", papyrus).expect("pinned papyrus");
@@ -1341,6 +1356,9 @@ fn shop_membership_excludes_members_items_on_free_worlds() {
 
 #[test]
 fn shop_selected_alternative_is_the_banked_and_purchased_item() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let steel_axe = shop_item_id(&data, "steel_axe");
     let bronze_axe = shop_item_id(&data, "bronze_axe");
@@ -1377,6 +1395,9 @@ fn shop_selected_alternative_is_the_banked_and_purchased_item() {
 
 #[test]
 fn shop_tier_falls_back_from_unstocked_best_item_to_stocked_lower_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
@@ -1401,6 +1422,9 @@ fn shop_tier_falls_back_from_unstocked_best_item_to_stocked_lower_tier() {
 
 #[test]
 fn shop_tier_skips_an_unaffordable_best_price_for_a_wearable_lower_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let steel_axe = shop_item_id(&data, "steel_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
@@ -1432,6 +1456,9 @@ fn shop_tier_skips_an_unaffordable_best_price_for_a_wearable_lower_tier() {
 
 #[test]
 fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let rune_axe = shop_item_id(&data, "rune_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
@@ -1499,6 +1526,9 @@ fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
 
 #[test]
 fn shop_tier_unknown_coin_bank_scans_before_skipping_the_best_price() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let steel_axe = shop_item_id(&data, "steel_axe");
     let iron_axe = shop_item_id(&data, "iron_axe");
@@ -1531,6 +1561,9 @@ fn shop_tier_unknown_coin_bank_scans_before_skipping_the_best_price() {
 
 #[test]
 fn tiered_no_vendor_detail_names_the_best_tier_and_failed_condition() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
     let mut need = tier_need(
@@ -1552,6 +1585,9 @@ fn tiered_no_vendor_detail_names_the_best_tier_and_failed_condition() {
 
 #[test]
 fn shop_purchase_units_exclude_pack_worn_and_planned_bank_take() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
     let request = shop_request(
@@ -1594,6 +1630,9 @@ fn shop_purchase_units_exclude_pack_worn_and_planned_bank_take() {
 
 #[test]
 fn shop_reserve_sums_the_maximum_quote_for_two_needs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let iron_axe = shop_item_id(&data, "iron_axe");
     let bronze_pickaxe = shop_item_id(&data, "bronze_pickaxe");
@@ -1630,6 +1669,9 @@ fn shop_reserve_sums_the_maximum_quote_for_two_needs() {
 
 #[test]
 fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
     let fact =
@@ -1674,6 +1716,9 @@ fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
 
 #[test]
 fn shop_pack_only_coin_policy_never_withdraws_coins() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let vial_water = shop_item_id(&data, "vial_water");
     let request = shop_request(
@@ -1703,6 +1748,9 @@ fn shop_pack_only_coin_policy_never_withdraws_coins() {
 
 #[test]
 fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
     let fact =
@@ -1759,6 +1807,9 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
 
 #[test]
 fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let bait = shop_item_id(&data, "fishing_bait");
     let short_request = shop_request(
@@ -1824,6 +1875,9 @@ fn shop_uses_content_price_floor_before_walking_but_not_the_full_reserve() {
 
 #[test]
 fn shop_unknown_and_hint_coin_banks_request_verification() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let vial_water = shop_item_id(&data, "vial_water");
     let request = shop_request(
@@ -1861,6 +1915,9 @@ fn shop_unknown_and_hint_coin_banks_request_verification() {
 
 #[test]
 fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let iron_axe = shop_item_id(&data, "iron_axe");
     let vendors: Vec<_> = vendors_for(&data, iron_axe)
@@ -1907,6 +1964,9 @@ fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
 
 #[test]
 fn nearest_pre_walk_message_names_all_eligible_vendors_and_price_range() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let iron_axe = shop_item_id(&data, "iron_axe");
     let vendors: Vec<_> = vendors_for(&data, iron_axe)
@@ -1942,6 +2002,9 @@ fn nearest_pre_walk_message_names_all_eligible_vendors_and_price_range() {
 
 #[test]
 fn block_messages_for_every_vendor_reason_are_byte_exact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let looked = Looked {
         bank: Some(BankSeen {
             origin: Origin::Session,
@@ -2046,6 +2109,9 @@ fn block_messages_for_every_vendor_reason_are_byte_exact() {
 
 #[test]
 fn shop_purchase_marks_unworn_wielded_item_for_wear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = pinned_shop_data();
     let bronze_axe = shop_item_id(&data, "bronze_axe");
     let request = shop_request(

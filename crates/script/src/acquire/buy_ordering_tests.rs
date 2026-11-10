@@ -394,6 +394,9 @@ fn coins_refusal() -> ChatLineView {
 
 #[test]
 fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recovery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = client_with_shop(false);
     let first_npcs = vec![npc_row(3, 124, 1), npc_row(7, 123, 6)];
     let closed = snapshot(&client, Vec::new(), first_npcs);
@@ -430,6 +433,9 @@ fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recover
 
 #[test]
 fn initially_open_wrong_shop_requires_real_local_clear_and_server_close_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(true);
     let before_close = client.main_modal_packet_state().close_packets;
     let npc = vec![npc_row(7, 123, 2)];
@@ -471,6 +477,9 @@ fn initially_open_wrong_shop_requires_real_local_clear_and_server_close_count() 
 
 #[test]
 fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = client_with_shop(false);
     let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
     let mut ledger = None;
@@ -509,6 +518,9 @@ fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
 
 #[test]
 fn a_fresh_unreachable_trade_reply_retries_without_waiting_for_a_shop_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -547,6 +559,9 @@ fn a_fresh_unreachable_trade_reply_retries_without_waiting_for_a_shop_page() {
 
 #[test]
 fn rejected_reconciliation_trade_does_not_settle_or_repeat_the_buy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -598,6 +613,9 @@ fn rejected_reconciliation_trade_does_not_settle_or_repeat_the_buy() {
 
 #[test]
 fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let client = client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -635,6 +653,9 @@ fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
 
 #[test]
 fn a_late_engine_rejection_ends_the_unanswered_trade_without_a_late_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let client = client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -669,6 +690,9 @@ fn a_late_engine_rejection_ends_the_unanswered_trade_without_a_late_page() {
 
 #[test]
 fn late_trade_page_is_closed_and_counted_before_retry_trade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -845,21 +869,33 @@ fn foreign_close_case(remaining: Option<RemainingModal>) {
 
 #[test]
 fn foreign_chat_modal_after_shop_close_is_closed_before_recovery_trade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     foreign_close_case(Some(RemainingModal::Chat));
 }
 
 #[test]
 fn foreign_side_modal_after_shop_close_is_closed_before_recovery_trade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     foreign_close_case(Some(RemainingModal::Side));
 }
 
 #[test]
 fn foreign_close_without_a_remaining_modal_trades_directly() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     foreign_close_case(None);
 }
 
 #[test]
 fn close_and_open_in_one_observation_cannot_bypass_a_new_trade_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -966,16 +1002,25 @@ fn partial_refusal_case(refusal_first: bool) {
 
 #[test]
 fn partial_three_of_five_and_coins_refusal_survive_recovery_chat_first() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     partial_refusal_case(true);
 }
 
 #[test]
 fn partial_three_of_five_and_coins_refusal_survive_recovery_pack_first() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     partial_refusal_case(false);
 }
 
 #[test]
 fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -1034,6 +1079,9 @@ fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
 
 #[test]
 fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -1118,6 +1166,9 @@ fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
 
 #[test]
 fn changed_run_returns_stale_and_drops_the_unresolved_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = client_with_shop(false);
     let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
     let mut ledger = None;
@@ -1152,6 +1203,9 @@ fn changed_run_returns_stale_and_drops_the_unresolved_dispatch() {
 
 #[test]
 fn initial_trade_budget_denial_retries_without_consuming_an_open_attempt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let client = client_with_shop(false);
     let page = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
     let mut ledger = None;
@@ -1171,6 +1225,9 @@ fn initial_trade_budget_denial_retries_without_consuming_an_open_attempt() {
 
 #[test]
 fn initial_close_budget_denial_retries_the_close_not_a_trade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let client = client_with_shop(true);
     let page = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
     let mut ledger = None;
@@ -1187,6 +1244,9 @@ fn initial_close_budget_denial_retries_the_close_not_a_trade() {
 
 #[test]
 fn unchanged_pending_purchase_polls_allocate_nothing_and_keep_bounded_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = client_with_shop(false);
     let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
     let mut ledger = None;
@@ -1222,6 +1282,9 @@ fn unchanged_pending_purchase_polls_allocate_nothing_and_keep_bounded_state() {
 
 #[test]
 fn three_hundred_stackable_units_are_counted_without_narrowing_or_saturation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_listener, mut client) = attached_client_with_shop(false);
     let cache = Arc::get_mut(&mut client.cache).unwrap();
     cache.objs.resize(315, client::config::ObjType::default());
@@ -1312,6 +1375,9 @@ fn three_hundred_stackable_units_are_counted_without_narrowing_or_saturation() {
 
 #[test]
 fn one_acquisition_buys_two_needs_and_waits_for_each_counted_final_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::acquire::{
         plan, AcquireOutcome, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
         CoinPolicy, Need, NeedKind, OpenGate, Presence, SourceSet, VendorChoice, WorldFacts,

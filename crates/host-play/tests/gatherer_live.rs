@@ -9111,6 +9111,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_close_boundary_accepts_wear_only_without_claiming_a_bank_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = unopened_bank_slot();
         slot.apply_status(&bank_close_status("—")).unwrap();
         assert!(slot.witness.pending_bank_trip.is_none());
@@ -9121,6 +9124,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_close_boundary_rejects_a_selected_bank_without_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = unopened_bank_slot();
         assert!(slot
             .apply_status(&bank_close_status("Draynor; Validate"))
@@ -9130,6 +9136,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_close_boundary_rejects_a_missing_bank_field_without_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = unopened_bank_slot();
         let mut status = bank_close_status("Draynor; Validate");
         Arc::make_mut(&mut status.fields)
@@ -9143,6 +9152,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_close_boundary_rejects_an_unverified_receipt_without_a_selected_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
         slot.observe_running(None, slot.capture()).unwrap();
         let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
@@ -9155,6 +9167,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_close_boundary_credits_a_verified_bank_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = open_bank_slot(&[]);
         slot.snapshot.seed_ingame(2);
         slot.snapshot
@@ -9176,6 +9191,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_open_boundary_accepts_an_empty_supply_deposit_without_a_deposit_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = open_bank_slot(&[]);
         slot.observe_running(None, slot.capture()).unwrap();
         slot.apply_status(&bank_status("Withdraw", "bank trip due", 0, 0))
@@ -9195,6 +9213,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_open_boundary_accepts_only_the_observed_item_count_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
         slot.observe_running(None, slot.capture()).unwrap();
         let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
@@ -9221,6 +9242,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_open_boundary_rejects_items_that_vanish_without_a_bank_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
         slot.observe_running(None, slot.capture()).unwrap();
         slot.snapshot.seed_inventory(vec![], 28);
@@ -9277,6 +9301,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn real_death_reprovision_conservation_accepts_observed_per_item_bank_increases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = real_death_slot_at_bank();
         let after =
             reprovision_deposit_observation(&mut slot, &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)]);
@@ -9301,6 +9328,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn real_death_reprovision_conservation_rejects_vanished_missing_or_short_bank_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for bank_after in [
             vec![(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)],
             vec![(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
@@ -9318,6 +9348,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn every_real_death_variant_requires_exact_reprovision_bank_increases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for case in [
             LiveCase::DeathReturn,
             LiveCase::DeathRespawnRegion,
@@ -9836,6 +9869,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_accepts_a_loaded_supply_shortage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = coin_runes_empty_slot();
         slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
             .unwrap();
@@ -9844,6 +9880,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_rejects_the_retired_withdraw_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = coin_runes_empty_slot();
         assert!(slot
             .apply_status(&coin_runes_empty_status("Withdraw", "supply-missing"))
@@ -9853,6 +9892,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_rejects_an_unloaded_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = coin_runes_empty_slot();
         slot.snapshot = GameSnapshot::new();
         assert!(slot
@@ -9863,6 +9905,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_rejects_an_unselected_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = coin_runes_empty_slot();
         let mut status = coin_runes_empty_status("Supply", "supply-missing");
         let mut fields = status.fields.to_vec();
@@ -9878,6 +9923,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_rejects_a_different_failure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = coin_runes_empty_slot();
         assert!(slot
             .apply_status(&coin_runes_empty_status("Supply", "return-failed"))
@@ -9887,6 +9935,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn coin_runes_empty_rejects_any_trip_yield_or_xp_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (trips, yielded, xp) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
             let mut slot = coin_runes_empty_slot();
             slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
@@ -9900,6 +9951,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_selection_observes_the_projection_without_a_retired_event() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for kind in ["Reachable", "AirFallback", "NearShortcut"] {
             let mut slot = soak_slot_at_deposit();
             slot.witness.bank_selected = false;
@@ -9921,6 +9975,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_selection_rejects_a_retired_event_without_a_selection_projection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         slot.witness.bank_selected = false;
         let mut status = soak_status("Select", "bank selected", 0, 0);
@@ -9950,6 +10007,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_withdrawal_requires_matching_pack_and_bank_item_deltas() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = slot_before_supply_withdrawal();
         observe_pack_change(&mut slot, &[(NET_ID, 1), (FEATHERS_ID, 3)], &[]).unwrap();
         assert!(slot.witness.bank_withdrawal_confirmed);
@@ -9957,6 +10017,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_withdrawal_rejects_an_uncredited_pack_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = slot_before_supply_withdrawal();
         observe_pack_change(
             &mut slot,
@@ -9969,6 +10032,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_withdrawal_rejects_a_different_bank_delta_quantity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = slot_before_supply_withdrawal();
         observe_pack_change(
             &mut slot,
@@ -9981,6 +10047,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn bank_withdrawal_rejects_a_retired_event_without_item_deltas() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = slot_before_supply_withdrawal();
         slot.apply_status(&soak_status("Withdraw", "withdrawal confirmed", 0, 0))
             .unwrap();

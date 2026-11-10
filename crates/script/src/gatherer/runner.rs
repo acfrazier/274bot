@@ -4020,6 +4020,9 @@ mod tests {
 
     #[test]
     fn acquire_tool_failures_keep_the_gatherer_codes_and_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let fixture = BaitFixture::new();
@@ -4051,6 +4054,9 @@ mod tests {
 
     #[test]
     fn a_partial_supply_hold_keeps_the_admitted_target_when_the_due_gate_clears() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick_bank};
         use api::snapshot::{ItemActionFamily, ItemContainer};
 
@@ -4123,6 +4129,9 @@ mod tests {
 
     #[test]
     fn unchanged_acquire_progress_does_not_republish_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{with_tick, with_tick_bank};
 
         let fixture = BaitFixture::new();
@@ -4448,6 +4457,9 @@ mod tests {
 
     #[test]
     fn gatherer_bank_status_preserves_selected_kind_and_access() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
         use crate::quester::families::tests::with_tick;
         use api::quest_progress::EvidenceStamp;
@@ -4509,6 +4521,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_deposit_receipt_begins_supply_child_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{ItemActionFamily, ItemContainer};
         let fixture = BaitFixture::new();
@@ -4601,6 +4616,9 @@ mod tests {
 
     #[test]
     fn full_pack_deposits_before_the_second_request_reports_a_session_shortage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick_bank};
         use api::snapshot::{ItemActionFamily, ItemContainer};
         let mut fixture = BaitFixture::new();

@@ -1972,6 +1972,9 @@ fn live_escape(tick: u32) -> crate::combat::guard::Escape {
 
 #[test]
 fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -2138,6 +2141,9 @@ fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
 
 #[test]
 fn successful_approach_retry_resets_the_budget_for_the_next_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -2524,6 +2530,9 @@ fn second_transient_return_stall_is_terminal_without_a_third_walk() {
 
 #[test]
 fn escape_refusals_wait_for_escape_end_without_shunning_or_spending_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -2665,6 +2674,9 @@ fn escape_refusals_wait_for_escape_end_without_shunning_or_spending_budget() {
 
 #[test]
 fn idle_exhaustion_reports_the_last_walk_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -3113,6 +3125,9 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
 
 #[test]
 fn late_tool_wear_preserves_the_bank_return_and_receipt_attribution() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut stats = snapshot.stats().to_vec();
     stats.retain(|stat| stat.index != 0);

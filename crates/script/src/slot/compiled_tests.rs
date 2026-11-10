@@ -1904,6 +1904,9 @@ fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
 
 #[test]
 fn gatherer_bank_seen_status_demotes_to_a_saved_hint_after_relog() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::bank_memory::{BankMemory, FrameEvent};
     use api::snapshot::ItemContainer;
 
@@ -5227,6 +5230,9 @@ fn vendor_facts_frame_port_borrows_the_world_arc_without_clones_or_allocations()
 
 #[test]
 fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::bank_memory::{BankMemory, Origin};
 
     let mut snapshot = gatherer_snapshot();

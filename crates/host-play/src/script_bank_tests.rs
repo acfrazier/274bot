@@ -3135,6 +3135,9 @@ mod bank_pick_capture {
 
     #[test]
     fn shop_keeper_service_pick_searches_all_rows_and_allocates_only_order_and_targets() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let from = tile(1, 1);
         let mut rows = Vec::with_capacity(71);
         let mut eligible = Vec::with_capacity(71);
@@ -3255,6 +3258,9 @@ mod bank_pick_capture {
 
     #[test]
     fn service_pick_excludes_quest_gated_keeper_and_chooses_nearer_reachable_keeper() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let from = tile(2, 2);
         let gated_access = tile(8, 2);
         let near_access = tile(2, 6);
@@ -3287,6 +3293,9 @@ mod bank_pick_capture {
 
     #[test]
     fn service_pick_distinguishes_empty_access_no_path_and_closed_unknown_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::selected::QuestGate;
 
         let from = tile(1, 1);
@@ -3340,6 +3349,9 @@ mod bank_pick_capture {
 
     #[test]
     fn service_route_search_respects_per_bot_avoid_rectangles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
         let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
         let bot = crate::NavBot {
@@ -3379,6 +3391,9 @@ mod bank_pick_capture {
 
     #[test]
     fn service_pick_mismatch_and_missing_world_are_not_settled() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
         let request = shop_request(Arc::clone(&facts), vec![0], tile(1, 1));
         let world = Some(world(false));
@@ -3417,6 +3432,9 @@ mod bank_pick_capture {
 
     #[test]
     fn superseded_cancelled_or_revoked_service_receipts_are_not_delivered() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
         let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
         let request_id = input.authority.request_id().get();
@@ -3498,6 +3516,9 @@ mod bank_pick_capture {
 
     #[test]
     fn service_search_failure_and_budget_exhaustion_remain_undecided() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
         let world = world(false);
         let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));

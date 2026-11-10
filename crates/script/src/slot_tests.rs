@@ -18,6 +18,9 @@ impl Script for Noop {
 
 #[test]
 fn native_relog_readiness_gate_retains_run_intent_without_operator_pause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(103_101);
     slot.start_test_script(Box::new(Noop), None).unwrap();

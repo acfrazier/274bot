@@ -1247,6 +1247,9 @@ mod tests {
 
     #[test]
     fn tool_use_uses_effective_level_and_wield_uses_base_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Mining"));
         let prepared = prepare(settings);
@@ -1303,6 +1306,9 @@ mod tests {
 
     #[test]
     fn shop_tool_tiers_exclude_items_beyond_the_mining_use_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Mining"));
         settings.insert("buyTools".into(), json!(true));
@@ -1332,6 +1338,9 @@ mod tests {
 
     #[test]
     fn the_best_held_usable_tier_stays_selected_when_it_cannot_be_worn() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
@@ -1364,6 +1373,9 @@ mod tests {
 
     #[test]
     fn a_held_wieldable_tool_is_due_and_the_core_owns_wear() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let stats = stats(&prepared);
         let axe = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
@@ -1388,6 +1400,9 @@ mod tests {
 
     #[test]
     fn best_banked_tool_uses_selected_name_and_core_withdraws_that_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
@@ -1416,6 +1431,9 @@ mod tests {
 
     #[test]
     fn absent_tool_uses_the_best_usable_wieldable_tier_as_primary_need() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
@@ -1444,6 +1462,9 @@ mod tests {
 
     #[test]
     fn skill_use_gate_removes_higher_pickaxe_tiers_before_purchase_selection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Mining"));
         let prepared = prepare(settings);
@@ -1464,6 +1485,9 @@ mod tests {
 
     #[test]
     fn a_better_worn_tool_wins_over_a_lower_packed_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 40;
@@ -1487,6 +1511,9 @@ mod tests {
 
     #[test]
     fn unposted_pack_or_worn_pages_do_not_admit_a_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let stats = stats(&prepared);
         assert!(!SupplyPlan::due(&prepared, &stats, Stock::default()));
@@ -1504,6 +1531,9 @@ mod tests {
 
     #[test]
     fn fishing_tool_needs_stay_carried_for_every_content_defined_tool() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         let mut prepared = prepare(settings);
@@ -1592,6 +1622,9 @@ mod tests {
 
     #[test]
     fn need_builder_preserves_tool_bait_food_and_optional_coin_contracts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
@@ -1673,6 +1706,9 @@ mod tests {
 
     #[test]
     fn a_usable_minimum_allows_a_partial_bank_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.as_ref().unwrap();
         let (tool_id, tool_name) = known_tool(&prepared);
@@ -1690,6 +1726,9 @@ mod tests {
 
     #[test]
     fn session_hint_and_unknown_bank_origins_follow_core_verdicts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let (tool_id, tool_name) = known_tool(&prepared);
         let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
@@ -1715,6 +1754,9 @@ mod tests {
 
     #[test]
     fn a_hint_partial_bank_plans_what_it_knows_and_still_scans() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.as_ref().unwrap();
         let (tool_id, tool_name) = known_tool(&prepared);
@@ -1737,6 +1779,9 @@ mod tests {
 
     #[test]
     fn coins_never_admit_a_trip_and_optional_coin_shortage_never_blocks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.saltfish.op1"));
@@ -1784,6 +1829,9 @@ mod tests {
 
     #[test]
     fn reserve_batch_lists_every_rune_at_a_fixed_target_and_ignores_worn_runes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -1873,6 +1921,9 @@ mod tests {
 
     #[test]
     fn reserve_target_overflow_returns_a_typed_action_error() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -2344,6 +2395,9 @@ mod tests {
 
     #[test]
     fn unchanged_due_polls_over_known_memory_allocate_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.as_ref().unwrap();
         let stats = stats(&prepared);
@@ -2383,6 +2437,9 @@ mod tests {
 
     #[test]
     fn buy_tools_adds_shops_only_to_gathering_tools_and_bait() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for enabled in [false, true] {
             let mut settings = crate::native::SettingsBag::new();
             settings.insert("skill".into(), json!("Fishing"));
@@ -2416,6 +2473,9 @@ mod tests {
 
     #[test]
     fn buy_tools_keeps_held_and_session_banked_tiers_ahead_of_shops() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("buyTools".into(), json!(true));
         let prepared = prepare(settings);

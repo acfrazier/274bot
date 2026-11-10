@@ -926,6 +926,9 @@ mod tests {
 
     #[test]
     fn play_binds_shop_catalog_before_any_slot_or_frame_uses_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("selected R289 content");
         let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4]);

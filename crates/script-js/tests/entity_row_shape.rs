@@ -560,6 +560,10 @@ fn main() {
         client::io::ClientRevision::R274,
         client::io::ClientRevision::R289,
     ] {
+        // Hosted builds embed no selected game data; local runs fail loudly here.
+        if !api::test_support::game_data_available() {
+            break;
+        }
         let label = match revision {
             client::io::ClientRevision::R274 => "R274",
             client::io::ClientRevision::R289 => "R289",

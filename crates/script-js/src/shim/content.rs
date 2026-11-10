@@ -379,6 +379,9 @@ mod shop_heap_tests {
 
     #[test]
     fn production_shop_content_retains_bounded_v8_heap_across_replacements() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let game_data =
             api::game_data::for_revision(ClientRevision::R289).expect("R289 selected facts");
         let full_json = content_json(Some(&game_data)).expect("R289 shop content");

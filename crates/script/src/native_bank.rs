@@ -3569,6 +3569,9 @@ mod tests {
 
     #[test]
     fn service_select_refuses_empty_or_mismatched_domains_without_host_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::service_pick::ServiceKind;
         for (kind, eligible, expected) in [
             (ServiceKind::Bank, &[][..], ServicePickOutcome::NoCandidate),
@@ -3595,6 +3598,9 @@ mod tests {
 
     #[test]
     fn service_select_waits_allocation_free_and_preserves_every_host_outcome() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::service_pick::ServiceKind;
         for expected in [
             ServicePickOutcome::Routed {
@@ -3658,6 +3664,9 @@ mod tests {
 
     #[test]
     fn cancelling_service_select_revokes_queued_work_and_rejects_its_late_result() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         let mut ledger = None;

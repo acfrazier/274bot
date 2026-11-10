@@ -485,6 +485,9 @@ fn ordinary_walk_ends() -> Vec<WalkEnd> {
 /// to the pick. The third ends the run with the last receipt's detail.
 #[test]
 fn access_recovers_each_ordinary_walk_failure_within_the_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let retry_position = WorldTile {
         x: 3204,
         z: 3205,
@@ -599,6 +602,9 @@ fn access_recovers_each_ordinary_walk_failure_within_the_budget() {
 /// access walk at once: the owner must not retry them.
 #[test]
 fn access_walk_cancellation_and_refusals_stay_terminal_at_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for end in [
         WalkEnd::UserInput,
         WalkEnd::Cancelled,
@@ -631,6 +637,9 @@ fn access_walk_cancellation_and_refusals_stay_terminal_at_once() {
 /// the failure after that is terminal with its detail.
 #[test]
 fn access_reselect_without_another_reachable_bank_walks_to_the_failed_one_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut roster = roster();
     let mut ledger = None;
     let mut run = access_walker(&roster, &mut ledger);
@@ -726,6 +735,9 @@ fn access_reselect_without_another_reachable_bank_walks_to_the_failed_one_again(
 /// receipt's detail, not the generic reason.
 #[test]
 fn access_recovery_pick_without_any_bank_keeps_the_last_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let roster = roster();
     let mut ledger = None;
     let mut run = access_walker(&roster, &mut ledger);
@@ -797,6 +809,9 @@ fn access_recovery_pick_without_any_bank_keeps_the_last_reason() {
 /// the same recovery and last-reason handling as the typed receipt.
 #[test]
 fn access_recovery_sentinel_pick_widens_then_keeps_the_last_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let roster = roster();
     let mut ledger = None;
     let mut run = access_walker(&roster, &mut ledger);
@@ -1807,6 +1822,9 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 
 #[test]
 fn live_replan_withdraws_an_alternative_by_its_selected_name_after_deposit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const BRONZE_AXE: i32 = 1351;
     const RUNE_AXE: i32 = 1359;
     let (mut snapshot, bank, banks) = fixture();
@@ -2242,6 +2260,9 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 
 #[test]
 fn shop_wear_resolution_uses_the_actual_tier_or_skips_a_carried_tool() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for wear in [Some(1351), None] {
         let (mut snapshot, _bank, banks) = fixture();
         let held_id = wear.unwrap_or(1359);
@@ -2650,6 +2671,9 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 
 #[test]
 fn chained_request_plans_from_open_rows_instead_of_stale_session_memory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (remembered, observed) in [(0, 7), (7, 0)] {
         let (mut snapshot, _bank, _banks) = fixture();
         open_bank(
@@ -2714,6 +2738,9 @@ fn chained_request_plans_from_open_rows_instead_of_stale_session_memory() {
 
 #[test]
 fn wear_admission_keeps_the_gatherer_tool_failure_codes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (case, expected) in [
         (0, "tool-missing: the selected tool left the inventory"),
         (1, "tool-missing: the selected tool has no observed name"),
@@ -2768,6 +2795,9 @@ fn wear_admission_keeps_the_gatherer_tool_failure_codes() {
 
 #[test]
 fn shut_bank_with_stuck_side_root_fails_before_wear_or_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
     let side = snapshot.modals().side;
@@ -3006,6 +3036,9 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
 
 #[test]
 fn acquisition_receipt_preserves_more_than_255_landed_units() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, _bank, banks) = fixture();
     let mut ledger = None;
     let mut run =

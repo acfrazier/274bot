@@ -91,6 +91,9 @@ fn reasons() -> [BlockReason; 7] {
 
 #[test]
 fn every_supply_park_holds_for_1000_ticks_without_a_plan_or_allocation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for reason in reasons() {
         let mut fixture = BaitFixture::new();
         fixture
@@ -138,6 +141,9 @@ fn every_supply_park_holds_for_1000_ticks_without_a_plan_or_allocation() {
 
 #[test]
 fn every_park_survives_relog_and_hint_generation_without_a_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for reason in reasons() {
         let mut fixture = BaitFixture::new();
         fixture
@@ -172,6 +178,9 @@ fn every_park_survives_relog_and_hint_generation_without_a_plan() {
 
 #[test]
 fn relog_rephrases_the_parked_bank_clause_as_a_saved_hint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = BaitFixture::new();
     fixture
         .snapshot
@@ -268,6 +277,9 @@ fn relog_rephrases_the_parked_bank_clause_as_a_saved_hint() {
 
 #[test]
 fn combined_session_bank_coverage_wakes_once_but_hint_coverage_does_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for origin in [Origin::Session, Origin::Hint] {
         let mut fixture = BaitFixture::new();
         let mut pack = fixture.snapshot.inventory().to_vec();
@@ -296,6 +308,9 @@ fn combined_session_bank_coverage_wakes_once_but_hint_coverage_does_not() {
 
 #[test]
 fn held_exact_or_lower_wieldable_tool_wakes_to_wear_without_a_bank_or_purchase() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for reason in [
         BlockReason::SupplyMissing,
         BlockReason::TooFewCoins {
@@ -352,6 +367,9 @@ fn held_exact_or_lower_wieldable_tool_wakes_to_wear_without_a_bank_or_purchase()
 
 #[test]
 fn session_banked_lower_tier_wakes_the_original_tool_need() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = BaitFixture::new();
     let mut wanted = need(1353, 1, Presence::Wielded);
     wanted.alternatives = Arc::from([1353, 1351]);
@@ -367,6 +385,9 @@ fn session_banked_lower_tier_wakes_the_original_tool_need() {
 
 #[test]
 fn resume_and_settings_each_plan_once_but_hold_release_does_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = BaitFixture::new();
     let mut gatherer = parked(
         &fixture,
@@ -425,6 +446,9 @@ fn resume_and_settings_each_plan_once_but_hold_release_does_not() {
 
 #[test]
 fn resume_with_hint_admits_one_verifying_trip_and_clears_evidence_idle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = BaitFixture::new();
     let mut gatherer = parked(
         &fixture,
@@ -451,6 +475,9 @@ fn resume_with_hint_admits_one_verifying_trip_and_clears_evidence_idle() {
 
 #[test]
 fn no_stock_due_and_no_space_use_the_same_single_replan_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (reason, edge, free_slots) in [
         (
             BlockReason::NoStock {

@@ -1046,6 +1046,9 @@ mod tests {
 
     #[test]
     fn nearest_shop_walk_retries_later_then_switches_placement() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, mut snapshot, facts) = fixture();
         let mut ledger = None;
         let mut run =
@@ -1097,6 +1100,9 @@ mod tests {
 
     #[test]
     fn typed_refusal_and_blocked_zone_receipts_are_terminal_after_a_retry() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (end, blocked, refusal) in [
             (
                 crate::native::WalkEnd::Refused,
@@ -1152,6 +1158,9 @@ mod tests {
 
     #[test]
     fn shop_retry_budget_is_shared_and_terminal_block_keeps_last_walk_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, snapshot, facts) = fixture();
         let mut ledger = None;
         let mut run =
@@ -1297,6 +1306,9 @@ mod tests {
 
     #[test]
     fn explicit_anchor_queues_only_the_authored_walk_without_a_vendor_pick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, snapshot, facts) = fixture();
         request.vendor = VendorChoice::Explicit {
             keeper_config: Arc::from("gerrant"),
@@ -1317,6 +1329,9 @@ mod tests {
 
     #[test]
     fn nearest_pick_carries_one_shared_domain_and_cancellation_revokes_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, snapshot, facts) = fixture();
         request.vendor = VendorChoice::Nearest;
         let mut ledger = None;
@@ -1357,6 +1372,9 @@ mod tests {
 
     #[test]
     fn no_path_on_best_tool_routes_the_complete_lower_tier_domain_and_wears_its_item() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let rune = data.item_by_alias("rune_pickaxe").unwrap().id;
         let bronze = data.item_by_alias("bronze_pickaxe").unwrap().id;
@@ -1501,6 +1519,9 @@ mod tests {
 
     #[test]
     fn held_minimum_and_optional_shortage_continue_with_exact_observed_units() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, mut snapshot, facts) = fixture();
         let mut ledger = None;
         let mut run = start(&request, purchase, &snapshot, &facts, &mut ledger);
@@ -1538,6 +1559,9 @@ mod tests {
 
     #[test]
     fn live_coins_and_space_refusals_use_the_missing_minimum_not_the_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (request, purchase, mut snapshot, facts) = fixture();
         snapshot.seed_inventory(vec![row(purchase.item, 1), row(995, 7)], 26);
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -1590,6 +1614,9 @@ mod tests {
 
     #[test]
     fn exhausted_stock_excludes_every_placement_before_the_next_complete_pick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut request, purchase, snapshot, facts) = fixture();
         request.vendor = VendorChoice::Nearest;
         let mut ledger = None;
@@ -1618,6 +1645,9 @@ mod tests {
 
     #[test]
     fn final_stock_refusal_reports_the_next_observed_restock_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (request, purchase, snapshot, facts) = fixture();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let fact = shop_facts::vendor_by_keeper_config(&data, "gerrant", purchase.item)

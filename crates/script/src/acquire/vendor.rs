@@ -220,6 +220,9 @@ mod tests {
 
     #[test]
     fn vendor_index_list_is_one_allocation_and_borrows_access_without_a_name_join() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (data, facts, item) = fixture();
         let access = facts.rows()[0].access().as_ptr();
         let mut result = None;
@@ -247,6 +250,9 @@ mod tests {
 
     #[test]
     fn explicit_keeper_identity_and_empty_access_filter_before_the_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (data, facts, item) = fixture();
         let indices = eligible_indices(&facts, &data, item, true, tile(0, 0), |row| {
             row.keeper.keeper_config != "harry"
@@ -258,6 +264,9 @@ mod tests {
 
     #[test]
     fn routed_identity_is_the_exact_eligible_row_even_with_repeated_display_names() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (_, facts, _) = fixture();
         let mut looked = Looked::default();
         let mut retry = false;
@@ -296,6 +305,9 @@ mod tests {
 
     #[test]
     fn unrelated_or_non_access_routed_results_fail_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (_, facts, _) = fixture();
         for (index, access_tile) in [
             (1, tile(19, 20)),
@@ -323,6 +335,9 @@ mod tests {
 
     #[test]
     fn established_absence_never_spends_an_undecided_retry_and_deduplicates_placements() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (_, facts, _) = fixture();
         let mut retry = false;
         let mut looked = Looked::default();
@@ -363,6 +378,9 @@ mod tests {
 
     #[test]
     fn every_undecided_pair_retries_once_then_blocks_without_claiming_unreachable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (_, facts, _) = fixture();
         for first in [
             ServicePickOutcome::BudgetExhausted,
@@ -395,6 +413,9 @@ mod tests {
 
     #[test]
     fn diagnostic_records_keep_three_keepers_and_count_the_rest_without_allocating() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R289).expect("selected content");
         let rows: Box<[_]> = keepers(&data)
             .unwrap()
