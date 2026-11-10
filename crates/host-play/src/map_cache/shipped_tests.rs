@@ -1,17 +1,17 @@
 //! Shipped map data against the real map cache and worker: release packaging
-//! ships exactly what a local bake or derive publishes, and a matching home
-//! installs it byte for byte without baking or deriving; foreign, partial or
-//! damaged shipped data is never installed or modified (the local derive or
-//! bake runs instead); a published user artifact is never replaced.
+//! ships exactly what a local bake or derive publishes. Homes install those
+//! bytes without comparing their current content or policy. Partial or damaged
+//! released assets are never installed or modified, and a published user
+//! artifact is never replaced.
 
 use super::super::fixture::{
-    fixture_descriptor, fixture_png, other_cache_descriptor, ship_fixture_catalogue,
-    ship_fixture_terrain, synthetic_client_snapshot, wait_for_status, CountingMapProducer,
+    fixture_descriptor, fixture_png, ship_fixture_catalogue, ship_fixture_terrain,
+    synthetic_client_snapshot, wait_for_status, CountingMapProducer,
 };
 use super::super::{
-    map_bake_test_step_snapshot, ArtifactKind, BakeRequest, MapBakeCursor, MapBakeProducer,
-    MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
-    MapProfileDescriptor, MapStage, PreparedMapInput,
+    cache_root_key, map_bake_test_step_snapshot, ArtifactKind, BakeRequest, MapBakeCursor,
+    MapBakeProducer, MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager,
+    MapJobStatus, MapProfileDescriptor, MapStage, PreparedMapInput,
 };
 use super::ShippedMap;
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
@@ -126,7 +126,7 @@ fn file_id(path: &Path) -> u64 {
 fn fixture_tiles(shipped: &ShippedMap) -> [TileKey; 2] {
     let identity = fixture_descriptor().image_identity();
     let bytes = fs::read(shipped.image_dir(identity).unwrap().join("manifest.json")).unwrap();
-    let manifest = ImageManifest::decode(&bytes, identity).unwrap();
+    let manifest = ImageManifest::decode(&bytes).unwrap();
     let tiles = manifest.tiles.as_slice();
     [tiles[0].key, tiles[1].key]
 }
@@ -175,7 +175,7 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
         .request(descriptor.clone(), MapDemand::Images)
         .unwrap();
     wait_ready(&baked);
-    let local_tree = tree(&local.image_dir(identity).unwrap());
+    let local_tree = tree(&local.image_dir(descriptor.revision()));
     assert!(local_tree.len() > 2, "manifest plus several tiles");
     assert_eq!(
         tree(&shipped.image_dir(identity).unwrap()),
@@ -183,7 +183,7 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
         "shipped bytes are a local bake's"
     );
     let catalogue_identity = descriptor.catalogue_identity();
-    let local_catalogue_tree = tree(&local.catalogue_dir(catalogue_identity).unwrap());
+    let local_catalogue_tree = tree(&local.catalogue_dir(descriptor.revision()));
     assert_eq!(
         local_catalogue_tree.len(),
         2,
@@ -209,12 +209,12 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
     assert_eq!(producer.image_runs(), 0, "installed, never baked");
     assert_eq!(producer.catalogue_runs(), 0, "installed, never derived");
     assert_eq!(
-        tree(&home.image_dir(identity).unwrap()),
+        tree(&home.image_dir(descriptor.revision())),
         local_tree,
         "installed bytes are a local bake's"
     );
     assert_eq!(
-        tree(&home.catalogue_dir(catalogue_identity).unwrap()),
+        tree(&home.catalogue_dir(descriptor.revision())),
         local_catalogue_tree,
         "installed catalogue bytes are a local derive's"
     );
@@ -243,50 +243,7 @@ fn missing_terrain_probe_leaves_the_cached_catalogue_tree_unchanged() {
         before,
         "the probe must not mutate the cache"
     );
-    assert!(!root
-        .image_dir(descriptor.image_identity())
-        .unwrap()
-        .exists());
-}
-
-#[test]
-fn terrain_shipped_for_another_client_cache_or_policy_is_ignored_and_left_as_shipped() {
-    let scratch = Scratch::new("foreign");
-    let shipped = ship_fixture_terrain(&scratch.0);
-    let before = tree(shipped.path());
-    let producer = Arc::new(CountingMapProducer::default());
-    let manager = MapDemandManager::with_shipped_map(
-        MapCacheRoot::from_root(scratch.0.join("home")),
-        producer.clone(),
-        shipped.clone(),
-    );
-    let fixture = fixture_descriptor();
-    let other_cache = other_cache_descriptor();
-    let other_policy =
-        MapProfileDescriptor::new(289, Digest([7; 32]), Digest([5; 32]), Digest([9; 32])).unwrap();
-    assert!(manager.shipped_images_available(&fixture), "control");
-    assert!(!manager.shipped_images_available(&other_cache));
-    assert!(!manager.shipped_images_available(&other_policy));
-
-    let adopt = manager
-        .request(other_cache.clone(), MapDemand::ReadyImages)
-        .unwrap();
-    wait_ready(&adopt);
-    assert!(!has_terrain(&adopt), "nothing to adopt: catalogue-only");
-    assert_eq!(producer.image_runs(), 0);
-    drop(adopt);
-    manager.reap();
-
-    // With consent the local bake runs as before.
-    let bake = manager.request(other_cache, MapDemand::Images).unwrap();
-    wait_ready(&bake);
-    assert!(has_terrain(&bake));
-    assert_eq!(producer.image_runs(), 1);
-    assert_eq!(
-        tree(shipped.path()),
-        before,
-        "shipped terrain stays as shipped"
-    );
+    assert!(!root.image_dir(descriptor.revision()).exists());
 }
 
 #[test]
@@ -321,7 +278,11 @@ fn a_damaged_shipped_tile_fails_closed_and_a_consented_bake_adopts_the_verified_
     );
     assert_eq!(tree(shipped.path()), before, "shipped files are only read");
     let identity = descriptor.image_identity();
-    let partial = root.partial_dir(289, ArtifactKind::Images, identity.key().unwrap().0);
+    let partial = root.partial_dir(
+        289,
+        ArtifactKind::Images,
+        cache_root_key(289, ArtifactKind::Images),
+    );
     let staged = partial.join(first.relative_path().unwrap());
     let staged_id = file_id(&staged);
     assert!(
@@ -337,7 +298,7 @@ fn a_damaged_shipped_tile_fails_closed_and_a_consented_bake_adopts_the_verified_
     wait_ready(&bake);
     assert!(has_terrain(&bake));
     assert_eq!(producer.image_runs(), 1);
-    let published = root.image_dir(identity).unwrap();
+    let published = root.image_dir(identity.revision);
     assert_eq!(
         file_id(&published.join(first.relative_path().unwrap())),
         staged_id,
@@ -398,10 +359,7 @@ fn partial_or_corrupt_shipped_files_are_never_installed() {
         assert!(!has_terrain(&handle), "{name}: catalogue-only");
         assert_eq!(producer.image_runs(), 0, "{name}: no bake");
         assert!(
-            !root
-                .image_dir(fixture_descriptor().image_identity())
-                .unwrap()
-                .exists(),
+            !root.image_dir(fixture_descriptor().revision()).exists(),
             "{name}: nothing published"
         );
         assert!(
@@ -417,7 +375,7 @@ fn reship_with_other_tiles(shipped: &ShippedMap) {
     let identity = fixture_descriptor().image_identity();
     let dir = shipped.image_dir(identity).unwrap();
     let mut manifest =
-        ImageManifest::decode(&fs::read(dir.join("manifest.json")).unwrap(), identity).unwrap();
+        ImageManifest::decode(&fs::read(dir.join("manifest.json")).unwrap()).unwrap();
     let tiles = manifest
         .tiles
         .as_slice()
@@ -480,7 +438,7 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
             .unwrap();
         wait_ready(&baked);
     }
-    let user_dir = root.image_dir(identity).unwrap();
+    let user_dir = root.image_dir(identity.revision);
     let before = tree(&user_dir);
     let before_ids: Vec<u64> = before
         .keys()
@@ -511,7 +469,11 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
     );
     assert!(
         !root
-            .partial_dir(289, ArtifactKind::Images, identity.key().unwrap().0)
+            .partial_dir(
+                289,
+                ArtifactKind::Images,
+                cache_root_key(289, ArtifactKind::Images)
+            )
             .exists(),
         "nothing was staged for install"
     );
@@ -539,7 +501,7 @@ fn shipped_catalogue_installs_byte_identically_without_deriving() {
         .request(descriptor.clone(), MapDemand::CatalogueOnly)
         .unwrap();
     wait_ready(&derived);
-    let local_tree = tree(&local.catalogue_dir(identity).unwrap());
+    let local_tree = tree(&local.catalogue_dir(identity.revision));
     assert_eq!(
         tree(&shipped.catalogue_dir(identity).unwrap()),
         local_tree,
@@ -561,44 +523,9 @@ fn shipped_catalogue_installs_byte_identically_without_deriving() {
     );
     assert_eq!(producer.catalogue_runs(), 0, "installed, never derived");
     assert_eq!(
-        tree(&home.catalogue_dir(identity).unwrap()),
+        tree(&home.catalogue_dir(identity.revision)),
         local_tree,
         "installed bytes are a local derive's"
-    );
-}
-
-#[test]
-fn catalogue_shipped_for_another_client_cache_or_policy_is_ignored_and_left_as_shipped() {
-    let scratch = Scratch::new("catalogue-foreign");
-    let shipped = ship_fixture_catalogue(&scratch.0);
-    let before = tree(shipped.path());
-    let other_policy =
-        MapProfileDescriptor::new(289, Digest([7; 32]), Digest([8; 32]), Digest([5; 32])).unwrap();
-    for (name, descriptor) in [
-        ("other-cache", other_cache_descriptor()),
-        ("other-policy", other_policy),
-    ] {
-        let producer = Arc::new(CountingMapProducer::default());
-        let manager = MapDemandManager::with_shipped_map(
-            MapCacheRoot::from_root(scratch.0.join(name)),
-            producer.clone(),
-            shipped.clone(),
-        );
-        let handle = manager
-            .request(descriptor.clone(), MapDemand::CatalogueOnly)
-            .unwrap();
-        wait_ready(&handle);
-        assert_eq!(
-            handle.ready().unwrap().catalogue.manifest().identity,
-            descriptor.catalogue_identity(),
-            "{name}: the local derive serves its own identity"
-        );
-        assert_eq!(producer.catalogue_runs(), 1, "{name}: derived locally");
-    }
-    assert_eq!(
-        tree(shipped.path()),
-        before,
-        "shipped catalogue stays as shipped"
     );
 }
 
@@ -656,7 +583,7 @@ fn a_damaged_shipped_catalogue_falls_back_to_the_local_derive() {
             "{name}: the local derive runs instead"
         );
         assert_eq!(
-            tree(&root.catalogue_dir(identity).unwrap()),
+            tree(&root.catalogue_dir(identity.revision)),
             expected,
             "{name}: the local derive publishes the same catalogue"
         );
@@ -724,9 +651,7 @@ fn catalogue_only_capture(
         ready.images.is_none(),
         "catalogue-only demand must not publish terrain"
     );
-    let catalogue_dir = cache_root
-        .catalogue_dir(descriptor.catalogue_identity())
-        .unwrap();
+    let catalogue_dir = cache_root.catalogue_dir(descriptor.revision());
     let capture_catalogue = capture.join("catalogue");
     fs::create_dir_all(&capture_catalogue).unwrap();
     fs::copy(
@@ -939,10 +864,8 @@ fn real_content_map_demand_capture() {
         .images
         .as_ref()
         .expect("full image demand publishes terrain");
-    let catalogue_dir = cache_root
-        .catalogue_dir(descriptor.catalogue_identity())
-        .unwrap();
-    let image_dir = cache_root.image_dir(descriptor.image_identity()).unwrap();
+    let catalogue_dir = cache_root.catalogue_dir(descriptor.revision());
+    let image_dir = cache_root.image_dir(descriptor.revision());
     let capture_catalogue = capture.join("catalogue");
     let capture_images = capture.join("images");
     fs::create_dir_all(&capture_catalogue).unwrap();
@@ -964,8 +887,7 @@ fn real_content_map_demand_capture() {
     .unwrap();
 
     let image_manifest_bytes = fs::read(capture_images.join("manifest.json")).unwrap();
-    let image_manifest =
-        ImageManifest::decode(&image_manifest_bytes, descriptor.image_identity()).unwrap();
+    let image_manifest = ImageManifest::decode(&image_manifest_bytes).unwrap();
     let mut captured_tiles = Vec::new();
     for tile in image_manifest.tiles.as_slice() {
         let mut bytes = Vec::new();

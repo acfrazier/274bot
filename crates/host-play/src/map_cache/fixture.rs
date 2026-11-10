@@ -34,12 +34,13 @@ pub fn fixture_descriptor() -> MapProfileDescriptor {
         .expect("fixture identities are valid")
 }
 
-/// [`fixture_descriptor`] for another client cache: same revision and
-/// policies, different decoded content.
-pub fn other_cache_descriptor() -> MapProfileDescriptor {
-    MapProfileDescriptor::new(289, Digest([6; 32]), Digest([8; 32]), Digest([9; 32]))
+/// [`fixture_descriptor`] with the other supported map revision, for a
+/// distinct cache root.
+pub fn other_revision_descriptor() -> MapProfileDescriptor {
+    MapProfileDescriptor::new(274, Digest([7; 32]), Digest([8; 32]), Digest([9; 32]))
         .expect("fixture identities are valid")
 }
+
 // Hang guard only, not a pass condition and not a latency target. Every map
 // job reaches a terminal status and a demand refused as Full is resubmitted on
 // each `status()` turn, so the wait below ends on the product's own signal.
@@ -86,7 +87,7 @@ pub fn ship_fixture_terrain(dir: &Path) -> ShippedMap {
     manager.reap();
     let shipped = ShippedMap::at(dir.join("map"));
     shipped
-        .ship_images_from(&root, fixture_descriptor().image_identity())
+        .ship_images_from(&root, fixture_descriptor().revision())
         .expect("ship fixture terrain");
     let _ = std::fs::remove_dir_all(&scratch);
     shipped
@@ -107,7 +108,7 @@ pub fn ship_fixture_catalogue(dir: &Path) -> ShippedMap {
     manager.reap();
     let shipped = ShippedMap::at(dir.join("map"));
     shipped
-        .ship_catalogue_from(&root, fixture_descriptor().catalogue_identity())
+        .ship_catalogue_from(&root, fixture_descriptor().revision())
         .expect("ship fixture catalogue");
     let _ = std::fs::remove_dir_all(&scratch);
     shipped

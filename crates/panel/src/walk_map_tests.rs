@@ -111,7 +111,7 @@ fn ready_images_with_tiles(
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
     let cache = host_play::map_cache::MapCacheRoot::from_root(root.clone());
-    let directory = cache.image_dir(identity).expect("image directory");
+    let directory = cache.image_dir(identity.revision);
     fs::create_dir_all(&directory).expect("image directory");
 
     let mut receipts = Vec::new();
@@ -2232,10 +2232,6 @@ fn slash_label_collect_reuses_name_buffer_after_warmup() {
 #[ignore = "requires BOT_WALK_MAP_DECODE_CORPUS to point at a published real image artifact"]
 fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     let _work_service_guard = decode_service_test_lock();
-    #[derive(serde::Deserialize)]
-    struct DeclaredIdentity {
-        identity: ImageIdentity,
-    }
 
     let root = std::path::PathBuf::from(
         std::env::var_os("BOT_WALK_MAP_DECODE_CORPUS")
@@ -2243,10 +2239,7 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     );
     let manifest_bytes =
         std::fs::read(root.join("manifest.json")).expect("read real image manifest");
-    let declared: DeclaredIdentity =
-        serde_json::from_slice(&manifest_bytes).expect("read declared image identity");
-    let manifest =
-        ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
+    let manifest = ImageManifest::decode(&manifest_bytes).expect("validate image manifest");
     let tiles = manifest.tiles.as_slice();
     assert!(
         !tiles.is_empty(),
@@ -2257,9 +2250,6 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     for receipt in tiles {
         let path = root.join(receipt.key.relative_path().expect("validated tile path"));
         let png = std::fs::read(path).expect("read published terrain PNG");
-        receipt
-            .verify_png(&png)
-            .expect("published terrain PNG matches its receipt");
         let legacy_rgba = decode_tile(&png).expect("legacy decode oracle");
         controller
             .request(1, manifest.identity, receipt.key, Arc::from(png))

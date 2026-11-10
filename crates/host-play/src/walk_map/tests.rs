@@ -1008,7 +1008,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_world_pack_without_replacing_the_r
 }
 
 #[test]
-fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_catalogue_identity() {
+fn ready_catalogue_retains_searchable_normalized_access() {
     use crate::map_cache::{
         fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
         MapProfileDescriptor,
@@ -1020,7 +1020,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     let identity = identity();
     let key = identity.key().unwrap();
     let cache_root = MapCacheRoot::from_root(fixture.root.join("map-cache"));
-    let directory = cache_root.catalogue_dir(identity).unwrap();
+    let directory = cache_root.catalogue_dir(identity.revision);
     std::fs::create_dir_all(&directory).unwrap();
     let document = ClientPois {
         schema: 1,
@@ -1089,18 +1089,6 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     }
     let ready_map = handle.ready().unwrap();
     let ready = Arc::clone(&ready_map.catalogue);
-    assert!(matches!(
-        Catalogue::from_ready(
-            Arc::clone(&world),
-            CatalogueIdentity {
-                content: digest(99),
-                ..identity
-            },
-            Some(Arc::clone(&ready_map.catalogue)),
-            None,
-        ),
-        Err(nav_planner::map::MapError::Identity)
-    ));
     let catalogue = Catalogue::from_ready(
         Arc::clone(&world),
         identity,

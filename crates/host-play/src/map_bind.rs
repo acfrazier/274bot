@@ -199,8 +199,8 @@ pub(crate) fn ship_map_bundle(
         drop(handle);
         manager.reap();
         Ok(ShippedMapBundle {
-            images: shipped.ship_images_from(&root, descriptor.image_identity())?,
-            catalogue: shipped.ship_catalogue_from(&root, descriptor.catalogue_identity())?,
+            images: shipped.ship_images_from(&root, descriptor.revision())?,
+            catalogue: shipped.ship_catalogue_from(&root, descriptor.revision())?,
         })
     })();
     match (result, fs::remove_dir_all(&scratch)) {

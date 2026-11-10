@@ -4,7 +4,7 @@
 //! The first explicit demand submits bounded cooperative work to the shared
 //! WorkAdmission service. The host owns demand, persistence and publication;
 //! navigation owns map decoding/raster policy. Workers write only
-//! identity-keyed `.partial` directories and publish a complete artifact with
+//! revision/format-keyed `.partial` directories and publish a complete artifact with
 //! one cross-process lock; readers never inspect a partial directory.
 
 use api::identity::{Cancellation, PublishSequence, Scope, Settlement, WorkIdentity};
@@ -24,7 +24,9 @@ use nav_planner::map::formats::{
     CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, ShippedCatalogue, ShippedImages,
     TileReceipt, MAX_IMAGE_BYTES, MAX_IMAGE_TILES, MAX_JSON_BYTES, MAX_PNG_BYTES,
 };
-use nav_planner::map::identity::{CatalogueIdentity, Digest, ImageIdentity, CATALOGUE_SCHEMA};
+use nav_planner::map::identity::{
+    CatalogueIdentity, Digest, ImageIdentity, CATALOGUE_SCHEMA, IMAGE_SCHEMA,
+};
 use nav_planner::map::raster::CHECKPOINT_BATCH_TILES;
 use nav_planner::map::MapError;
 use parking_lot::Mutex;
@@ -333,16 +335,16 @@ impl MapCacheRoot {
         self.revision_dir(revision).join(kind.directory_name())
     }
 
-    pub fn catalogue_dir(&self, identity: CatalogueIdentity) -> Result<PathBuf, MapCacheError> {
-        Ok(self
-            .kind_dir(identity.revision, ArtifactKind::Catalogue)
-            .join(identity.key()?.0.to_string()))
+    pub fn catalogue_dir(&self, revision: u16) -> PathBuf {
+        let kind = ArtifactKind::Catalogue;
+        self.kind_dir(revision, kind)
+            .join(cache_root_key(revision, kind).to_string())
     }
 
-    pub fn image_dir(&self, identity: ImageIdentity) -> Result<PathBuf, MapCacheError> {
-        Ok(self
-            .kind_dir(identity.revision, ArtifactKind::Images)
-            .join(identity.key()?.0.to_string()))
+    pub fn image_dir(&self, revision: u16) -> PathBuf {
+        let kind = ArtifactKind::Images;
+        self.kind_dir(revision, kind)
+            .join(cache_root_key(revision, kind).to_string())
     }
 
     pub fn partial_dir(&self, revision: u16, kind: ArtifactKind, key: Digest) -> PathBuf {
@@ -433,15 +435,16 @@ impl MapCacheRoot {
     /// and requested artifact root.
     fn open_catalogue(
         &self,
-        identity: CatalogueIdentity,
+        revision: u16,
         capacity: &mut CapacityLock,
     ) -> Result<Option<Arc<ReadyCatalogue>>, MapCacheError> {
-        let path = self.catalogue_dir(identity)?;
-        let key = identity.key()?.0;
-        let lock_path = self.lock_path(identity.revision, ArtifactKind::Catalogue, key);
+        let kind = ArtifactKind::Catalogue;
+        let path = self.catalogue_dir(revision);
+        let key = cache_root_key(revision, kind);
+        let lock_path = self.lock_path(revision, kind, key);
         let marker_path = self.prune_marker_path(ArtifactRootId {
-            revision: identity.revision,
-            kind: ArtifactKind::Catalogue,
+            revision,
+            kind,
             key,
             partial: false,
         });
@@ -450,18 +453,17 @@ impl MapCacheRoot {
             &path,
             &marker_path,
             ArtifactRootId {
-                revision: identity.revision,
-                kind: ArtifactKind::Catalogue,
+                revision,
+                kind,
                 key,
                 partial: false,
             },
-            ArtifactIdentity::Catalogue(identity),
         )?
         else {
             return Ok(None);
         };
         clear_ready_checkpoint(&path, capacity)?;
-        match ReadyCatalogue::open(&path, identity, lock) {
+        match ReadyCatalogue::open(&path, lock) {
             Ok(value) => Ok(Some(Arc::new(value))),
             Err(MapCacheError::Map(MapError::Io(error)))
                 if error.kind() == io::ErrorKind::NotFound =>
@@ -476,15 +478,16 @@ impl MapCacheRoot {
     /// and requested artifact root; tile PNGs remain unopened until requested.
     fn open_images(
         &self,
-        identity: ImageIdentity,
+        revision: u16,
         capacity: &mut CapacityLock,
     ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
-        let path = self.image_dir(identity)?;
-        let key = identity.key()?.0;
-        let lock_path = self.lock_path(identity.revision, ArtifactKind::Images, key);
+        let kind = ArtifactKind::Images;
+        let path = self.image_dir(revision);
+        let key = cache_root_key(revision, kind);
+        let lock_path = self.lock_path(revision, kind, key);
         let marker_path = self.prune_marker_path(ArtifactRootId {
-            revision: identity.revision,
-            kind: ArtifactKind::Images,
+            revision,
+            kind,
             key,
             partial: false,
         });
@@ -493,18 +496,17 @@ impl MapCacheRoot {
             &path,
             &marker_path,
             ArtifactRootId {
-                revision: identity.revision,
-                kind: ArtifactKind::Images,
+                revision,
+                kind,
                 key,
                 partial: false,
             },
-            ArtifactIdentity::Image(identity),
         )?
         else {
             return Ok(None);
         };
         clear_ready_checkpoint(&path, capacity)?;
-        match ReadyImages::open(&path, identity, lock) {
+        match ReadyImages::open(&path, lock) {
             Ok(value) => Ok(Some(Arc::new(value))),
             Err(MapCacheError::Map(MapError::Io(error)))
                 if error.kind() == io::ErrorKind::NotFound =>
@@ -580,19 +582,25 @@ fn parse_keyed_control_name(name: &std::ffi::OsStr, suffix: &str) -> Option<Dige
     parse_digest_name(digest)
 }
 
-fn identity_matches_root(identity: ArtifactIdentity, root: ArtifactRootId) -> bool {
-    match identity {
-        ArtifactIdentity::Catalogue(identity) => {
-            root.kind == ArtifactKind::Catalogue
-                && identity.revision == root.revision
-                && identity.key().is_ok_and(|key| key.0 == root.key)
-        }
-        ArtifactIdentity::Image(identity) => {
-            root.kind == ArtifactKind::Images
-                && identity.revision == root.revision
-                && identity.key().is_ok_and(|key| key.0 == root.key)
-        }
+fn root_metadata_matches(identity: ArtifactIdentity, root: ArtifactRootId) -> bool {
+    let (revision, kind, legacy_key) = match identity {
+        ArtifactIdentity::Catalogue(identity) => (
+            identity.revision,
+            ArtifactKind::Catalogue,
+            identity.key().ok().map(|key| key.0),
+        ),
+        ArtifactIdentity::Image(identity) => (
+            identity.revision,
+            ArtifactKind::Images,
+            identity.key().ok().map(|key| key.0),
+        ),
+    };
+    if revision != root.revision || kind != root.kind {
+        return false;
     }
+    // Current roots are keyed only by revision and cache format. Legacy
+    // content-keyed roots remain recognizable solely for safe pruning.
+    root.key == cache_root_key(root.revision, root.kind) || legacy_key == Some(root.key)
 }
 
 fn read_regular_bounded(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, MapCacheError> {
@@ -633,7 +641,7 @@ fn read_prune_marker(
         key,
         partial: marker.partial,
     };
-    if marker.schema != PRUNE_MARKER_SCHEMA || !identity_matches_root(marker.identity, id) {
+    if marker.schema != PRUNE_MARKER_SCHEMA || !root_metadata_matches(marker.identity, id) {
         return Err(MapCacheError::Map(MapError::Path));
     }
     Ok(Some((id, marker.identity)))
@@ -652,8 +660,8 @@ fn read_root_identity(
             let Ok(checkpoint) = serde_json::from_slice::<Checkpoint>(&bytes) else {
                 return Ok(None);
             };
-            if !identity_matches_root(checkpoint.identity, id)
-                || Checkpoint::decode(&bytes, checkpoint.identity).is_err()
+            if !root_metadata_matches(checkpoint.identity, id)
+                || Checkpoint::decode(&bytes).is_err()
             {
                 return Ok(None);
             }
@@ -670,8 +678,8 @@ fn read_root_identity(
             let Ok(header) = serde_json::from_slice::<Header>(&bytes) else {
                 return Ok(None);
             };
-            if !identity_matches_root(ArtifactIdentity::Catalogue(header.identity), id)
-                || CatalogueManifest::decode(&bytes, header.identity).is_err()
+            if !root_metadata_matches(ArtifactIdentity::Catalogue(header.identity), id)
+                || CatalogueManifest::decode(&bytes).is_err()
             {
                 return Ok(None);
             }
@@ -685,8 +693,8 @@ fn read_root_identity(
             let Ok(header) = serde_json::from_slice::<Header>(&bytes) else {
                 return Ok(None);
             };
-            if !identity_matches_root(ArtifactIdentity::Image(header.identity), id)
-                || ImageManifest::decode(&bytes, header.identity).is_err()
+            if !root_metadata_matches(ArtifactIdentity::Image(header.identity), id)
+                || ImageManifest::decode(&bytes).is_err()
             {
                 return Ok(None);
             }
@@ -1528,13 +1536,9 @@ pub struct ReadyCatalogue {
 }
 
 impl ReadyCatalogue {
-    fn open(
-        directory: &Path,
-        identity: CatalogueIdentity,
-        lock: PublishLock,
-    ) -> Result<Self, MapCacheError> {
+    fn open(directory: &Path, lock: PublishLock) -> Result<Self, MapCacheError> {
         Ok(Self {
-            inner: NavReadyCatalogue::open(directory, identity)?,
+            inner: NavReadyCatalogue::open(directory)?,
             _lock: lock,
         })
     }
@@ -1557,13 +1561,9 @@ pub struct ReadyImages {
 }
 
 impl ReadyImages {
-    fn open(
-        directory: &Path,
-        identity: ImageIdentity,
-        lock: PublishLock,
-    ) -> Result<Self, MapCacheError> {
+    fn open(directory: &Path, lock: PublishLock) -> Result<Self, MapCacheError> {
         Ok(Self {
-            inner: NavReadyImages::open(directory, identity)?,
+            inner: NavReadyImages::open(directory)?,
             _lock: lock,
         })
     }
@@ -1604,7 +1604,6 @@ fn ready_lease(
     ready: &Path,
     marker_path: &Path,
     root_id: ArtifactRootId,
-    expected_identity: ArtifactIdentity,
 ) -> Result<Option<PublishLock>, MapCacheError> {
     // An absent ready root needs no lease and must not create a key file
     // or its parent directories during a read-only terrain probe.
@@ -1614,13 +1613,7 @@ fn ready_lease(
     let Some(lease) = PublishLock::try_acquire_shared(lock_path)? else {
         return Ok(None);
     };
-    if let Some((_, marker_identity)) =
-        read_prune_marker(marker_path, root_id.revision, root_id.kind, root_id.key)?
-    {
-        if marker_identity != expected_identity || !identity_matches_root(marker_identity, root_id)
-        {
-            return Err(MapCacheError::Map(MapError::Path));
-        }
+    if read_prune_marker(marker_path, root_id.revision, root_id.kind, root_id.key)?.is_some() {
         return Ok(None);
     }
     Ok(real_directory(ready)?.then_some(lease))
@@ -1655,6 +1648,30 @@ impl ArtifactKind {
             Self::Images => "images",
         }
     }
+
+    fn cache_format_version(self) -> u32 {
+        let manifest_schema = match self {
+            Self::Catalogue => CATALOGUE_SCHEMA,
+            Self::Images => IMAGE_SCHEMA,
+        };
+        (u32::from(manifest_schema) << 16) | u32::from(CHECKPOINT_SCHEMA)
+    }
+}
+
+fn cache_root_key(revision: u16, kind: ArtifactKind) -> Digest {
+    const DOMAIN: &[u8] = b"274bot.map.cache.root\0";
+    let mut bytes = [0; DOMAIN.len() + 2 + 1 + 4];
+    let domain_end = DOMAIN.len();
+    let revision_end = domain_end + 2;
+    let kind_end = revision_end + 1;
+    bytes[..domain_end].copy_from_slice(DOMAIN);
+    bytes[domain_end..revision_end].copy_from_slice(&revision.to_be_bytes());
+    bytes[revision_end] = match kind {
+        ArtifactKind::Catalogue => 0,
+        ArtifactKind::Images => 1,
+    };
+    bytes[kind_end..].copy_from_slice(&kind.cache_format_version().to_be_bytes());
+    Digest::of(&bytes)
 }
 
 /// Immutable map input binding.  A runtime binding clones the owning
@@ -1715,7 +1732,8 @@ impl PreparedMapInput {
     }
 
     /// Select the decoded snapshot by the existing versionlist directory key.
-    /// The client's decoded-content key identifies map-cache resources.
+    /// The decoded-content identity is recorded in artifact metadata only;
+    /// map-cache roots are keyed by revision and cache format.
     pub fn offline(
         revision: u16,
         jag_dir: &Path,
@@ -1827,9 +1845,9 @@ impl MapProfileDescriptor {
     }
 
     pub fn with_input(mut self, input: PreparedMapInput) -> Result<Self, MapCacheError> {
-        if input.revision != self.revision || input.content != self.content {
+        if input.revision != self.revision {
             return Err(MapCacheError::Message(
-                "prepared map input does not match descriptor identity".into(),
+                "prepared map input does not match descriptor revision".into(),
             ));
         }
         self.input = Some(input);
@@ -1867,12 +1885,6 @@ impl MapProfileDescriptor {
     }
     pub fn input(&self) -> Option<&PreparedMapInput> {
         self.input.as_ref()
-    }
-    pub fn image_key(&self) -> Result<Digest, MapCacheError> {
-        Ok(self.image.key()?.0)
-    }
-    pub fn catalogue_key(&self) -> Result<Digest, MapCacheError> {
-        Ok(self.catalogue.key()?.0)
     }
 }
 
@@ -2016,7 +2028,7 @@ impl BakeRequest {
         )
         .map_err(MapCacheError::Map)
     }
-    pub fn expected_identity(&self) -> ArtifactIdentity {
+    pub fn identity(&self) -> ArtifactIdentity {
         match self.artifact {
             ArtifactKind::Catalogue => {
                 ArtifactIdentity::Catalogue(self.descriptor.catalogue_identity())
@@ -2030,16 +2042,13 @@ fn bake_request(
     root: &MapCacheRoot,
     descriptor: MapProfileDescriptor,
     artifact: ArtifactKind,
-) -> Result<BakeRequest, MapCacheError> {
-    let key = match artifact {
-        ArtifactKind::Catalogue => descriptor.catalogue_key()?,
-        ArtifactKind::Images => descriptor.image_key()?,
-    };
-    Ok(BakeRequest {
+) -> BakeRequest {
+    let key = cache_root_key(descriptor.revision(), artifact);
+    BakeRequest {
         artifact,
         partial_dir: Arc::new(root.partial_dir(descriptor.revision(), artifact, key)),
         descriptor,
-    })
+    }
 }
 
 /// B owns format decoding/raster policy; D owns demand, persistence and
@@ -2387,8 +2396,7 @@ impl BakeWriter {
         cancel: Arc<AtomicBool>,
         progress: Arc<dyn Fn(MapProgress) + Send + Sync>,
     ) -> Result<Self, MapCacheError> {
-        let identity = request.expected_identity();
-        let key = identity.key()?;
+        let key = cache_root_key(request.descriptor.revision(), request.artifact);
         let mut capacity = root.try_acquire_capacity()?.ok_or(MapCacheError::Busy)?;
         let mut changed = root.ensure_kind_dir(request.descriptor.revision(), request.artifact)?;
         changed |=
@@ -2437,14 +2445,12 @@ impl BakeWriter {
         progress: Arc<dyn Fn(MapProgress) + Send + Sync>,
         mut usage: CacheUsage,
     ) -> Result<Self, MapCacheError> {
-        let identity = request.expected_identity();
-        let partial_expected = root.partial_dir(
-            request.descriptor.revision(),
-            request.artifact,
-            identity.key()?,
-        );
+        let identity = request.identity();
+        let key = cache_root_key(request.descriptor.revision(), request.artifact);
+        let partial_expected =
+            root.partial_dir(request.descriptor.revision(), request.artifact, key);
         if partial.as_path() != partial_expected.as_path() {
-            return Err(MapCacheError::Map(MapError::Identity));
+            return Err(MapCacheError::Map(MapError::Path));
         }
         let partial_exists = match fs::symlink_metadata(partial.as_path()) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
@@ -2462,8 +2468,16 @@ impl BakeWriter {
         }
         let checkpoint = if partial_exists {
             read_regular_bounded(&partial.join("checkpoint.json"), MAX_JSON_BYTES)?
-                .and_then(|bytes| Checkpoint::decode(&bytes, identity).ok())
-                .filter(|checkpoint| checkpoint.planned_units == plan.planned_units)
+                .and_then(|bytes| Checkpoint::decode(&bytes).ok())
+                .filter(|checkpoint| {
+                    checkpoint.planned_units == plan.planned_units
+                        && checkpoint.identity.revision() == request.descriptor.revision()
+                        && matches!(
+                            (request.artifact, checkpoint.identity),
+                            (ArtifactKind::Catalogue, ArtifactIdentity::Catalogue(_))
+                                | (ArtifactKind::Images, ArtifactIdentity::Image(_))
+                        )
+                })
         } else {
             None
         };
@@ -2514,17 +2528,7 @@ impl BakeWriter {
             planned_units: plan.planned_units,
             completed: nav_planner::map::Rows::new(Vec::new())?,
         });
-        let bytes = checkpoint
-            .completed
-            .as_slice()
-            .iter()
-            .try_fold(0u64, |sum, unit| {
-                sum.checked_add(u64::from(unit.payload.bytes))
-            })
-            .ok_or(MapCacheError::Map(MapError::Limit("artifact bytes")))?;
-        if bytes > max_artifact_bytes(request.artifact) {
-            return Err(MapCacheError::Map(MapError::Limit("artifact bytes")));
-        }
+        let bytes = 0;
         let verification =
             (!checkpoint.completed.as_slice().is_empty()).then(|| CheckpointVerification {
                 next: 0,
@@ -2571,27 +2575,38 @@ impl BakeWriter {
                 File::open(&path)?
                     .take(limit as u64 + 1)
                     .read_to_end(&mut verification.payload)?;
-                match unit
-                    .payload
-                    .verify(&verification.payload, limit as u32)
-                    .map_err(MapCacheError::from)
-                    .and_then(|()| self.validate_unit(unit.key, &verification.payload))
-                {
-                    Ok(()) => true,
-                    Err(MapCacheError::Map(_)) => false,
-                    Err(error) => return Err(error),
+                if verification.payload.len() > limit {
+                    false
+                } else {
+                    match self.validate_unit(unit.key, &verification.payload) {
+                        Ok(()) => true,
+                        Err(MapCacheError::Map(_)) => false,
+                        Err(error) => return Err(error),
+                    }
                 }
             }
             _ => false,
         };
         if valid {
-            verification.completed.push(unit);
-            verification.bytes += u64::from(unit.payload.bytes);
+            let receipt = PayloadReceipt {
+                bytes: u32::try_from(verification.payload.len())
+                    .map_err(|_| MapCacheError::Map(MapError::Limit("checkpoint unit bytes")))?,
+                sha256: Digest::of(&verification.payload),
+            };
+            verification.bytes = verification
+                .bytes
+                .checked_add(u64::from(receipt.bytes))
+                .ok_or(MapCacheError::Map(MapError::Limit("artifact bytes")))?;
+            if verification.bytes > max_artifact_bytes(self.artifact()) {
+                return Err(MapCacheError::Map(MapError::Limit("artifact bytes")));
+            }
+            verification.completed.push(CompletedUnit {
+                key: unit.key,
+                payload: receipt,
+            });
         } else {
             self.checkpoint_dirty = true;
             if let Some(length) = existing_bytes {
-                // Do not let the producer adopt a well-formed payload whose
-                // bytes contradicted its durable checkpoint receipt.
                 let cache_bytes = self
                     .cache_bytes
                     .checked_sub(length)
@@ -2730,8 +2745,8 @@ impl BakeWriter {
     }
 
     /// Adopt a completed payload already present in the partial artifact.
-    /// The cursor has validated its contents; this checks its length and
-    /// accounts it in the host checkpoint without rewriting the file.
+    /// The cursor has validated its contents; this records its receipt in the
+    /// host checkpoint without reopening or comparing the payload.
     pub fn record_unit(
         &mut self,
         key: UnitKey,
@@ -2740,13 +2755,6 @@ impl BakeWriter {
         let Some((next_bytes, index)) = self.admit_unit(key, u64::from(receipt.bytes))? else {
             return Ok(false);
         };
-        if regular_file_length(&self.partial.join(unit_relative_path(key)?))?
-            != Some(u64::from(receipt.bytes))
-        {
-            return Err(MapCacheError::Map(MapError::Invalid(
-                "recorded unit length",
-            )));
-        }
         if matches!(key, UnitKey::Terrain { .. }) {
             // Windows requires a writable handle to flush file buffers.
             OpenOptions::new()
@@ -2814,23 +2822,12 @@ impl BakeWriter {
     }
 
     fn validate_unit(&self, key: UnitKey, payload: &[u8]) -> Result<(), MapCacheError> {
-        match (self.identity, key) {
-            (ArtifactIdentity::Catalogue(identity), UnitKey::ClientPois) => {
-                let pois = ClientPois::decode(payload, identity)?;
-                let _ = pois;
-                if payload.len() > MAX_JSON_BYTES {
-                    return Err(MapCacheError::Map(MapError::Limit("catalogue payload")));
-                }
+        match (self.artifact(), key) {
+            (ArtifactKind::Catalogue, UnitKey::ClientPois) => {
+                ClientPois::decode(payload)?;
             }
-            (ArtifactIdentity::Image(_), UnitKey::Terrain { tile }) => {
-                TileReceipt {
-                    key: tile,
-                    payload: PayloadReceipt {
-                        bytes: payload.len() as u32,
-                        sha256: Digest::of(payload),
-                    },
-                }
-                .verify_png(payload)?;
+            (ArtifactKind::Images, UnitKey::Terrain { tile }) => {
+                TileReceipt::validate_png_bytes(tile, payload)?;
             }
             _ => return Err(MapCacheError::Map(MapError::Invalid("artifact unit"))),
         }
@@ -3066,24 +3063,16 @@ impl BakeWriter {
         }
         self.report(MapStage::Publishing, "writing completion receipt".into());
         let manifest = match (self.identity, output) {
-            (ArtifactIdentity::Catalogue(identity), BakeOutput::Catalogue(mut manifest)) => {
-                if manifest.identity != identity {
-                    return Err(MapCacheError::Map(MapError::Identity));
-                }
+            (ArtifactIdentity::Catalogue(_), BakeOutput::Catalogue(mut manifest)) => {
                 manifest.payload =
                     read_receipt(&self.partial.join("client-pois.json"), MAX_JSON_BYTES)?;
                 let bytes = encode_json_bounded(&manifest)?;
-                let checked = CatalogueManifest::decode(&bytes, identity)?;
+                let checked = CatalogueManifest::decode(&bytes)?;
                 let payload = read_bounded(&self.partial.join("client-pois.json"), MAX_JSON_BYTES)?;
                 checked.read_payload(&payload)?;
                 bytes
             }
-            (ArtifactIdentity::Image(identity), BakeOutput::Images(manifest)) => {
-                if manifest.identity != identity {
-                    return Err(MapCacheError::Map(MapError::Identity));
-                }
-                manifest.encode()?
-            }
+            (ArtifactIdentity::Image(_), BakeOutput::Images(manifest)) => manifest.encode()?,
             _ => return Err(MapCacheError::Map(MapError::Invalid("artifact manifest"))),
         };
         self.write_counted(&self.partial.join("manifest.json"), &manifest, true)?;
@@ -3391,6 +3380,14 @@ struct JobKey {
     image: Digest,
     catalogue: Digest,
 }
+impl JobKey {
+    fn for_revision(revision: u16) -> Self {
+        Self {
+            image: cache_root_key(revision, ArtifactKind::Images),
+            catalogue: cache_root_key(revision, ArtifactKind::Catalogue),
+        }
+    }
+}
 
 // WorkTicket's frozen marker contains a function pointer, which the seam checker refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3557,20 +3554,17 @@ impl MapBakeJob {
         demand: Arc<AtomicUsize>,
     ) -> Result<Self, MapCacheError> {
         let descriptor = request.descriptor.clone();
-        let key = match input.artifact {
-            ArtifactKind::Catalogue => descriptor.catalogue_key()?,
-            ArtifactKind::Images => descriptor.image_key()?,
-        };
-        if input.key.image != descriptor.image_key()?
-            || input.key.catalogue != descriptor.catalogue_key()?
+        let key = cache_root_key(descriptor.revision(), input.artifact);
+        let expected_job = JobKey::for_revision(descriptor.revision());
+        if input.key != expected_job
             || request.artifact != input.artifact
             || request.partial_dir.as_os_str().is_empty()
         {
             return Err(MapCacheError::Map(MapError::Identity));
         }
         let ready_path = Arc::new(match input.artifact {
-            ArtifactKind::Catalogue => root.catalogue_dir(descriptor.catalogue_identity())?,
-            ArtifactKind::Images => root.image_dir(descriptor.image_identity())?,
+            ArtifactKind::Catalogue => root.catalogue_dir(descriptor.revision()),
+            ArtifactKind::Images => root.image_dir(descriptor.revision()),
         });
         let lock_path = root.lock_path(descriptor.revision(), input.artifact, key);
         let census_cursor = CacheCensusCursor::new(root.clone());
@@ -3621,13 +3615,13 @@ impl MapBakeJob {
         }
         let Some(catalogue) = self
             .root
-            .open_catalogue(self.descriptor.catalogue_identity(), &mut capacity)?
+            .open_catalogue(self.descriptor.revision(), &mut capacity)?
         else {
             return Ok(OpenReady::Ready(None));
         };
         let images = if self.input.artifact == ArtifactKind::Images {
             self.root
-                .open_images(self.descriptor.image_identity(), &mut capacity)?
+                .open_images(self.descriptor.revision(), &mut capacity)?
         } else {
             None
         };
@@ -3647,21 +3641,13 @@ impl MapBakeJob {
         let Some(mut capacity) = self.root.try_acquire_capacity()? else {
             return Ok(false);
         };
-        let identities = [
-            Some(ArtifactIdentity::Catalogue(
-                self.descriptor.catalogue_identity(),
-            )),
-            (self.input.artifact == ArtifactKind::Images)
-                .then(|| ArtifactIdentity::Image(self.descriptor.image_identity())),
+        let kinds = [
+            Some(ArtifactKind::Catalogue),
+            (self.input.artifact == ArtifactKind::Images).then_some(ArtifactKind::Images),
         ];
         let mut changed = false;
-        for identity in identities.into_iter().flatten() {
-            let (kind, key) = match identity {
-                ArtifactIdentity::Catalogue(identity) => {
-                    (ArtifactKind::Catalogue, identity.key()?.0)
-                }
-                ArtifactIdentity::Image(identity) => (ArtifactKind::Images, identity.key()?.0),
-            };
+        for kind in kinds.into_iter().flatten() {
+            let key = cache_root_key(self.descriptor.revision(), kind);
             changed |= self
                 .root
                 .ensure_kind_dir(self.descriptor.revision(), kind)?;
@@ -3794,21 +3780,15 @@ impl MapBakeJob {
     }
 
     fn validate_census_targets(&self, census: &CacheCensusResult) -> Result<(), MapCacheError> {
-        let mut identities = [None, None];
-        identities[0] = Some(ArtifactIdentity::Catalogue(
-            self.descriptor.catalogue_identity(),
-        ));
-        if self.input.artifact == ArtifactKind::Images {
-            identities[1] = Some(ArtifactIdentity::Image(self.descriptor.image_identity()));
-        }
-        for identity in identities.into_iter().flatten() {
+        let kinds = [
+            Some(ArtifactKind::Catalogue),
+            (self.input.artifact == ArtifactKind::Images).then_some(ArtifactKind::Images),
+        ];
+        for kind in kinds.into_iter().flatten() {
             let id = ArtifactRootId {
                 revision: self.descriptor.revision(),
-                kind: match identity {
-                    ArtifactIdentity::Catalogue(_) => ArtifactKind::Catalogue,
-                    ArtifactIdentity::Image(_) => ArtifactKind::Images,
-                },
-                key: identity.key()?,
+                kind,
+                key: cache_root_key(self.descriptor.revision(), kind),
                 partial: false,
             };
             for partial in [false, true] {
@@ -3819,8 +3799,7 @@ impl MapBakeJob {
                     .find(|root| root.id == root_id && root.root_exists)
                 {
                     if !root.fully_censused
-                        || (root.identity.is_some() && root.identity != Some(identity))
-                        || (!partial && (!root.safe_to_prune || root.identity != Some(identity)))
+                        || (!partial && (!root.safe_to_prune || root.identity.is_none()))
                     {
                         return Err(MapCacheError::Map(MapError::Path));
                     }
@@ -3838,7 +3817,7 @@ impl MapBakeJob {
         self.shipped_bundle = self
             .shipped
             .as_ref()
-            .and_then(|source| source.images_bundle(self.descriptor.image_identity()));
+            .and_then(|source| source.images_bundle(self.descriptor.revision()));
     }
 
     fn ensure_shipped_catalogue_bundle(&mut self) {
@@ -3849,7 +3828,7 @@ impl MapBakeJob {
         self.shipped_catalogue_bundle = self
             .shipped
             .as_ref()
-            .and_then(|source| source.catalogue_bundle(self.descriptor.catalogue_identity()));
+            .and_then(|source| source.catalogue_bundle(self.descriptor.revision()));
     }
 
     fn ready_satisfies(&mut self, ready: &ReadyMap) -> bool {
@@ -3883,10 +3862,7 @@ impl MapBakeJob {
                                 "shipped source absent",
                             )));
                         };
-                        self.cursor = Some(
-                            source
-                                .catalogue_cursor(self.descriptor.catalogue_identity(), bundle)?,
-                        );
+                        self.cursor = Some(source.catalogue_cursor(bundle)?);
                         self.cursor_is_shipped = true;
                         return Ok(true);
                     }
@@ -3900,11 +3876,7 @@ impl MapBakeJob {
                                 "shipped source absent",
                             )));
                         };
-                        self.cursor = Some(source.images_cursor(
-                            self.descriptor.image_identity(),
-                            bundle,
-                            Arc::clone(&partial_dir),
-                        )?);
+                        self.cursor = Some(source.images_cursor(bundle, Arc::clone(&partial_dir))?);
                         self.cursor_is_shipped = true;
                         return Ok(true);
                     }
@@ -3924,11 +3896,10 @@ impl MapBakeJob {
             .census_result
             .as_ref()
             .ok_or(MapCacheError::Map(MapError::Path))?;
-        let identity = self.request.expected_identity();
         let id = ArtifactRootId {
             revision: self.descriptor.revision(),
             kind: self.input.artifact,
-            key: identity.key()?,
+            key: cache_root_key(self.descriptor.revision(), self.input.artifact),
             partial: true,
         };
         Ok(CacheUsage::for_root(census, id))
@@ -3966,20 +3937,14 @@ impl MapBakeJob {
         let Some(key) = PublishLock::try_acquire(&self.lock_path)? else {
             return Ok(ExclusiveAcquire::Busy);
         };
-        let expected = self.request.expected_identity();
         let root_id = ArtifactRootId {
             revision: self.descriptor.revision(),
             kind: self.input.artifact,
-            key: expected.key()?,
+            key: cache_root_key(self.descriptor.revision(), self.input.artifact),
             partial: false,
         };
         let marker_path = self.root.prune_marker_path(root_id);
-        if let Some((_, marker_identity)) =
-            read_prune_marker(&marker_path, root_id.revision, root_id.kind, root_id.key)?
-        {
-            if marker_identity != expected || !identity_matches_root(marker_identity, root_id) {
-                return Err(MapCacheError::Map(MapError::Path));
-            }
+        if read_prune_marker(&marker_path, root_id.revision, root_id.kind, root_id.key)?.is_some() {
             return Ok(ExclusiveAcquire::Busy);
         }
         let generation = capacity.bump()?;
@@ -4097,10 +4062,7 @@ impl MapBakeJob {
             )))?;
         match output {
             MapBakeCursorOutput::Catalogue(pois) => {
-                let identity = self.descriptor.catalogue_identity();
-                if pois.identity != identity {
-                    return Err(MapCacheError::Map(MapError::Identity));
-                }
+                let identity = pois.identity;
                 let payload = pois.encode()?;
                 let payload_bytes = u32::try_from(payload.len())
                     .map_err(|_| MapCacheError::Map(MapError::Limit("catalogue payload")))?;
@@ -4123,9 +4085,6 @@ impl MapBakeJob {
                 }));
             }
             MapBakeCursorOutput::Images(manifest) => {
-                if manifest.identity != self.descriptor.image_identity() {
-                    return Err(MapCacheError::Map(MapError::Identity));
-                }
                 self.bake_output = Some(BakeOutput::Images(manifest));
             }
         }
@@ -4384,15 +4343,13 @@ impl MapBakeJob {
                             return self.fail(error);
                         }
                         if let Some(source) = &self.shipped {
-                            let (key, what) = match self.input.artifact {
-                                ArtifactKind::Catalogue => {
-                                    (self.descriptor.catalogue_key(), "catalogue")
-                                }
-                                ArtifactKind::Images => (self.descriptor.image_key(), "terrain"),
+                            let key =
+                                cache_root_key(self.descriptor.revision(), self.input.artifact);
+                            let what = match self.input.artifact {
+                                ArtifactKind::Catalogue => "catalogue",
+                                ArtifactKind::Images => "terrain",
                             };
-                            if let Ok(key) = key {
-                                source.reject(key, what, &error);
-                            }
+                            source.reject(key, what, &error);
                         }
                         self.shipped_bundle = None;
                         self.shipped_catalogue_bundle = None;
@@ -4677,18 +4634,18 @@ impl MapDemandManager {
         &self,
         descriptor: &MapProfileDescriptor,
     ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
-        self.cached_images(descriptor.image_identity())
+        self.cached_images(descriptor.revision())
     }
 
-    /// Terrain shipped with this release for exactly `descriptor`'s image
-    /// identity, not yet found unusable in this process: the worker installs
-    /// it instead of baking. Reads only the small shipped description; the
-    /// worker verifies every file while installing.
+    /// Terrain shipped with this release for `descriptor`'s revision, not yet
+    /// found unusable in this process: the worker installs it instead of
+    /// baking. Reads only the small shipped description; the worker verifies
+    /// every released file while installing.
     pub fn shipped_images_available(&self, descriptor: &MapProfileDescriptor) -> bool {
         self.inner
             .shipped
             .as_ref()
-            .is_some_and(|shipped| shipped.images_bundle(descriptor.image_identity()).is_some())
+            .is_some_and(|shipped| shipped.images_bundle(descriptor.revision()).is_some())
     }
 
     fn input_for(
@@ -4698,7 +4655,7 @@ impl MapDemandManager {
         generation: u64,
         artifact: ArtifactKind,
     ) -> Result<(MapBakeInput, BakeRequest), MapCacheError> {
-        let request = bake_request(&self.inner.root, descriptor.clone(), artifact)?;
+        let request = bake_request(&self.inner.root, descriptor.clone(), artifact);
         let input = MapBakeInput {
             key,
             generation,
@@ -4760,10 +4717,7 @@ impl MapDemandManager {
         demand: MapDemand,
     ) -> Result<MapDemandHandle, MapCacheError> {
         self.reap();
-        let key = JobKey {
-            image: descriptor.image_key()?,
-            catalogue: descriptor.catalogue_key()?,
-        };
+        let key = JobKey::for_revision(descriptor.revision());
         let handle_descriptor = descriptor.clone().without_input();
         // Cache hits still enter the admitted job's bounded preflight.
         let artifact = ArtifactKind::Catalogue;
@@ -4868,10 +4822,7 @@ impl MapDemandManager {
         descriptor: MapProfileDescriptor,
         demand: MapDemand,
     ) -> Result<MapDemandHandle, MapCacheError> {
-        let key = JobKey {
-            image: descriptor.image_key()?,
-            catalogue: descriptor.catalogue_key()?,
-        };
+        let key = JobKey::for_revision(descriptor.revision());
         let mut jobs = self.inner.jobs.lock();
         if jobs
             .active
@@ -5203,9 +5154,9 @@ impl MapDemandManager {
 
     fn cached_catalogue(
         &self,
-        identity: CatalogueIdentity,
+        revision: u16,
     ) -> Result<Option<Arc<ReadyCatalogue>>, MapCacheError> {
-        let key = identity.key()?.0;
+        let key = cache_root_key(revision, ArtifactKind::Catalogue);
         let mut cache = self.inner.ready.lock();
         let Some(value) = cache.catalogues.get(&key).and_then(Weak::upgrade) else {
             cache.catalogues.remove(&key);
@@ -5214,11 +5165,8 @@ impl MapDemandManager {
         Ok(Some(value))
     }
 
-    fn cached_images(
-        &self,
-        identity: ImageIdentity,
-    ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
-        let key = identity.key()?.0;
+    fn cached_images(&self, revision: u16) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
+        let key = cache_root_key(revision, ArtifactKind::Images);
         let mut cache = self.inner.ready.lock();
         let Some(value) = cache.images.get(&key).and_then(Weak::upgrade) else {
             cache.images.remove(&key);
@@ -5232,11 +5180,11 @@ impl MapDemandManager {
         descriptor: &MapProfileDescriptor,
         demand: MapDemand,
     ) -> Result<Option<ReadyMap>, MapCacheError> {
-        let Some(catalogue) = self.cached_catalogue(descriptor.catalogue_identity())? else {
+        let Some(catalogue) = self.cached_catalogue(descriptor.revision())? else {
             return Ok(None);
         };
         let images = if demand.wants_images() {
-            let Some(images) = self.cached_images(descriptor.image_identity())? else {
+            let Some(images) = self.cached_images(descriptor.revision())? else {
                 return Ok(None);
             };
             Some(images)
@@ -5263,11 +5211,11 @@ impl MapDemandManager {
         demand: MapDemand,
     ) -> Result<ReadyMap, MapCacheError> {
         let catalogue = self
-            .cached_catalogue(descriptor.catalogue_identity())?
+            .cached_catalogue(descriptor.revision())?
             .ok_or(MapCacheError::Message("catalogue is not ready".into()))?;
         let images = if demand.wants_images() {
             Some(
-                self.cached_images(descriptor.image_identity())?
+                self.cached_images(descriptor.revision())?
                     .ok_or(MapCacheError::Message("images are not ready".into()))?,
             )
         } else {
@@ -6207,7 +6155,7 @@ mod tests {
         artifact: ArtifactKind,
         plan: BakePlan,
     ) -> (BakeRequest, BakeWriter) {
-        let request = bake_request(root, descriptor, artifact).unwrap();
+        let request = bake_request(root, descriptor, artifact);
         let writer = BakeWriter::open(
             root.clone(),
             &request,
@@ -6315,7 +6263,7 @@ mod tests {
         let root_id = ArtifactRootId {
             revision: descriptor.revision(),
             kind: ArtifactKind::Images,
-            key: descriptor.image_key().unwrap(),
+            key: cache_root_key(descriptor.revision(), ArtifactKind::Images),
             partial: true,
         };
         let baseline_entries = complete_census(&root)
@@ -6364,13 +6312,10 @@ mod tests {
     }
 
     fn active_fixture_job(root: &MapCacheRoot, descriptor: MapProfileDescriptor) -> MapBakeJob {
-        let request = bake_request(root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(root, descriptor.clone(), ArtifactKind::Images);
         let producer = FixtureProducer::new(false);
         let input = MapBakeInput {
-            key: JobKey {
-                catalogue: descriptor.catalogue_key().unwrap(),
-                image: descriptor.image_key().unwrap(),
-            },
+            key: JobKey::for_revision(descriptor.revision()),
             generation: 1,
             artifact: ArtifactKind::Images,
             charge: producer.charge(&request).unwrap(),
@@ -6402,13 +6347,10 @@ mod tests {
     fn absent_terrain_probe_does_not_create_paths_or_sync_directories() {
         let root = temp_root("read-only-terrain-probe");
         let descriptor = descriptor(&root);
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images);
         let producer = FixtureProducer::new(false);
         let input = MapBakeInput {
-            key: JobKey {
-                catalogue: descriptor.catalogue_key().unwrap(),
-                image: descriptor.image_key().unwrap(),
-            },
+            key: JobKey::for_revision(descriptor.revision()),
             generation: 1,
             artifact: ArtifactKind::Images,
             charge: producer.charge(&request).unwrap(),
@@ -6444,7 +6386,7 @@ mod tests {
     fn catalogue_writer_defers_empty_checkpoint_until_payload_is_ready() {
         let root = temp_root("defer-empty-catalogue-checkpoint");
         let descriptor = descriptor(&root);
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Catalogue).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Catalogue);
         let payload = fixture_cursor(&request)
             .catalogue()
             .unwrap()
@@ -6452,10 +6394,7 @@ mod tests {
             .unwrap();
         let producer = FixtureProducer::new(false);
         let input = MapBakeInput {
-            key: JobKey {
-                catalogue: descriptor.catalogue_key().unwrap(),
-                image: descriptor.image_key().unwrap(),
-            },
+            key: JobKey::for_revision(descriptor.revision()),
             generation: 1,
             artifact: ArtifactKind::Catalogue,
             charge: producer.charge(&request).unwrap(),
@@ -6510,11 +6449,7 @@ mod tests {
             assert_eq!(synced, vec![path.parent().unwrap().to_path_buf()]);
         }
         let checkpoint_bytes = fs::read(&path).unwrap();
-        let checkpoint = Checkpoint::decode(
-            &checkpoint_bytes,
-            ArtifactIdentity::Catalogue(descriptor.catalogue_identity()),
-        )
-        .unwrap();
+        let checkpoint = Checkpoint::decode(&checkpoint_bytes).unwrap();
         assert_eq!(checkpoint.completed.as_slice().len(), 1);
         assert_eq!(checkpoint.completed.as_slice()[0].key, UnitKey::ClientPois);
         #[cfg(not(windows))]
@@ -6524,7 +6459,7 @@ mod tests {
             schema: CATALOGUE_SCHEMA,
             identity,
             key: identity.key().unwrap(),
-            record_count: ClientPois::decode(&payload, identity)
+            record_count: ClientPois::decode(&payload)
                 .unwrap()
                 .records
                 .as_slice()
@@ -6549,7 +6484,7 @@ mod tests {
             let synced = TEST_DIRECTORY_SYNCS.with(|trace| trace.borrow_mut().take().unwrap());
             assert_eq!(synced, vec![partial.as_ref().clone()]);
         }
-        CatalogueManifest::decode(&fs::read(partial.join("manifest.json")).unwrap(), identity)
+        CatalogueManifest::decode(&fs::read(partial.join("manifest.json")).unwrap())
             .unwrap()
             .read_payload(&payload)
             .unwrap();
@@ -6685,7 +6620,7 @@ mod tests {
         let mut first = active_fixture_job(&root, descriptor(&root));
         let previous_bytes = first.writer.as_ref().unwrap().cache_bytes;
         let second_descriptor =
-            MapProfileDescriptor::new(274, Digest([41; 32]), Digest([42; 32]), Digest([43; 32]))
+            MapProfileDescriptor::new(289, Digest([41; 32]), Digest([42; 32]), Digest([43; 32]))
                 .unwrap();
         let second = active_fixture_job(&root, second_descriptor);
         first.start_census();
@@ -6787,7 +6722,7 @@ mod tests {
             ArtifactRootId {
                 revision: descriptor.revision(),
                 kind: ArtifactKind::Images,
-                key: descriptor.image_key().unwrap(),
+                key: cache_root_key(descriptor.revision(), ArtifactKind::Images),
                 partial: true,
             },
         );
@@ -6882,7 +6817,7 @@ mod tests {
             ready.images.as_ref().unwrap(),
             ready_again.images.as_ref().unwrap()
         ));
-        let image_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let image_dir = root.image_dir(descriptor.revision());
         assert!(!image_dir.join("checkpoint.json").exists());
         let manifest_modified = fs::metadata(image_dir.join("manifest.json"))
             .unwrap()
@@ -6949,13 +6884,10 @@ mod tests {
         let partial = root.partial_dir(
             descriptor.revision(),
             ArtifactKind::Images,
-            descriptor.image_key().unwrap(),
+            cache_root_key(descriptor.revision(), ArtifactKind::Images),
         );
-        let checkpoint = Checkpoint::decode(
-            &fs::read(partial.join("checkpoint.json")).unwrap(),
-            ArtifactIdentity::Image(descriptor.image_identity()),
-        )
-        .unwrap();
+        let checkpoint =
+            Checkpoint::decode(&fs::read(partial.join("checkpoint.json")).unwrap()).unwrap();
         assert_eq!(
             checkpoint.completed.as_slice()[0].key,
             UnitKey::Terrain { tile: keys[0] }
@@ -6994,7 +6926,7 @@ mod tests {
             .unwrap();
         wait_ready(&handle);
         let images = handle.ready().unwrap().images.expect("images ready");
-        let ready_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let ready_dir = root.image_dir(descriptor.revision());
         let written = producer.written.lock().clone();
         assert_eq!(written.len(), 3);
         let mut buffer = Vec::new();
@@ -7022,7 +6954,7 @@ mod tests {
     fn image_checkpoint_syncs_each_touched_directory_and_created_parent_once() {
         let root = temp_root("batch-directory-sync");
         let descriptor = descriptor(&root);
-        let request = bake_request(&root, descriptor, ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor, ArtifactKind::Images);
         let mut writer = BakeWriter::open(
             root.clone(),
             &request,
@@ -7077,7 +7009,7 @@ mod tests {
     fn writer_rejects_missing_adopted_tile_and_checkpoints_its_own_write() {
         let root = temp_root("record-missing");
         let descriptor = descriptor(&root);
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images);
         let progress: Arc<dyn Fn(MapProgress) + Send + Sync> = Arc::new(|_| {});
         let mut writer = BakeWriter::open(
             root.clone(),
@@ -7110,7 +7042,7 @@ mod tests {
     fn writer_caps_cumulative_image_bytes() {
         let root = temp_root("image-byte-cap");
         let descriptor = descriptor(&root);
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images);
         let mut writer = BakeWriter::open(
             root.clone(),
             &request,
@@ -7190,7 +7122,7 @@ mod tests {
         let partial = root.partial_dir(
             descriptor.revision(),
             ArtifactKind::Images,
-            descriptor.image_key().unwrap(),
+            cache_root_key(descriptor.revision(), ArtifactKind::Images),
         );
         for (index, tile) in tiles.iter().enumerate() {
             let bytes = cold_images
@@ -7221,7 +7153,7 @@ mod tests {
         wait_ready(&resumed);
         let resumed_map = resumed.ready().unwrap();
         let resumed_images = resumed_map.images.as_ref().unwrap();
-        let ready_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let ready_dir = root.image_dir(descriptor.revision());
         assert_eq!(
             file_id(&ready_dir.join(tiles[0].key.relative_path().unwrap())),
             intact,
@@ -7238,92 +7170,11 @@ mod tests {
             fs::read(ready_dir.join("manifest.json")).unwrap(),
             fs::read(
                 cold_root
-                    .image_dir(cold_identity)
-                    .unwrap()
+                    .image_dir(cold_identity.revision)
                     .join("manifest.json")
             )
             .unwrap(),
             "resumed publication is byte-identical to a cold native bake"
-        );
-    }
-
-    #[test]
-    fn native_image_resume_rebakes_a_checkpointed_tile_whose_bytes_changed() {
-        let root = temp_root("native-receipt");
-        let cold_root = temp_root("native-receipt-cold");
-        let client_root = temp_root("native-receipt-client");
-        let (jag, snapshot) = synthetic_client_snapshot(client_root.path());
-        let descriptor = native_descriptor(&jag, &snapshot);
-        let cold_descriptor = native_descriptor(&jag, &snapshot);
-        let cold_manager = MapDemandManager::new(
-            cold_root.clone(),
-            Arc::new(crate::map_producer::NativeMapProducer::new()),
-        );
-        let cold = cold_manager
-            .request(cold_descriptor.clone(), MapDemand::Images)
-            .unwrap();
-        wait_ready(&cold);
-        let cold_map = cold.ready().unwrap();
-        let cold_images = cold_map.images.as_ref().unwrap().clone();
-        let tile = cold_images.manifest().tiles.as_slice()[0];
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
-        let plan = BakePlan {
-            planned_units: cold_images.manifest().tiles.as_slice().len() as u32,
-            stage: BakeStage::BaseTerrain,
-        };
-        let mut writer = BakeWriter::open(
-            root.clone(),
-            &request,
-            plan,
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(|_| {}),
-        )
-        .unwrap();
-        let bytes = cold_images
-            .read_tile_arc(tile.key)
-            .unwrap()
-            .expect("cold manifest tile");
-        writer
-            .write_image_tile(UnitKey::Terrain { tile: tile.key }, bytes.as_ref())
-            .unwrap();
-        let path = writer.directory().join(tile.key.relative_path().unwrap());
-        assert_eq!(
-            writer.completed_receipt(UnitKey::Terrain { tile: tile.key }),
-            Some(tile.payload)
-        );
-        writer.persist_checkpoint().unwrap();
-        fs::write(&path, fixture_png(9)).unwrap();
-        drop(writer);
-
-        let manager = MapDemandManager::new(
-            root.clone(),
-            Arc::new(crate::map_producer::NativeMapProducer::new()),
-        );
-        let resumed = manager
-            .request(descriptor.clone(), MapDemand::Images)
-            .unwrap();
-        wait_ready(&resumed);
-        let resumed_map = resumed.ready().unwrap();
-        let resumed_images = resumed_map.images.as_ref().unwrap();
-        assert_eq!(
-            resumed_images.read_tile_arc(tile.key).unwrap(),
-            cold_images.read_tile_arc(tile.key).unwrap(),
-            "a checkpoint receipt must not bless bytes changed after checkpointing"
-        );
-        assert_eq!(
-            fs::read(
-                root.image_dir(descriptor.image_identity())
-                    .unwrap()
-                    .join("manifest.json")
-            )
-            .unwrap(),
-            fs::read(
-                cold_root
-                    .image_dir(cold_descriptor.image_identity())
-                    .unwrap()
-                    .join("manifest.json")
-            )
-            .unwrap()
         );
     }
 
@@ -7363,7 +7214,7 @@ mod tests {
         let tiles = reference_images.manifest().tiles.as_slice();
         assert!(tiles.len() > ACKNOWLEDGED_TILES + UNACKNOWLEDGED_TILES);
 
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images);
         let mut writer = BakeWriter::open(
             root.clone(),
             &request,
@@ -7395,11 +7246,7 @@ mod tests {
         }
         let checkpoint_path = partial.join("checkpoint.json");
         let checkpoint_bytes = fs::read(&checkpoint_path).unwrap();
-        let acknowledged = Checkpoint::decode(
-            &checkpoint_bytes,
-            ArtifactIdentity::Image(descriptor.image_identity()),
-        )
-        .unwrap();
+        let acknowledged = Checkpoint::decode(&checkpoint_bytes).unwrap();
         assert_eq!(acknowledged.completed.as_slice().len(), ACKNOWLEDGED_TILES);
         let window = &tiles[ACKNOWLEDGED_TILES..ACKNOWLEDGED_TILES + UNACKNOWLEDGED_TILES];
         for tile in window {
@@ -7410,14 +7257,11 @@ mod tests {
         }
         let before_crash = fs::read(&checkpoint_path).unwrap();
         assert_eq!(
-            Checkpoint::decode(
-                &before_crash,
-                ArtifactIdentity::Image(descriptor.image_identity()),
-            )
-            .unwrap()
-            .completed
-            .as_slice()
-            .len(),
+            Checkpoint::decode(&before_crash)
+                .unwrap()
+                .completed
+                .as_slice()
+                .len(),
             ACKNOWLEDGED_TILES,
             "the crash window must not acknowledge its unfinished batch"
         );
@@ -7443,10 +7287,7 @@ mod tests {
         fs::create_dir_all(interrupted_path.parent().unwrap()).unwrap();
         fs::write(&interrupted_path, &png[..png.len() / 2]).unwrap();
         let intact = file_id(&partial.join(tiles[0].key.relative_path().unwrap()));
-        assert!(!root
-            .image_dir(descriptor.image_identity())
-            .unwrap()
-            .exists());
+        assert!(!root.image_dir(descriptor.revision()).exists());
 
         let manager = MapDemandManager::new(
             root.clone(),
@@ -7472,8 +7313,7 @@ mod tests {
         assert_eq!(
             file_id(
                 &root
-                    .image_dir(descriptor.image_identity())
-                    .unwrap()
+                    .image_dir(descriptor.revision())
                     .join(tiles[0].key.relative_path().unwrap())
             ),
             intact,
@@ -7560,10 +7400,7 @@ mod tests {
             .unwrap();
 
         wait_ready(&second);
-        assert!(root
-            .catalogue_dir(second_descriptor.catalogue_identity())
-            .unwrap()
-            .is_dir());
+        assert!(root.catalogue_dir(second_descriptor.revision()).is_dir());
         drop(second);
         let _ = fs::remove_dir_all(root.path());
     }
@@ -7577,7 +7414,7 @@ mod tests {
             .request(descriptor.clone(), MapDemand::CatalogueOnly)
             .unwrap();
         wait_ready(&baked);
-        let ready = root.catalogue_dir(descriptor.catalogue_identity()).unwrap();
+        let ready = root.catalogue_dir(descriptor.revision());
         drop(baked);
 
         fs::write(ready.join("checkpoint.json"), b"stale checkpoint").unwrap();
@@ -7628,16 +7465,14 @@ mod tests {
         let handle = resumed.request(descriptor, MapDemand::Images).unwrap();
         wait_ready(&handle);
         assert_eq!(resumed_producer.rasterized.load(AtomicOrdering::Relaxed), 1);
-        let image_dir = root
-            .image_dir(handle.descriptor().image_identity())
-            .unwrap();
+        let image_dir = root.image_dir(handle.descriptor().revision());
         assert!(!image_dir.join("checkpoint.json").exists());
     }
 
     #[test]
     fn client_input_requires_a_prepared_cache_lease() {
         let root = temp_root("client-input-missing");
-        let request = bake_request(&root, descriptor(&root), ArtifactKind::Catalogue).unwrap();
+        let request = bake_request(&root, descriptor(&root), ArtifactKind::Catalogue);
         assert!(matches!(
             request.client_input(),
             Err(MapCacheError::NoPreparedCache)
@@ -7679,7 +7514,7 @@ mod tests {
             Err(_) => panic!("bad catalogue receipt returned the wrong error"),
             Ok(_) => panic!("bad catalogue receipt was published"),
         }
-        assert!(!root.catalogue_dir(identity).unwrap().exists());
+        assert!(!root.catalogue_dir(identity.revision).exists());
     }
 
     #[test]
@@ -7693,7 +7528,7 @@ mod tests {
             handle.ready().unwrap().images.unwrap()
         };
         let second =
-            MapProfileDescriptor::new(274, Digest([4; 32]), Digest([2; 32]), Digest([3; 32]))
+            MapProfileDescriptor::new(289, Digest([4; 32]), Digest([2; 32]), Digest([3; 32]))
                 .unwrap();
         {
             let installer = MapDemandManager::new(root.clone(), FixtureProducer::new(false));
@@ -7702,8 +7537,8 @@ mod tests {
                 .unwrap();
             wait_ready(&handle);
         }
-        let leased = root.image_dir(first.image_identity()).unwrap();
-        let unleased = root.image_dir(second.image_identity()).unwrap();
+        let leased = root.image_dir(first.revision());
+        let unleased = root.image_dir(second.revision());
         fs::File::create(unleased.join("unused-padding.bin"))
             .unwrap()
             .set_len(MAX_GENERATED_CACHE_BYTES + (16 << 20))
@@ -7728,10 +7563,7 @@ mod tests {
         let (input, request) = manager
             .input_for(
                 &first,
-                JobKey {
-                    catalogue: first.catalogue_key().unwrap(),
-                    image: first.image_key().unwrap(),
-                },
+                JobKey::for_revision(first.revision()),
                 1,
                 ArtifactKind::Catalogue,
             )
@@ -7750,9 +7582,9 @@ mod tests {
         assert_eq!(
             prune.id,
             ArtifactRootId {
-                revision: 274,
+                revision: 289,
                 kind: ArtifactKind::Images,
-                key: second.image_key().unwrap(),
+                key: cache_root_key(second.revision(), ArtifactKind::Images),
                 partial: false,
             },
             "the least recently used leased root is not a prune candidate"
@@ -7774,18 +7606,18 @@ mod tests {
         wait_ready(&handle);
         drop(handle);
 
-        let image_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let image_dir = root.image_dir(descriptor.revision());
         let root_id = ArtifactRootId {
             revision: descriptor.revision(),
             kind: ArtifactKind::Images,
-            key: descriptor.image_key().unwrap(),
+            key: cache_root_key(descriptor.revision(), ArtifactKind::Images),
             partial: false,
         };
         let marker_path = root.prune_marker_path(root_id);
         let lock_path = root.lock_path(root_id.revision, root_id.kind, root_id.key);
         let mut capacity = root.try_acquire_capacity().unwrap().unwrap();
         let leased = root
-            .open_images(descriptor.image_identity(), &mut capacity)
+            .open_images(descriptor.revision(), &mut capacity)
             .unwrap()
             .unwrap();
         drop(capacity);
@@ -7811,13 +7643,10 @@ mod tests {
         assert!(!image_dir.join("manifest.json").exists());
 
         let census = complete_census(&root);
-        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images).unwrap();
+        let request = bake_request(&root, descriptor.clone(), ArtifactKind::Images);
         let producer = FixtureProducer::new(false);
         let input = MapBakeInput {
-            key: JobKey {
-                catalogue: descriptor.catalogue_key().unwrap(),
-                image: descriptor.image_key().unwrap(),
-            },
+            key: JobKey::for_revision(descriptor.revision()),
             generation: 1,
             artifact: ArtifactKind::Images,
             charge: producer.charge(&request).unwrap(),
@@ -7838,7 +7667,7 @@ mod tests {
         ));
         let mut capacity = root.try_acquire_capacity().unwrap().unwrap();
         assert!(root
-            .open_images(descriptor.image_identity(), &mut capacity)
+            .open_images(descriptor.revision(), &mut capacity)
             .unwrap()
             .is_none());
         drop(capacity);
@@ -7868,11 +7697,11 @@ mod tests {
         wait_ready(&handle);
         drop(handle);
 
-        let image_dir = root.image_dir(descriptor.image_identity()).unwrap();
+        let image_dir = root.image_dir(descriptor.revision());
         let root_id = ArtifactRootId {
             revision: descriptor.revision(),
             kind: ArtifactKind::Images,
-            key: descriptor.image_key().unwrap(),
+            key: cache_root_key(descriptor.revision(), ArtifactKind::Images),
             partial: false,
         };
         let census = complete_census(&root);
@@ -7882,13 +7711,9 @@ mod tests {
             .find(|summary| summary.id == root_id)
             .unwrap();
         let marker_path = root.prune_marker_path(root_id);
-        let foreign_descriptor = MapProfileDescriptor::new(
-            descriptor.revision(),
-            Digest([91; 32]),
-            Digest([92; 32]),
-            Digest([93; 32]),
-        )
-        .unwrap();
+        let foreign_descriptor =
+            MapProfileDescriptor::new(289, Digest([91; 32]), Digest([92; 32]), Digest([93; 32]))
+                .unwrap();
         let foreign_marker = serde_json::to_vec(&PruneMarker {
             schema: PRUNE_MARKER_SCHEMA,
             identity: ArtifactIdentity::Image(foreign_descriptor.image_identity()),
@@ -7907,7 +7732,7 @@ mod tests {
         assert!(image_dir.join("manifest.json").is_file());
         let mut capacity = root.try_acquire_capacity().unwrap().unwrap();
         assert!(matches!(
-            root.open_images(descriptor.image_identity(), &mut capacity),
+            root.open_images(descriptor.revision(), &mut capacity),
             Err(MapCacheError::Map(MapError::Path))
         ));
     }
@@ -7942,7 +7767,7 @@ mod tests {
         for iteration in 0..20u8 {
             let seed = index * 40 + iteration;
             let descriptor = MapProfileDescriptor::new(
-                274,
+                if index == 0 { 274 } else { 289 },
                 Digest([seed.wrapping_add(1); 32]),
                 Digest([seed.wrapping_add(41); 32]),
                 Digest([seed.wrapping_add(81); 32]),
@@ -8010,7 +7835,7 @@ mod tests {
             wait_ready(&handle);
             println!(
                 "\nPUBLISHED_DIRECTORY_ID={}",
-                file_id(&root.image_dir(descriptor(&root).image_identity()).unwrap())
+                file_id(&root.image_dir(descriptor(&root).revision()))
             );
             return;
         }
@@ -8049,7 +7874,7 @@ mod tests {
             }
         }
         let descriptor = descriptor(&root);
-        let ready = root.image_dir(descriptor.image_identity()).unwrap();
+        let ready = root.image_dir(descriptor.revision());
         for (index, tile) in FixtureProducer::tile_keys().into_iter().enumerate() {
             assert_eq!(
                 fs::read(ready.join(tile.relative_path().unwrap())).unwrap(),
@@ -8060,7 +7885,7 @@ mod tests {
             .partial_dir(
                 descriptor.revision(),
                 ArtifactKind::Images,
-                descriptor.image_key().unwrap(),
+                cache_root_key(descriptor.revision(), ArtifactKind::Images),
             )
             .exists());
     }
@@ -8117,7 +7942,7 @@ mod tests {
         let catalogue_lock = root.lock_path(
             274,
             ArtifactKind::Catalogue,
-            descriptor(&root).catalogue_key().unwrap(),
+            cache_root_key(274, ArtifactKind::Catalogue),
         );
         assert!(PublishLock::try_acquire_shared(&catalogue_lock)
             .unwrap()
@@ -8171,9 +7996,13 @@ mod tests {
             root.lock_path(
                 274,
                 ArtifactKind::Catalogue,
-                descriptor.catalogue_key().unwrap(),
+                cache_root_key(descriptor.revision(), ArtifactKind::Catalogue),
             ),
-            root.lock_path(274, ArtifactKind::Images, descriptor.image_key().unwrap()),
+            root.lock_path(
+                274,
+                ArtifactKind::Images,
+                cache_root_key(274, ArtifactKind::Images),
+            ),
         ];
         for lock in &locks {
             // A handle that re-locks shared after holding the exclusive lock
@@ -8218,12 +8047,12 @@ mod tests {
             (
                 MapDemand::CatalogueOnly,
                 ArtifactKind::Catalogue,
-                descriptor.catalogue_key().unwrap(),
+                cache_root_key(descriptor.revision(), ArtifactKind::Catalogue),
             ),
             (
                 MapDemand::Images,
                 ArtifactKind::Images,
-                descriptor.image_key().unwrap(),
+                cache_root_key(descriptor.revision(), ArtifactKind::Images),
             ),
         ] {
             // Another process publishing or pruning this key holds it
@@ -8264,7 +8093,7 @@ mod tests {
     fn corrupt_ready_path_is_rejected_without_overwrite() {
         let root = temp_root("corrupt-ready");
         let descriptor = descriptor(&root);
-        let catalogue = root.catalogue_dir(descriptor.catalogue_identity()).unwrap();
+        let catalogue = root.catalogue_dir(descriptor.revision());
         fs::create_dir_all(catalogue.parent().unwrap()).unwrap();
         fs::write(&catalogue, b"not-a-directory").unwrap();
         let producer = FixtureProducer::new(false);
@@ -8450,7 +8279,7 @@ mod tests {
                 content,
                 policy,
             };
-            let artifact_root = root.catalogue_dir(identity).unwrap();
+            let artifact_root = root.catalogue_dir(identity.revision);
             fs::create_dir(&artifact_root).unwrap();
 
             let payload = ClientPois {
@@ -8759,15 +8588,11 @@ mod tests {
         let partial = root.partial_dir(
             descriptor.revision(),
             ArtifactKind::Images,
-            descriptor.image_key().unwrap(),
+            cache_root_key(descriptor.revision(), ArtifactKind::Images),
         );
         let checkpoint_path = partial.join("checkpoint.json");
         let checkpoint_bytes = fs::read(&checkpoint_path).unwrap();
-        let checkpoint = Checkpoint::decode(
-            &checkpoint_bytes,
-            ArtifactIdentity::Image(descriptor.image_identity()),
-        )
-        .unwrap();
+        let checkpoint = Checkpoint::decode(&checkpoint_bytes).unwrap();
         assert_eq!(
             checkpoint.completed.as_slice().len(),
             CHECKPOINT_BATCH_TILES
@@ -8807,11 +8632,7 @@ mod tests {
         WorkService::wait_terminal(&shared, &ticket).unwrap();
         wait_for_status(&handle, MapJobStatus::Paused);
         let paused_checkpoint_bytes = fs::read(&checkpoint_path).unwrap();
-        let paused_checkpoint = Checkpoint::decode(
-            &paused_checkpoint_bytes,
-            ArtifactIdentity::Image(descriptor.image_identity()),
-        )
-        .unwrap();
+        let paused_checkpoint = Checkpoint::decode(&paused_checkpoint_bytes).unwrap();
         assert!(paused_checkpoint.completed.as_slice().len() >= CHECKPOINT_BATCH_TILES);
         assert!(
             paused_checkpoint.completed.as_slice().len()
@@ -8846,7 +8667,7 @@ mod tests {
                 key = tile.key
             );
         }
-        let published = root.image_dir(descriptor.image_identity()).unwrap();
+        let published = root.image_dir(descriptor.revision());
         for (key, id) in uncheckpointed {
             assert_eq!(file_id(&published.join(key.relative_path().unwrap())), id);
         }
