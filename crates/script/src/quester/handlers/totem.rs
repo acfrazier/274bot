@@ -658,6 +658,7 @@ mod tests {
             width: 1,
             height: 1,
             scroll_height: 0,
+            inventory_ready: false,
             scroll_position: 0,
             hidden: false,
             text: Some(letter.to_owned()),

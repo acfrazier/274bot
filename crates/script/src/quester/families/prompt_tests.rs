@@ -23,6 +23,7 @@ fn widget(component_id: i32, parent_id: i32, hidden: bool, button_type: i32) -> 
         width: 1,
         height: 1,
         scroll_height: 0,
+        inventory_ready: false,
         scroll_position: 0,
         hidden,
         text: None,

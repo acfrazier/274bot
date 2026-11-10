@@ -1383,11 +1383,13 @@ mod tests {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         let current = HostAuthority {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         ledger.pick_request = Some(PendingPick {
             request: current.request,

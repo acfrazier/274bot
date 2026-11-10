@@ -462,6 +462,7 @@ mod tests {
             width: 5,
             height: 5,
             scroll_height: 0,
+            inventory_ready: false,
             scroll_position: 0,
             hidden: false,
             text: None,
