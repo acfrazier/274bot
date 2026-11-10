@@ -137,6 +137,7 @@ const _: () = assert!(std::mem::size_of::<Escape>() <= 64);
 pub struct WalkGuard {
     threats: ThreatSet,
     tables: Arc<CombatTables>,
+    protected_items: Option<Arc<[i32]>>,
     schedule: Schedule,
     last_tick: u16,
     follow_until: u16,
@@ -162,9 +163,9 @@ const FLAG_NO_POINTS_REPORTED: u8 = 8;
 const FLAG_FOOD_ONLY: u8 = 16;
 const FLAG_CURE_FRUIT: u8 = 32;
 
-// Potion doses and fruit counts share one receipt baseline, keeping this guard
-// within its existing 264-byte ceiling.
-const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 264);
+// The 64-bit baseline measured 264 bytes; protected Path ids add a 16-byte
+// Arc slice handle, and a 344-byte cap preserves at least 64 bytes of headroom.
+const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 344);
 
 static TABLES: LazyLock<Option<Arc<CombatTables>>> = LazyLock::new(|| {
     api::game_data::for_revision(ClientRevision::R289)
@@ -236,6 +237,16 @@ impl WalkGuard {
         snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
+        Self::begin_with_protected(request, snapshot, tables, None)
+    }
+
+    /// Begin a protected route, sharing its Path item ids with the guard.
+    pub fn begin_with_protected(
+        request: &WalkRequest,
+        snapshot: &SnapshotView<'_>,
+        tables: Arc<CombatTables>,
+        protected_items: Option<Arc<[i32]>>,
+    ) -> Result<Self, GuardRefusal> {
         if !request.allow.prayer {
             return Err(GuardRefusal::PrayerDisallowed);
         }
@@ -243,7 +254,12 @@ impl WalkGuard {
         if base < MIN_PROTECT_PRAYER_LEVEL {
             return Err(GuardRefusal::PrayerTooLow);
         }
-        Ok(Self::new(tables, request.allow.food, false))
+        Ok(Self::new(
+            tables,
+            request.allow.food,
+            false,
+            protected_items,
+        ))
     }
 
     /// Begin food-only upkeep for a route when protection is not allowed.
@@ -257,25 +273,35 @@ impl WalkGuard {
     /// Host/tests supply the pin's tables explicitly.
     pub fn begin_food_only_with(
         request: &WalkRequest,
-        _snapshot: &SnapshotView<'_>,
+        snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
-        Ok(Self::new(tables, request.allow.food, true))
+        Self::begin_food_only_with_protected(request, snapshot, tables, None)
     }
 
-    /// Whether any recognized food remains in the observed inventory.
+    /// Begin food-only upkeep while preserving the Path's carried items.
+    pub fn begin_food_only_with_protected(
+        request: &WalkRequest,
+        _snapshot: &SnapshotView<'_>,
+        tables: Arc<CombatTables>,
+        protected_items: Option<Arc<[i32]>>,
+    ) -> Result<Self, GuardRefusal> {
+        Ok(Self::new(tables, request.allow.food, true, protected_items))
+    }
+
+    /// Whether any recognized, unreserved food remains in the observed inventory.
     /// Missing inventory is unknown, not exhausted.
     pub fn has_food(&self, snapshot: &SnapshotView<'_>) -> Option<bool> {
         if self.flags & FLAG_FOOD_ALLOWED == 0 {
             return Some(false);
         }
         let inventory = snapshot.inventory()?;
-        Some(
-            inventory
-                .value
-                .iter()
-                .any(|row| row.count > 0 && self.tables.food(row.def.id).is_some()),
-        )
+        let protected_items = self.protected_items.as_deref().unwrap_or(&[]);
+        Some(inventory.value.iter().any(|row| {
+            row.count > 0
+                && !protected_items.contains(&row.def.id)
+                && self.tables.food(row.def.id).is_some()
+        }))
     }
 
     /// Prayers this guard has observed being raised by its admitted click.
@@ -283,10 +309,16 @@ impl WalkGuard {
         self.raised_prayers
     }
 
-    fn new(tables: Arc<CombatTables>, food_allowed: bool, food_only: bool) -> Self {
+    fn new(
+        tables: Arc<CombatTables>,
+        food_allowed: bool,
+        food_only: bool,
+        protected_items: Option<Arc<[i32]>>,
+    ) -> Self {
         Self {
             threats: ThreatSet::default(),
             tables,
+            protected_items,
             schedule: Schedule::default(),
             last_tick: 0,
             follow_until: 0,
@@ -473,7 +505,7 @@ impl WalkGuard {
             && !self.schedule.pending(OpKind::Eat)
             && self.schedule.unsettled[OpKind::Eat.index()] < 3
         {
-            policy::eat_choice(
+            policy::eat_choice_excluding(
                 &frame,
                 &self.tables,
                 &self.schedule,
@@ -482,6 +514,7 @@ impl WalkGuard {
                 hp,
                 hp_max,
                 tick,
+                self.protected_items.as_deref().unwrap_or(&[]),
                 0,
             )
         } else {
@@ -562,20 +595,23 @@ impl WalkGuard {
         danger: Option<i32>,
         tick: u16,
     ) -> Option<GuardOp> {
-        let decision = cure::cure_choice(&CureInputs {
-            cond: condition,
-            danger,
-            exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
-            policy,
-            route_refused_for_poison: false,
-            inventory: frame.inventory,
-            tables: &self.tables,
-            schedule: &self.schedule,
-            clue_reserve: false,
-            tick,
-            q_unknown: self.tables.unknown_poison_pulse(),
-            eat_floor: 0,
-        });
+        let decision = cure::cure_choice(
+            &CureInputs {
+                cond: condition,
+                danger,
+                exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
+                policy,
+                route_refused_for_poison: false,
+                inventory: frame.inventory,
+                tables: &self.tables,
+                schedule: &self.schedule,
+                clue_reserve: false,
+                tick,
+                q_unknown: self.tables.unknown_poison_pulse(),
+                eat_floor: 0,
+            },
+            self.protected_items.as_deref().unwrap_or(&[]),
+        );
         match decision {
             CureDecision::Drink { item, kind, .. } => {
                 let name = item_name(frame, item)?;
@@ -1131,7 +1167,7 @@ mod tests {
 
     #[test]
     fn driver_fits_the_per_route_budget() {
-        assert!(std::mem::size_of::<WalkGuard>() <= 264);
+        assert!(std::mem::size_of::<WalkGuard>() <= 344);
     }
 
     #[test]
@@ -2880,6 +2916,56 @@ mod tests {
             "food denial must still allow protection: {op:?}"
         );
     }
+    #[test]
+    fn path_food_is_reserved_from_guard_and_other_food_remains_usable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let protected: Arc<[i32]> = Arc::from([food_id("bread")]);
+
+        let mut reserved_only = Scene::new(43);
+        reserved_only.stats[3].effective = 1;
+        reserved_only.launch_arrow();
+        reserved_only.add_food("bread", 0, 1);
+        let mut guard = WalkGuard::begin_food_only_with_protected(
+            &reserved_only.request(),
+            &reserved_only.view(),
+            Arc::clone(&reserved_only.tables),
+            Some(Arc::clone(&protected)),
+        )
+        .unwrap();
+        assert_eq!(guard.has_food(&reserved_only.view()), Some(false));
+        assert_eq!(
+            guard.tick(
+                &reserved_only.view_at(0),
+                reserved_only.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            ),
+            None
+        );
+
+        let mut available = Scene::new(43);
+        available.stats[3].effective = 1;
+        available.launch_arrow();
+        available.add_food("bread", 0, 1);
+        available.add_food("lobster", 1, 1);
+        let mut guard = WalkGuard::begin_food_only_with_protected(
+            &available.request(),
+            &available.view(),
+            Arc::clone(&available.tables),
+            Some(Arc::clone(&protected)),
+        )
+        .unwrap();
+        assert_eq!(guard.has_food(&available.view()), Some(true));
+        assert!(matches!(
+            guard.tick(
+                &available.view_at(0),
+                available.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            ),
+            Some(GuardOp::Eat { name }) if name.as_ref() == "Lobster"
+        ));
+    }
 
     fn food_id(alias: &str) -> i32 {
         api::game_data::for_revision(ClientRevision::R289)
@@ -3199,12 +3285,13 @@ mod tests {
         let lobster = food_id("lobster");
         let shrimp = food_id("shrimp");
         let pick = |hp: i32| {
-            policy::food_by(
+            policy::food_by_excluding(
                 hp,
                 40,
                 [(lobster, 1), (shrimp, 1)].into_iter(),
                 &scene.tables,
                 None,
+                &[],
                 |_| true,
             )
         };

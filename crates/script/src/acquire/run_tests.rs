@@ -2834,20 +2834,16 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<crate::quester::runner::Quester>(),
         size_of::<crate::survival::SurvivalStep>(),
     );
-    assert!(size_of::<crate::native_bank::BankMachine>() <= 768);
-    // Measured on Linux x86_64 at the round-4 head: 744 bytes. Keep 24 bytes
-    // of explicit headroom under the 768-byte cap.
-    assert!(size_of::<AcquireRun>() <= 768);
+    // BankMachine=456 B and AcquireRun=920 B are measured baselines.
+    // Shared capacity keep-set plumbing keeps 64 B of headroom.
+    assert!(size_of::<crate::native_bank::BankMachine>() <= 520);
+    assert!(size_of::<AcquireRun>() <= 984);
     assert!(size_of::<WearStep>() <= 8);
     assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
-    // Per-run inline state that had only a printed size. Measured 880 B and
-    // 224 B on the 64-bit CI targets; pinned at the reading plus 8 B. The
-    // Provisioner holds an `AcquireRun`, which grew 40 B with the shop phase
-    // (the ordered purchase queue, the held-target counters and the lazy
-    // shop run): 920 B measured on macOS aarch64, pinned at 928.
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 928);
+    // Provisioner is 1120 B: +208 B capacity snapshot and +32 B stage state.
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1184);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 

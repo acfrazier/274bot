@@ -63,17 +63,23 @@ pub struct NeedObservation {
 /// Why an optional need finished below its target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnmetCause {
-    /// The plan found nothing more to draw it from.
+    /// The selected bank has no stock remaining for this item.
     NoSupply,
     /// The pack had no free slot for it, so it was left out of the plan.
     NoRoom,
+    /// The survival assessment could not be completed from observed facts.
+    AssessmentUnavailable,
+    /// The assessed survival bound exceeds the accepted threshold.
+    SurvivalBound,
 }
 
 impl UnmetCause {
     pub const fn describe(self) -> &'static str {
         match self {
-            Self::NoSupply => "nothing more to draw it from",
+            Self::NoSupply => "bank stock is below target",
             Self::NoRoom => "no free pack slot for it",
+            Self::AssessmentUnavailable => "survival assessment unavailable",
+            Self::SurvivalBound => "survival bound above 1%",
         }
     }
 }

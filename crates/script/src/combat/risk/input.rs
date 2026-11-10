@@ -24,6 +24,10 @@ pub enum UnknownWhy {
     NoZoneTable,
     #[error("required combat facts are unavailable")]
     MissingFacts,
+    #[error("mixed survival food is not supported by the current sizing model")]
+    MixedFood,
+    #[error("carried survival food has unsupported eating timing")]
+    UnsupportedFood,
     #[error("player input is locked")]
     InputLock,
     #[error("selected poison facts are missing or invalid")]
@@ -253,6 +257,19 @@ impl RiskInput {
         poison: PoisonState,
         off_debt: bool,
     ) -> Self {
+        Self::capture_excluding(frame, tables, threats, poison, off_debt, &[])
+    }
+
+    /// Exclude Path-owned food before food validation and bounded selection.
+    /// The items still occupy pack slots; they cannot supply survival healing.
+    pub fn capture_excluding(
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        threats: &ThreatSet,
+        poison: PoisonState,
+        off_debt: bool,
+        protected_food: &[i32],
+    ) -> Self {
         let mut input = Self {
             pos: frame.here,
             tick: frame.tick,
@@ -357,7 +374,7 @@ impl RiskInput {
             input.set_missing_facts(true);
         }
 
-        capture_inventory(frame, tables, &mut input);
+        capture_inventory(frame, tables, &mut input, protected_food);
         capture_live(frame, threats, &mut input);
         input
     }
@@ -493,7 +510,12 @@ impl FoodCandidate {
     };
 }
 
-fn capture_inventory(frame: &Frame<'_>, tables: &CombatTables, input: &mut RiskInput) {
+fn capture_inventory(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    input: &mut RiskInput,
+    protected_food: &[i32],
+) {
     const INVENTORY_SLOTS: usize = 28;
     let mut occupied = [false; INVENTORY_SLOTS];
     for item in frame.inventory {
@@ -527,7 +549,7 @@ fn capture_inventory(frame: &Frame<'_>, tables: &CombatTables, input: &mut RiskI
     let mut len = 0usize;
     let mut more_food = false;
     for (index, item) in frame.inventory.iter().enumerate() {
-        if item.count <= 0 {
+        if item.count <= 0 || protected_food.contains(&item.def.id) {
             continue;
         }
         let Some(food) = tables.food(item.def.id) else {

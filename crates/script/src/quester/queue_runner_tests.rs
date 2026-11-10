@@ -154,6 +154,7 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
         advances: Some(false),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if: PredicateDocument::Any(vec![]),
         settle: PredicateDocument::Any(vec![]),
         hazard: None,

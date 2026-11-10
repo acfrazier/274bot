@@ -167,6 +167,7 @@ impl Driver {
             let mut actions = NativeActions { _private: () };
             let cx = ActionContext {
                 stage_cross: None,
+                protected_items: None,
                 walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,

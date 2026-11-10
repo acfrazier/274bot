@@ -381,6 +381,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -482,6 +483,7 @@ pub(crate) fn with_tick_budget_output<R>(
         cx: crate::native::ActionContext {
             stage_cross: None,
             walk_prereq: Default::default(),
+            protected_items: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,

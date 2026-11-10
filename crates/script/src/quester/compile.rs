@@ -6,6 +6,8 @@ use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
+#[path = "inventory.rs"]
+pub(super) mod inventory;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
@@ -21,6 +23,7 @@ use api::selected::{
     FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
     Truth,
 };
+pub(crate) use inventory::{stage_inventory, StageInventory};
 use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
 use std::{
@@ -166,6 +169,13 @@ pub struct CompiledPath {
     pub warnings: Vec<Arc<str>>,
 }
 
+impl CompiledPath {
+    /// Return the deterministic narrow set of items owned by this compiled Path.
+    pub fn managed_item_ids(&self) -> &[i32] {
+        &self.provisioning.managed_items
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompiledItemKind {
     MustHave,
@@ -237,6 +247,11 @@ pub struct CompiledProvisioning {
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
+    /// Managed items owned by this compiled Path, excluding unrelated global
+    /// tool families and unrelated operator loadout rows.
+    pub managed_items: Arc<[i32]>,
+    /// Managed items that a Path step or predicate requires in the pack.
+    pub carried_items: Arc<[i32]>,
     /// Stage keys in compiled sequence order; item gates resolve against this.
     pub stages: Arc<[FactKey]>,
     pub tools: Arc<[BankItem]>,
@@ -247,7 +262,10 @@ pub struct CompiledProvisioning {
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
     pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
+    pub survival: Option<Arc<super::survival::CompiledSurvival>>,
 }
+
+const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 416);
 
 pub struct CompiledSequence {
     pub stage: FactKey,
@@ -276,6 +294,9 @@ pub struct CompiledStep {
     pub tactic: Option<Arc<str>>,
     pub advances: bool,
     pub attempt_budget: Option<StepAttemptBudget>,
+    /// Content signal that a counted attempt ran and failed; see
+    /// `StepDocument::failure_signal`.
+    pub failure_signal: Option<Arc<dyn PredicatePlan>>,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
@@ -380,6 +401,10 @@ pub trait StepPlan: Send + Sync {
         std::time::Duration::from_secs(8)
     }
     fn compile_warning(&self) -> Option<&'static str> {
+        None
+    }
+    /// Declared fights expose their immutable request to stage provisioning.
+    fn combat_request(&self) -> Option<&crate::combat::CombatRequest> {
         None
     }
     /// A copy of this plan that knows its step's own `skip_if` and `settle`.
@@ -1464,6 +1489,17 @@ pub(super) fn compile_uncached(
             }
         }
     }
+    let (managed_items, carried_items) =
+        inventory::compile_managed_items(header, role, &recipe_ctx)
+            .map_err(|error| error.with_path(document.id.clone()))?;
+    let survival = super::survival::CompiledSurvival::compile(
+        &sequences,
+        role,
+        header,
+        &recipe_ctx,
+        zones,
+        &prelude,
+    )?;
     let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
         .into_iter()
         .map(|(name, steps)| {
@@ -1492,12 +1528,15 @@ pub(super) fn compile_uncached(
             .collect(),
         tools: Arc::from(tools),
         gather_tool_needs: Arc::from(gather_tool_needs),
+        managed_items,
+        carried_items,
         keep_ids,
         coin_float,
         coin,
         loadout_carry,
         base_spillover_keep,
         recipes: provisioning_recipes,
+        survival,
     };
     Ok(CompiledPath {
         id: document.id.clone(),
@@ -1701,7 +1740,9 @@ fn compile_steps(
             error.step = Some(step.id.clone());
             error
         };
-        if !supports_attempt_budget && (step.max_attempts.is_some() || step.stop.is_some()) {
+        if !supports_attempt_budget
+            && (step.max_attempts.is_some() || step.stop.is_some() || step.failure_signal.is_some())
+        {
             return Err(step_error("step-attempt-budget-unsupported"));
         }
         let attempt_budget = match (step.max_attempts, step.stop.as_deref()) {
@@ -1719,6 +1760,9 @@ fn compile_steps(
             (Some(_), _) => return Err(step_error("step-max-attempts-needs-stop")),
             (None, Some(_)) => return Err(step_error("step-stop-without-max-attempts")),
         };
+        if step.failure_signal.is_some() && attempt_budget.is_none() {
+            return Err(step_error("step-failure-signal-without-budget"));
+        }
         let handler = step_handlers()
             .find(|handler| handler.kind == step.kind && handler.version == step.version)
             .ok_or_else(|| CompileError {
@@ -1757,6 +1801,19 @@ fn compile_steps(
         })?;
         let skip_if =
             families::compile_predicate(&step.skip_if, cx).map_err(|err| CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: err.code,
+                detail: err.detail,
+                source: None,
+            })?;
+        let failure_signal = step
+            .failure_signal
+            .as_ref()
+            .map(|signal| families::compile_predicate(signal, cx))
+            .transpose()
+            .map_err(|err| CompileError {
                 path: document.id.clone(),
                 role: None,
                 step: Some(step.id.clone()),
@@ -1814,6 +1871,7 @@ fn compile_steps(
                 .flatten(),
             advances: step.advances.unwrap_or(false),
             attempt_budget,
+            failure_signal,
             skip_if,
             skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
@@ -3255,7 +3313,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<Option<StepHazard>>(), 6);
         assert_eq!(std::mem::size_of::<Option<Arc<str>>>(), 16);
         assert_eq!(std::mem::size_of::<Option<StepAttemptBudget>>(), 24);
-        assert_eq!(std::mem::size_of::<CompiledStep>(), 192);
+        // 192 B before `failure_signal` (one `Option<Arc<dyn PredicatePlan>>`, 16 B).
+        // A compiled step belongs to the shared compiled path, not to a bot; the
+        // bundled Paths hold about 1,800 steps, so the cost is about 29 KB per process.
+        assert_eq!(std::mem::size_of::<CompiledStep>(), 208);
     }
 
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
@@ -3268,6 +3329,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
             hazard: None,
@@ -3678,6 +3740,70 @@ mod tests {
         }
     }
 
+    fn miss_message_signal() -> PredicateDocument {
+        PredicateDocument::Fact {
+            kind: "message".into(),
+            version: 1,
+            args: serde_json::json!({ "any": ["but fail and cut yourself trying."] }),
+        }
+    }
+
+    #[test]
+    fn failure_signal_needs_a_budget_and_compiles_with_one() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let _home = crate::IsolatedEnv::enter("quester-step-failure-signal");
+        let without_budget = compile_err(|document| {
+            let step = document
+                .roles
+                .iter_mut()
+                .flat_map(|role| &mut role.sequences)
+                .flat_map(|sequence| &mut sequence.steps)
+                .find(|step| step.kind == "talk")
+                .expect("Cook has a default talk step");
+            step.failure_signal = Some(miss_message_signal());
+        });
+        assert_eq!(
+            without_budget.code.as_ref(),
+            "step-failure-signal-without-budget"
+        );
+
+        let mut document = decode_cook().unwrap();
+        let step = document
+            .roles
+            .iter_mut()
+            .flat_map(|role| &mut role.sequences)
+            .flat_map(|sequence| &mut sequence.steps)
+            .find(|step| step.kind == "talk")
+            .expect("Cook has a default talk step");
+        step.max_attempts = Some(4);
+        step.stop = Some("retry-stop".into());
+        step.failure_signal = Some(miss_message_signal());
+        let data = selected();
+        let quest_catalog = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quest_catalog)
+            .expect("signal with budget");
+        assert!(compiled
+            .sequences
+            .iter()
+            .flat_map(|sequence| &sequence.steps)
+            .any(|step| step.failure_signal.is_some() && step.attempt_budget.is_some()));
+
+        let mut unknown = document.clone();
+        let step = unknown
+            .roles
+            .iter_mut()
+            .flat_map(|role| &mut role.sequences)
+            .flat_map(|sequence| &mut sequence.steps)
+            .find(|step| step.failure_signal.is_some())
+            .unwrap();
+        step.failure_signal = Some(PredicateDocument::Fact {
+            kind: "no_such_fact".into(),
+            version: 1,
+            args: serde_json::json!({}),
+        });
+        assert!(compile_uncached_for_test(&unknown, &data, &quest_catalog).is_err());
+    }
+
     #[test]
     fn attempt_budgets_are_rejected_for_recipes_and_progress_readers() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
@@ -3691,6 +3817,7 @@ mod tests {
                 .expect("Cook has an egg recipe")[0];
             step.max_attempts = Some(2);
             step.stop = Some("recipe-stop".into());
+            step.failure_signal = Some(miss_message_signal());
         });
         assert_eq!(recipe.code.as_ref(), "step-attempt-budget-unsupported");
 
@@ -3721,6 +3848,7 @@ mod tests {
             advances: None,
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::Any(vec![]),
             hazard: None,

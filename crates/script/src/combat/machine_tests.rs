@@ -83,6 +83,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
+    protected_items: Option<Arc<[i32]>>,
     wilderness: Option<TestWilderness>,
 }
 impl Runtime {
@@ -112,6 +113,7 @@ impl Runtime {
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
             walk_prereq: Default::default(),
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
@@ -224,6 +226,7 @@ impl Harness {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
+            protected_items: None,
             wilderness: scene.wilderness.clone(),
         };
         let (machine, lease) =
@@ -1624,6 +1627,51 @@ fn case3_food_only_line_and_real_heal_choose_largest_fitting_food() {
             assert_len(&plan, 0);
         }
     }
+}
+
+#[test]
+fn path_food_reservation_never_eats_bread_and_uses_lobster_instead() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
+    let mut reserved_only = Scene::new("khazard_warlord");
+    let bread = reserved_only.held("bread", 0);
+    let bread_id = bread.def.id;
+    let mut harness = fight(&mut reserved_only);
+    harness.runtime.protected_items = Some(Arc::from([bread_id]));
+    reserved_only.stat(3, 12, 40);
+    reserved_only.inventory.push(bread);
+    reserved_only.refresh();
+    let plan = harness.pending_batch(&reserved_only, 3);
+    assert!(
+        plan.effects.iter().flatten().all(|effect| !matches!(
+            effect,
+            HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Eat"
+        )),
+        "the only food is reserved for the Path"
+    );
+
+    let mut mixed = Scene::new("khazard_warlord");
+    let bread = mixed.held("bread", 0);
+    let bread_id = bread.def.id;
+    let lobster = mixed.held("lobster", 1);
+    let mut harness = fight(&mut mixed);
+    harness.runtime.protected_items = Some(Arc::from([bread_id]));
+    mixed.face_us();
+    mixed.stat(3, 9, 40);
+    mixed.inventory.extend([bread, lobster]);
+    mixed.refresh();
+    let plan = harness.pending_batch(&mixed, 3);
+    assert!(matches!(
+        plan.get(0),
+        Some(HostEffect::Interaction(InteractReq::Held {
+            name,
+            action,
+            slot: Some(1),
+            ..
+        })) if name == "Lobster" && action == "Eat"
+    ));
 }
 
 #[test]

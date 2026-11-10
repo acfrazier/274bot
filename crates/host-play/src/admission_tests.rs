@@ -715,8 +715,7 @@ fn global_override_on_lethal_crossing_proceeds_and_arms_the_food_guard() {
     );
     assert!(assessment.reason.contains("for information"));
     assert!(crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        false
+        decision, true, false
     ));
 }
 
@@ -744,8 +743,7 @@ fn request_only_lethal_crossing_is_refused_with_the_bound() {
         assessment.reason
     );
     assert!(crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        false
+        decision, true, false
     ));
 }
 
@@ -789,8 +787,7 @@ fn compat_v1_counts_as_the_global_override_at_the_decision_point() {
     assert!(result.assessment.as_ref().unwrap().bound > 0.01);
     // A compat v1 walk gets no food guard: its frozen behavior.
     assert!(!crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        true
+        decision, true, true
     ));
 }
 
@@ -1931,6 +1928,7 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
             &Estimate {
                 zones: Some(zones),
                 wilderness: producer::wilderness_view(&world).unwrap(),
+                multiway: producer::multiway_view(&world).unwrap(),
                 permitted: grants != ZoneExempt::NONE,
                 risks: &tables(&world).unwrap().risks,
                 combat: &tables(&world).unwrap().combat,
@@ -2234,6 +2232,76 @@ mod compact_final_route_tests {
         snapshot
     }
 
+    #[test]
+    fn route_capture_excludes_path_food_without_losing_other_risk_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let from = tile(0, 1);
+        let mut snapshot = post_wear_snapshot(from);
+        let mut food = wearable_item(379);
+        food.container = api::snapshot::ItemContainer::Inventory;
+        food.slot = 0;
+        food.count = 2;
+        snapshot.seed_inventory(vec![food], 28);
+
+        let included = capture(&snapshot, false, None, false, None);
+        assert_eq!(included.food_iter().collect::<Vec<_>>(), [(379, 2)]);
+        let excluded = capture_excluding(&snapshot, false, None, false, None, &[379]);
+        assert_eq!(excluded.food_len, 0);
+        assert_eq!(excluded.hp, included.hp);
+        assert_eq!(excluded.missing_facts(), included.missing_facts());
+    }
+
+    #[test]
+    fn publication_excludes_quest_food_and_reuses_the_worker_assessment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let world = Arc::new(empty_corridor());
+        let from = tile(0, 1);
+        let dest = tile(10, 1);
+        let route = compact_route_path(&world, from, dest);
+        let mut snapshot = post_wear_snapshot(from);
+        let mut lobster = wearable_item(379);
+        lobster.container = api::snapshot::ItemContainer::Inventory;
+        lobster.slot = 0;
+        lobster.count = 6;
+        let mut bread = wearable_item(2309);
+        bread.container = api::snapshot::ItemContainer::Inventory;
+        bread.slot = 6;
+        snapshot.seed_inventory(vec![lobster, bread], 28);
+        let protected: Arc<[i32]> = Arc::from([2309]);
+        let included = capture(&snapshot, false, None, false, Some(&world));
+        assert_eq!(
+            included.food_len, 2,
+            "control: the pack holds two food kinds"
+        );
+        let input = capture_excluding(&snapshot, false, None, false, Some(&world), &protected);
+        assert_eq!(input.food_iter().collect::<Vec<_>>(), [(379, 6)]);
+        let admission = make_admission(RiskPolicy::Inherit, input);
+        let worker = assess_route_path(&route, &world, &admission);
+        let mut bot = crate::script_runtime::NavBot {
+            compact_route: Some(route),
+            requested_route: Some((dest, 0, false, false, false, ZoneExempt::NONE)),
+            admission: Some(Box::new(admission)),
+            assessment: Some(Arc::clone(&worker)),
+            walk_protected_items: Some(Arc::clone(&protected)),
+            admission_pending: true,
+            ..Default::default()
+        };
+
+        publish(&mut bot, &world, &snapshot, false, None);
+
+        assert!(bot.compact_route.is_some(), "publication retains the route");
+        assert!(bot.risk_refusal.is_none());
+        let published = bot.assessment.as_ref().expect("published assessment");
+        assert_eq!(published.input.food_len, 1);
+        assert_eq!(published.input.food_iter().collect::<Vec<_>>(), [(379, 6)]);
+        assert!(Arc::ptr_eq(published, &worker), "no second assessment");
+        assert!(!bot.admission_pending);
+    }
+
     fn pending_wear(
         final_route: crate::walk_plan::RoutePath,
         dest: WorldTile,
@@ -2303,8 +2371,12 @@ mod compact_final_route_tests {
         food.container = api::snapshot::ItemContainer::Inventory;
         food.slot = 0;
         food.count = 2;
-        snapshot.seed_inventory(vec![food], 28);
+        let mut bread = wearable_item(2309);
+        bread.container = api::snapshot::ItemContainer::Inventory;
+        bread.slot = 2;
+        snapshot.seed_inventory(vec![food, bread], 28);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
+        bot.walk_protected_items = Some(Arc::from([2309]));
 
         finish_carried_wear(&mut bot, &snapshot, &world, from);
 
@@ -2317,10 +2389,18 @@ mod compact_final_route_tests {
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false, None)
+            capture_excluding(
+                &snapshot,
+                false,
+                bot.condition.current(),
+                false,
+                None,
+                &[2309]
+            )
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
+        assert_eq!(after.input.food_len, 1, "bank resume excludes quest bread");
         assert_eq!(after.input.food_counts.iter().copied().sum::<u8>(), 2);
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "the final route remains compact");
@@ -2416,4 +2496,279 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
         bot.walk_outcome_detail.as_deref(),
         Some(expected_detail.as_str())
     );
+}
+
+mod survival_provisioning {
+    use super::*;
+    use script::native::{HostFrame, NativeOutput, ScriptStatus};
+    use script::quester::compile::{self, StepContext};
+    use script::quester::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
+    use std::task::Poll;
+    use std::time::{Duration, Instant};
+
+    struct Output;
+
+    impl NativeOutput for Output {
+        fn status(&mut self, _: ScriptStatus) {}
+        fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {}
+        fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+        fn settings_applied(&mut self, _: u64) {}
+    }
+
+    fn snapshot(from: WorldTile) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                network: from,
+                actor: api::snapshot::ActorView {
+                    name: Some("survival-shortfall".into()),
+                    actions: Vec::new(),
+                    tile: from,
+                    distance: 0,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: 0,
+                    health: 1,
+                    total_health: 40,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 50,
+                skill_level: 1,
+                headicons: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+            animation_update: None,
+        });
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_stats(
+            [
+                (3, "hitpoints", 1, 40),
+                (1, "defence", 1, 1),
+                (5, "prayer", 1, 1),
+            ]
+            .into_iter()
+            .map(|(index, name, effective, base)| api::snapshot::StatView {
+                index,
+                name: name.into(),
+                effective,
+                base,
+                xp: 0,
+                used: true,
+            })
+            .collect(),
+        );
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            members: true,
+            cycle: 1,
+            ..Default::default()
+        });
+        snapshot.seed_varps(vec![api::snapshot::VarpView {
+            index: 173,
+            value: 0,
+        }]);
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        snapshot
+    }
+
+    fn shortfall_reaches_admission(global_override: bool, owns_inventory: bool) {
+        let world = known_corridor(&[12]);
+        let combat = selected_combat();
+        let selected = combat.selected();
+        let quests =
+            api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let zones = producer::zones_view(&world).unwrap().unwrap();
+        let zone_key = producer::bind_key(zones, ZoneKey::Zone(0)).unwrap();
+        let mut document = compile::decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items.clear();
+        header.tools.clear();
+        header.coin_float = 0;
+        header.loadouts.clear();
+        header.owns_inventory = owns_inventory;
+        document.roles[0].sequences[0].cross = vec![script::quester::path::RequiredZoneDocument {
+            id: zones.name(zone_key).unwrap(),
+            name: "Ice warrior crossing".into(),
+            reason: "Carry the real provisioning shortfall to route admission.".into(),
+        }];
+        let mut path =
+            compile::compile_uncached_for_test_with_zones(&document, selected, &quests, zones)
+                .unwrap();
+        Arc::get_mut(&mut path).unwrap().provisioning.bank = None;
+
+        let from = tile(0, 1);
+        let to = tile(23, 1);
+        let snapshot = snapshot(from);
+        let mut memory = api::bank_memory::BankMemory::default();
+        memory.track(&snapshot, 1);
+        assert_eq!(memory.origin(), api::bank_memory::Origin::Session);
+        let evidence = api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let frame = HostFrame::for_test(
+            Some((from.x, from.z, from.level)),
+            Some(&snapshot),
+            None,
+            script::CompiledTick {
+                selected: Some(selected),
+                bank_memory: Some(&memory),
+                ..Default::default()
+            },
+        );
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut output = Output;
+        let prepared = script::native::with_test_tick(
+            frame,
+            evidence,
+            ClientRevision::R289,
+            (Duration::from_millis(600), Instant::now()),
+            &mut ledger,
+            &mut output,
+            |native| {
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after: evidence,
+                    banks: &banks,
+                    choices: &script::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll(
+                    &mut cx,
+                    &path.provisioning,
+                    None,
+                    Some(&path.provisioning.stages[0]),
+                )
+            },
+        );
+        assert!(
+            matches!(prepared, Poll::Ready(Ok(ProvisionEvent::Ready))),
+            "{prepared:?}"
+        );
+        let status = provisioner.status();
+        assert_eq!(status.phase, ProvisionPhase::Ready);
+        let missing = status
+            .item
+            .expect("the unmet survival food stays visible")
+            .to_owned();
+        assert!(status.need > 0 && status.need <= 28);
+        assert_eq!(status.pack, 0);
+        assert_eq!(status.bank, Some(0));
+        let (missing_item, exposure) = missing
+            .split_once(" [stage ")
+            .expect("the shortfall names its stage and exposure");
+        assert!(exposure.starts_with(path.provisioning.stages[0].0.as_ref()));
+        assert!(selected
+            .items()
+            .iter()
+            .any(|item| item.name.as_deref() == Some(missing_item)));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.test_outbox().is_empty()));
+
+        let view = SnapshotView::new(Some(&snapshot), evidence).with_bank_memory(Some(&memory));
+        let frame = Frame::borrow(view).unwrap();
+        let risk_input = RiskInput::capture(
+            &frame,
+            &combat,
+            &ThreatSet::default(),
+            PoisonState::Clear,
+            false,
+        );
+        assert_eq!(risk_input.food_counts.iter().sum::<u8>(), 0);
+        let globals = crate::WalkGlobals {
+            allow_danger_zones: global_override,
+            ..Default::default()
+        };
+        let decision = globals.danger_decision(Default::default(), Default::default(), true);
+        assert!(decision.permitted, "the guide declares this crossing");
+        let grant = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+        let options = FindOptions {
+            zones: grant,
+            ..Default::default()
+        };
+        let request = Admission {
+            policy: decision.policy,
+            enforce: decision.enforce,
+            grants: grant,
+            allow: WalkAllow {
+                food: true,
+                ..Default::default()
+            },
+            ..make_admission(RiskPolicy::Inherit, risk_input)
+        };
+        assert_eq!(request.enforce, !global_override);
+        let state = WorldState::default();
+        let admitted = route(
+            &world,
+            &request,
+            options,
+            |opts| real_search(&world, from, to, opts, &state, &[]),
+            || real_witness(&world, from, to, options, &state, &[]),
+        );
+        assert!(matches!(admitted.outcome, crate::RouteOutcome::Routed(_)));
+        assert!(matches!(
+            admitted.assessment.as_ref().unwrap().verdict,
+            Verdict::Unsurvivable
+        ));
+        if global_override {
+            assert_eq!(request.policy, RiskPolicy::Proceed);
+            assert!(
+                admitted.refusal.is_none(),
+                "a global override proceeds despite {missing}"
+            );
+        } else {
+            assert!(matches!(admitted.refusal, Some(WalkRefusal::Unsurvivable)));
+        }
+        assert_eq!(
+            provisioner.status().item,
+            Some(missing.as_str()),
+            "admission does not erase the named survival shortfall"
+        );
+    }
+
+    #[test]
+    fn global_override_proceeds_after_provisioning_reports_missing_survival_food() {
+        script::require_local_game_data_for_test!(ClientRevision::R289);
+        for owns_inventory in [false, true] {
+            shortfall_reaches_admission(true, owns_inventory);
+        }
+    }
+
+    #[test]
+    fn request_only_crossing_refuses_after_provisioning_reports_missing_survival_food() {
+        script::require_local_game_data_for_test!(ClientRevision::R289);
+        for owns_inventory in [false, true] {
+            shortfall_reaches_admission(false, owns_inventory);
+        }
+    }
 }

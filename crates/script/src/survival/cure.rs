@@ -112,7 +112,7 @@ pub(crate) struct CureInputs<'a> {
 }
 
 /// Select a cure without copying inventory rows or allocating.
-pub(crate) fn cure_choice(input: &CureInputs<'_>) -> CureDecision {
+pub(crate) fn cure_choice(input: &CureInputs<'_>, protected_items: &[i32]) -> CureDecision {
     let Some(condition) = input.cond.filter(|condition| {
         condition.session == SessionMark::Live
             && condition.hp_known
@@ -162,7 +162,7 @@ pub(crate) fn cure_choice(input: &CureInputs<'_>) -> CureDecision {
         .flatten()
         .map(|item| (item, PotionKind::SuperAntipoison));
     let candidate = ordinary.or(super_antipoison);
-    let fruit = held_fruit(input.inventory, input.tables);
+    let fruit = held_fruit(input.inventory, input.tables, protected_items);
     let held = candidate.is_some() || fruit.is_some();
 
     if input.policy == CurePoison::Never {
@@ -206,12 +206,17 @@ fn held_dose(inventory: &[ItemView], tables: &CombatTables, kind: PotionKind) ->
         .map(|dose| dose.id)
 }
 
-fn held_fruit(inventory: &[ItemView], tables: &CombatTables) -> Option<i32> {
+fn held_fruit(
+    inventory: &[ItemView],
+    tables: &CombatTables,
+    protected_items: &[i32],
+) -> Option<i32> {
     let item_id = tables.selected().item_by_alias("macro_triffidfruit")?.id;
-    inventory
-        .iter()
-        .any(|item| item.count > 0 && item.def.id == item_id)
-        .then_some(item_id)
+    (!protected_items.contains(&item_id)
+        && inventory
+            .iter()
+            .any(|item| item.count > 0 && item.def.id == item_id))
+    .then_some(item_id)
 }
 
 /// Whether `item_id` is a dose of antipoison or super antipoison that
@@ -299,20 +304,23 @@ mod tests {
         expected: CureDecision,
     ) {
         let schedule = Schedule::default();
-        let actual = cure_choice(&CureInputs {
-            cond: condition.as_ref(),
-            danger: Some(0),
-            exposure,
-            policy,
-            route_refused_for_poison: false,
-            inventory,
-            tables,
-            schedule: &schedule,
-            clue_reserve: false,
-            tick: 10,
-            q_unknown,
-            eat_floor: 0,
-        });
+        let actual = cure_choice(
+            &CureInputs {
+                cond: condition.as_ref(),
+                danger: Some(0),
+                exposure,
+                policy,
+                route_refused_for_poison: false,
+                inventory,
+                tables,
+                schedule: &schedule,
+                clue_reserve: false,
+                tick: 10,
+                q_unknown,
+                eat_floor: 0,
+            },
+            &[],
+        );
         assert_eq!(actual, expected, "condition {condition:?}");
     }
 
@@ -818,20 +826,23 @@ mod tests {
         );
         let schedule = Schedule::default();
         let decide = |inventory: &[ItemView], clue_reserve| {
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory,
-                tables: &tables,
-                schedule: &schedule,
-                clue_reserve,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            })
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory,
+                    tables: &tables,
+                    schedule: &schedule,
+                    clue_reserve,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[],
+            )
         };
         assert_eq!(
             decide(&[held(ordinary4, 1), held(ordinary1, 1)], false),
@@ -880,20 +891,23 @@ mod tests {
         let state = condition(20, 99, poison, FoodSummary::default());
         let ordinary = [held(ordinary_4, 1), held(ordinary_1, 1)];
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &ordinary,
-                tables: &tables,
-                schedule: &Schedule::default(),
-                clue_reserve: false,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &ordinary,
+                    tables: &tables,
+                    schedule: &Schedule::default(),
+                    clue_reserve: false,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::Drink {
                 item: ordinary_1,
                 kind: PotionKind::Antipoison,
@@ -902,20 +916,23 @@ mod tests {
         );
         let super_only = [held(super_1, 1)];
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &super_only,
-                tables: &tables,
-                schedule: &Schedule::default(),
-                clue_reserve: false,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &super_only,
+                    tables: &tables,
+                    schedule: &Schedule::default(),
+                    clue_reserve: false,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::Drink {
                 item: super_1,
                 kind: PotionKind::SuperAntipoison,
@@ -924,40 +941,46 @@ mod tests {
         );
         let super_and_fruit = [held(super_1, 1), held(fruit_id, 1)];
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &super_and_fruit,
-                tables: &tables,
-                schedule: &Schedule::default(),
-                clue_reserve: true,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &super_and_fruit,
+                    tables: &tables,
+                    schedule: &Schedule::default(),
+                    clue_reserve: true,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::EatFruit {
                 item: fruit_id,
                 why: CureWhy::Always,
             }
         );
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Never,
-                route_refused_for_poison: true,
-                inventory: &ordinary,
-                tables: &tables,
-                schedule: &Schedule::default(),
-                clue_reserve: false,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Never,
+                    route_refused_for_poison: true,
+                    inventory: &ordinary,
+                    tables: &tables,
+                    schedule: &Schedule::default(),
+                    clue_reserve: false,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::Needed {
                 why: CureWhy::RouteRefused,
                 held: true,
@@ -977,20 +1000,23 @@ mod tests {
         let mut busy = Schedule::default();
         busy.admitted(OpKind::Drink, 10, 0, false, InputEffect::Standard);
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&safe),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &ordinary,
-                tables: &tables,
-                schedule: &busy,
-                clue_reserve: false,
-                tick: 10,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&safe),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &ordinary,
+                    tables: &tables,
+                    schedule: &busy,
+                    clue_reserve: false,
+                    tick: 10,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::Needed {
                 why: CureWhy::Always,
                 held: true,
@@ -1031,43 +1057,72 @@ mod tests {
         assert!(schedule.pending(OpKind::Eat));
 
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &inventory,
-                tables: &tables,
-                schedule: &schedule,
-                clue_reserve: false,
-                tick: 12,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &inventory,
+                    tables: &tables,
+                    schedule: &schedule,
+                    clue_reserve: false,
+                    tick: 12,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::Needed {
                 why: CureWhy::Always,
                 held: true,
             }
         );
         assert_eq!(
-            cure_choice(&CureInputs {
-                cond: Some(&state),
-                danger: Some(0),
-                exposure: Exposure::None,
-                policy: CurePoison::Always,
-                route_refused_for_poison: false,
-                inventory: &inventory,
-                tables: &tables,
-                schedule: &schedule,
-                clue_reserve: false,
-                tick: 13,
-                q_unknown: 11,
-                eat_floor: 0,
-            }),
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &inventory,
+                    tables: &tables,
+                    schedule: &schedule,
+                    clue_reserve: false,
+                    tick: 13,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[]
+            ),
             CureDecision::EatFruit {
                 item: fruit_id,
                 why: CureWhy::Always,
+            }
+        );
+        assert_eq!(
+            cure_choice(
+                &CureInputs {
+                    cond: Some(&state),
+                    danger: Some(0),
+                    exposure: Exposure::None,
+                    policy: CurePoison::Always,
+                    route_refused_for_poison: false,
+                    inventory: &inventory,
+                    tables: &tables,
+                    schedule: &schedule,
+                    clue_reserve: false,
+                    tick: 13,
+                    q_unknown: 11,
+                    eat_floor: 0,
+                },
+                &[fruit_id],
+            ),
+            CureDecision::Needed {
+                why: CureWhy::Always,
+                held: false,
             }
         );
         assert!(schedule.pending(OpKind::Eat));
@@ -1107,7 +1162,7 @@ mod tests {
         };
         let allocations = allocation_counter::measure(|| {
             for _ in 0..1_000 {
-                std::hint::black_box(cure_choice(&input));
+                std::hint::black_box(cure_choice(&input, &[]));
             }
         });
         assert_eq!(allocations, allocation_counter::AllocationInfo::default());

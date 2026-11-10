@@ -704,6 +704,34 @@ fn exemption_contains_matches_the_router_whole_walk_mask() {
 }
 
 #[test]
+fn covered_zones_preserves_zone_group_and_pack_identity() {
+    let (a, b) = zone_world();
+    let zones = a.zones().unwrap();
+    let one = zones.bind(ZoneKey::Zone(2)).unwrap();
+    let rows: Vec<_> = zones.covered_zones(one).unwrap().collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key(), one);
+    let group = zones.bind(ZoneKey::Group(0)).unwrap();
+    let members: Vec<_> = zones
+        .covered_zones(group)
+        .unwrap()
+        .map(|zone| zone.key())
+        .collect();
+    assert_eq!(
+        members,
+        [
+            zones.bind(ZoneKey::Zone(0)).unwrap(),
+            zones.bind(ZoneKey::Zone(1)).unwrap()
+        ]
+    );
+    let foreign = b.zones().unwrap().bind(ZoneKey::Zone(0)).unwrap();
+    assert!(matches!(
+        zones.covered_zones(foreign),
+        Err(ContractError::PackMismatch)
+    ));
+}
+
+#[test]
 fn zone_exemptions_are_pack_bound_and_unknown_keys_refuse() {
     assert_eq!(MAX_ZONE_KEYS, 8);
     let (a, b) = zone_world();
@@ -835,6 +863,48 @@ fn wilderness_view_has_no_grid_and_reports_membership() {
     let inside = tile(3072, 3525, 0);
     assert!(wild.contains(inside));
     assert!(wild.level(inside) > 0);
+}
+
+#[test]
+fn multiway_view_claims_single_way_only_from_a_table_and_away_from_its_cells() {
+    // The multiway table keys 8x8 cells by their origin tile (`maps/multiway.csv`).
+    let keys = crate::pack::keys_from_tiles([tile(96, 96, 0), tile(0, 8, 2)]).unwrap();
+    let with_table = TransportGraph {
+        multiway: keys,
+        ..TransportGraph::default()
+    };
+    let lease = NavLease::wrap(Arc::new(NavWorld::from_parts(
+        grid(tile(3200, 3200, 0), 1, 1, vec![0]),
+        with_table,
+        Vec::new(),
+    )))
+    .unwrap();
+    let view = lease.multiway();
+    assert!(view.known());
+    // Inside the cell, and next to it only with a margin that reaches in.
+    assert!(!view.single_way_around(tile(96, 96, 0), 0));
+    assert!(!view.single_way_around(tile(103, 103, 0), 0));
+    assert!(view.single_way_around(tile(104, 96, 0), 0));
+    assert!(!view.single_way_around(tile(104, 96, 0), 1));
+    // Another level, and a cell far away, are single-way.
+    assert!(view.single_way_around(tile(96, 96, 1), 0));
+    assert!(view.single_way_around(tile(4000, 4000, 0), 3));
+    assert!(!view.single_way_around(tile(0, 8, 2), 0));
+    // A tile outside the packable range is never claimed.
+    assert!(!view.single_way_around(tile(-1, 5, 0), 0));
+    assert!(!view.single_way_around(tile(20000, 5, 0), 0));
+    assert!(!view.single_way_around(tile(5, 5, 4), 0));
+
+    // A pack built without the table claims nothing, wherever the tile is.
+    let without = NavLease::wrap(Arc::new(NavWorld::from_parts(
+        grid(tile(3200, 3200, 0), 1, 1, vec![0]),
+        TransportGraph::default(),
+        Vec::new(),
+    )))
+    .unwrap();
+    assert!(!without.multiway().known());
+    assert!(!without.multiway().single_way_around(tile(4000, 4000, 0), 0));
+    assert!(!MultiwayView::none().single_way_around(tile(4000, 4000, 0), 0));
 }
 
 #[test]

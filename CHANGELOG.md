@@ -82,6 +82,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   redirected error stream is full, no longer stops every bot. Before, the failed
   write left the shared navigation state unusable and every bot stopped with a
   panic.
+- Route publication and reroutes exclude protected quest food from survival
+  credit. Survival preparation selects one available food kind before sizing,
+  so a bank with many food kinds does not repeat the sizing calculation.
+- The Quester chooses survival gear and food from its bank before risky stages,
+  including stages whose Path manages its inventory. It protects quest-managed
+  items and authored equipment slots, equips permitted gear first, reserves
+  space for the stage's items, and reports supply or capacity shortfalls.
+  Quest item protection also works for Paths with more than 64 managed items.
+  Crossing admission still makes the final survival decision.
+- Survival preparation excludes quest food from eating and survival credit.
+  It preserves held food during gear deposits and reports each shortfall
+  once with its stage, NPCs, target and actual cause. Mixed survival food
+  has a specific model-limit message. An unavailable calculation does not
+  stop preparation.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.

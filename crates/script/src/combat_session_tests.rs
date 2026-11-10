@@ -343,6 +343,7 @@ fn with_tick<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,

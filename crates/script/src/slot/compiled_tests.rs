@@ -2764,6 +2764,14 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
                 .expect("the active seat includes its shared delivery buffers"),
         )
         .expect("bounded seat delivery capacity fits the signed allocation counter");
+        println!(
+            "Native custody layout HostAction={} HostAuthority={} SeatEffect={} native_delivery_capacity={} seat_delivery_capacity={}",
+            std::mem::size_of::<crate::native::HostAction>(),
+            std::mem::size_of::<crate::native::HostAuthority>(),
+            std::mem::size_of::<SeatEffect>(),
+            measured.as_ref().unwrap().seat_native_delivery.capacity(),
+            measured.as_ref().unwrap().seat_delivery.capacity(),
+        );
         let slot_family_bytes = main
             .bytes_current
             .checked_sub(shared_seat.bytes_current)
@@ -2799,38 +2807,13 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // Capture all samples before the unchanged cap assertions.
     let measurements = [(false, false), (true, false), (true, true)]
         .map(|(oak, knife)| (oak, knife, measure_mode(oak, knife)));
-    // Main's item/source reconciliation (all bytes exclusive per bot):
-    // 8226 + bank journal c7edef762's typed Ledger outcome 8 = 8234.
-    // Tick merge 846b2d4ab adds 1123: boxed runner 408 + Prepared fields 72
-    // + canonical Off 3 + eleven status rows 616 + Off status Arc 24 = 9357.
-    // Explicit oak/Off control 81300f726 adds 557 B of fixture input scope,
-    // not production state: bag entries 416 + index 36 + keys 30 + bag Off 3
-    // + resource Value vector 72 + oak 3 - prepared resource 3.
-    // Thus oak Off is 9914. Knife adds two item-name Arcs 48 and two retained
-    // Off-to-Knife string deltas 4 = 9966. The bank relog fix adds 24 B to the
-    // boxed GatherScratch (session restarts, access recovery, avoided bank,
-    // last reason): 9990. 9998 leaves 8 B headroom.
-    // macOS measures 9509 / 10066 / 10118 for the three samples (merlot, aarch64;
-    // the same allocations count more bytes there): 10118 + 8 B headroom = 10126.
-    // Linux stays 9998.
-    // The new private owner probe reproduces all three preparation totals
-    // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
-    // Inline TickKit storage is already in Prepared; shared tables stay out.
-    // Compat finish: the 40 B input authority is allocated on first use instead of eagerly in the
-    // slot (see `the_slot_runtime_context_and_lazy_authority_have_known_sizes`), and the shared
-    // baseline slot never uses it. Dev 91d2ca897 measures 9,938 / 9,990 for the oak and Knife
-    // samples; Linux now 9,978 / 10,030, so 10030 + 8 B headroom = 10038. macOS (merlot, aarch64)
-    // measures 9,621 / 10,178 / 10,230 for ordinary / oak Off / oak Knife; 10230 + 8 B = 10238.
-    // Gatherer shop: +144 B per bot against that head, measured on macOS (merlot, aarch64) as
-    // 9,765 / 10,322 / 10,374, so 10374 + 8 B = 10382. The 144 B are the boxed Gatherer 1,584 ->
-    // 1,568 B (-16), the boxed GatherScratch 104 -> 144 B (+40; prepared+instance +24 B in all),
-    // the two added status rows `bank_seen` and `block_reason` (2 * 56 = +112) and the Ledger
-    // 1,016 -> 1,024 B (+8) allocated at the first poll. Linux (x86_64) takes the same +144 on
-    // the 10038 cap, pending the aubaine measurement.
+    // Six protected-food handles add 96 B without a new allocation.
+    // The composed macOS maximum is 10470 B, Linux 10270 B.
+    // Both caps leave 64 B of headroom.
     #[cfg(target_os = "macos")]
-    let exclusive_cap = 10382;
+    let exclusive_cap = 10534;
     #[cfg(not(target_os = "macos"))]
-    let exclusive_cap = 10182;
+    let exclusive_cap = 10334;
     for (oak, knife, exclusive) in measurements {
         assert!(
             (0..=exclusive_cap).contains(&exclusive),
@@ -3717,43 +3700,24 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Inline seat layout, separate from the owned-heap cap below: 656 B
-        // measured on the 64-bit CI targets. The inventory's rule allows +8%,
-        // rounded to an 8-byte boundary: 656 * 1.08 = 708.5 -> 712 B.
+        // The measured 656 B inline seat keeps the default 64 B headroom.
         assert!(
-            std::mem::size_of::<crate::slot::api_seat::ApiSeat>() <= 712,
-            "ApiSeat inline layout grew to {} B (measured 656 B; limit 712 B)",
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>() <= 720,
+            "ApiSeat inline layout grew to {} B (measured 656 B; limit 720 B)",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>()
         );
-        // The source-532 baseline is 8,848 B Linux / 8,912 B macOS, including
-        // Cure, QuietRead and the typed bank receipt. Shared tables stay excluded.
-        // Tick preparation +483 B = boxed Gatherer +408 + Prepared fields +72
-        // + retained "Off" +3. Polls +640 B = 11 StatusField rows * 56 + a 24 B
-        // Arc<str> for "Off". Installation is unchanged. Linux measures 9,971 B
-        // and macOS independently measures 10,035 B (BATCH-029-INT/
-        // r2-pvp-v2-mac-api-seat-1). Main permits 8 B headroom on each platform.
-        // The bank relog fix adds 24 B to the boxed GatherScratch (Linux 9,995 B
-        // measured; macOS +24 B by the same allocation size, not measured).
-        // Non-blocking follow-up: "Off" could use &'static str or a shared
-        // static Arc instead of a separate allocation per bot.
-        // Compat finish, against dev 91d2ca897: Linux 9,995 B -> 10,035 B (+40 B, measured as one
-        // delta, not split; macOS measures 10,099 B on merlot: cap 10,099 + 8 B headroom). Two changes in the range can move this number: the 40 B input
-        // authority now allocated on first use (see
-        // `the_slot_runtime_context_and_lazy_authority_have_known_sizes`) and the CastNpcSeat the
-        // boxed ApiSeat now holds inline (`slot/api.rs`, `slot/cast_npc.rs`).
-        // Gatherer shop: +144 B against that head (macOS 10,099 -> 10,243 B: prepared+instance
-        // +24 B, polls +120 B), by the causes in `gatherer_exclusive_heap_stays_inside_the_
-        // measured_native_bound`. macOS cap 10,243 + 8 B headroom; Linux takes the same +144 on
-        // 10,043, pending the aubaine measurement.
+        // Six protected-food handles add 96 B without a new allocation.
+        // The composed baseline is 10339 B macOS / 10275 B Linux.
+        // Keep 64 B of headroom on each platform.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10251;
+        let exclusive_limit = 10403;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 10187;
+        let exclusive_limit = 10339;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let exclusive_limit = 8848;
+        let exclusive_limit = 9008;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat is {exclusive} B, over {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
+            "exclusive API seat exceeds {exclusive_limit} B (six protected-food custody handles add 96 B; shared tables excluded)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

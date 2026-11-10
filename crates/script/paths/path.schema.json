@@ -471,6 +471,15 @@
           "$ref": "#/$defs/step.thieve.v1"
         },
         {
+          "$ref": "#/$defs/step.answer_count.v1"
+        },
+        {
+          "$ref": "#/$defs/step.if_button.v1"
+        },
+        {
+          "$ref": "#/$defs/step.x:mm:solve_reinitialisation.v1"
+        },
+        {
           "$ref": "#/$defs/step.x:totem:solve_combination.v1"
         }
       ]
@@ -1931,6 +1940,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -1961,6 +1980,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2149,6 +2171,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2180,6 +2212,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2481,6 +2516,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2512,6 +2557,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2715,6 +2763,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2746,6 +2804,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2809,6 +2870,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2839,6 +2910,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -2903,6 +2977,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2933,6 +3017,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3050,6 +3137,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3080,6 +3177,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3176,6 +3276,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3206,6 +3316,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3342,6 +3455,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3373,6 +3496,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3432,6 +3558,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3462,6 +3598,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3502,6 +3641,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3532,6 +3681,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3572,6 +3724,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3602,6 +3764,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -3642,6 +3807,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3672,6 +3847,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4251,6 +4429,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4282,6 +4470,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4408,6 +4599,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4438,6 +4639,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4575,6 +4779,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4606,6 +4820,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },
@@ -4711,6 +4928,16 @@
           "minLength": 1,
           "pattern": "\\S"
         },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4743,11 +4970,360 @@
         ],
         "stop": [
           "max_attempts"
+        ],
+        "failure_signal": [
+          "max_attempts"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "AnswerCountArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number typed into the dialog. The client's own answer is a\nnon-negative 32-bit integer; the content decides what it means."
+        },
+        "max_ticks": {
+          "type": "integer",
+          "description": "Observed ticks the step waits for the dialog to open. Size it from the\ncontent delay before `p_countdialog`, and count `p_delay(n)` as n + 1.",
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Content citation for the dialog and the chosen value.",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "value",
+        "max_ticks",
+        "source"
+      ],
+      "description": "Answer the open count dialog with a number."
+    },
+    "step.answer_count.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "answer_count"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/AnswerCountArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
+          "max_attempts"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "IfButtonArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Component id from the content interface pack (`interface.pack`, the\n`<interface>:<component>` row). A `buttontype=pause` component sends the\nresume press instead of `IF_BUTTON`."
+        },
+        "max_ticks": {
+          "type": "integer",
+          "description": "Observed ticks the step waits for the component to be shown: on an open\ninterface, with no hidden layer above it. Size it from the content\ndelay before the script unhides it, and count `p_delay(n)` as n + 1.",
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Content citation for the component and the script that handles it.",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "component",
+        "max_ticks",
+        "source"
+      ],
+      "description": "Press one interface component once it is shown."
+    },
+    "step.if_button.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "if_button"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/IfButtonArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
+          "max_attempts"
         ]
       },
       "additionalProperties": false
     },
     "Args4": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pieces": {
+          "type": "string",
+          "description": "Object alias prefix of the 24 board pieces: `reinitialisation` names\n`reinitialisation_01` to `reinitialisation_24`."
+        },
+        "arrival": {
+          "$ref": "#/$defs/ArrivalArg",
+          "description": "Where the cutscene leaves the player when it ends\n(`p_teleport(0_41_70_25_27)`, `mm_puzzle.rs2:190`); the step is done\nthere, with the progress already set."
+        }
+      },
+      "required": [
+        "pieces",
+        "arrival"
+      ]
+    },
+    "ArrivalArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for this authored tile."
+        }
+      },
+      "required": [
+        "tile",
+        "source"
+      ]
+    },
+    "step.x:mm:solve_reinitialisation.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "x:mm:solve_reinitialisation"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args4"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
+          "max_attempts"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "Args5": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -4808,7 +5384,7 @@
           "const": 1
         },
         "args": {
-          "$ref": "#/$defs/Args4"
+          "$ref": "#/$defs/Args5"
         },
         "comment": {
           "type": [
@@ -4828,6 +5404,16 @@
           "type": "string",
           "minLength": 1,
           "pattern": "\\S"
+        },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
@@ -4860,6 +5446,9 @@
           "stop"
         ],
         "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
           "max_attempts"
         ]
       },

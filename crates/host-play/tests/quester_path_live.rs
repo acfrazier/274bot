@@ -122,6 +122,7 @@ fn smoke_cell(
         stage,
         loadout,
         extra_items,
+        skills: &seeds.skill_refs(),
         seed_vars,
         stand: WorldTile {
             x: seeds.stand[0],
@@ -166,6 +167,7 @@ fn arrav_role_smoke_cell(spec: PathCell<'_>, gang: Gang) -> Result<Cell, String>
             stage,
             loadout: spec.loadout,
             extra_items: spec.extra_items,
+            skills: spec.skills,
             stand: spec.stand,
         },
         gang,
@@ -215,6 +217,7 @@ fn arrav_smoke_pair(
             stage: Some("b:0"),
             loadout: None,
             extra_items: &[],
+            skills: &[],
             seed_vars: &[("blackarmgang", 0)],
             // blackarmgang.json b-tramp: maps/m50_52.jm2:8228.
             stand: WorldTile {
@@ -1508,6 +1511,7 @@ mod smoke_tests {
                 stage: Some("arthur:3"),
                 loadout: None,
                 extra_items: &[],
+                skills: &[],
                 seed_vars: &[],
                 stand: WorldTile {
                     x: 2769,
@@ -1847,6 +1851,7 @@ mod smoke_tests {
                 stage: Some(&seeds.stage),
                 loadout: seeds.fixture_loadout().unwrap(),
                 extra_items: &extra_items,
+                skills: &seeds.skill_refs(),
                 seed_vars: &seed_vars,
                 stand: WorldTile {
                     x: seeds.stand[0],

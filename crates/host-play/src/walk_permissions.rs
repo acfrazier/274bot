@@ -263,12 +263,14 @@ impl WalkGlobals {
     }
 }
 
-/// Whether a native walk's decided zone grant arms the walk's food guard.
-/// Every permitted danger crossing arms it (the global override, a card
-/// request or a Path `cross`); a compat v1 walk keeps its frozen behavior
-/// and gets no guard. Eating refuses nothing.
-pub(crate) fn walk_arms_danger_food_guard(zones: ZoneExempt, compat_v1: bool) -> bool {
-    zones.is_all() && !compat_v1
+/// Whether one danger decision both credits food and arms its danger-food
+/// guard. Enforced routes count even when the runtime net is not yet active.
+pub(crate) fn walk_arms_danger_food_guard(
+    decision: DangerDecision,
+    allow_food: bool,
+    compat_v1: bool,
+) -> bool {
+    allow_food && !compat_v1 && (decision.permitted || decision.enforce)
 }
 
 /// The globals one slot's walks see. A compat v1 slot counts as the global
@@ -1737,15 +1739,40 @@ mod tests {
                     assert_eq!(decision.policy, RiskPolicy::Proceed);
                     assert!(!decision.enforce, "the override is informational");
                 }
-                let (options, native) = resolve_native_admission(globals, script, walk, false);
+                let (options, decision) = resolve_native_admission(globals, script, walk, false);
                 assert!(options.zones.is_all());
-                assert_eq!(
-                    (native.policy, native.enforce),
-                    (RiskPolicy::Proceed, false)
-                );
-                assert!(walk_arms_danger_food_guard(options.zones, false));
+                assert_eq!(decision.policy, RiskPolicy::Proceed);
+                assert!(!decision.enforce);
+                assert!(walk_arms_danger_food_guard(decision, true, false));
             }
         }
+    }
+
+    #[test]
+    fn route_food_credit_and_guard_share_the_enforced_decision() {
+        let proceed = DangerDecision {
+            permitted: true,
+            policy: RiskPolicy::Proceed,
+            enforce: false,
+        };
+        assert!(walk_arms_danger_food_guard(proceed, true, false));
+        assert!(!walk_arms_danger_food_guard(proceed, false, false));
+        assert!(!walk_arms_danger_food_guard(proceed, true, true));
+
+        // A future NET_AVAILABLE-only route is enforced before it is granted.
+        let future_enforced = DangerDecision {
+            permitted: false,
+            policy: RiskPolicy::Inherit,
+            enforce: true,
+        };
+        assert!(walk_arms_danger_food_guard(future_enforced, true, false));
+
+        let unrequested = DangerDecision {
+            permitted: false,
+            policy: RiskPolicy::Avoid,
+            enforce: false,
+        };
+        assert!(!walk_arms_danger_food_guard(unrequested, true, false));
     }
 
     #[test]
@@ -1767,7 +1794,7 @@ mod tests {
         );
         assert!(options.zones.is_all());
         assert_eq!(native, crossing);
-        assert!(walk_arms_danger_food_guard(options.zones, false));
+        assert!(walk_arms_danger_food_guard(native, true, false));
         // A native script's card setting and its walk option.
         let card = WalkPermissions {
             allow_danger_zones: true,
@@ -1798,10 +1825,10 @@ mod tests {
             let decision = globals.danger_decision(WalkPermissions::default(), walk, false);
             assert!(!decision.permitted, "walk={bit:?}");
             assert_eq!(decision.policy, RiskPolicy::Avoid);
-            let options =
-                resolve_native_admission(globals, WalkPermissions::default(), walk, false).0;
+            let (options, decision) =
+                resolve_native_admission(globals, WalkPermissions::default(), walk, false);
             assert!(options.zones == ZoneExempt::NONE);
-            assert!(!walk_arms_danger_food_guard(options.zones, false));
+            assert!(!walk_arms_danger_food_guard(decision, true, false));
         }
     }
 
@@ -1824,7 +1851,15 @@ mod tests {
             assert_eq!(globals.for_script_family(false), globals);
         }
         // No food guard for a compat v1 walk, even with every zone granted.
-        assert!(!walk_arms_danger_food_guard(ZoneExempt::all(), true));
+        assert!(!walk_arms_danger_food_guard(
+            DangerDecision {
+                permitted: true,
+                policy: RiskPolicy::Proceed,
+                enforce: false,
+            },
+            true,
+            true
+        ));
     }
 
     /// The compat (compiled, bool-wire) path reads the same decision: the

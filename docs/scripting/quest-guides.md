@@ -25,7 +25,7 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
-- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`). Default kinds compile as `false` when it is omitted.
+- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, `answer_count`, `if_button`, and `x:*`). Default kinds compile as `false` when it is omitted.
 
 ### Retry limits
 
@@ -36,6 +36,8 @@ The runner counts failed begins, soft poll failures, and settle timeouts. It als
 Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
 
 After a settle timeout, an advancing step rereads progress before it retries.
+
+Optional `failure_signal` (a predicate document, valid only with `max_attempts` and `stop`) names what the content shows when one attempt ran and failed without changing anything the watchdog tracks, for example a `message` fact on the content's failure text. It is checked on the chat since the step began, when a settle timeout closes an attempt whose step ran to its end (its operation was sent). A timeout with the signal counts as progress for the no-progress watchdog, so `max_attempts` is the only bound on those retries. A timeout without the signal, or from a step that never ran to its end, still counts toward the watchdog's eight-observation park. Cite the content line that prints the signal in the step `comment`. Example: Dwarf Cannon's railing repair uses `{"Fact":{"kind":"message","version":1,"args":{"any":["but fail and cut yourself trying."]}}}` (`railings.rs2:78-91`).
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
@@ -125,6 +127,21 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
+| `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. `source` cites the content. |
+| `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for. `source` cites the content. |
+| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board (`pieces`: the alias prefix of its 24 pieces, `reinitialisation`; `arrival`: the `tile` and `source` where the cutscene after the last piece leaves the player). Open the panel first with an `interact` step. The step reads the board the client holds, plans the slides with the shared sliding-puzzle solver and clicks one piece per observed move, then waits for the cutscene to reach `arrival`. It fails after three clicks that moved nothing, when the board closes unsolved, or when the cutscene does not arrive within 34 ticks. |
+
+### Count dialogs and interface buttons
+
+Content can ask for a number (`p_countdialog`) or wait for a press on its own interface. Neither is a dialogue page, so `talk` does not answer them. Use the two steps in order after the conversation that opens them:
+
+1. A `talk` step whose conversation ends at the prompt. Set `gap_ticks` when the script closes the chat and delays before the prompt (`p_delay(n)` costs n + 1 ticks).
+2. `answer_count` with the number to type, or `if_button` with the component to press. Both send one request, and only while the prompt is shown. The step never repeats a request; a failure goes to the runner's bounded retry.
+3. Settle on what the content does next (a chat line, an item, a stage), not on the step itself. Both steps are Explicit: declare `advances`.
+
+`max_ticks` is observed game ticks from the step's start. Size it from the content delay before the prompt, and cite it in `source`. Use `talk` with `continue_only` for the chat pages that follow, and use `answer_once` only for menus.
+
+Death Plateau's dice game uses all three: Harold's stake (`death_guard_equiproom.rs2:227-228`), the roll button `death_dice:com_28` (`:46-47`, shown after three `p_delay(2)` at `:88-99`) and the continue button `death_dice:com_30` (`:123`, `p_pausebutton`).
 
 ## Checks a guide can use
 
@@ -233,14 +250,14 @@ Use `ordered` for stages whose steps leave nothing observable behind, such as Ha
    The cursor can pass the last step while the `acquire` step's own `settle` and `skip_if` are still `False` (a burnt pie, a product lost on the way). The recipe then restarts from its first step, and every child `skip_if` is checked again. Only a pass that began a child restarts.
 
    The `acquire` step's optional `max_restarts` arg (default 8) bounds this; past it the step parks with `<recipe> gave up after <N> attempts: <settle> is still false`. A restart repeats every child whose `skip_if` is false, so guard buys, hand-ins and consumed items with a `skip_if` that holds once they are done.
-8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress.
+8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress. The one exception is a settle timeout that shows its step's declared `failure_signal` (see Retry limits): it clears the count.
 
 
 ## How a run gathers items
 
 Provisioning checks the inventory first and plans from the account's bank memory, which the host updates whenever the bank is open; the Quester keeps no bank receipt of its own. Collecting or making an item outside the bank does not change that memory.
 
-Unless `quest.owns_inventory` bypasses preparation, missing required or acquirable items, coin floats, active-loadout carry floats, and tools needed by a gather step may cause a bank check. An item with `from_stage` is ignored until the quest reaches that stage (an Unknown stage keeps it out), so it causes neither an acquisition nor the initial bank scan early.
+Missing required or acquirable items, coin floats, active-loadout carry floats, and gather tools may cause a bank check. `quest.owns_inventory` leaves these quest supplies to the Path, but still runs survival preparation. An item with `from_stage` is ignored until that stage, including its acquisition and initial bank scan.
 
 For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
 
@@ -266,7 +283,7 @@ Closing the bank:
 
 ### Bank memory and inventory space
 
-Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
+Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a required-item shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
 Preparation preserves the guide's record items, tools and floats. There is no unconditional inventory freshen or deposit sweep.
 
@@ -277,6 +294,38 @@ Available bank hints are withdrawn only when they fit alongside the active recip
 An unmeetable speculative peak does not itself park the guide. Preparation falls back to immediate withdrawals while still requiring room for the active acquisition's final item. Later inventory pressure is left to the running family.
 
 Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the stage's bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
+
+### Survival supplies
+
+Before a risky stage, the bank check prices the stage's declared NPC fights and
+permitted `cross` zones with the shared survival model. It selects from the
+guide's combat loadouts and ordinary food the account holds or banks.
+
+The existing loadout run withdraws and wears gear first, one piece at a time.
+Worn gear uses no inventory slots. Required quest items reserve their space
+next. Food then fills the remaining space, up to the model's target.
+
+The food calculation uses the live food guard's threshold and content timing.
+Food that the Path needs carried is excluded from survival credit and from
+automatic eating. The current sizing model supports one other ordinary food
+kind. A mixture reports a specific model limit, not missing combat facts.
+There is no prayer, regeneration, or escape credit.
+
+A supply shortfall does not itself stop preparation. Status and the unmet-need
+log name the item, target quantity, and quantity obtained. Actual route
+admission remains the decision point: a script-requested crossing must pass the
+1% death bound. A global danger override proceeds without passing that bound,
+with its food guard armed. A compatibility walk also proceeds, but keeps its
+existing behavior: no food guard and no food credit.
+
+Survival deposits preserve the Path's managed items and held survival food.
+Automatic gear cannot replace protected worn gear, take an authored equipment
+slot, or equip an item that the Path needs carried.
+
+If combat facts, food timing, or a future attacker are unknown, preparation
+does not claim a passing target. It reports the stage, NPCs, and actual cause.
+A planner error is also informational. Preparation continues to admission.
+
 
 ## Rules of thumb
 

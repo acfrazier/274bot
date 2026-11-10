@@ -282,14 +282,18 @@ fn can_protect_style(attack: StyleObs, protect: StyleObs) -> bool {
 
 /// Largest held heal fitting the HP deficit, otherwise the smallest eligible
 /// heal. Recovery applies the cap, not the nominal heal.
-pub(crate) fn food_by(
+pub(crate) fn food_by_excluding(
     hp: i32,
     hp_max: i32,
     inventory: impl Iterator<Item = (i32, i32)>,
     tables: &CombatTables,
     gate: Option<i32>,
+    protected_items: &[i32],
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
+    if hp <= 0 || hp >= hp_max {
+        return None;
+    }
     let mut fitting: Option<(i32, i32)> = None;
     let mut smallest: Option<(i32, i32)> = None;
     for (id, count) in inventory {
@@ -298,6 +302,7 @@ pub(crate) fn food_by(
         };
         let heal = food.heal;
         if count <= 0
+            || protected_items.contains(&id)
             || !eligible(food)
             || gate.is_some_and(|gate| hp.saturating_add(heal).min(hp_max) <= gate)
         {
@@ -340,6 +345,35 @@ pub(crate) fn eat_choice(
     tick: u16,
     eat_floor: i32,
 ) -> Option<EatChoice> {
+    eat_choice_excluding(
+        frame,
+        tables,
+        schedule,
+        danger,
+        poison_fire,
+        hp,
+        hp_max,
+        tick,
+        &[],
+        eat_floor,
+    )
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame, tables and schedule borrows plus danger, poison fire, HP, tick, protected ids and eat floor stay explicit"
+)]
+pub(crate) fn eat_choice_excluding(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    schedule: &Schedule,
+    danger: Option<i32>,
+    poison_fire: i32,
+    hp: i32,
+    hp_max: i32,
+    tick: u16,
+    protected_items: &[i32],
+    eat_floor: i32,
+) -> Option<EatChoice> {
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
     let eat_line = lines.eat.max(eat_floor);
     if hp <= 0
@@ -350,12 +384,13 @@ pub(crate) fn eat_choice(
         return None;
     }
 
-    let ordinary = food_by(
+    let ordinary = food_by_excluding(
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         None,
+        protected_items,
         |food| food.eat_delay_arg.is_some() && schedule.food_ready(food, tick),
     );
     let heal = ordinary
@@ -367,12 +402,13 @@ pub(crate) fn eat_choice(
             combo: None,
         });
     }
-    let combo = food_by(
+    let combo = food_by_excluding(
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         None,
+        protected_items,
         |food| {
             let Some(delay) = food.message_delay else {
                 return false;

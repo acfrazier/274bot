@@ -1937,12 +1937,13 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             bot.route_path_for_follow(),
             bot.admission.as_deref().copied(),
         ) {
-            admission.input = crate::admission::capture(
+            admission.input = crate::admission::capture_excluding(
                 snapshot,
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
                 Some(world),
+                bot.walk_protected_items.as_deref().unwrap_or(&[]),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             bot.assessment = Some(crate::admission::assess_route_path(
@@ -2119,12 +2120,13 @@ fn step_walk(
     let outcome = search(opts);
     let (outcome, assessment, refusal) =
         if let Some(mut admission) = bot.admission.as_deref().copied() {
-            admission.input = crate::admission::capture(
+            admission.input = crate::admission::capture_excluding(
                 snapshot,
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
                 Some(w),
+                bot.walk_protected_items.as_deref().unwrap_or(&[]),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             let route = match &outcome {

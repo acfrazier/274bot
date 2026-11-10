@@ -4,7 +4,9 @@ use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
 use api::selected::ClientRevision;
 use api::WorldTile;
-use nav_planner::contract::{BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView};
+use nav_planner::contract::{
+    BoundZoneKey, MultiwayView, NavLease, RouteView, WildernessView, ZoneTableView,
+};
 use nav_planner::router::{Leg, Route};
 use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
 use nav_planner::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
@@ -23,10 +25,22 @@ struct Fixture {
 }
 impl Fixture {
     fn new(table: ZoneTable, wilderness: WildernessRules) -> Self {
+        Self::with_multiway(table, wilderness, &[])
+    }
+    /// The same world with a multiway table. An empty list is a pack built
+    /// without `maps/multiway.csv`: no single-way claim is ever made.
+    fn with_multiway(
+        table: ZoneTable,
+        wilderness: WildernessRules,
+        multiway: &[WorldTile],
+    ) -> Self {
         let zones = table.clone();
+        let keys: Box<[u32]> = nav_planner::pack::keys_from_tiles(multiway.iter().copied())
+            .expect("multiway fixture cells pack");
         let lease = crate::gatherer::select::tests::test_nav_lease(move |world| {
             world.graph.zones = Some(zones);
             world.graph.wilderness = wilderness;
+            world.graph.multiway = keys;
         });
         Self { lease, table }
     }
@@ -47,6 +61,9 @@ impl Fixture {
     }
     fn wilderness(&self) -> WildernessView<'_> {
         self.lease.wilderness()
+    }
+    fn multiway(&self) -> MultiwayView<'_> {
+        self.lease.multiway()
     }
     fn route<'a>(&self, route: &'a Route) -> RouteView<'a> {
         nav_planner::producer::route_view(&self.lease, route).expect("the lease identity is minted")
@@ -156,6 +173,17 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
         &WildernessRules::default(),
     )
 }
+
+/// Real-content crossing shared by the bank-check acceptance tests.
+pub(crate) fn provisioning_cross_fixture() -> (NavLease, String) {
+    let tables = tables();
+    let fixture = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let name = fixture
+        .zones()
+        .name(fixture.bound(ZoneKey::Zone(0)))
+        .unwrap();
+    (fixture.lease, name)
+}
 /// Effective one-attacker fixture for the S3 hand-worked ice examples. This
 /// tests S2a replay arithmetic, not S3's unimplemented eligibility discount.
 fn corridor_plan(fx: &Fixture, tables: &CombatTables, prefix: u16) -> RoutePlan {
@@ -201,6 +229,7 @@ fn context<'a>(fx: &'a Fixture, risk: &'a RiskTables, tables: &'a CombatTables) 
         risks: risk,
         combat: tables,
         wilderness: fx.wilderness(),
+        multiway: fx.multiway(),
         allow: WalkAllow::default(),
         generation: 7,
         permitted: false,
@@ -1953,7 +1982,7 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
 }
 
 #[test]
-fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
+fn r1_m2_mid_crossing_transport_only_credits_food_outside_the_hold() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -2011,10 +2040,9 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
         !baseline.passed,
         "the max-hit replay still fails despite the probabilistic no-food admission"
     );
-    assert_eq!(
-        (assessment.verdict, assessment.bound),
-        (no_food_assessment.verdict, no_food_assessment.bound),
-        "inventory must not change P1-C's no-food bound"
+    assert!(
+        assessment.bound < no_food_assessment.bound,
+        "ordinary bites outside the transport lock receive food credit"
     );
     assert_eq!(assessment.verdict, Verdict::Survivable);
 }
@@ -3281,7 +3309,7 @@ fn u9_risk_assessment_reuses_one_immutable_table() {
 }
 
 #[test]
-fn assessment_does_not_credit_food_or_report_fixable_with() {
+fn assessment_does_not_credit_food_when_the_guard_cannot_eat() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3289,7 +3317,8 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
     let walk = route(88, 112);
-    let cx = context(&fx, &risk, &tables);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.allow.food = false;
     let mut no_food = input(40, 40, 0, &tables);
     no_food.pos = tile(88);
     let mut carried_food = input(40, 40, 5, &tables);
@@ -3306,6 +3335,67 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
         .iter()
         .chain(with.supplies.iter())
         .all(|need| !matches!(need, SupplyNeed::Food { .. })));
+}
+
+#[test]
+fn assessment_crossing_passes_with_computed_carried_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(85, 125);
+    let mut bare = input(20, 40, 0, &tables);
+    bare.pos = tile(85);
+    let cx = context(&fx, &risks, &tables);
+    let without = assess(fx.route(&walk), &cx, bare);
+    assert_eq!(without.verdict, Verdict::Unsurvivable, "{}", without.reason);
+    let ident = known_kind(&tables).npc_id;
+    let exposure = SupplyExposure {
+        ident,
+        kind: *risks.npc(ident).unwrap(),
+        ticks: 70,
+    };
+    let heal = tables.food(bare.food_ids[0]).unwrap().heal as u8;
+    let count = (1..=28)
+        .find(|&count| {
+            supply_bound(
+                &[exposure],
+                &bare,
+                &tables,
+                Food {
+                    item: bare.food_ids[0],
+                    heal,
+                    count,
+                },
+            )
+            .unwrap()
+            .admits(consts::DEATH_BOUND)
+        })
+        .expect("ordinary content food can cover this exposure");
+    let mut carried = bare;
+    carried.food_counts[0] = count;
+    let with = assert_assessment_equivalence(fx.route(&walk), &cx, carried);
+    assert_eq!(with.verdict, Verdict::Survivable, "{}", with.reason);
+    assert!(with.bound < consts::DEATH_BOUND);
+    assert!(without.bound > consts::DEATH_BOUND);
+}
+
+#[test]
+fn assessment_content_lethal_opening_is_refused_even_with_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(85, 125);
+    let mut carried = input(1, 40, 28, &tables);
+    carried.pos = tile(85);
+    let result = assess(fx.route(&walk), &context(&fx, &risks, &tables), carried);
+    assert_eq!(result.verdict, Verdict::Unsurvivable, "{}", result.reason);
+    assert!(result.bound > consts::DEATH_BOUND);
 }
 
 #[test]
@@ -3897,6 +3987,286 @@ fn t5w_assessment_yields_and_drops_geometry_and_timeline_state() {
 #[test]
 fn t5w_heap_bound_covers_one_assessment_without_projection() {
     let bounds = assessment_heap_bounds().expect("risk heap bound is representable");
-    assert_eq!(bounds.peak_bytes, bounds.retained_bytes);
+    assert_eq!(
+        bounds.peak_bytes,
+        bounds.retained_bytes + supplies::SCRATCH_HEAP_BYTES
+    );
     assert_eq!(admission_peak_heap_bytes(), Some(bounds.peak_bytes));
+}
+
+// ---- Single-way combat (content `npc_combat.rs2:372-389`) ----
+
+fn knight_zones(tables: &CombatTables, spawns: &[i32]) -> ZoneTable {
+    let npc = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap();
+    zone_table(
+        spawns
+            .iter()
+            .map(|spawn| Zone::npc(tile(*spawn), 5, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![ZoneKind::new(
+            "knight",
+            "Black Knight",
+            npc.id,
+            33,
+            false,
+            false,
+        )],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    )
+}
+
+/// A Base40 account: 40 hitpoints and 40 defence, no armour bonus.
+fn base40_input(tables: &CombatTables) -> RiskInput {
+    let mut value = input(40, 40, 0, tables);
+    value.defence = 40;
+    value
+}
+
+const KNIGHT_SPAWNS: [i32; 7] = [92, 95, 98, 100, 102, 104, 106];
+
+/// A cell far from the route: the pack carries a multiway table, the route
+/// is not in it.
+fn far_multiway() -> [WorldTile; 1] {
+    [WorldTile {
+        x: 4000,
+        z: 4000,
+        level: 0,
+    }]
+}
+
+fn assess_knights(fx: &Fixture, tables: &CombatTables, input: RiskInput) -> Arc<RouteAssessment> {
+    let risk = RiskTables::build(tables);
+    let walk = route(90, 108);
+    let mut cx = context(fx, &risk, tables);
+    cx.permitted = true;
+    assess(fx.route(&walk), &cx, input)
+}
+
+#[test]
+fn single_way_walk_past_seven_black_knights_is_admitted_for_a_base_40_account() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let single = Fixture::with_multiway(table.clone(), WildernessRules::default(), &far_multiway());
+    let admitted = assess_knights(&single, &tables, base40_input(&tables));
+    // Seven zones, one attacker at a time: at most one attack per 5 ticks
+    // over the route, 4 damage at most each, below 40 hitpoints.
+    assert_eq!(admitted.plan.intervals.len(), 7, "{}", admitted.reason);
+    assert_eq!(admitted.verdict, Verdict::Survivable, "{}", admitted.reason);
+    assert!(admitted.bound <= consts::DEATH_BOUND, "{}", admitted.reason);
+
+    // Without a multiway table nothing is claimed: all seven attack.
+    let unknown = Fixture::new(table, WildernessRules::default());
+    let summed = assess_knights(&unknown, &tables, base40_input(&tables));
+    assert_eq!(summed.verdict, Verdict::Unsurvivable, "{}", summed.reason);
+    assert!(
+        summed.bound > consts::DEATH_BOUND,
+        "summed bound {}",
+        summed.bound
+    );
+}
+
+#[test]
+fn single_way_bound_never_exceeds_the_summed_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let summed_fx = Fixture::new(table.clone(), WildernessRules::default());
+    let single_fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    for hp in [1u8, 4, 8, 12, 20, 40] {
+        let mut input = base40_input(&tables);
+        input.hp = hp;
+        input.hp_max = hp.max(40);
+        let summed = assess_knights(&summed_fx, &tables, input);
+        let single = assess_knights(&single_fx, &tables, input);
+        assert!(
+            single.bound <= summed.bound,
+            "hp {hp}: single {} summed {}",
+            single.bound,
+            summed.bound
+        );
+    }
+}
+
+#[test]
+fn single_way_lethal_walk_is_still_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let single = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    // A single attacker for the whole walk still beats 6 hitpoints.
+    let mut weak = base40_input(&tables);
+    weak.hp = 6;
+    weak.hp_max = 40;
+    let refused = assess_knights(&single, &tables, weak);
+    assert_eq!(refused.verdict, Verdict::Unsurvivable, "{}", refused.reason);
+    assert!(refused.bound > consts::DEATH_BOUND);
+    assert!(
+        refused.bound < 1.0,
+        "the bound counts one attacker, not seven: {}",
+        refused.bound
+    );
+}
+
+#[test]
+fn a_multiway_cell_on_the_route_keeps_every_attacker_summed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let on_route = WorldTile {
+        x: 96,
+        z: 96,
+        level: 0,
+    };
+    let multiway = Fixture::with_multiway(
+        table.clone(),
+        WildernessRules::default(),
+        &[on_route, far_multiway()[0]],
+    );
+    let summed = Fixture::new(table, WildernessRules::default());
+    let with_cell = assess_knights(&multiway, &tables, base40_input(&tables));
+    let without = assess_knights(&summed, &tables, base40_input(&tables));
+    assert_eq!(
+        with_cell.verdict,
+        Verdict::Unsurvivable,
+        "{}",
+        with_cell.reason
+    );
+    assert_eq!(with_cell.bound.to_bits(), without.bound.to_bits());
+}
+
+#[test]
+fn single_way_does_not_collapse_an_npc_with_forcemulti() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    let mut risk = RiskTables::build(&tables);
+    let id = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let fact = *risk.npc(id).unwrap();
+    *risk.npc_mut(id).unwrap() = KindRisk::new(
+        fact.max_hit,
+        fact.rate,
+        fact.r,
+        fact.reach,
+        fact.style,
+        fact.unknown,
+        fact.poison,
+        fact.attack_roll,
+        true,
+        true,
+        false,
+        false,
+    );
+    let walk = route(90, 108);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.permitted = true;
+    let forced = assess(fx.route(&walk), &cx, base40_input(&tables));
+    assert_eq!(forced.verdict, Verdict::Unsurvivable, "{}", forced.reason);
+}
+
+#[test]
+fn single_way_cluster_of_an_on_hit_only_npc_rolls_every_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    let id = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let plain = RiskTables::build(&tables);
+    let mut gated = RiskTables::build(&tables);
+    let fact = *gated.npc(id).unwrap();
+    *gated.npc_mut(id).unwrap() = fact.with_on_hit_only(true);
+    let walk = route(90, 108);
+    let mut input = base40_input(&tables);
+    input.hp = 12;
+    let run = |risk: &RiskTables| {
+        let mut cx = context(&fx, risk, &tables);
+        cx.permitted = true;
+        assess(fx.route(&walk), &cx, input)
+    };
+    let one_at_a_time = run(&plain);
+    let leaky = run(&gated);
+    // A hit-only recorder may let a second NPC attack after misses, so its
+    // cluster rolls damage on every slot: never a lower bound than the
+    // ordinary cluster, never above the summed schedule.
+    assert!(leaky.bound >= one_at_a_time.bound);
+    let summed = Fixture::new(
+        knight_zones(&tables, &KNIGHT_SPAWNS),
+        WildernessRules::default(),
+    );
+    let all = assess_knights(&summed, &tables, input);
+    assert!(leaky.bound <= all.bound);
+}
+
+#[test]
+fn single_way_counts_one_attacker_across_different_kinds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let knight = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let ice = tables.selected().npc_by_config("icewarrior").unwrap().id;
+    let spawns = [92, 95, 98, 100, 102, 104, 106];
+    let zones: Vec<Zone> = spawns
+        .iter()
+        .enumerate()
+        .map(|(index, spawn)| {
+            Zone::npc(
+                tile(*spawn),
+                5,
+                ZoneClass::Always,
+                u16::MAX,
+                u16::from(index % 2 == 1),
+            )
+        })
+        .collect();
+    let table = zone_table(
+        zones,
+        vec![
+            ZoneKind::new("knight", "Black Knight", knight, 33, false, false),
+            ZoneKind::new("ice", "Ice warrior", ice, 57, false, false),
+        ],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let single = Fixture::with_multiway(table.clone(), WildernessRules::default(), &far_multiway());
+    let summed = Fixture::new(table, WildernessRules::default());
+    let one = assess_knights(&single, &tables, base40_input(&tables));
+    let all = assess_knights(&summed, &tables, base40_input(&tables));
+    // Four knights (4, every 5 ticks) and three ice warriors (6, every 4
+    // ticks) take turns: at most one attack per 4 ticks, 6 damage at most.
+    assert_eq!(one.plan.intervals.len(), 7, "{}", one.reason);
+    assert_eq!(one.verdict, Verdict::Survivable, "{}", one.reason);
+    assert!(one.bound <= all.bound);
+    assert_eq!(all.verdict, Verdict::Unsurvivable, "{}", all.reason);
 }

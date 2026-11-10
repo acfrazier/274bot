@@ -1,8 +1,9 @@
-use super::consts::{LAG, MAX_EVENTS, POISON_PERIOD};
+use super::consts::{LAG, MAX_EVENTS, POISON_PERIOD, SINGLE_WAY_LULL};
 use super::odds::{hit_chance, Event, EventBuf, EventKind, HitChance};
 use super::{RiskInput, RiskTables, RoutePath, RoutePlan, UnknownWhy, ZoneInterval};
 use crate::combat::tables::CombatTables;
 use api::condition::PoisonState;
+use nav_planner::contract::MultiwayView;
 use std::cell::RefCell;
 
 /// Poison events to charge in addition to poison inflicted by exposed NPCs.
@@ -19,6 +20,9 @@ pub(crate) struct TimelineSummary {
     pub attacks: u16,
     pub fixed: u16,
     pub ticks: u16,
+    /// Rows whose own schedule a single-way cluster replaced (zero for the
+    /// all-summed schedule).
+    pub single_way_rows: u16,
 }
 
 thread_local! {
@@ -72,7 +76,7 @@ fn damage_type_index(name: &str) -> Option<usize> {
     }
 }
 
-fn npc_hit(
+pub(super) fn npc_hit(
     ident: i32,
     attack_roll: u32,
     input: &RiskInput,
@@ -154,6 +158,28 @@ fn kind_attack(
     }
 }
 
+/// One row's own schedule: an attack every `rate` ticks over its interval.
+#[allow(clippy::too_many_arguments, reason = "one row's schedule parameters")]
+fn add_row_events(
+    out: &mut EventBuf,
+    summary: &mut TimelineSummary,
+    row: &ZoneInterval,
+    kind: EventKind,
+    hit: HitChance,
+    rate: u8,
+    start: i32,
+    end: i32,
+) -> Result<(), UnknownWhy> {
+    let mut tick = start;
+    while tick < end {
+        add_event(out, summary, tick, kind, row.max_hit, hit)?;
+        tick = tick
+            .checked_add(i32::from(rate))
+            .ok_or(UnknownWhy::Overflow)?;
+    }
+    Ok(())
+}
+
 /// Build the complete, summed, own-rate event schedule for one route.
 pub(crate) fn build_timeline(
     path: RoutePath<'_>,
@@ -164,15 +190,243 @@ pub(crate) fn build_timeline(
     poison: PoisonCharge,
     out: &mut EventBuf,
 ) -> Result<TimelineSummary, UnknownWhy> {
+    build(
+        path,
+        plan,
+        input,
+        tables,
+        risks,
+        poison,
+        MultiwayView::none(),
+        out,
+    )
+}
+
+/// The schedule with single-way combat counted: in a non-multiway area the
+/// content lets one NPC at a time attack a player. Content
+/// `npc_combat.rs2:372-389` (`npc_check_notcombat`, `npc_check_notcombat_self`)
+/// is called at the start of every shared melee, ranged and magic attack
+/// (`npc_combat.rs2:63-67`, `npc_combat_ranged.rs2:20-24`,
+/// `npc_combat_magic.rs2:60-64`): while the player was in combat within 8
+/// ticks and `%aggressive_npc` is another NPC, the attack does not happen.
+/// An NPC with `npc_forcemulti`, an NPC on a multiway cell
+/// (`maps/multiway.csv`) and a bespoke attack skip that rule, so they keep
+/// their own schedules.
+///
+/// Rows that can attack in single-way combat and whose intervals overlap form
+/// one cluster, whatever their kinds. Its attacks are at most one per `g`
+/// ticks over the union of its intervals, where `g` is its smallest attack
+/// interval (at most 8): the same NPC repeats at its own interval, and a
+/// different NPC may attack only 8 ticks after the player's last combat. So
+/// the cluster is `ceil(span / g)` attacks with its largest maximum hit and
+/// highest hit chance, never more events than the rows summed for rows of one
+/// kind. An NPC that records combat only on a hit (`combat_vars_on_hit`,
+/// content `mortton_shades.rs2:239-246`) can let a second NPC attack after
+/// misses; its hits are still `g` ticks apart (a hit sets the variables), so a
+/// cluster with such a member rolls damage on every one of those slots.
+/// The caller takes the smaller of this bound and the all-summed bound.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one schedule input per call, as `build_timeline`, plus the multiway table"
+)]
+pub(crate) fn build_single_way_timeline(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    tables: &CombatTables,
+    risks: &RiskTables,
+    poison: PoisonCharge,
+    multiway: MultiwayView<'_>,
+    out: &mut EventBuf,
+) -> Result<TimelineSummary, UnknownWhy> {
+    build(path, plan, input, tables, risks, poison, multiway, out)
+}
+
+/// The rows of one overlapping run that may attack in single-way combat.
+#[derive(Clone, Copy)]
+struct Cluster {
+    first: usize,
+    last: usize,
+    end: i32,
+    rows: u32,
+}
+
+/// The collapsed schedule of rows proven single-way: the union of their
+/// intervals and the strongest attack of any member.
+#[derive(Clone, Copy)]
+struct Merged {
+    first: usize,
+    start: i32,
+    end: i32,
+    amount: u8,
+    rate: u8,
+    hit: HitChance,
+    on_hit_only: bool,
+    rows: u32,
+}
+
+/// Whether every route tile a row's NPC can hit the player on is known to be
+/// outside the multiway table. The NPC stands within its reach of the player.
+fn row_is_single_way(
+    path: RoutePath<'_>,
+    row: &ZoneInterval,
+    risks: &RiskTables,
+    multiway: MultiwayView<'_>,
+) -> Result<bool, UnknownWhy> {
+    let kind = risks.npc(row.ident()).ok_or(UnknownWhy::MissingFacts)?;
+    let margin = kind.reach.saturating_add(1);
+    for index in row.a..=row.b {
+        let tile = path.point(index).ok_or(UnknownWhy::Overflow)?.tile;
+        if !multiway.single_way_around(tile, margin) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// A row that may join a single-way cluster: a shared attack of an NPC without
+/// `npc_forcemulti`, attacking at least every [`SINGLE_WAY_LULL`] ticks.
+fn candidate(row: &ZoneInterval, risks: &RiskTables, event: EventKind, rate: u8) -> bool {
+    event == EventKind::Attack
+        && rate <= SINGLE_WAY_LULL
+        && risks
+            .npc(row.ident())
+            .is_some_and(|kind| kind.shared_attack() && !kind.forcemulti())
+}
+
+/// Emit a merged run: one attacker at a time when it holds two rows or more,
+/// else the row's own schedule.
+#[allow(clippy::too_many_arguments, reason = "the schedule inputs of `build`")]
+fn emit_merged(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    tables: &CombatTables,
+    risks: &RiskTables,
+    merged: &Merged,
+    out: &mut EventBuf,
+    summary: &mut TimelineSummary,
+) -> Result<(), UnknownWhy> {
+    if merged.rows < 2 {
+        let row = &plan.intervals[merged.first];
+        let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
+        let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
+        let end = path.interval_end_tick(row)?;
+        return add_row_events(out, summary, row, kind, hit, rate, start, end);
+    }
+    // At most one attack per interval over the union; a member that records
+    // combat only on a hit makes every one of those slots a damage roll.
+    let hit = if merged.on_hit_only {
+        HitChance::ceil_from(1.0)
+    } else {
+        merged.hit
+    };
+    let mut tick = merged.start;
+    while tick < merged.end {
+        add_event(out, summary, tick, EventKind::Attack, merged.amount, hit)?;
+        tick = tick
+            .checked_add(i32::from(merged.rate))
+            .ok_or(UnknownWhy::Overflow)?;
+    }
+    summary.single_way_rows = summary
+        .single_way_rows
+        .saturating_add(u16::try_from(merged.rows).unwrap_or(u16::MAX));
+    Ok(())
+}
+
+/// Emit a finished cluster. Its rows that are known to attack in single-way
+/// combat are merged by overlap again (a row on a multiway cell may have been
+/// the link); the others keep their own schedules.
+#[allow(clippy::too_many_arguments, reason = "the schedule inputs of `build`")]
+fn flush(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    risks: &RiskTables,
+    multiway: MultiwayView<'_>,
+    input: &RiskInput,
+    tables: &CombatTables,
+    cluster: &Cluster,
+    out: &mut EventBuf,
+    summary: &mut TimelineSummary,
+) -> Result<(), UnknownWhy> {
+    let mut open: Option<Merged> = None;
+    for index in cluster.first..=cluster.last {
+        let row = &plan.intervals[index];
+        if row.hazard() {
+            continue;
+        }
+        let (event, hit, rate) = kind_attack(row, input, risks, tables)?;
+        if !candidate(row, risks, event, rate) {
+            continue;
+        }
+        let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
+        let end = path.interval_end_tick(row)?;
+        if cluster.rows >= 2 && !row_is_single_way(path, row, risks, multiway)? {
+            add_row_events(out, summary, row, event, hit, rate, start, end)?;
+            continue;
+        }
+        let on_hit_only = risks
+            .npc(row.ident())
+            .is_some_and(|fact| fact.on_hit_only());
+        match open.as_mut() {
+            Some(merged) if start < merged.end => {
+                merged.end = merged.end.max(end);
+                merged.amount = merged.amount.max(row.max_hit);
+                merged.rate = merged.rate.min(rate);
+                if hit.get() > merged.hit.get() {
+                    merged.hit = hit;
+                }
+                merged.on_hit_only |= on_hit_only;
+                merged.rows += 1;
+            }
+            _ => {
+                if let Some(done) = open.take() {
+                    emit_merged(path, plan, input, tables, risks, &done, out, summary)?;
+                }
+                open = Some(Merged {
+                    first: index,
+                    start,
+                    end,
+                    amount: row.max_hit,
+                    rate,
+                    hit,
+                    on_hit_only,
+                    rows: 1,
+                });
+            }
+        }
+    }
+    if let Some(done) = open {
+        emit_merged(path, plan, input, tables, risks, &done, out, summary)?;
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one schedule input per call, as `build_timeline`, plus the multiway table"
+)]
+fn build(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    tables: &CombatTables,
+    risks: &RiskTables,
+    poison: PoisonCharge,
+    multiway: MultiwayView<'_>,
+    out: &mut EventBuf,
+) -> Result<TimelineSummary, UnknownWhy> {
     out.clear();
     let mut summary = TimelineSummary {
         attacks: 0,
         fixed: 0,
         ticks: 0,
+        single_way_rows: 0,
     };
     let mut last_tick = path.ticks();
 
-    for row in &plan.intervals {
+    let mut open: Option<Cluster> = None;
+    for (index, row) in plan.intervals.iter().enumerate() {
         let start = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
         let end = path.interval_end_tick(row)?;
         last_tick = last_tick.max(end);
@@ -185,16 +439,54 @@ pub(crate) fn build_timeline(
                 row.max_hit,
                 HitChance::ceil_from(0.0),
             )?;
-        } else {
-            let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
-            let mut tick = start;
-            while tick < end {
-                add_event(out, &mut summary, tick, kind, row.max_hit, hit)?;
-                tick = tick
-                    .checked_add(i32::from(rate))
-                    .ok_or(UnknownWhy::Overflow)?;
+            continue;
+        }
+        let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
+        if !multiway.known() || !candidate(row, risks, kind, rate) {
+            add_row_events(out, &mut summary, row, kind, hit, rate, start, end)?;
+            continue;
+        }
+        match open.as_mut() {
+            Some(cluster) if start < cluster.end => {
+                cluster.end = cluster.end.max(end);
+                cluster.last = index;
+                cluster.rows += 1;
+            }
+            _ => {
+                if let Some(done) = open.take() {
+                    flush(
+                        path,
+                        plan,
+                        risks,
+                        multiway,
+                        input,
+                        tables,
+                        &done,
+                        out,
+                        &mut summary,
+                    )?;
+                }
+                open = Some(Cluster {
+                    first: index,
+                    last: index,
+                    end,
+                    rows: 1,
+                });
             }
         }
+    }
+    if let Some(done) = open {
+        flush(
+            path,
+            plan,
+            risks,
+            multiway,
+            input,
+            tables,
+            &done,
+            out,
+            &mut summary,
+        )?;
     }
 
     for live in input.live_iter() {

@@ -450,6 +450,8 @@ pub enum BankAction {
     /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
     DepositCapacity {
         keep: Arc<[i32]>,
+        /// One runtime-selected survival item preserved without copying `keep`.
+        extra_keep: Option<i32>,
         slots: u8,
     },
     Close,
@@ -473,6 +475,18 @@ pub struct BankCount {
     pub id: i32,
     pub count: i32,
 }
+
+const CAPACITY_PACK_SLOTS: usize = 28;
+
+enum ProtectedCounts {
+    Products(Vec<BankCount>),
+    // Zero-count entries are empty. The complete keep set stays in the request.
+    Capacity([BankCount; CAPACITY_PACK_SLOTS]),
+}
+
+// Measured at 232 B; the 64 B headroom retains the bounded inline 28-row
+// protected-count snapshot without per-check allocation.
+const _: () = assert!(std::mem::size_of::<ProtectedCounts>() <= 296);
 
 /// What a bank action settled to. The bank's rows are not carried here: the
 /// host observes the open table into the account's bank memory
@@ -593,7 +607,7 @@ pub struct BankMachine {
     session: u64,
     deposits: u8,
     withdraw_index: u8,
-    protected_before: Vec<BankCount>,
+    protected_before: ProtectedCounts,
     deposited: u32,
     capacity_freed: u8,
     item_mode_ensured: bool,
@@ -663,15 +677,10 @@ impl NativeMachine for BankMachine {
     type Output = BankReceipt;
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        let protected_capacity = match &request.action {
-            BankAction::DepositProducts { keep, .. } | BankAction::DepositCapacity { keep, .. } => {
-                keep.len()
-            }
-            _ => 0,
-        };
-        let mut protected_before = Vec::with_capacity(protected_capacity);
+        let mut protected_before = ProtectedCounts::Products(Vec::new());
         match &request.action {
             BankAction::DepositProducts { products, keep } => {
+                let mut before = Vec::with_capacity(keep.len());
                 if products.len() + keep.len() > MAX_MEMO {
                     return Err(ActionError::Unavailable(Arc::from(
                         "bank product/keep set exceeds 64 items",
@@ -682,17 +691,22 @@ impl NativeMachine for BankMachine {
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
                 for id in keep.iter().copied() {
-                    if protected_before.iter().any(|row: &BankCount| row.id == id) {
+                    if before.iter().any(|row: &BankCount| row.id == id) {
                         continue;
                     }
-                    protected_before.push(BankCount {
+                    before.push(BankCount {
                         id,
                         count: ops::count_id(inventory.value, id),
                     });
                 }
+                protected_before = ProtectedCounts::Products(before);
             }
-            BankAction::DepositCapacity { keep, slots } => {
-                if keep.len() > MAX_MEMO || *slots == 0 || *slots > MAX_DEPOSITS {
+            BankAction::DepositCapacity {
+                keep,
+                extra_keep,
+                slots,
+            } => {
+                if *slots == 0 || *slots > MAX_DEPOSITS {
                     return Err(ActionError::Unavailable(Arc::from(
                         "invalid exact bank capacity deposit plan",
                     )));
@@ -701,15 +715,28 @@ impl NativeMachine for BankMachine {
                     .snapshot()
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
-                for id in keep.iter().copied() {
-                    if protected_before.iter().any(|row: &BankCount| row.id == id) {
+                if inventory.value.len() > CAPACITY_PACK_SLOTS {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "inventory exceeds bank capacity snapshot bound",
+                    )));
+                }
+                let mut before = [BankCount { id: 0, count: 0 }; CAPACITY_PACK_SLOTS];
+                let mut used = 0;
+                for row in inventory.value {
+                    let id = row.def.id;
+                    if row.count <= 0
+                        || !(keep.contains(&id) || *extra_keep == Some(id))
+                        || before[..used].iter().any(|prior| prior.id == id)
+                    {
                         continue;
                     }
-                    protected_before.push(BankCount {
+                    before[used] = BankCount {
                         id,
                         count: ops::count_id(inventory.value, id),
-                    });
+                    };
+                    used += 1;
                 }
+                protected_before = ProtectedCounts::Capacity(before);
             }
             BankAction::WithdrawTo { withdrawals } => {
                 if withdrawals.len() > MAX_MEMO
@@ -1467,10 +1494,17 @@ impl NativeMachine for BankMachine {
                         }
                         let view_wait_expired =
                             self.view_armed && self.deadline_reached(cx.evidence().tick);
-                        let scan = if let BankAction::DepositCapacity { keep, .. } =
-                            &self.request.action
+                        let scan = if let BankAction::DepositCapacity {
+                            keep, extra_keep, ..
+                        } = &self.request.action
                         {
-                            ops::deposit_capacity_next(keep, side, pack, self.same_session(cx))
+                            ops::deposit_capacity_next(
+                                keep,
+                                *extra_keep,
+                                side,
+                                pack,
+                                self.same_session(cx),
+                            )
                         } else {
                             let spec = deposit_spec(&self.request.action)
                                 .expect("deposit actions have a deposit spec");
@@ -2553,11 +2587,34 @@ impl BankMachine {
 
     fn protected_unchanged<R: ops::BankRow>(&self, inventory: Option<&[R]>) -> Option<bool> {
         let inventory = inventory?;
-        Some(
-            self.protected_before
+        Some(match &self.protected_before {
+            ProtectedCounts::Products(before) => before
                 .iter()
                 .all(|before| ops::count_id(inventory, before.id) == before.count),
-        )
+            ProtectedCounts::Capacity(before) => {
+                let BankAction::DepositCapacity {
+                    keep, extra_keep, ..
+                } = &self.request.action
+                else {
+                    unreachable!("capacity counts belong to a capacity request");
+                };
+                before
+                    .iter()
+                    .filter(|row| row.count > 0)
+                    .all(|row| ops::count_id(inventory, row.id) == row.count)
+                    && inventory
+                        .iter()
+                        .filter(|row| {
+                            row.count() > 0
+                                && (keep.contains(&row.id()) || *extra_keep == Some(row.id()))
+                        })
+                        .all(|row| {
+                            before
+                                .iter()
+                                .any(|prior| prior.count > 0 && prior.id == row.id())
+                        })
+            }
+        })
     }
 
     pub(crate) fn interrupt(&mut self) {
@@ -3023,6 +3080,8 @@ impl NativeMachine for Close {
 
 #[cfg(test)]
 mod tests {
+    mod capacity;
+
     use super::*;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
     use crate::quester::families::tests::{
@@ -8316,6 +8375,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 1,
                 },
                 partial_ok: false,
@@ -8412,6 +8472,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 2,
                 },
                 partial_ok: false,
@@ -9192,6 +9253,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 1,
                 },
                 partial_ok: false,

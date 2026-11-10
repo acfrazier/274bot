@@ -3867,6 +3867,8 @@ pub struct PathCell<'a> {
     pub stage: Option<&'a str>,
     pub loadout: Option<scenario::quester::FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
+    /// Skill levels from a Path seed file; they replace the profile level.
+    pub skills: &'a [(&'a str, i32)],
     /// Explicit operator seeds for hint-less stages (released Cook: the stage
     /// varp and value, recorded like every other cheat). See
     /// `scenario::quester::quester_stage_with_seeds`.
@@ -3892,6 +3894,7 @@ pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
             stage: spec.stage,
             loadout: spec.loadout,
             extra_items: spec.extra_items,
+            skills: spec.skills,
             seed_vars: spec.seed_vars,
             stand: spec.stand,
             before_relog: spec.before_relog,

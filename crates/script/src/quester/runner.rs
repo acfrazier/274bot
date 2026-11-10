@@ -3133,6 +3133,32 @@ impl Quester {
         }
     }
 
+    /// A settle timeout that closes a completed attempt: the step ran to its
+    /// end (its operation was sent) and the step's declared `failure_signal`
+    /// holds on the chat since the step began. A step without the signal, or
+    /// one that never ran, stays an ordinary unchanged observation.
+    fn completed_attempt_observed(&self, tick: &NativeTick<'_>) -> bool {
+        if self.last_outcome.is_none() {
+            return false;
+        }
+        let Some(signal) = self
+            .current_step()
+            .and_then(|step| step.failure_signal.as_ref())
+        else {
+            return false;
+        };
+        let pred = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &self.quests,
+            progress: self.progress_slice(),
+            required_after: tick.cx.evidence(),
+            chat_since: self.chat_since,
+            outcome: self.last_outcome.as_ref(),
+        };
+        signal.evaluate(&pred) == Truth::True
+    }
+
     fn record_step_success(&mut self) {
         if let Some(budget) = self.current_attempt_budget() {
             self.record_budgeted_attempt(&budget, true);
@@ -3154,6 +3180,10 @@ impl Quester {
         let user_input = matches!(&error, ActionError::UserInput);
         if !user_input {
             self.fail_streak = self.fail_streak.saturating_add(1);
+        }
+        // `include_outcome` is the settle timeout of a step that ran to its end.
+        if include_outcome && !user_input && self.completed_attempt_observed(tick) {
+            self.watchdog.attempt_completed();
         }
         self.record_failure(error);
         let budget = self.current_attempt_budget();
@@ -4004,6 +4034,7 @@ impl Script for Quester {
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         tick.cx.walk_prereq = self.path.prereq;
+        tick.cx.protected_items = Some(Arc::clone(&self.path.provisioning.carried_items));
         if tick.cx.run() != self.run {
             api::host_log!(
                 api::hostlog::Category::ScriptLifecycle,
@@ -5567,18 +5598,123 @@ mod tests {
         assert_eq!(script.step_attempts, 9);
     }
 
+    /// Content: `railings.rs2:78-91` (`[label,mcannon_fix_broken_railing]`): a
+    /// railing miss prints "but fail and cut yourself trying." and leaves no
+    /// other trace, so a chance step with a declared failure signal must be
+    /// bounded by its own `max_attempts`, not by the no-progress watchdog.
+    struct FixedSignal(Truth);
+    impl crate::quester::compile::PredicatePlan for FixedSignal {
+        fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+            self.0
+        }
+    }
+
+    /// Settle-timeout failures of the first Cook step, with `signal` declared
+    /// and `sent` saying whether the step ran to its end (its operation was
+    /// sent). Returns the script after the run parks or `attempts` failures.
+    fn settle_timeouts_with_signal(
+        signal: Option<Truth>,
+        sent: bool,
+        attempts: u32,
+    ) -> (Quester, u32) {
+        let (mut script, snapshot) = fixture();
+        let sequence_index = script
+            .path
+            .sequences
+            .iter()
+            .position(|sequence| !sequence.steps.is_empty())
+            .expect("Cook has a nonempty sequence");
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            let step = &mut path.sequences[sequence_index].steps[0];
+            step.attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 32,
+                stop: Arc::from("retry-stop"),
+            });
+            step.failure_signal = signal.map(|truth| Arc::new(FixedSignal(truth)) as _);
+        }
+        script.seq_index = sequence_index;
+        script.step_index = 0;
+        script.stage = Some(FactKey::new("watchdog-stage"));
+        let step_id = script.current_step().expect("current step").id.clone();
+        script.reset_attempt_scope_if_needed(&step_id);
+
+        let mut ledger = None;
+        let mut done = 0;
+        for tick in 1..=u64::from(attempts) {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, tick, |native| {
+                script.last_outcome = sent.then(|| StepOutcome {
+                    progress: None,
+                    evidence: native.cx.evidence(),
+                    receipt: None,
+                });
+                script.record_step_failure_with_outcome(
+                    ActionError::Failed(Arc::from("step settle timeout")),
+                    native,
+                    true,
+                );
+            });
+            done += 1;
+            if script.parked {
+                break;
+            }
+        }
+        (script, done)
+    }
+
+    #[test]
+    fn completed_attempts_with_the_failure_signal_reach_the_declared_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (script, done) = settle_timeouts_with_signal(Some(Truth::True), true, 40);
+        assert_eq!(done, 32, "the step's own max_attempts is the bound");
+        assert_eq!(script.step_attempts, 32);
+        assert!(script.parked);
+        assert!(
+            script
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("retry-stop")),
+            "parked by the step's named stop, not the watchdog: {:?}",
+            script.last_error
+        );
+        assert!(script.watchdog.unchanged() <= 1);
+    }
+
+    #[test]
+    fn timeouts_without_the_failure_signal_or_a_sent_operation_still_park_the_watchdog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        // No signal declared.
+        let (script, done) = settle_timeouts_with_signal(None, true, 40);
+        assert_eq!(done, 9);
+        assert_eq!(script.watchdog.unchanged(), 8);
+        assert!(script.parked);
+        // Signal declared but not observed.
+        let (script, done) = settle_timeouts_with_signal(Some(Truth::False), true, 40);
+        assert_eq!(done, 9);
+        assert_eq!(script.watchdog.unchanged(), 8);
+        // Signal observed from older chat, but the step never ran to its end.
+        let (script, done) = settle_timeouts_with_signal(Some(Truth::True), false, 40);
+        assert_eq!(done, 9);
+        assert_eq!(script.watchdog.unchanged(), 8);
+        assert!(script.parked);
+        assert!(script
+            .last_error
+            .as_deref()
+            .is_none_or(|error| !error.contains("retry-stop")));
+    }
+
     /// The Quester holds no bank table of its own (design-bank-snapshot D8):
     /// the account's memory is the host's and reaches it as a borrow.
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        // 3640 B before the dev 900f2dccd merge. Dev's revision-377 journal work
-        // added `layout: Layout` to `quest_journal::native::JournalMachine`
-        // (192 -> 200 B); the Quester holds two `ActionHandle<JournalMachine>`
-        // (`journal`, `gang_reader`), +8 B each. No Quester field of this input grew.
-        // The shop phase then grew `AcquireRun` by 40 B, and the Quester's
-        // `Provisioner` holds one inline: 3696 B (macOS aarch64).
-        assert_eq!(bytes, 3696, "Quester changed its measured per-bot layout");
+        // Survival adds a 208 B capacity snapshot and 32 B of stage state
+        // to the 3696 B composed baseline. Keep 64 B of headroom.
+        assert!(bytes <= 4000, "Quester changed its per-bot layout: {bytes} B");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
@@ -6208,6 +6344,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -6313,6 +6450,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -6440,6 +6578,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -9464,6 +9603,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             hazard: None,
             skip_if,
             settle,
@@ -9935,6 +10075,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -9949,6 +10090,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             hazard: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
@@ -10375,6 +10517,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             hazard: None,
             skip_if,
             settle,

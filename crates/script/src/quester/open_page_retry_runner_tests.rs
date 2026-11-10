@@ -52,6 +52,7 @@ fn crate_document() -> super::super::path::PathDocument {
         advances: Some(false),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if: PredicateDocument::Any(vec![]),
         settle: PredicateDocument::Any(vec![]),
         hazard: None,

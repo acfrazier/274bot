@@ -87,19 +87,21 @@ impl TickPlan {
 }
 /// Largest held heal fitting the HP deficit, otherwise the smallest eligible
 /// heal. Recovery applies the cap, not the nominal heal.
-pub(crate) fn food_by(
+pub(crate) fn food_by_excluding(
     frame: &Frame<'_>,
     tables: &CombatTables,
     gate: Option<i32>,
+    protected_items: &[i32],
     eligible: impl Fn(&super::tables::FoodFact) -> bool,
 ) -> Option<i32> {
     let (hp, hp_max) = stat(frame, 3);
-    policy::food_by(
+    policy::food_by_excluding(
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         gate,
+        protected_items,
         eligible,
     )
 }

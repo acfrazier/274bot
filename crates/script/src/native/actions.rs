@@ -277,6 +277,7 @@ impl ActionContext<'_> {
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
@@ -318,6 +319,7 @@ impl ActionContext<'_> {
                 effect: HostEffect::Interaction(request),
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
                 bank_deposit: None,
+                protected_items: None,
             });
         }
         owner.set_latest_batch(first_id);
@@ -362,6 +364,7 @@ impl ActionContext<'_> {
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
@@ -395,6 +398,7 @@ impl ActionContext<'_> {
             effect,
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
@@ -477,6 +481,7 @@ impl ActionContext<'_> {
             effect: HostEffect::AssessWalk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
         });
         Ok(request_id.get())
     }
@@ -535,6 +540,7 @@ impl ActionContext<'_> {
             effect: HostEffect::Walk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
         });
         Ok(request_id.get())
     }
@@ -1234,6 +1240,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -1749,6 +1756,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
