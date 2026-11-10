@@ -16,8 +16,8 @@ use super::formats::{
 };
 use super::identity::{BakePolicy, Digest, EncoderLibrary, ImageIdentity, IMAGE_SCHEMA};
 use super::producer::{
-    charge_product, charge_sum, drive_sync, make_work_charge, source_digest, ClientMapInput,
-    OwnedClientMapInput, ProducerStep,
+    charge_product, charge_sum, drive_sync, make_work_charge, ClientMapInput, OwnedClientMapInput,
+    ProducerStep,
 };
 use super::records::{
     RecordOffset, MAX_MAP_LOC_PLACEMENTS_PER_RECORD, MAX_MAP_RECORDS, MAX_MAP_RECORD_BYTES,
@@ -148,23 +148,15 @@ pub struct ImageBakeReport {
     pub metrics: RasterMetrics,
 }
 
-/// Checkpoint lookup and durable tile-writing seam for owned image bakes.
+/// Durable tile-writing seam for owned image bakes.
 pub trait ImageTileSink {
     type Error: std::error::Error + 'static;
 
-    /// Returns the receipt already recorded for this tile, if any.
-    /// Implementations MUST release any operation-local handle before returning.
-    fn checkpointed(&mut self, key: TileKey) -> Option<PayloadReceipt>;
-
-    /// `Ok(None)` means backpressure and MUST leave the tile unwritten.
-    /// `Ok(Some(receipt))` means these exact PNG bytes were installed.
-    /// Implementations MUST finish and release the write operation before
-    /// returning, so no handle or lock can survive a cursor yield.
-    fn write_tile(
-        &mut self,
-        key: TileKey,
-        png: &[u8],
-    ) -> Result<Option<PayloadReceipt>, Self::Error>;
+    /// `Ok(false)` means backpressure and MUST leave the tile unwritten.
+    /// `Ok(true)` means the PNG was installed. Implementations MUST finish and
+    /// release the write operation before returning, so no handle or lock can
+    /// survive a cursor yield.
+    fn write_tile(&mut self, key: TileKey, png: &[u8]) -> Result<bool, Self::Error>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -194,27 +186,6 @@ pub enum ImageBakeOutcome {
 pub fn bake_policy() -> BakePolicy {
     BakePolicy {
         algorithm: Text::new("native-sparse-terrain-v2").expect("static policy text"),
-        producer_sources: source_digest(&[
-            include_bytes!("raster.rs"),
-            include_bytes!("../../build.rs"),
-            include_bytes!("client_cache.rs"),
-            include_bytes!("records.rs"),
-            include_bytes!("producer.rs"),
-            include_bytes!("spatial.rs"),
-            include_bytes!("../collision.rs"),
-            include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/map_cache.rs"),
-            include_bytes!(
-                "../../../../vendor/fr-client-rust/crates/client/src/config/flo_type.rs"
-            ),
-            include_bytes!(
-                "../../../../vendor/fr-client-rust/crates/client/src/config/loc_type.rs"
-            ),
-            include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/graphics/pix8.rs"),
-            include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/graphics/pix3d.rs"),
-            include_bytes!(
-                "../../../../vendor/fr-client-rust/crates/client/src/dash3d/map_flag.rs"
-            ),
-        ]),
         encoder: EncoderLibrary {
             name: Text::new("png").expect("static encoder name"),
             version: Text::new(env!("NAV_PNG_VERSION")).expect("locked encoder version"),
@@ -254,7 +225,7 @@ pub fn image_identity(input: ClientMapInput<'_>) -> Result<ImageIdentity, MapErr
 }
 
 pub fn plan_images(input: ClientMapInput<'_>) -> Result<(ImagePlan, PlanStats), MapError> {
-    let mut cursor = RasterPlanCursor::new(input, None)?;
+    let mut cursor = RasterPlanCursor::new(input)?;
     let prepared = drive_sync(|context| cursor.step(context))?;
     Ok((prepared.plan, prepared.stats))
 }
@@ -266,8 +237,11 @@ pub fn bake_images_to_partial(
 ) -> Result<ImageBakeOutcome, MapError> {
     let started = Instant::now();
     let identity = image_identity(input)?;
-    if partial.identity() != ArtifactIdentity::Image(identity) {
-        return Err(MapError::Identity);
+    let ArtifactIdentity::Image(partial_identity) = partial.identity() else {
+        return Err(MapError::Invalid("image cache artifact"));
+    };
+    if partial_identity.revision != identity.revision {
+        return Err(MapError::Invalid("image cache revision"));
     }
     let reading_cache = RasterProgress {
         stage: RasterStage::ReadingCache,
@@ -285,9 +259,8 @@ pub fn bake_images_to_partial(
         )));
     }
     fs::create_dir_all(partial.directory())?;
-    let mut cursor =
-        ImageBakeCursor::new(input, Arc::new(partial.directory().to_owned()), identity)?;
-    let mut sink = AtomicImageTileSink::new(partial.directory(), |_: TileKey| None);
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(partial.directory().to_owned()))?;
+    let mut sink = AtomicImageTileSink::new(partial.directory());
     let mut restored = false;
     drive_sync(|context| {
         let step = cursor
@@ -339,11 +312,9 @@ pub fn bake_images_to_partial(
 pub fn bake_images_into(
     input: ClientMapInput<'_>,
     tile_dir: &Path,
-    checkpointed: impl FnMut(TileKey) -> Option<PayloadReceipt>,
     mut keep_running: impl FnMut(RasterProgress) -> bool,
 ) -> Result<ImageBakeOutcome, MapError> {
     let started = Instant::now();
-    let identity = image_identity(input)?;
     let reading_cache = RasterProgress {
         stage: RasterStage::ReadingCache,
         completed_tiles: 0,
@@ -360,8 +331,8 @@ pub fn bake_images_into(
         )));
     }
     fs::create_dir_all(tile_dir)?;
-    let mut sink = AtomicImageTileSink::new(tile_dir, checkpointed);
-    let mut cursor = ImageBakeCursor::new(input, Arc::new(tile_dir.to_owned()), identity)?;
+    let mut sink = AtomicImageTileSink::new(tile_dir);
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(tile_dir.to_owned()))?;
     drive_sync(|context| {
         match cursor
             .step_with(context, &mut sink, &mut keep_running)
@@ -402,7 +373,7 @@ fn completed_from_disk(
         bytes: compressed.len() as u32,
         sha256: Digest::of(compressed),
     };
-    TileReceipt { key, payload }.verify_png(compressed)?;
+    TileReceipt::validate_png_bytes(key, compressed)?;
     decode_png_into(compressed, pixels)?;
     Ok(CompletedUnit {
         key: UnitKey::Terrain { tile: key },
@@ -514,7 +485,6 @@ enum RasterPlanAction {
 /// entry points. A step never retains a live file handle.
 struct RasterPlanCursor {
     input: OwnedClientMapInput,
-    expected_identity: Option<ImageIdentity>,
     identity: Option<ImageIdentity>,
     phase: RasterPlanPhase,
     config: Option<JagFile>,
@@ -550,13 +520,9 @@ struct RasterPlanCursor {
 }
 
 impl RasterPlanCursor {
-    fn new(
-        input: ClientMapInput<'_>,
-        expected_identity: Option<ImageIdentity>,
-    ) -> Result<Self, MapError> {
+    fn new(input: ClientMapInput<'_>) -> Result<Self, MapError> {
         Ok(Self {
             input: OwnedClientMapInput::copy(input)?,
-            expected_identity,
             identity: None,
             phase: RasterPlanPhase::Identity,
             config: None,
@@ -656,12 +622,6 @@ impl RasterPlanCursor {
         match phase {
             RasterPlanPhase::Identity => {
                 let identity = image_identity(self.input.view())?;
-                if self
-                    .expected_identity
-                    .is_some_and(|expected| expected != identity)
-                {
-                    return Err(MapError::Identity);
-                }
                 self.identity = Some(identity);
                 self.phase = RasterPlanPhase::OpenLocConfig;
                 Ok(RasterPlanAction::Unit)
@@ -1170,7 +1130,7 @@ enum RasterBakeAction {
 /// a time. No operation file handle or borrowed input survives a yielded step.
 pub struct ImageBakeCursor {
     planner: Option<RasterPlanCursor>,
-    expected_identity: ImageIdentity,
+    identity: ImageIdentity,
     directory: Arc<PathBuf>,
     phase: RasterBakePhase,
     context: Option<RasterContext>,
@@ -1354,17 +1314,14 @@ impl ImageBakeCursor {
         make_work_charge(input_bytes, scratch_bytes, result_bytes)
     }
 
-    pub fn new(
-        input: ClientMapInput<'_>,
-        partial_dir: Arc<PathBuf>,
-        expected_identity: ImageIdentity,
-    ) -> Result<Self, MapError> {
+    pub fn new(input: ClientMapInput<'_>, partial_dir: Arc<PathBuf>) -> Result<Self, MapError> {
         if partial_dir.as_os_str().is_empty() {
             return Err(MapError::Path);
         }
+        let identity = image_identity(input)?;
         Ok(Self {
-            planner: Some(RasterPlanCursor::new(input, Some(expected_identity))?),
-            expected_identity,
+            planner: Some(RasterPlanCursor::new(input)?),
+            identity,
             directory: partial_dir,
             phase: RasterBakePhase::Plan,
             context: None,
@@ -1516,9 +1473,6 @@ impl ImageBakeCursor {
                     ProducerStep::Cancelled => return Ok(ProducerStep::Cancelled),
                     ProducerStep::Completed(prepared) => {
                         self.tracker.observe(planner.peak_tracked_bytes);
-                        if prepared.plan.identity != self.expected_identity {
-                            return Err(MapError::Identity.into());
-                        }
                         self.progress.planning_squares_completed = prepared.stats.map_squares;
                         self.progress.planning_squares_total = Some(prepared.stats.map_squares);
                         self.progress.total_tiles = u32::try_from(prepared.plan.tiles.len())
@@ -1637,16 +1591,13 @@ impl ImageBakeCursor {
                 }
                 let key = plan.tiles[self.adoption_index];
                 self.adoption_index += 1;
-                let recorded = sink.checkpointed(key);
                 if let Ok(unit) = completed_from_disk(
                     &self.directory,
                     key,
                     &mut self.compressed,
                     &mut self.pixels,
                 ) {
-                    if recorded.is_none_or(|receipt| receipt == unit.payload)
-                        && !self.completed_keys.contains(&key)
-                    {
+                    if !self.completed_keys.contains(&key) {
                         let bytes = self
                             .completed_bytes
                             .checked_add(u64::from(unit.payload.bytes))
@@ -1814,14 +1765,13 @@ impl ImageBakeCursor {
                     .ok_or(MapError::Invalid("missing base tile"))?;
                 self.phase = RasterBakePhase::WriteBase;
                 ensure_tile_can_write(key, &self.png, &self.completed_keys, self.completed_bytes)?;
-                let payload = match sink.write_tile(key, &self.png) {
-                    Ok(Some(payload)) => payload,
-                    Ok(None) => return Ok(RasterBakeAction::Backpressure),
+                match sink.write_tile(key, &self.png) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(RasterBakeAction::Backpressure),
                     Err(error) => return Err(ImageBakeError::Sink(error)),
-                };
+                }
                 complete_tile(
                     key,
-                    payload,
                     &self.png,
                     &mut self.completed,
                     &mut self.completed_keys,
@@ -1840,7 +1790,7 @@ impl ImageBakeCursor {
                 if self.checkpoint_enabled {
                     write_checkpoint_if_batch(
                         &self.directory,
-                        self.expected_identity,
+                        self.identity,
                         BakeStage::BaseTerrain,
                         self.progress.total_tiles,
                         &self.completed,
@@ -1854,7 +1804,7 @@ impl ImageBakeCursor {
                 if self.checkpoint_enabled {
                     write_checkpoint(
                         &self.directory,
-                        self.expected_identity,
+                        self.identity,
                         BakeStage::Downsample,
                         self.progress.total_tiles,
                         &self.completed,
@@ -1919,18 +1869,14 @@ impl ImageBakeCursor {
                 };
                 let plan = self.plan.as_ref().ok_or(MapError::NotReady)?;
                 if plan.tiles.binary_search(&child).is_ok() {
-                    let receipt = self
-                        .completed
-                        .binary_search_by_key(&UnitKey::Terrain { tile: child }, |unit| unit.key)
-                        .ok()
-                        .map(|index| self.completed[index].payload)
-                        .ok_or(MapError::Invalid("missing completed child"))?;
+                    if !self.completed_keys.contains(&child) {
+                        return Err(MapError::Invalid("missing completed child").into());
+                    }
                     read_bounded(
                         &self.directory.join(child.relative_path()?),
                         MAX_PNG_BYTES as usize,
                         &mut self.compressed,
                     )?;
-                    receipt.verify(&self.compressed, MAX_PNG_BYTES)?;
                     self.parent_children[child_index] = Some(decode_png(&self.compressed)?);
                 }
                 self.phase = RasterBakePhase::LoadParentChild;
@@ -1961,14 +1907,13 @@ impl ImageBakeCursor {
                     .ok_or(MapError::Invalid("missing parent tile"))?;
                 self.phase = RasterBakePhase::WriteParent;
                 ensure_tile_can_write(key, &self.png, &self.completed_keys, self.completed_bytes)?;
-                let payload = match sink.write_tile(key, &self.png) {
-                    Ok(Some(payload)) => payload,
-                    Ok(None) => return Ok(RasterBakeAction::Backpressure),
+                match sink.write_tile(key, &self.png) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(RasterBakeAction::Backpressure),
                     Err(error) => return Err(ImageBakeError::Sink(error)),
-                };
+                }
                 complete_tile(
                     key,
-                    payload,
                     &self.png,
                     &mut self.completed,
                     &mut self.completed_keys,
@@ -1989,7 +1934,7 @@ impl ImageBakeCursor {
                 if self.checkpoint_enabled {
                     write_checkpoint_if_batch(
                         &self.directory,
-                        self.expected_identity,
+                        self.identity,
                         BakeStage::Downsample,
                         self.progress.total_tiles,
                         &self.completed,
@@ -2063,7 +2008,7 @@ impl ImageBakeCursor {
                     atomic_write(&self.directory.join("manifest.json"), &manifest_bytes)?;
                     write_checkpoint(
                         &self.directory,
-                        self.expected_identity,
+                        self.identity,
                         BakeStage::Publishing,
                         self.progress.total_tiles,
                         &self.completed,
@@ -2090,7 +2035,7 @@ impl ImageBakeCursor {
                     if self.checkpoint_enabled {
                         write_checkpoint(
                             &self.directory,
-                            self.expected_identity,
+                            self.identity,
                             stage,
                             self.progress.total_tiles,
                             &self.completed,
@@ -2686,44 +2631,22 @@ fn decode_png_into(bytes: &[u8], output: &mut Vec<u8>) -> Result<(), MapError> {
     Ok(())
 }
 
-struct AtomicImageTileSink<'a, F> {
+struct AtomicImageTileSink<'a> {
     directory: &'a Path,
-    checkpointed: F,
 }
 
-impl<'a, F> AtomicImageTileSink<'a, F>
-where
-    F: FnMut(TileKey) -> Option<PayloadReceipt>,
-{
-    fn new(directory: &'a Path, checkpointed: F) -> Self {
-        Self {
-            directory,
-            checkpointed,
-        }
+impl<'a> AtomicImageTileSink<'a> {
+    fn new(directory: &'a Path) -> Self {
+        Self { directory }
     }
 }
 
-impl<F> ImageTileSink for AtomicImageTileSink<'_, F>
-where
-    F: FnMut(TileKey) -> Option<PayloadReceipt>,
-{
+impl ImageTileSink for AtomicImageTileSink<'_> {
     type Error = MapError;
 
-    fn checkpointed(&mut self, key: TileKey) -> Option<PayloadReceipt> {
-        (self.checkpointed)(key)
-    }
-
-    fn write_tile(
-        &mut self,
-        key: TileKey,
-        png: &[u8],
-    ) -> Result<Option<PayloadReceipt>, Self::Error> {
-        let payload = PayloadReceipt {
-            bytes: png.len() as u32,
-            sha256: Digest::of(png),
-        };
+    fn write_tile(&mut self, key: TileKey, png: &[u8]) -> Result<bool, Self::Error> {
         atomic_write(&self.directory.join(key.relative_path()?), png)?;
-        Ok(Some(payload))
+        Ok(true)
     }
 }
 
@@ -2754,20 +2677,22 @@ fn ensure_tile_can_write(
 
 fn complete_tile(
     key: TileKey,
-    payload: PayloadReceipt,
     png: &[u8],
     completed: &mut Vec<CompletedUnit>,
     completed_keys: &mut BTreeSet<TileKey>,
     completed_bytes: &mut u64,
 ) -> Result<(), MapError> {
-    let receipt = TileReceipt { key, payload };
+    let payload = PayloadReceipt {
+        bytes: png.len() as u32,
+        sha256: Digest::of(png),
+    };
     let Some(projected_bytes) = completed_bytes.checked_add(u64::from(payload.bytes)) else {
         return Err(MapError::Limit("image bytes"));
     };
     if projected_bytes > MAX_IMAGE_BYTES {
         return Err(MapError::Limit("image bytes"));
     }
-    receipt.verify_png(png)?;
+    TileReceipt::validate_png_bytes(key, png)?;
     if completed_keys.contains(&key) {
         return Err(MapError::Duplicate("completed tile"));
     }

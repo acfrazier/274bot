@@ -12,7 +12,6 @@ use api::work::{
     MonotonicClock, SharedCancellation, SliceBudget, StepContext, SystemClock, WorkCharge,
     WorkPhase,
 };
-use sha2::{Digest as _, Sha256};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -167,22 +166,6 @@ pub(crate) fn drive_sync<T>(
 pub fn catalogue_policy() -> CataloguePolicy {
     CataloguePolicy {
         algorithm: Text::new("client-loc-mapfunction-v1").expect("static policy text"),
-        producer_sources: source_digest(&[
-            include_bytes!("catalogue.rs"),
-            include_bytes!("client_cache.rs"),
-            include_bytes!("poi.rs"),
-            include_bytes!("records.rs"),
-            include_bytes!("producer.rs"),
-            include_bytes!("../collision.rs"),
-            include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/map_cache.rs"),
-            include_bytes!(
-                "../../../../vendor/fr-client-rust/crates/client/src/config/loc_type.rs"
-            ),
-            include_bytes!(
-                "../../../../vendor/fr-client-rust/crates/client/src/config/npc_type.rs"
-            ),
-            include_bytes!("../../../../crates/api/src/game_data.rs"),
-        ]),
     }
 }
 
@@ -200,14 +183,4 @@ pub fn derive_catalogue(
     let mut cursor = CatalogueCursor::new(input)?;
     let result = drive_sync(|context| cursor.step(context))?;
     Ok((result.pois, result.stats))
-}
-
-pub(crate) fn source_digest(sources: &[&[u8]]) -> Digest {
-    let mut hash = Sha256::new();
-    hash.update(b"274bot.map.producer-sources\0");
-    for source in sources {
-        hash.update((source.len() as u64).to_be_bytes());
-        hash.update(source);
-    }
-    Digest(hash.finalize().into())
 }

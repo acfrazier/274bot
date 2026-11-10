@@ -135,7 +135,6 @@ pub struct EncoderLibrary {
 #[serde(deny_unknown_fields)]
 pub struct BakePolicy {
     pub algorithm: Text,
-    pub producer_sources: Digest,
     pub encoder: EncoderLibrary,
     /// Sorted unique library names, including compression backend/libpng if used.
     pub libraries: Rows<EncoderLibrary, 8>,
@@ -143,8 +142,8 @@ pub struct BakePolicy {
     pub options: Text,
 }
 impl BakePolicy {
-    /// SHA256("274bot.map.bake-policy\0" || version:u16=1 || algorithm:text ||
-    /// sources:32 || encoder.name:text || encoder.version:text || count:u8 ||
+    /// SHA256("274bot.map.bake-policy\0" || version:u16=2 || algorithm:text ||
+    /// encoder.name:text || encoder.version:text || count:u8 ||
     /// each library(name:text,version:text) || options:text).
     pub fn identity(&self) -> Result<Digest, MapError> {
         for pair in self.libraries.as_slice().windows(2) {
@@ -154,9 +153,8 @@ impl BakePolicy {
         }
         let mut h = Sha256::new();
         h.update(b"274bot.map.bake-policy\0");
-        h.update(1u16.to_be_bytes());
+        h.update(2u16.to_be_bytes());
         text(&mut h, &self.algorithm);
-        h.update(self.producer_sources.0);
         text(&mut h, &self.encoder.name);
         text(&mut h, &self.encoder.version);
         h.update([self.libraries.as_slice().len() as u8]);
@@ -174,16 +172,14 @@ impl BakePolicy {
 #[serde(deny_unknown_fields)]
 pub struct CataloguePolicy {
     pub algorithm: Text,
-    pub producer_sources: Digest,
 }
 impl CataloguePolicy {
-    /// SHA256("274bot.map.catalogue-policy\0" || version:u16=1 || algorithm:text || sources:32).
+    /// SHA256("274bot.map.catalogue-policy\0" || version:u16=2 || algorithm:text).
     pub fn identity(&self) -> Digest {
         let mut h = Sha256::new();
         h.update(b"274bot.map.catalogue-policy\0");
-        h.update(1u16.to_be_bytes());
+        h.update(2u16.to_be_bytes());
         text(&mut h, &self.algorithm);
-        h.update(self.producer_sources.0);
         Digest(h.finalize().into())
     }
 }

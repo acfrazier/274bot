@@ -26,7 +26,6 @@ fn catalogue_identity() -> CatalogueIdentity {
 fn policy() -> BakePolicy {
     BakePolicy {
         algorithm: Text::new("terrain-v1").unwrap(),
-        producer_sources: Digest([0x33; 32]),
         encoder: EncoderLibrary {
             name: Text::new("png").unwrap(),
             version: Text::new("0.17.16").unwrap(),
@@ -221,7 +220,7 @@ fn canonical_keys_match_independent_binary_preimages_and_encoder_invalidation() 
     let before = encoder.identity().unwrap();
     assert_eq!(
         before.to_string(),
-        "a0427a8aae783885f514d5fb6b673f698184ae989431bd88765bf1a822e02d5a"
+        "beeaf7ef5e9263ec4871d397c608a73fc2f29c6d71e687d0e5784eef3e1d1726"
     );
     encoder.encoder.version = Text::new("0.18.0").unwrap();
     let after = encoder.identity().unwrap();
@@ -501,26 +500,15 @@ fn snap_uses_distance_then_coordinates_and_never_fabricates_a_miss() {
 }
 
 #[test]
-fn catalogue_rejects_identity_and_version_before_deserializing_records() {
+fn catalogue_rejects_version_before_deserializing_records() {
     let identity = serde_json::to_string(&catalogue_identity()).unwrap();
     let wrong_version = format!("{{\"records\":[0],\"identity\":{identity},\"schema\":2}}");
     assert!(matches!(
-        ClientPois::decode(wrong_version.as_bytes(), catalogue_identity()),
+        ClientPois::decode(wrong_version.as_bytes()),
         Err(MapError::Unsupported { .. })
     ));
-    let wrong_identity = format!("{{\"records\":[0],\"identity\":{identity},\"schema\":1}}");
     assert!(matches!(
-        ClientPois::decode(
-            wrong_identity.as_bytes(),
-            CatalogueIdentity {
-                revision: 274,
-                ..catalogue_identity()
-            }
-        ),
-        Err(MapError::Identity)
-    ));
-    assert!(matches!(
-        ClientPois::decode(&vec![b' '; MAX_JSON_BYTES + 1], catalogue_identity()),
+        ClientPois::decode(&vec![b' '; MAX_JSON_BYTES + 1]),
         Err(MapError::Limit(_))
     ));
 }
@@ -529,13 +517,13 @@ fn catalogue_rejects_duplicate_unknown_and_non_client_records() {
     let mut c = catalogue();
     c.records = Rows::new(vec![booth(), booth()]).unwrap();
     assert!(matches!(
-        ClientPois::decode(&serde_json::to_vec(&c).unwrap(), c.identity),
+        ClientPois::decode(&serde_json::to_vec(&c).unwrap()),
         Err(MapError::Duplicate("POI key"))
     ));
     let mut value = serde_json::to_value(catalogue()).unwrap();
     value["unexpected"] = true.into();
     assert!(matches!(
-        ClientPois::decode(&serde_json::to_vec(&value).unwrap(), catalogue_identity()),
+        ClientPois::decode(&serde_json::to_vec(&value).unwrap()),
         Err(MapError::Schema(_))
     ));
     let duplicated_field = format!(
@@ -543,19 +531,19 @@ fn catalogue_rejects_duplicate_unknown_and_non_client_records() {
         serde_json::to_string(&catalogue_identity()).unwrap()
     );
     assert!(matches!(
-        ClientPois::decode(duplicated_field.as_bytes(), catalogue_identity()),
+        ClientPois::decode(duplicated_field.as_bytes()),
         Err(MapError::Schema(_))
     ));
     value = serde_json::to_value(catalogue()).unwrap();
     value["records"][0]["name"] = "x".repeat(Text::MAX_BYTES + 1).into();
     assert!(matches!(
-        ClientPois::decode(&serde_json::to_vec(&value).unwrap(), catalogue_identity()),
+        ClientPois::decode(&serde_json::to_vec(&value).unwrap()),
         Err(MapError::Schema(_))
     ));
     value = serde_json::to_value(catalogue()).unwrap();
     value["records"][0]["walk_target"] = serde_json::json!({"tile":{"x":3514,"z":3479,"plane":0}});
     assert!(matches!(
-        ClientPois::decode(&serde_json::to_vec(&value).unwrap(), catalogue_identity()),
+        ClientPois::decode(&serde_json::to_vec(&value).unwrap()),
         Err(MapError::Invalid("non-client POI in client catalogue"))
     ));
 }
@@ -659,7 +647,7 @@ fn image_header_rejects_pixel_bombs_before_tile_deserialization() {
     value["interior"] = u32::MAX.into();
     value["tiles"] = serde_json::json!([0]);
     assert!(matches!(
-        ImageManifest::decode(&serde_json::to_vec(&value).unwrap(), image_identity()),
+        ImageManifest::decode(&serde_json::to_vec(&value).unwrap()),
         Err(MapError::Invalid("raster dimensions/LOD"))
     ));
     let bytes = png_header(u32::MAX, TILE_PIXELS);
@@ -692,10 +680,7 @@ fn image_manifest_rejects_duplicate_keys_missing_parent_and_traversal_fields() {
     let mut m = image_manifest(b"png");
     let base = m.tiles.as_slice()[0];
     m.tiles = Rows::new(vec![base, base]).unwrap();
-    assert!(matches!(
-        m.validate(m.identity),
-        Err(MapError::Duplicate("tile key"))
-    ));
+    assert!(matches!(m.validate(), Err(MapError::Duplicate("tile key"))));
     m = image_manifest(b"png");
     m.max_lod = 1;
     m.extent.east = 3648;
@@ -718,13 +703,13 @@ fn image_manifest_rejects_duplicate_keys_missing_parent_and_traversal_fields() {
     ])
     .unwrap();
     assert!(matches!(
-        m.validate(m.identity),
+        m.validate(),
         Err(MapError::Invalid("missing parent tile"))
     ));
     let mut value = serde_json::to_value(image_manifest(b"png")).unwrap();
     value["tiles"][0]["path"] = "../../other.png".into();
     assert!(matches!(
-        ImageManifest::decode(&serde_json::to_vec(&value).unwrap(), image_identity()),
+        ImageManifest::decode(&serde_json::to_vec(&value).unwrap()),
         Err(MapError::Schema(_))
     ));
 }
@@ -844,7 +829,7 @@ fn partial_catalogue_requires_checkpoint_verification_and_explicit_publication()
     )
     .unwrap();
     assert!(matches!(
-        ReadyCatalogue::open(&partial, identity),
+        ReadyCatalogue::open(&partial),
         Err(MapError::NotReady)
     ));
     let entry = PartialEntry::at(&partial, checkpoint.identity).unwrap();
@@ -852,21 +837,11 @@ fn partial_catalogue_requires_checkpoint_verification_and_explicit_publication()
         entry.load_checkpoint().unwrap().completed.as_slice()[0].payload,
         receipt(&payload)
     );
-    assert!(matches!(
-        Checkpoint::decode(
-            &checkpoint.encode().unwrap(),
-            ArtifactIdentity::Catalogue(CatalogueIdentity {
-                policy: Digest([9; 32]),
-                ..identity
-            })
-        ),
-        Err(MapError::Identity)
-    ));
     let ready = root.0.join(key.to_string());
     std::fs::rename(&partial, &ready).unwrap();
     assert!(PartialEntry::at(&ready, checkpoint.identity).is_err());
     assert_eq!(
-        ReadyCatalogue::open(&ready, identity)
+        ReadyCatalogue::open(&ready)
             .unwrap()
             .pois()
             .records
@@ -875,11 +850,6 @@ fn partial_catalogue_requires_checkpoint_verification_and_explicit_publication()
             .as_str(),
         "Bank booth"
     );
-    std::fs::write(ready.join("client-pois.json"), b"{}").unwrap();
-    assert!(matches!(
-        ReadyCatalogue::open(&ready, identity),
-        Err(MapError::Invalid("payload length"))
-    ));
 }
 #[test]
 fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
@@ -892,7 +862,7 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
         image_manifest(&png).encode().unwrap(),
     )
     .unwrap();
-    let image = ReadyImages::open(&ready, image_identity()).unwrap();
+    let image = ReadyImages::open(&ready).unwrap();
     let mut buffer = Vec::new();
     let unlisted = TileKey {
         x: 55,
@@ -922,58 +892,6 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
         &std::sync::Arc::clone(&shared)
     ));
     drop(shared);
-
-    std::fs::write(&tile, &png[..png.len() - 1]).unwrap();
-    assert!(matches!(
-        image.read_tile_arc(tile_key()),
-        Err(MapError::Invalid("file changed while reading"))
-    ));
-    let mut corrupt = png;
-    corrupt[20] ^= 1;
-    std::fs::write(&tile, &corrupt).unwrap();
-    assert!(matches!(
-        image.read_tile_into(tile_key(), &mut buffer),
-        Err(MapError::Digest)
-    ));
-    assert!(matches!(
-        image.read_tile_arc(tile_key()),
-        Err(MapError::Digest)
-    ));
-}
-#[test]
-fn image_checkpoint_is_invalidated_by_encoder_policy_changes() {
-    let old = ImageIdentity {
-        policy: policy().identity().unwrap(),
-        ..image_identity()
-    };
-    let checkpoint = Checkpoint {
-        schema: CHECKPOINT_SCHEMA,
-        identity: ArtifactIdentity::Image(old),
-        stage: BakeStage::BaseTerrain,
-        planned_units: 2,
-        completed: Rows::new(vec![CompletedUnit {
-            key: UnitKey::Terrain { tile: tile_key() },
-            payload: receipt(b"png"),
-        }])
-        .unwrap(),
-    };
-    let mut encoder = policy();
-    encoder.libraries = Rows::new(vec![EncoderLibrary {
-        name: Text::new("libpng").unwrap(),
-        version: Text::new("1.6.50").unwrap(),
-    }])
-    .unwrap();
-    let changed = ImageIdentity {
-        policy: encoder.identity().unwrap(),
-        ..old
-    };
-    assert!(matches!(
-        Checkpoint::decode(
-            &checkpoint.encode().unwrap(),
-            ArtifactIdentity::Image(changed)
-        ),
-        Err(MapError::Identity)
-    ));
 }
 
 struct TrackedReader {

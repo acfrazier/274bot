@@ -1506,7 +1506,7 @@ impl CatalogueCursor {
                     },
                     records: Rows::new(std::mem::take(&mut self.records))?,
                 };
-                document.validate(identity)?;
+                document.validate()?;
                 self.result = Some(CatalogueResult {
                     pois: document,
                     stats: self.stats,
