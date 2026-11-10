@@ -37,14 +37,18 @@ fn crossing_observation(snapshot: &GameSnapshot) -> Value {
     })
 }
 
-fn default_crossing_start(snapshot: &GameSnapshot, hitpoints: i32) -> Result<Value, String> {
+fn default_crossing_start(
+    snapshot: &GameSnapshot,
+    hitpoints: i32,
+    defence: i32,
+) -> Result<Value, String> {
     if snapshot.tile() != Some((2778, 3401, 0)) {
         return Err(format!(
             "unexpected keep crossing start: {:?}",
             snapshot.tile()
         ));
     }
-    for (index, expected) in [(1, 1), (3, hitpoints)] {
+    for (index, expected) in [(1, defence), (3, hitpoints)] {
         let stat = snapshot
             .stats()
             .iter()
@@ -62,19 +66,30 @@ fn default_crossing_start(snapshot: &GameSnapshot, hitpoints: i32) -> Result<Val
     {
         return Err("the default crossing cell must not seed items or equipment".into());
     }
-    Ok(json!({"cell": "Merlin keep stairs", "hitpoints": hitpoints,
+    Ok(
+        json!({"cell": "Merlin keep stairs", "hitpoints": hitpoints, "defence": defence,
         "seed": ["setvar arthur 3", "~clearinv", "tele 0 2778 3401", "minme", "~clearinv worn"],
         "quester_card_blanket_danger": false, "world_speed_command": false,
-        "observed": crossing_observation(snapshot)}))
+        "observed": crossing_observation(snapshot)}),
+    )
 }
 
 /// Request only: the guide declares the crossing, the global setting is off, so
-/// survival admission enforces the 1% bound. The player is raised to Hitpoints
-/// 99 so the route passes the bound and the walk is admitted.
+/// survival admission enforces the 1% bound. The player has Hitpoints 99 and
+/// Defence 99, so the route passes the bound and the walk is admitted.
 #[test]
 #[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
 fn merlin_declared_keep_stairs() {
-    run_keep_stairs(false, REQUEST_ONLY_HITPOINTS);
+    run_keep_stairs(false, Fixture::new(99, 99), false);
+}
+
+/// Request only, with a player whose route fails the bound (Hitpoints 99,
+/// Defence 1: about 5.8% chance of death). The declaration does not skip the
+/// 1% bound: the walk is refused and names the bound.
+#[test]
+#[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
+fn merlin_declared_keep_stairs_refused_by_the_bound() {
+    run_keep_stairs(false, Fixture::new(99, 1), true);
 }
 
 /// The global Danger routing setting overrides everything, Quester included:
@@ -84,11 +99,20 @@ fn merlin_declared_keep_stairs() {
 #[test]
 #[ignore = "requires Engine Q, CPU renderer, live catalog, and evidence directory"]
 fn merlin_keep_stairs_global_override_without_declaration() {
-    run_keep_stairs(true, DEFAULT_HITPOINTS);
+    run_keep_stairs(true, Fixture::new(10, 1), false);
 }
 
-const DEFAULT_HITPOINTS: i32 = 10;
-const REQUEST_ONLY_HITPOINTS: i32 = 99;
+#[derive(Clone, Copy)]
+struct Fixture {
+    hitpoints: i32,
+    defence: i32,
+}
+
+impl Fixture {
+    const fn new(hitpoints: i32, defence: i32) -> Self {
+        Self { hitpoints, defence }
+    }
+}
 
 fn strip_declarations(value: &mut Value) {
     match value {
@@ -137,7 +161,12 @@ fn serve_arthur_without_declarations() {
     );
 }
 
-fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
+fn run_keep_stairs(
+    global_override_without_declaration: bool,
+    fixture: Fixture,
+    expect_bound_refusal: bool,
+) {
+    let Fixture { hitpoints, defence } = fixture;
     assert!(
         std::env::var_os("QUESTER_TICK_MS").is_none(),
         "the shared Engine Q speed must remain unchanged"
@@ -149,6 +178,8 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
     };
     let label = if global_override_without_declaration {
         "merlin-global-override-undeclared-keep-stairs"
+    } else if expect_bound_refusal {
+        "merlin-declared-keep-stairs-refused-by-bound"
     } else {
         "merlin-declared-keep-stairs"
     };
@@ -174,7 +205,7 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("the shared stage builder supplies the native Start");
-    let mut fixture = vec![
+    let mut seed = vec![
         command(
             "reset the crossing to default player stats",
             "minme".into(),
@@ -186,8 +217,8 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
             Proof::SideTabAvailable { index: 3 },
         ),
     ];
-    if hitpoints != DEFAULT_HITPOINTS {
-        fixture.push(command(
+    if hitpoints != 10 {
+        seed.push(command(
             "raise Hitpoints for the request-only crossing",
             format!("setstat hitpoints {hitpoints}"),
             Proof::Stat {
@@ -196,14 +227,24 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
             },
         ));
     }
+    if defence != 1 {
+        seed.push(command(
+            "raise Defence for the request-only crossing",
+            format!("setstat defence {defence}"),
+            Proof::Stat {
+                id: 1,
+                min: defence,
+            },
+        ));
+    }
     scenario.steps.splice(
         start..start,
-        fixture.into_iter().chain([Step {
+        seed.into_iter().chain([Step {
             name: "observe the exact crossing fixture",
             kind: StepKind::Await {
                 evidence: "default Hitpoints 10, Defence 1, no items, keep approach",
                 ready: Box::new(move |snapshot| {
-                    default_crossing_start(snapshot, hitpoints).is_ok()
+                    default_crossing_start(snapshot, hitpoints, defence).is_ok()
                 }),
                 summary: None,
             },
@@ -241,7 +282,7 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
             expect: vec!["arthur:4".into()],
         },
         observe_start: Some(Box::new(move |snapshot| {
-            default_crossing_start(snapshot, hitpoints)
+            default_crossing_start(snapshot, hitpoints, defence)
         })),
     };
     let outcome = quester_live::run_observed(
@@ -264,5 +305,14 @@ fn run_keep_stairs(global_override_without_declaration: bool, hitpoints: i32) {
         Box::new(|snapshot, _| Some(crossing_observation(snapshot))),
     );
     script::quester::registry::set_source(source_before);
-    outcome.unwrap();
+    if expect_bound_refusal {
+        let error = outcome.expect_err("the request-only crossing must fail the 1% bound");
+        assert!(
+            error.contains("upper bound on the chance of death")
+                && error.contains("at most 1% is admitted"),
+            "the refusal must name the bound: {error}"
+        );
+    } else {
+        outcome.unwrap();
+    }
 }
