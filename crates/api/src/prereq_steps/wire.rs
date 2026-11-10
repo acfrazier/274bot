@@ -1,4 +1,4 @@
-//! Wire format for the source-pinned `prereq_steps.json` family.
+//! Wire format for the `prereq_steps.json` family.
 
 use super::{PrereqCatalog, PrereqJournal, PrereqStep};
 use crate::selected::{FactError, SourceSpan};
