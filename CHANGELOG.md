@@ -1060,6 +1060,94 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   stays on screen once the bot logs back in. The client clears the countdown
   on a successful login, as the Java 289 client does.
 
+### Gatherer
+
+- Gatherer can buy a missing gathering tool or bait from a reachable shop.
+  `buyTools` is on by default. A usable tool in the pack, equipment or observed
+  bank is used first; the bot does not buy an upgrade in its place. Shop
+  purchases choose the best skill-usable tier that a reachable vendor sells
+  within the account's budget. A tool bought for wearing must also meet the
+  account's wield requirement. Prices follow the content rule.
+- A supply shortage now parks the running card instead of stopping it.
+  The panel, terminal and fleet show the reason and the bank information used.
+  The card closes the bank and waits without repeated trips or purchase clicks.
+  Fresh supply evidence, Resume or a relevant setting change can start one
+  new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
+  connection checks remain active.
+- Bank-only navigation no longer loads the shop catalog. Shop users still
+  prepare the shared catalog before the first purchase.
+- A fresh "can't reach" reply now lets a shop purchase retry its rejected
+  Trade. A timeout alone still cannot start another Trade while the first
+  response is unconfirmed.
+- Gatherer retries eligible walk failures from the observed position. Return and
+  resource-approach failures share a four-failure budget across targets. A
+  successful arrival or gather resets the budget. Gatherer fails with the last
+  walk detail when the budget ends. A live host escape makes Gatherer wait for
+  a newer observed game tick before it resumes walking, without shunning any
+  target or spending the phase budget. A poison refusal shuns its target for
+  the session.
+- Bank and shop acquisition share bounded retries for eligible walk failures.
+  Retries start from the observed position. If a shop exhausts its walk budget,
+  an alternate reachable shop can still be tried. Typed refusals and
+  blocked-zone results remain terminal.
+- Gatherer allocates its acquisition owner only while a supply trip or park
+  close is active. Idle Gatherers stay within the existing 8 KiB heap limit
+  and the restored 1 KiB inline-size limit.
+
+### Quester
+
+- Added stock and pricing facts for ten more shops used by Quester paths.
+
+### Navigation
+
+- Active route walks send at most one movement packet per observed game tick.
+  A refused click that sends no packet does not use that tick's allowance.
+
+### Fixed during development
+
+#### Shop purchases
+
+- Native shop purchases no longer adopt an unrelated open shop or repeat an
+  unresolved buy. Recovery trades with the same keeper and checks the fresh
+  page before another purchase. Reported quantities count observed units,
+  including purchases above 255 units.
+- Shop acquisition checks whether required bait is affordable at the minimum
+  content price before walking to its seller. It does not require the full
+  refill reserve first.
+- When every eligible shop's access walk fails, the blocked reason now says
+  the shop cannot be reached from here and asks you to move closer, instead
+  of saying nobody sells the item.
+
+#### Banking
+
+- Gatherer now shows whether its bank information was seen this session or
+  saved from an earlier session, with its age at the last status update.
+- Gatherer supply trips now share the native acquisition flow. A full pack
+  is still deposited before a missing supply is reported, and a held tool
+  that can be wielded is equipped without a bank trip. Bank refusals keep
+  their specific reason. A refill can withdraw a lower usable tool tier when
+  that is what the bank holds.
+- Gatherer bank status retains the selected route kind and access tile during
+  supply trips.
+
+#### Quester
+
+- Quester status and its Start log include the active Path's step comment.
+
+#### Scenario checks
+
+- Gatherer's empty-bank reserve check now verifies the blocked supply stage
+  instead of an obsolete withdrawal stage. It still requires a selected,
+  loaded bank and no gathering progress.
+- Gatherer's named-site check recognizes the first walk to an unloaded
+  resource. It still checks the selected site, bank deposits, return walk
+  and fresh gathering progress.
+- Gatherer's bank checks distinguish equipping a held tool from closing a
+  bank. A real bank close still requires verified deposit evidence.
+- The park/relog live check now allows a temporary scene-loading hold. It still
+  requires the same blocked run, retained run intent and restored Running
+  readiness before the new-session clock can complete the check.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app

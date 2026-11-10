@@ -6727,6 +6727,8 @@ fn s2b_admission_per_bot_layouts() {
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
+    // GATHERER-SHOP adds an 8 B inline walk-packet tick allowance to Traveller.
+    // NavBot measures 3824 B; no heap payload or SlotScript growth is added.
     // Prerequisite hop tracking and captured logical-walk ownership add 240 B
     // to NavBot, including 24 B for physical takeoff/destination identity;
     // the slot's manual-run alias and exact bank policy add 32 B.
@@ -6740,6 +6742,10 @@ fn s2b_admission_per_bot_layouts() {
     // measured after the merge with dev (4104 B / 1592 B); the wilderness seam is a
     // fat `Arc<dyn WildernessLevels>` (+8 B, 1600 B); the macOS pin follows it
     // because the two have matched at every earlier measurement.
+    // Gatherer shop: the 8 B inline walk-packet tick allowance in Traveller (see
+    // above, 3824 B before the merges) comes back on top of that head: NavBot
+    // 4112 B, measured on macOS aarch64; SlotScript is unchanged at 1600 B. The
+    // Linux x86_64 pin takes the same +8 B, pending the aubaine measurement.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -6753,7 +6759,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1600, 560, 264)
+        (4112, 1600, 560, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -6763,7 +6769,8 @@ fn s2b_admission_per_bot_layouts() {
     ))]
     // Provenance removal shrinks each of the two inline NavLease owners
     // by 32 B and the inline quest evidence by 40 B.
-    // The Linux lib suite on the compat-finish merge with dev measured NavBot at 4104 B.
+    // The Linux lib suite on the compat-finish merge with dev measured NavBot at 4104 B; the
+    // Gatherer shop adds the 8 B walk-packet tick allowance: 4112 B.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6771,7 +6778,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1600, 560, 264)
+        (4112, 1600, 560, 264)
     );
     // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
     // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B

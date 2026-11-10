@@ -1,7 +1,7 @@
 //! The borrowed shop vendor iterator allocates nothing after its shared facts are warm.
 use api::game_data::for_revision;
 use api::selected::ClientRevision;
-use api::shop_facts::vendors_for;
+use api::shop_facts::{keepers, vendors_for};
 use api::test_support::local_asset_path;
 
 #[test]
@@ -36,4 +36,23 @@ fn warmed_vendors_for_pass_allocates_nothing() {
 
     assert_eq!(measured.count_total, 0);
     assert_eq!(measured.count_current, 0);
+}
+
+#[test]
+fn warmed_keeper_pass_allocates_nothing_on_both_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let expected = keepers(&data).expect("generated shop facts").count();
+        assert!(expected > 0);
+        let mut count = 0;
+        let measured = allocation_counter::measure(|| {
+            count = keepers(&data).expect("generated shop facts").count();
+        });
+        assert_eq!(count, expected);
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(measured.count_current, 0);
+    }
 }

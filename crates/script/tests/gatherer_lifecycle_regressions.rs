@@ -2033,6 +2033,7 @@ fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
     frame.seed_world(world);
 }
 
+#[track_caller]
 fn assert_resource_return(
     selected: &Arc<api::game_data::SelectedGameData>,
     request: &script::native::WalkRequest,
@@ -2247,6 +2248,31 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
     }
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    let first = &spell.runes[0];
+    if matches!(rune_stock, RuneStock::Empty) {
+        for _ in 0..8 {
+            now += 1;
+            tick(&mut slot, &frame, now);
+            assert!(
+                slot.take_native_action().is_none(),
+                "a blocked acquisition batch must not withdraw any supply"
+            );
+            if slot
+                .native_status()
+                .is_some_and(|status| status.phase == NativePhase::Blocked)
+            {
+                break;
+            }
+        }
+        let status = slot.native_status().unwrap();
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert!(status.failure.is_none(), "missing supplies park the run");
+        assert_eq!(slot.state(), script::RunState::Running);
+        assert!(slot.native_run().is_some());
+        assert!(lifecycle_status_text(&slot, "block_reason").contains(first.name.as_str()));
+        slot.stop();
+        return;
+    }
     // The trip's own open started this session in Item mode (`bank.rs2:18-19`
     // resets `%bankcert`), so the first withdraw needs no Item press
     // (TICK-FIX #11).
@@ -2271,30 +2297,6 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     bank_stock.remove(0);
     frame.seed_inventory(held.clone(), 28);
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
-    let first = &spell.runes[0];
-    if matches!(rune_stock, RuneStock::Empty) {
-        for _ in 0..8 {
-            now += 1;
-            tick(&mut slot, &frame, now);
-            assert!(
-                slot.take_native_action().is_none(),
-                "zero-rune stock must block after the tool withdrawal"
-            );
-            if slot
-                .native_status()
-                .is_some_and(|status| status.phase == NativePhase::Blocked)
-            {
-                break;
-            }
-        }
-        let status = slot.native_status().unwrap();
-        assert_eq!(status.phase, NativePhase::Blocked);
-        let failure = status.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "supply-missing");
-        assert!(failure.message.contains(first.name.as_str()));
-        slot.stop();
-        return;
-    }
     let first_withdrawal = match rune_stock {
         RuneStock::Full => first.count * 5,
         RuneStock::Partial => PARTIAL_BANK_RUNES
@@ -2868,22 +2870,36 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
     }
 
     death.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+    let mut closes = 0;
     for _ in 0..10 {
         now += 1;
         tick(&mut slot, &death, now);
-        assert!(
-            slot.take_native_action().is_none(),
-            "an empty loaded bank must not produce a withdrawal"
-        );
-        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+        if let Some(action) = slot.take_native_action() {
+            assert!(
+                matches!(&action.effect, HostEffect::Interaction(InteractReq::Close)),
+                "an empty loaded bank may be closed, but must not produce a withdrawal"
+            );
+            closes += 1;
+            let authority = action.authority();
+            let request_id = action.request_id.get();
+            accept_trip_operation(&mut slot, &authority, request_id, now);
+            death.seed_bank_observation(-1, now, None, Vec::new());
+        } else if closes == 1 && slot.native_status().unwrap().phase == NativePhase::Blocked {
             break;
         }
     }
+    assert_eq!(
+        closes, 1,
+        "parked recovery must close the open empty bank once"
+    );
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
-    let failure = status.failure.as_ref().unwrap();
-    assert_eq!(failure.code.as_ref(), "supply-missing");
-    assert!(failure.message.to_ascii_lowercase().contains("axe"));
+    assert!(status.failure.is_none(), "an empty bank parks recovery");
+    assert_eq!(slot.state(), script::RunState::Running);
+    assert!(slot.native_run().is_some());
+    assert!(lifecycle_status_text(&slot, "block_reason")
+        .to_ascii_lowercase()
+        .contains("axe"));
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
     slot.stop();
 }
@@ -3976,7 +3992,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
 }
 
 #[test]
-fn site_refused_initial_walk_stops_with_nav_detail() {
+fn site_refused_initial_walk_retries_from_observed_position() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3984,13 +4000,15 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
     let mut slot = started_with(4422, &selected, site_willow_bag("woodcutting.draynor"));
     let frame = site_willow_frame();
     let mut now = 0;
-    let (authority, request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
-    assert!(matches!(effect, HostEffect::Walk(_)));
+    let (authority, initial_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(initial) = effect else {
+        panic!("initial Site approach")
+    };
     slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
             goal: None,
-            request_id: request,
+            request_id: initial_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
                 tick: now,
@@ -4005,19 +4023,15 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
             prereq_allow: None,
         },
     );
-    now += 1;
-    tick(&mut slot, &frame, now);
-    assert_eq!(slot.state(), script::RunState::Idle);
-    assert!(!slot.want_run);
-    let status = slot.native_status().unwrap();
-    assert_eq!(status.phase, NativePhase::Blocked);
-    assert!(status
-        .failure
-        .as_ref()
-        .unwrap()
-        .message
-        .contains("no route to the selected site"));
-    assert!(!slot.has_native_actions());
+    let (_, _, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(retry) = effect else {
+        panic!("fresh Site retry")
+    };
+    assert_eq!(retry.target, initial.target);
+    assert_eq!(retry.required_after.tick, now);
+    assert!(retry.required_after.tick > initial.required_after.tick);
+    assert!(slot.native_status().unwrap().failure.is_none());
+    slot.stop();
 }
 
 #[test]

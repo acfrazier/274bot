@@ -25,7 +25,7 @@ journal-paint-proof = ["dep:parking_lot"]
 # Test-only capacity seams (force the time-off-the-CPU measure on Linux,
 # per-service delay receipts). Enabled from dev-dependencies, never
 # production builds.
-test-support = []
+test-support = ["api/test-support"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

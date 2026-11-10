@@ -29,7 +29,7 @@ import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';
 export default class T extends LoopingBot {
     loop() {
         const rec = Object.values(SHOP_DB).find(r => r.keepers.includes('Aemad')) ?? null;
-        const unknown = Object.values(SHOP_DB).find(r => r.keepers.includes('Shop keeper')) ?? null;
+        const unknown = Object.values(SHOP_DB).find(r => r.keepers.includes('Unpublished test keeper')) ?? null;
         let plan = null;
         let err = null;
         try {
@@ -46,7 +46,7 @@ export default class T extends LoopingBot {
         }
         let unsupported = null;
         try {
-            buyoutPlan({ inv: 'generalshop1', keepers: ['Shop keeper'], items: [] }, { pot_empty: 3 }, 200, new Set(['Pot']));
+            buyoutPlan({ inv: 'unpinned_test_shop', keepers: ['Unpublished test keeper'], items: [] }, { pot_empty: 3 }, 200, new Set(['Pot']));
         } catch (e) {
             unsupported = String(e.message || e);
         }
@@ -94,14 +94,24 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
             "archeryshop",
             "archeryshop2",
             "axeshop",
+            "boozeshop",
+            "clotheshop",
+            "death_pub",
             "fishingshop",
             "fishingshop2",
+            "generalshop1",
+            "generalshop2",
+            "generalshop6",
+            "gnomeshop_heck",
+            "khazardshop",
             "magearena_runeshop",
             "magicguildshop",
             "magicshop",
             "pickaxeshop",
             "runeshop",
-            "shilofishingshop"
+            "shantayshop",
+            "shilofishingshop",
+            "wydinstore"
         ])
     );
     assert_eq!(probe["err"], Value::Null);

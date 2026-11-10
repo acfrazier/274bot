@@ -334,6 +334,17 @@ impl<'a> SnapshotView<'a> {
             .flatten()
     }
 
+    /// Borrow all four current modal roots without allocating. An in-game
+    /// observation with every root at `-1` means no local modal is open;
+    /// an unavailable or disconnected frame returns `None`.
+    pub fn modals(&self) -> Option<Observed<&super::ModalView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.modals(),
+            stamp: self.stamp,
+        })
+    }
+
     /// The m8aq `bankSideSnapshotReady` while the bank and its side root are
     /// open: the side component carries this session's full transmission.
     pub fn bank_side_ready(&self) -> bool {
@@ -1041,6 +1052,7 @@ mod tests {
             assert!(view.inventory_capacity().is_none());
             assert!(view.inventory().is_none());
             assert!(view.bank().is_none());
+            assert!(view.modals().is_none());
             assert!(view.quest_statuses().is_none());
             assert!(view.main_modal().is_none());
             assert!(view.npcs().is_none());
@@ -1071,6 +1083,18 @@ mod tests {
         assert!(view.inventory().is_none());
         assert!(view.bank().is_none());
         assert!(view.quest_statuses().is_none());
+        let modals = view.modals().unwrap();
+        assert_eq!(modals.stamp, stamp);
+        assert!(std::ptr::eq(modals.value, snapshot.modals()));
+        assert_eq!(
+            [
+                modals.value.main,
+                modals.value.side,
+                modals.value.chat,
+                modals.value.tutorial,
+            ],
+            [-1; 4],
+        );
         assert_eq!(view.main_modal().unwrap().value.root, -1);
         assert!(view.npcs().is_none());
         assert!(view.locs().is_none());

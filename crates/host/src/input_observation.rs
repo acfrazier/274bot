@@ -142,6 +142,11 @@ impl PacketObserver for SlotInput {
             LineageKind::Content => InputLineage::ContentRequest(state.request_id),
             LineageKind::Advanced => InputLineage::AdvancedRequest(state.request_id),
         };
+        #[cfg(feature = "test-support")]
+        api::interact::record_classified_driver_packet_for_test(!matches!(
+            lineage,
+            InputLineage::Foreign
+        ));
         state.inputs.record_opcode(revision, opcode, lineage);
     }
 
@@ -228,5 +233,75 @@ mod tests {
             "S3 observer heap: one install={}B; rebind={} allocations; 128 commits={} allocations; retained after detach=0B",
             installed.bytes_current, rebound.count_total, committed.count_total,
         );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn driver_packet_oracle_counts_real_buy_wear_and_loc_commits() {
+        use api::interact::{classified_driver_packet_count_for_test, Driver};
+        let input = SlotInput::new();
+        let mut client = client::client::Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        input.bind_outbound_observer(&mut client);
+        let before = classified_driver_packet_count_for_test();
+        for (index, packet) in [
+            api::prot::Send::inv_button1(311, 0, 3900).unwrap(),
+            api::prot::Send::opheld2(1349, 0, 3214).unwrap(),
+            api::prot::Send::oploc1(3025, 3169, 1276).unwrap(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            Driver::send_packet(&mut client, packet).unwrap();
+            assert_eq!(
+                classified_driver_packet_count_for_test() - before,
+                index as u64 + 1
+            );
+        }
+        assert_eq!(client.out.committed_packet_count(), Some(3));
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn driver_packet_oracle_excludes_client_packets_and_deferred_client_tail() {
+        use api::interact::{classified_driver_packet_count_for_test, Driver};
+        let input = SlotInput::new();
+        let mut client = client::client::Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        input.bind_outbound_observer(&mut client);
+        let before = classified_driver_packet_count_for_test();
+        for packet in [
+            api::prot::Send::no_timeout(),
+            api::prot::Send::map_build_complete(),
+        ] {
+            packet
+                .write_for_revision(ClientRevision::R289, &mut client.out)
+                .unwrap();
+        }
+        assert_eq!(classified_driver_packet_count_for_test(), before);
+        Driver::send_packet(&mut client, &api::prot::Send::close_modal()).unwrap();
+        assert_eq!(classified_driver_packet_count_for_test() - before, 1);
+        api::prot::Send::no_timeout()
+            .write_for_revision(ClientRevision::R289, &mut client.out)
+            .unwrap();
+        client.out.finish_packet();
+        assert_eq!(classified_driver_packet_count_for_test() - before, 1);
+        assert_eq!(client.out.committed_packet_count(), Some(4));
     }
 }

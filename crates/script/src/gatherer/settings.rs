@@ -102,6 +102,8 @@ pub struct GathererSettings {
     pub use_zanaris_bank: bool,
     #[serde(default = "default_bait_target")]
     pub bait_target: i32,
+    #[serde(default = "default_buy_tools")]
+    pub buy_tools: bool,
     #[serde(default)]
     pub food: String,
     #[serde(default)]
@@ -169,6 +171,10 @@ fn default_max_deaths() -> u8 {
     crate::native::death::default_max_deaths()
 }
 
+fn default_buy_tools() -> bool {
+    true
+}
+
 impl Default for GathererSettings {
     fn default() -> Self {
         Self {
@@ -187,6 +193,7 @@ impl Default for GathererSettings {
             use_mage_bank: false,
             use_zanaris_bank: false,
             bait_target: default_bait_target(),
+            buy_tools: default_buy_tools(),
             food: String::new(),
             food_target: 0,
             eat_below: 0,
@@ -436,6 +443,7 @@ impl GathererSettings {
             || self.use_mage_bank != other.use_mage_bank
             || self.use_zanaris_bank != other.use_zanaris_bank
             || self.bait_target != other.bait_target
+            || self.buy_tools != other.buy_tools
             || self.food != other.food
             || self.food_target != other.food_target
             || self.eat_below != other.eat_below
@@ -823,6 +831,7 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "10000",
             "{ key: 'skill', anyOf: ['Fishing'] }",
         ),
+        boolean_setting("buyTools", true),
         setting_group(
             setting_with("food", "string", Some(""), &[], None, Some("gatherer-food")),
             "Safety",
@@ -976,7 +985,7 @@ mod tests {
 
     #[test]
     fn site_is_additive_required_only_when_active_and_restart_required() {
-        assert_eq!(super::super::card::CARD.schema_version, 4);
+        assert_eq!(super::super::card::CARD.schema_version, 5);
         let old = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
         assert_eq!(old.location, "Start");
         assert!(old.site.is_empty());
@@ -1290,6 +1299,24 @@ mod tests {
             gaps: Arc::from([]),
         };
         assert!(target_admits_method("miningResources", &method).unwrap());
+    }
+
+    #[test]
+    fn tool_buying_defaults_on_and_changes_at_an_acquisition_boundary() {
+        let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert!(defaults.buy_tools);
+        assert!(GathererSettings::default().buy_tools);
+        let setting = schema()
+            .iter()
+            .find(|setting| setting.id == "buyTools")
+            .unwrap();
+        assert_eq!(setting.ty, "boolean");
+        assert_eq!(setting.default.as_deref(), Some("true"));
+        let mut bag = SettingsBag::new();
+        bag.insert("buyTools".into(), json!(false));
+        let disabled = GathererSettings::from_bag(&bag).unwrap();
+        assert!(!disabled.buy_tools);
+        assert!(defaults.boundary_changed(&disabled));
     }
 }
 #[cfg(test)]

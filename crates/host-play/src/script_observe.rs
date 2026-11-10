@@ -1306,6 +1306,7 @@ where
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),
+                        shop_keepers: world.as_deref().and_then(|world| world.shop_keeper_facts()),
                         hold: hold || ours,
                         world_members,
                         ..Default::default()
@@ -2137,6 +2138,41 @@ where
                                     walk_permissions,
                                 );
                             }
+                            script::native::HostEffect::ServicePick(request) => {
+                                let evidence = api::quest_progress::EvidenceStamp {
+                                    run: authority.run(),
+                                    tick,
+                                    sequence: tick,
+                                };
+                                let Some(scope) = compatibility_work_scope else {
+                                    slot.complete_native_service_pick(
+                                        &authority,
+                                        script::native_bank::ServicePickReceipt {
+                                            request_id: authority.request_id().get(),
+                                            evidence,
+                                            outcome:
+                                                script::native_bank::ServicePickOutcome::NotSettled,
+                                        },
+                                    );
+                                    continue;
+                                };
+                                super::bank::queue_native_service_pick_scoped(
+                                    navs,
+                                    name,
+                                    scope,
+                                    world,
+                                    state.as_ref(),
+                                    snapshot
+                                        .read()
+                                        .expect("snapshot access requires a published snapshot"),
+                                    super::bank::NativeServicePickInput {
+                                        request,
+                                        authority,
+                                        evidence,
+                                        session_permissions: slot.api_gather_walk_permissions(),
+                                    },
+                                );
+                            }
                         }
                     }
                     let mut dispatchable = Vec::with_capacity(interact.len());
@@ -2550,6 +2586,10 @@ fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot, tick: 
     let mut completed = false;
     if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
         slot.complete_native_bank_pick(&authority, receipt);
+        completed = true;
+    }
+    if let Some((authority, receipt)) = bot.bank_pick.take_service_receipt() {
+        slot.complete_native_service_pick(&authority, receipt);
         completed = true;
     }
     if let Some(result) = bot.assess_result.take() {

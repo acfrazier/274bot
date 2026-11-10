@@ -133,6 +133,7 @@ impl Runtime {
             eligible: true,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
         };
         f(&mut actions, &mut cx)
     }

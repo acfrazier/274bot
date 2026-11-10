@@ -1,7 +1,11 @@
-use super::ledger::{BankDepositTrace, HostAction, HostCustody, HostEffect};
+use super::ledger::{
+    BankDepositTrace, HostAction, HostCustody, HostEffect, PendingPick, PickChannel, PickReceipt,
+};
 use super::owner::Owner;
 use super::*;
-use crate::native_bank::{BankPickReceipt, BankPickRequest};
+use crate::native_bank::{
+    BankPickReceipt, BankPickRequest, ServicePickReceipt, ServicePickRequest,
+};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 /// Add the stage's declared grants to this step's declared route grants.
@@ -364,40 +368,68 @@ impl ActionContext<'_> {
         Ok(request_id.get())
     }
 
-    /// Queue one selector-owned bank pick. This computes a route choice; it
-    /// does not consume a game-interaction event.
+    /// Queue one selector-owned bank pick without a game-interaction event.
     pub fn bank_pick(&mut self, request: BankPickRequest) -> Result<u64, ActionError> {
+        self.emit_pick(HostEffect::BankPick(request), PickChannel::Bank)
+    }
+
+    /// Queue a complete-domain service route pick without a game-interaction event.
+    pub fn service_pick(&mut self, request: ServicePickRequest) -> Result<u64, ActionError> {
+        self.emit_pick(HostEffect::ServicePick(request), PickChannel::Service)
+    }
+
+    fn emit_pick(&mut self, effect: HostEffect, channel: PickChannel) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         let ledger = self.ledger.as_mut().expect("owner checked");
         let request_id = ledger.next_id()?;
         owner.set_interaction(request_id);
         ledger.interaction = None;
         ledger.interaction_request = None;
-        ledger.bank_pick = None;
-        ledger.bank_pick_request = Some(request_id);
+        ledger.pick = None;
+        ledger.pick_request = Some(PendingPick {
+            request: request_id,
+            channel,
+        });
         ledger.outbox.push(HostAction {
             custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
-            effect: HostEffect::BankPick(request),
+            effect,
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
         });
         Ok(request_id.get())
     }
 
+    /// Read only the live matching bank-channel result.
     pub fn bank_pick_receipt(&self, request_id: u64) -> Option<&BankPickReceipt> {
+        match self.pick_receipt(request_id)? {
+            PickReceipt::Bank(receipt) => Some(receipt),
+            PickReceipt::Service(_) => None,
+        }
+    }
+
+    /// Read only the live matching typed service-channel result.
+    pub fn service_pick_receipt(&self, request_id: u64) -> Option<&ServicePickReceipt> {
+        match self.pick_receipt(request_id)? {
+            PickReceipt::Service(receipt) => Some(receipt),
+            PickReceipt::Bank(_) => None,
+        }
+    }
+
+    fn pick_receipt(&self, request_id: u64) -> Option<&PickReceipt> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
-        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+        let pending = ledger.pick_request?;
+        if owner.run != self.run()
+            || owner.id.get() != self.action_id
+            || !owner.interaction_live(pending.request)
+            || pending.request.get() != request_id
+        {
             return None;
         }
-        ledger.bank_pick.as_ref().filter(|receipt| {
-            ledger
-                .bank_pick_request
-                .is_some_and(|id| id.get() == request_id)
-                && receipt.request_id == request_id
-                && receipt.evidence.run == self.run()
+        ledger.pick.as_ref().filter(|receipt| {
+            receipt.request_id() == request_id && receipt.evidence().run == self.run()
         })
     }
 
@@ -633,9 +665,12 @@ impl ActionContext<'_> {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
             }
-            if ledger.bank_pick_request == Some(request_id) {
-                ledger.bank_pick_request = None;
-                ledger.bank_pick = None;
+            if ledger
+                .pick_request
+                .is_some_and(|pending| pending.request == request_id)
+            {
+                ledger.pick_request = None;
+                ledger.pick = None;
             }
 
             for receipt in &mut ledger.batch_receipts {
@@ -1212,6 +1247,7 @@ mod tests {
             action_id: owner.id.get(),
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
@@ -1726,6 +1762,7 @@ mod tests {
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             active_now,
             wall_now: Instant::now(),

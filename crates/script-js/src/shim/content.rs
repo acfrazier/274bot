@@ -187,3 +187,301 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod shop_heap_tests {
+    use super::content_json;
+    use client::io::ClientRevision;
+    use rustyscript::{Runtime, RuntimeOptions};
+    use serde_json::Value;
+
+    const ORIGINAL_TWELVE_SHOPS: [&str; 12] = [
+        "adventurershop",
+        "magearena_runeshop",
+        "magicshop",
+        "runeshop",
+        "archeryshop",
+        "archeryshop2",
+        "fishingshop",
+        "fishingshop2",
+        "shilofishingshop",
+        "axeshop",
+        "pickaxeshop",
+        "magicguildshop",
+    ];
+
+    const POSTED_SHOP_KEYS: [&str; 22] = [
+        "adventurershop",
+        "magearena_runeshop",
+        "magicshop",
+        "runeshop",
+        "archeryshop",
+        "archeryshop2",
+        "fishingshop",
+        "fishingshop2",
+        "shilofishingshop",
+        "axeshop",
+        "pickaxeshop",
+        "magicguildshop",
+        "death_pub",
+        "generalshop1",
+        "generalshop2",
+        "generalshop6",
+        "shantayshop",
+        "khazardshop",
+        "gnomeshop_heck",
+        "wydinstore",
+        "clotheshop",
+        "boozeshop",
+    ];
+
+    #[derive(Clone, Copy, Debug)]
+    struct HeapStats {
+        used: usize,
+        total: usize,
+    }
+
+    impl HeapStats {
+        fn delta_from(self, before: Self) -> HeapDelta {
+            HeapDelta {
+                used: self.used as i128 - before.used as i128,
+                total: self.total as i128 - before.total as i128,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct HeapDelta {
+        used: i128,
+        total: i128,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct ShopCoverage {
+        records: usize,
+        items: usize,
+        keepers: usize,
+    }
+
+    fn assert_exact_shop_keys(shops: &Value, expected: &[&str]) {
+        let object = shops.as_object().expect("shop dictionary");
+        let mut actual: Vec<&str> = object.keys().map(String::as_str).collect();
+        actual.sort_unstable();
+        let mut expected = expected.to_vec();
+        expected.sort_unstable();
+        assert_eq!(actual, expected, "exact inventory key set");
+    }
+
+    fn shop_coverage(content: &Value) -> ShopCoverage {
+        let shops = content
+            .get("shops")
+            .and_then(Value::as_object)
+            .expect("serialized shops object");
+        let mut item_count = 0usize;
+        let mut keeper_count = 0usize;
+        for (inventory, record) in shops {
+            assert_eq!(
+                record.get("inv").and_then(Value::as_str),
+                Some(inventory.as_str()),
+                "{inventory}: record identity"
+            );
+            let items = record
+                .get("items")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("{inventory}: items array"));
+            assert!(!items.is_empty(), "{inventory}: stocked items");
+            assert!(
+                items.iter().all(|item| item.as_object().is_some()),
+                "{inventory}: every posted item is an object"
+            );
+            item_count += items.len();
+
+            let keepers = record
+                .get("keepers")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("{inventory}: keepers array"));
+            assert!(!keepers.is_empty(), "{inventory}: keeper coverage");
+            assert!(
+                keepers.iter().all(|keeper| keeper.as_str().is_some()),
+                "{inventory}: keeper entries retain their actual string shape"
+            );
+            keeper_count += keepers.len();
+        }
+        ShopCoverage {
+            records: shops.len(),
+            items: item_count,
+            keepers: keeper_count,
+        }
+    }
+
+    /// Form the measurement-only comparator by removing only the ten new
+    /// inventories from the production serializer's full selected content.
+    fn original_twelve_content(full_json: &str) -> (String, ShopCoverage, ShopCoverage) {
+        let full: Value = serde_json::from_str(full_json).expect("production content JSON");
+        let full_shops = full.get("shops").expect("production shops");
+        assert_exact_shop_keys(full_shops, &POSTED_SHOP_KEYS);
+        let full_coverage = shop_coverage(&full);
+
+        let mut subset = full.clone();
+        let subset_shops = subset
+            .get_mut("shops")
+            .and_then(Value::as_object_mut)
+            .expect("mutable production shops");
+        subset_shops.retain(|inventory, _| ORIGINAL_TWELVE_SHOPS.contains(&inventory.as_str()));
+        assert_exact_shop_keys(
+            subset.get("shops").expect("twelve-shop subset"),
+            &ORIGINAL_TWELVE_SHOPS,
+        );
+        for (field, full_value) in full.as_object().expect("content object") {
+            if field != "shops" {
+                assert_eq!(
+                    subset.get(field),
+                    Some(full_value),
+                    "only shops may differ in the measurement comparator"
+                );
+            }
+        }
+        let subset_coverage = shop_coverage(&subset);
+        (
+            serde_json::to_string(&subset).expect("serialize twelve-shop comparator"),
+            subset_coverage,
+            full_coverage,
+        )
+    }
+
+    fn runtime_with_empty_host() -> Runtime {
+        crate::runtime::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).expect("create clean V8 runtime");
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .expect("create production host root");
+        runtime
+    }
+
+    // Keep this assignment identical to production publication in
+    // load/bindings.rs:777-782; `content_json` above is its production serializer.
+    fn post_content(runtime: &mut Runtime, serialized_content: &str) {
+        let assignment = format!("globalThis.__rs2b0t_host.content = {serialized_content};");
+        runtime
+            .eval::<()>(&assignment)
+            .expect("publish serialized production content");
+    }
+
+    fn collected_heap(runtime: &mut Runtime) -> HeapStats {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        let heap = isolate.get_heap_statistics();
+        HeapStats {
+            used: heap.used_heap_size(),
+            total: heap.total_heap_size(),
+        }
+    }
+
+    #[test]
+    fn production_shop_content_retains_bounded_v8_heap_across_replacements() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let game_data =
+            api::game_data::for_revision(ClientRevision::R289).expect("R289 selected facts");
+        let full_json = content_json(Some(&game_data)).expect("R289 shop content");
+        let (twelve_json, twelve_coverage, full_coverage) = original_twelve_content(&full_json);
+        assert_eq!(twelve_coverage.records, ORIGINAL_TWELVE_SHOPS.len());
+        assert_eq!(full_coverage.records, POSTED_SHOP_KEYS.len());
+        assert!(twelve_coverage.items > 0 && twelve_coverage.keepers > 0);
+        assert!(full_coverage.items > twelve_coverage.items);
+        assert!(full_coverage.keepers > twelve_coverage.keepers);
+
+        let mut twelve_runtime = runtime_with_empty_host();
+        let twelve_before = collected_heap(&mut twelve_runtime);
+        post_content(&mut twelve_runtime, &twelve_json);
+        let twelve_after = collected_heap(&mut twelve_runtime);
+        let twelve_delta = twelve_after.delta_from(twelve_before);
+        drop(twelve_runtime);
+
+        let mut full_runtime = runtime_with_empty_host();
+        let full_before = collected_heap(&mut full_runtime);
+        post_content(&mut full_runtime, &full_json);
+        let full_after = collected_heap(&mut full_runtime);
+        let full_delta = full_after.delta_from(full_before);
+        let added_shop_graph_growth = full_delta.used - twelve_delta.used;
+        assert!(
+            added_shop_graph_growth > 0,
+            "the ten added inventories must be retained: full {full_delta:?}, \
+             original twelve {twelve_delta:?}"
+        );
+
+        // The 22-vs-12 retained delta covers the ten extra record objects,
+        // their nested item objects, and keeper strings. Replacements retain
+        // at most one such measured graph beyond the current content root.
+        let mut replacements = Vec::with_capacity(3);
+        for _ in 0..3 {
+            post_content(&mut full_runtime, &full_json);
+            replacements.push(collected_heap(&mut full_runtime));
+        }
+        let last_replacement = *replacements.last().expect("replacement sample");
+        let replacement_delta = last_replacement.delta_from(full_after);
+        let retained_used = last_replacement.used.saturating_sub(full_after.used);
+        let one_added_shop_graph =
+            usize::try_from(added_shop_graph_growth).expect("positive added-shop heap delta");
+
+        println!(
+            "R289 production shop content post-GC V8 heap: \
+             12-shop objects records={} items={} keepers={}, \
+             before used={} total={} after used={} total={} deltas used={} total={}; \
+             22-shop objects records={} items={} keepers={}, \
+             before used={} total={} after used={} total={} deltas used={} total={}; \
+             added-ten-shop used delta={} total delta={}; \
+             3 replacements last used={} total={} deltas from full used={} total={} \
+             retained-used={} bound-one-added-shop-graph={}",
+            twelve_coverage.records,
+            twelve_coverage.items,
+            twelve_coverage.keepers,
+            twelve_before.used,
+            twelve_before.total,
+            twelve_after.used,
+            twelve_after.total,
+            twelve_delta.used,
+            twelve_delta.total,
+            full_coverage.records,
+            full_coverage.items,
+            full_coverage.keepers,
+            full_before.used,
+            full_before.total,
+            full_after.used,
+            full_after.total,
+            full_delta.used,
+            full_delta.total,
+            added_shop_graph_growth,
+            full_delta.total - twelve_delta.total,
+            last_replacement.used,
+            last_replacement.total,
+            replacement_delta.used,
+            replacement_delta.total,
+            retained_used,
+            one_added_shop_graph,
+        );
+        for (index, sample) in replacements.iter().enumerate() {
+            let delta = sample.delta_from(full_after);
+            let retained = sample.used.saturating_sub(full_after.used);
+            println!(
+                "R289 production content replacement {} post-GC: used={} total={} \
+                 delta-used={} delta-total={}",
+                index + 1,
+                sample.used,
+                sample.total,
+                delta.used,
+                delta.total,
+            );
+            assert!(
+                retained <= one_added_shop_graph,
+                "replacement {} retained {retained} used-heap bytes; \
+                 one measured added-shop graph is {one_added_shop_graph} bytes \
+                 (full {}, replacement {})",
+                index + 1,
+                full_after.used,
+                sample.used
+            );
+        }
+    }
+}

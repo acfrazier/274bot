@@ -17,9 +17,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
-use crate::collision::WorldCollision;
+use crate::collision::{WorldCollision, SQ_BLOCKED, WALK_BLOCK_FLAGS};
 use crate::contract::{NavIdentity, SearchGraphEnvelope};
 use crate::grid::StepGrid;
 use crate::pack::{decode_any_reader, decode_full, decode_grid, BankStand, PackError};
@@ -29,7 +28,7 @@ use crate::transport::{TransportEdge, TransportGraph, TransportKind, WildernessR
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
 /// router's directional step test rejects the tile from any direction
 /// (a 274N grid walk byte is boolean; there are no half-open faces to keep).
-const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+const BLOCKED: u32 = SQ_BLOCKED | WALK_BLOCK_FLAGS;
 
 /// The whole-world collision + transport graph + bank stand table the
 /// router consumes.
@@ -39,6 +38,7 @@ pub struct NavWorld {
     reachability: ReachabilityAtlas,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
+    shop_keepers: OnceLock<Arc<api::service_pick::ShopKeeperFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
     /// Shared compatibility lookup rules, cloned once and retained per world.
@@ -52,6 +52,14 @@ pub struct NavWorld {
 struct TransportItemNames {
     by_id: HashMap<i32, String>,
     max_name_bytes: usize,
+}
+
+/// Why selected shop placements could not be bound to a navigation world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ShopKeeperBindError {
+    /// This world already owns its selected-content shop placements.
+    #[error("shop keeper facts already bound")]
+    AlreadyBound,
 }
 
 impl NavWorld {
@@ -99,6 +107,12 @@ impl NavWorld {
         self.named_banks.get()
     }
 
+    /// Pinned `keepers.npc` and selected NPC placements, resolved once against
+    /// this world's collision. Every bot shares these rows and access rings.
+    pub fn shop_keeper_facts(&self) -> Option<&Arc<api::service_pick::ShopKeeperFacts>> {
+        self.shop_keepers.get()
+    }
+
     /// Selected-cache display names for transport resources, bound once with
     /// the bank facts. An unbound/unknown item stays unnamed, never guessed.
     pub fn transport_item_name(&self, id: i32) -> Option<&str> {
@@ -119,8 +133,8 @@ impl NavWorld {
             .map_or(0, |names| names.max_name_bytes)
     }
 
-    /// Bind selected-content placements once. A repeated bind is rejected,
-    /// rather than accepting a data argument whose value would be ignored.
+    /// Bind bank placements and transport-item names, without loading shops.
+    /// A repeated bind is rejected; different data is never silently ignored.
     pub fn bind_named_bank_facts(
         &self,
         data: &api::game_data::SelectedGameData,
@@ -165,6 +179,23 @@ impl NavWorld {
             })
             .map_err(|_| "item names already bound")?;
         Ok(())
+    }
+
+    /// Bind selected shop placements once, before a shop consumer starts.
+    /// Bank-only worlds do not need the process-wide shop catalog or these rows.
+    pub fn bind_shop_keeper_facts(
+        &self,
+        data: &api::game_data::SelectedGameData,
+    ) -> Result<(), ShopKeeperBindError> {
+        if self.shop_keepers.get().is_some() {
+            return Err(ShopKeeperBindError::AlreadyBound);
+        }
+        self.shop_keepers
+            .set(Arc::new(crate::service_pick::resolve_shop_keepers(
+                data,
+                &self.collision,
+            )))
+            .map_err(|_| ShopKeeperBindError::AlreadyBound)
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world
@@ -226,6 +257,7 @@ impl NavWorld {
             reachability,
             banks,
             named_banks: OnceLock::new(),
+            shop_keepers: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
             wilderness_rules: OnceLock::new(),

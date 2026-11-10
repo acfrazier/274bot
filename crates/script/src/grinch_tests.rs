@@ -177,6 +177,7 @@ impl Driver {
                     .with_reach(reach)
                     .with_world_members(Truth::Unknown)
                     .with_bank_memory(bank_memory),
+                shop_keepers: None,
                 retained: &mut self.retained,
                 action_id: 0,
                 active_now: Duration::from_millis(tick.saturating_mul(600)),
@@ -215,6 +216,7 @@ impl Driver {
                         reach: None,
                         reach_flood: None,
                         bank_memory,
+                        shop_keepers: None,
                         collision: None,
                         hold: false,
                         world_members: Truth::Unknown,

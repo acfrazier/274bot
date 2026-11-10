@@ -78,6 +78,8 @@ pub(super) const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
 pub(super) const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
 pub(super) const CAPTURE_GRACE: Duration = Duration::from_secs(10);
 #[cfg(feature = "js")]
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
+#[cfg(feature = "js")]
 const FEATHER: i32 = 314;
 #[cfg(feature = "js")]
 const LOGS: i32 = 1511;
@@ -1055,6 +1057,10 @@ fn has(snapshot: &GameSnapshot, id: i32, held: i32) -> bool {
 }
 
 #[cfg(feature = "js")]
+include!("clean_logout_guard.inc.rs");
+#[cfg(feature = "js")]
+define_clean_logout_guard!(super::Play, CLEAN_LOGOUT_DEADLINE);
+#[cfg(feature = "js")]
 fn run_compat_cell(spec: &CompatSpec) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     let root = PathBuf::from(
@@ -1114,6 +1120,12 @@ fn run_compat_cell(spec: &CompatSpec) {
     )
     .unwrap_or_else(|error| {
         panic!("HARNESS PREREQUISITE FAILURE (before the cell deadline): starting login: {error}")
+    });
+    let mut logout_guard = (spec.label == "l-seat-gather-loop").then(|| CleanLogoutGuard {
+        play: &play,
+        account: &account,
+        label: spec.label,
+        attempted: false,
     });
     let mut login_ready = false;
     // The posted frame the answer arrived at; the verdict reads a later one.
@@ -1212,6 +1224,9 @@ fn run_compat_cell(spec: &CompatSpec) {
             })
         };
         if let Some((trace, result, facts, error)) = written {
+            if let Some(guard) = logout_guard.as_mut() {
+                guard.logout().unwrap_or_else(|error| panic!("{error}"));
+            }
             assert!(
                 error.is_none(),
                 "evidence capture failed: {error:?}; {trace:#?}"

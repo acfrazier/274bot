@@ -6,6 +6,36 @@
 follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
+## Nearest-service search
+
+`api::service_pick::ServiceCandidate` borrows a resolved row's access tiles.
+The bank and shop-keeper bindings share the same footprint access rule:
+standable tiles outside the footprint, on an open side, with no wall on the
+shared edge. A keeper placement is a one-tile footprint with all sides open.
+`NavWorld` resolves every pinned keeper placement once when selected-content
+facts are bound. All bots share those rows and their inline access rings.
+
+`nearest_service_air` is a test-only ordering oracle over borrowed candidates
+with no heap allocation.
+Its order is same level, footprint Chebyshev distance, access distance, then
+access x and z. Air order is not a route-cost decision.
+
+A routed pick searches **every access tile of every eligible row in one
+first-goal search**. It never pages the domain by air distance. Teleports and
+bank fetching are disabled. The host uses the same admitted cooperative
+cursor and cancellation fences as native bank selection. An established
+`NoPath` is distinct from `BudgetExhausted` or `NotSettled`; the latter two
+leave reachability undecided. Unknown quest facts close their route edges.
+
+The current native host supplies the same empty avoid-rectangle set as its
+bank picks, while preserving wilderness and danger permission bits. A future
+owner-supplied avoid set enters the typed service request and the existing
+cooperative request's `avoid` input; it needs no second search implementation.
+Cooking adds its own resolved facts binding and service kind, not a fork of
+the geometry or search.
+
+## Pack bake
+
 ## Product staging and local generation
 
 Product builds do not run `nav-bake`. The host build stages existing payloads

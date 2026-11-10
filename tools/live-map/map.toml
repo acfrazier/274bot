@@ -99,6 +99,7 @@ globs = [
   "crates/host-play/tests/quester_families_live.rs",
   "crates/nav-bake/src/transport/**",
   "crates/nav-bake/src/transport.rs",
+  "crates/host-play/tests/gatherer_live.rs",
   "crates/frontend-core/src/**",
   "crates/panel/src/**",
   "crates/panel/assets/**",
@@ -163,13 +164,31 @@ globs = [
   # deleted by script split S3; its code moved to `script-js`
   # S3 commit: 6831a262cbb35272e6a596b14a1239901b1ea90b.
   "crates/script/src/shim/mod.rs",
+  # These exact paths cover test-only or declaration-only changes in this revision.
+  # Product changes in these files need live coverage instead of this exemption.
+  "crates/host/Cargo.toml",
+  "crates/host-play/Cargo.toml",
+  "crates/host/src/input_observation.rs",
+  "crates/host-play/src/combat_proof.rs",
+  "crates/host-play/src/script_bank_harness.rs",
+  "crates/script/src/native/server_ordered.rs",
+  "crates/script-js/host-js/index.d.ts",
+  # Approved merge ancestry: workspace version/lint declarations and a test-only
+  # terminal benchmark seam (the remaining memory.rs change is comment-only).
+  "Cargo.toml",
+  "Cargo.lock",
+  "crates/host-play/src/memory.rs",
   "crates/host-play/src/bank_core_live.rs",
+  "crates/host-play/src/clean_logout_guard.inc.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
   # Test/live-harness only: host-play/src/lib.rs:634-635 gates this module
   # with cfg(any(test, all(feature = "live-harness", feature = "test-support"))).
   "crates/host-play/src/bank_npc_live.rs",
   "crates/host-play/src/bank_memory_live.rs",
   "crates/host-play/src/gather_bait_live.rs",
+  "crates/host-play/src/acquire_shop_live.rs",
+  "crates/host-play/src/buy_reply_probe_live.rs",
+  "crates/host-play/src/gather_tool_buy_live.rs",
   "crates/host-play/src/gather_held_live.rs",
   "crates/host-play/src/script_bank_harness.rs",
   "crates/host-play/src/gather_return_live.rs",
@@ -271,6 +290,8 @@ exceptions = [
   "crates/host-play/tests/walk_no_route_live.rs",
   "crates/frontend-core/src/survival_live_tests.rs",
   "crates/host-play/src/survival_eat_live_tests.rs",
+  "crates/host-play/src/gather_bait_live.rs",
+  "crates/host-play/tests/gatherer_live.rs",
 ]
 
 # Controlled native steps prove slow-return, shutdown, panic and custody rules.
@@ -595,6 +616,14 @@ globs = ["crates/script/Cargo.toml", "crates/script/src/card.rs", "crates/script
 cells = [
   "script.catalog-options-headless|${ISOHOME:?} env -u GITHUB_ACTIONS nice -n 10 cargo test --locked -p script --features test-hooks,canvas-raster --lib -- --nocapture --test-threads=1",
 ]
+
+[[cover]]
+globs = ["crates/host-play/src/bank_npc_live.rs"]
+cells = [
+  "host.bank-mage-teller-native|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_mage_teller_native_real_play_receipt --nocapture --test-threads=1",
+  "host.bank-npc-pick-burst|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_ten_guest_shared_bank_pick_full_retry_burst --nocapture --test-threads=1",
+]
+
 
 [[cover]]
 globs = ["crates/api/src/cook_locations.rs", "crates/script-js/src/compat/cook_locations.rs"]
@@ -1152,7 +1181,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/grinch.rs", "crates/script/src/quester/families/reach.rs", "crates/script-js/src/compat/anchor_return.rs"]
+globs = ["crates/script/src/grinch.rs", "crates/script/src/acquire/run.rs", "crates/script/src/quester/families/reach.rs", "crates/script-js/src/compat/anchor_return.rs"]
 cells = [
   "host.grinch-cross-region-return|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test grinch_live -- --ignored --exact grinch_three_bank_returns_cross_region_live --nocapture --test-threads=1",
 ]
@@ -1952,3 +1981,72 @@ globs = ["vendor/fr-client-rust/crates/client/src/sound/midi.rs"]
 cells = [
   "vendor.midi-pcm-differential|cd vendor/fr-client-rust && DEPS_BATCH_025_PCM_CORPUS=${DEPS_BATCH_025_PCM_CORPUS:?} DEPS_BATCH_025_PCM_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/midi-pcm-capture DEPS_BATCH_025_PCM_FIXTURE_DIR=${DEPS_BATCH_025_PCM_FIXTURE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p client --features audio,test-support --test midi_pcm_differential captures_production_pcm_and_compares_optional_baseline -- --ignored --exact --nocapture --test-threads=1|--locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --features audio,test-support --test midi_pcm_differential captures_production_pcm_and_compares_optional_baseline -- --ignored --exact",
 ]
+
+# The native acquisition core binds selected shop facts, routes to an exact
+# keeper, and reconciles each real ShopButton against posted content replies.
+[[cover]]
+globs = ["crates/api/src/service_pick.rs", "crates/api/src/shop_facts.rs", "crates/host-play/src/lib.rs", "crates/host-play/src/script_bank.rs", "crates/nav-planner/src/collision.rs", "crates/nav-planner/src/service_pick.rs", "crates/nav-planner/src/world.rs", "crates/script-js/compat-js/index.d.ts", "crates/script/src/acquire/buy.rs", "crates/script/src/acquire/mod.rs", "crates/script/src/acquire/plan.rs", "crates/script/src/acquire/run.rs", "crates/script/src/acquire/shop_run.rs", "crates/script/src/acquire/vendor.rs", "crates/script/src/shop_open.rs"]
+cells = [
+  "host.acquire-shop-explicit|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_explicit_live --nocapture --test-threads=1",
+  "host.acquire-shop-nearest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_nearest_live --nocapture --test-threads=1",
+  "host.buy-reply-probe|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact buy_reply_probe_live::live_buy_reply_probe_engine_l --nocapture --test-threads=1",
+]
+# Startup binds shop facts for both explicit and nearest acquisition.
+[[cover]]
+globs = ["crates/host-play/src/play_bootstrap.rs"]
+cells = [
+  "host.acquire-shop-explicit|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_explicit_live --nocapture --test-threads=1",
+  "host.acquire-shop-nearest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact acquire_shop_live::acquire_shop_nearest_live --nocapture --test-threads=1",
+]
+
+# Tool buying and shortage parking use the shared acquisition owner. These
+# cells keep stock, reply, wear, relog and operator-control receipts separate.
+[[cover]]
+globs = ["crates/script/src/gatherer/**", "crates/script/src/slot/compiled.rs", "crates/frontend-core/src/views.rs", "crates/frontend-core/src/fleet.rs"]
+cells = [
+  "host.gatherer-tool-buy-harpoon|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_tool_buy_live::gatherer_tool_buy_harpoon --nocapture --test-threads=1",
+  "host.gatherer-tool-buy-no-coins|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_tool_buy_live::gatherer_tool_buy_no_coins --nocapture --test-threads=1",
+  "host.gatherer-tool-buy-axe-wear|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_tool_buy_live::gatherer_tool_buy_axe_wear --nocapture --test-threads=1",
+  "host.gatherer-park-resume|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_tool_buy_live::live_gatherer_park_then_resume --nocapture --test-threads=1",
+  "host.gatherer-park-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_tool_buy_live::live_gatherer_park_relog --nocapture --test-threads=1",
+  "frontend-core.gatherer-park-controls|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BLOCKED_ENGINE_DIR=${ENGINE_L_DIR:?} BLOCKED_NAV_PACK=${NAV_PACK_289:?} BLOCKED_CATALOG_ROOT=${CATALOG_ROOT:?} BLOCKED_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --features live-harness --test native_blocked_live -- --ignored --exact gatherer_parked_status_is_shared_and_controllable --nocapture --test-threads=1",
+]
+# The M1 bank-only tests use real Draynor bait and an isolated account cache.
+[[cover]]
+globs = ["crates/host-play/src/gather_bait_live.rs"]
+cells = [
+  "host.gather-bait-one-trip|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_bait_live::live_gather_bait_one_trip_then_missing_in_place_at_draynor --nocapture --test-threads=1",
+  "host.gather-bait-stale-hint|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact gather_bait_live::live_gather_bait_stale_hint_costs_one_trip_at_draynor --nocapture --test-threads=1",
+]
+
+# These selectors cover the requested real-content Gatherer tests.
+[[cover]]
+globs = ["crates/host-play/tests/gatherer_live.rs"]
+cells = [
+  "host.gatherer-wc-near-edge|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_wc_near_edge --nocapture --test-threads=1",
+  "host.gatherer-location-modes|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_location_modes --nocapture --test-threads=1",
+  "host.gatherer-wc-no-placement|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_wc_area_no_placement --nocapture --test-threads=1",
+  "host.gatherer-mine-gas-hazard|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_mine_gas_hazard --nocapture --test-threads=1",
+  "host.gatherer-death-return|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_WC_BANK_TILE=3017,3170,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_return --nocapture --test-threads=1",
+  "host.gatherer-death-return-respawn-region|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_return_respawn_region --nocapture --test-threads=1",
+  "host.gatherer-death-return-no-stock|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_return_no_stock --nocapture --test-threads=1",
+  "host.gatherer-death-return-refused-stops|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_return_refused_stops --nocapture --test-threads=1",
+  "host.gatherer-death-watchdog-pending5|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_watchdog_pending5 --nocapture --test-threads=1",
+  "host.gatherer-death-watchdog-proving|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_death_watchdog_proving --nocapture --test-threads=1",
+  "host.gatherer-random|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_ENGINE_DIR=${ENGINE_L_DIR:?} BOT_ENGINE_DIR=${ENGINE_L_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_random --nocapture --test-threads=1",
+]
+
+# Approved walk-retry ancestry also carries these separately mapped seams.
+# Keep their product paths covered rather than treating the merge as not-live.
+[[cover]]
+globs = ["crates/frontend-core/src/session/native_settings.rs"]
+cells = [
+  "frontend-core.native-copy-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib fleet_copy_",
+]
+
+[[cover]]
+globs = ["crates/frontend-core/src/bench.rs"]
+cells = [
+  "panel.memory-completion-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib memory_run_",
+]
+

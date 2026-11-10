@@ -58,6 +58,23 @@ pub struct VendorFact<'a> {
     pub item: &'a ShopItemFact,
 }
 
+/// A joined pinned shop keeper, without a stock selection.
+///
+/// Identity comes from the generated shop record's keeper config (the NPC's
+/// `owned_shop` parameter), joined to the selected `npc.pack`; display names
+/// never join rows.
+#[derive(Debug, Clone, Copy)]
+pub struct KeeperFact<'a> {
+    /// The posted inventory selected by the keeper's `owned_shop` parameter.
+    pub record: &'a ShopRecord,
+    /// The NPC config alias that owns the shop.
+    pub keeper_config: &'a str,
+    /// The NPC display name, not an identity key.
+    pub keeper_name: &'a str,
+    /// The selected `npc.pack` type id for `keeper_config`, not a live index.
+    pub keeper_id: i32,
+}
+
 #[derive(Debug)]
 struct JoinedKeeper {
     shop_index: usize,
@@ -265,6 +282,24 @@ pub fn vendor_by_keeper_config<'a>(
     }))
 }
 
+/// Borrow every keeper joined to a pinned posted shop, in content order.
+///
+/// These are the same `owned_shop` → selected-`npc.pack` rows used by
+/// [`vendors_for`], without an item filter.
+/// The process-wide per-revision join owns the returned rows. Once bound,
+/// constructing or advancing this iterator does not allocate.
+pub fn keepers(
+    data: &SelectedGameData,
+) -> Result<impl Iterator<Item = KeeperFact<'static>>, FactError> {
+    let joined = joined_shops(data)?;
+    Ok(joined.vendor_keepers.iter().map(move |row| KeeperFact {
+        record: &joined.shops[row.shop_index],
+        keeper_config: &row.config,
+        keeper_name: &row.name,
+        keeper_id: row.id,
+    }))
+}
+
 /// Content per-unit buying price, never below 1 gp.
 ///
 /// Formula: `shop.rs2:131-147` and `shop.rs2:183-192`.
@@ -424,6 +459,10 @@ mod tests {
         super::vendor_by_keeper_config(data, config, item_id).expect("generated shop facts")
     }
 
+    fn keepers(data: &SelectedGameData) -> impl Iterator<Item = KeeperFact<'static>> {
+        super::keepers(data).expect("generated shop facts")
+    }
+
     fn content_json_value(data: &SelectedGameData) -> ContentShops<'_> {
         super::content_json_value(data).expect("generated shop facts")
     }
@@ -477,10 +516,20 @@ mod tests {
         "axeshop",
         "pickaxeshop",
         "magicguildshop",
+        "death_pub",
+        "generalshop1",
+        "generalshop2",
+        "generalshop6",
+        "shantayshop",
+        "khazardshop",
+        "gnomeshop_heck",
+        "wydinstore",
+        "clotheshop",
+        "boozeshop",
     ];
 
     #[test]
-    fn all_twelve_shopbuyout_presets_are_posted_on_both_revisions() {
+    fn all_twenty_two_posted_shops_resolve_on_both_revisions() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let Some(catalog) = data(rev) else {
                 return;
@@ -495,9 +544,7 @@ mod tests {
                 );
             }
             // Unpublished identities stay fail-closed.
-            assert!(shop_by_keeper(&catalog, "Shop keeper").is_none());
             assert!(shop_by_keeper(&catalog, "Chamber guardian").is_none());
-            assert!(shop_by_inv(&catalog, "generalshop1").is_none());
             assert!(shop_by_inv(&catalog, "magearena_staffshop").is_none());
         }
     }
@@ -851,6 +898,160 @@ mod tests {
     }
 
     #[test]
+    fn path_keeper_configs_resolve_exact_inventory_items_and_npc_ids() {
+        let Some(catalog) = data(ClientRevision::R289) else {
+            return;
+        };
+        let cases = [
+            ("death_barman", "death_pub", "asgarnian_ale"),
+            ("generalshopkeeper1", "generalshop1", "pot_empty"),
+            ("generalshopkeeper2", "generalshop2", "pot_empty"),
+            ("generalshopkeeper6", "generalshop6", "pot_empty"),
+            ("shantay", "shantayshop", "water_skin4"),
+            ("khazard_shopkeeper", "khazardshop", "bronze_pickaxe"),
+            ("gnome_heckelfunch", "gnomeshop_heck", "brandy"),
+            ("wydin", "wydinstore", "pot_flour"),
+            ("thessalia", "clotheshop", "white_apron"),
+            ("zambo", "boozeshop", "beer"),
+        ];
+        assert_eq!(shops_for(&catalog).len(), 22);
+        for (config, inv, obj) in cases {
+            let item_id = catalog.item_by_alias(obj).expect(obj).id;
+            let vendor = vendor_by_keeper_config(&catalog, config, item_id).expect(config);
+            let npc_id = catalog.npc_by_config(config).expect(config).id;
+            assert_eq!(vendor.record.inv, inv);
+            assert_eq!(vendor.keeper_config, config);
+            assert_eq!(vendor.keeper_id, npc_id);
+            assert_eq!(vendor.item.obj, obj);
+            assert!(
+                catalog
+                    .npc_placements()
+                    .expect("NPC placements")
+                    .rows
+                    .iter()
+                    .any(|placement| placement.npc_id == npc_id),
+                "{config} has no placement candidate"
+            );
+            let shop = shop_by_inv(&catalog, inv).expect(inv);
+            for stocked_item in &shop.items {
+                let stocked_id = catalog
+                    .item_by_alias(&stocked_item.obj)
+                    .expect(&stocked_item.obj)
+                    .id;
+                let stocked_vendor =
+                    vendor_by_keeper_config(&catalog, config, stocked_id).expect(config);
+                assert_eq!(stocked_vendor.keeper_id, npc_id);
+            }
+        }
+
+        let bronze_pickaxe_id = catalog
+            .item_by_alias("bronze_pickaxe")
+            .expect("bronze pickaxe")
+            .id;
+        let vendors: Vec<_> = vendors_for(&catalog, bronze_pickaxe_id).collect();
+        let mut keeper_rows: Vec<_> = vendors
+            .iter()
+            .map(|vendor| (vendor.keeper_config, vendor.record.inv.as_str()))
+            .collect();
+        keeper_rows.sort_unstable();
+        assert_eq!(
+            keeper_rows,
+            [
+                ("aemad", "adventurershop"),
+                ("bob", "axeshop"),
+                ("khazard_shopkeeper", "khazardshop"),
+                ("kortan", "adventurershop"),
+                ("nurmof", "pickaxeshop"),
+            ],
+        );
+        let inventories: std::collections::BTreeSet<_> = vendors
+            .iter()
+            .map(|vendor| vendor.record.inv.as_str())
+            .collect();
+        assert_eq!(inventories.len(), 4, "shop inventories are not keeper rows");
+    }
+
+    #[test]
+    fn path_buy_items_resolve_through_their_pinned_keeper() {
+        let Some(catalog) = data(ClientRevision::R289) else {
+            return;
+        };
+        // Buy rows in the fourteen Paths named by design.md 4.6. M2's
+        // compiler will enforce this join for every newly authored Path.
+        let cases: &[(&str, &str, &[&str])] = &[
+            ("aemad", "adventurershop", &["rope"]),
+            ("gerrant", "fishingshop", &["raw_sardine"]),
+            ("betty", "magicshop", &["eye_of_newt"]),
+            ("death_barman", "death_pub", &["asgarnian_ale"]),
+            (
+                "generalshopkeeper1",
+                "generalshop1",
+                &["shears", "tinderbox", "jug_empty"],
+            ),
+            (
+                "generalshopkeeper2",
+                "generalshop2",
+                &["bucket_empty", "hammer"],
+            ),
+            ("generalshopkeeper6", "generalshop6", &["bucket_empty"]),
+            (
+                "shantay",
+                "shantayshop",
+                &[
+                    "bronze_bar",
+                    "desert_boots",
+                    "desert_robe",
+                    "desert_shirt",
+                    "feather",
+                    "hammer",
+                    "shantay_pass",
+                    "water_skin4",
+                ],
+            ),
+            (
+                "khazard_shopkeeper",
+                "khazardshop",
+                &["jug_empty", "swamppaste"],
+            ),
+            (
+                "gnome_heckelfunch",
+                "gnomeshop_heck",
+                &["bucket_milk", "chocolate_dust"],
+            ),
+            (
+                "wydin",
+                "wydinstore",
+                &["raw_beef", "pot_flour", "redberries"],
+            ),
+            ("thessalia", "clotheshop", &["white_apron", "pink_skirt"]),
+            ("zambo", "boozeshop", &["karamja_rum"]),
+        ];
+        for &(config, inventory, items) in cases {
+            for &obj in items {
+                let id = catalog.item_by_alias(obj).expect(obj).id;
+                let vendor = vendor_by_keeper_config(&catalog, config, id)
+                    .unwrap_or_else(|| panic!("{config} does not stock Path item {obj}"));
+                assert_eq!(vendor.record.inv, inventory);
+                assert_eq!(vendor.item.obj, obj);
+            }
+        }
+        let placements = catalog.npc_placements().expect("NPC placements");
+        let all: Vec<_> = keepers(&catalog).collect();
+        let placed_candidates: usize = all
+            .iter()
+            .map(|keeper| {
+                placements
+                    .rows
+                    .iter()
+                    .filter(|row| row.npc_id == keeper.keeper_id)
+                    .count()
+            })
+            .sum();
+        assert_eq!(all.len(), 23);
+        assert_eq!(placed_candidates, 24);
+    }
+
+    #[test]
     fn explicit_vendor_and_stock_coverage_are_exact() {
         let Some(catalog) = data(ClientRevision::R289) else {
             return;
@@ -884,6 +1085,93 @@ mod tests {
         assert_eq!(gerrant.item.obj, "harpoon");
         assert!(vendor_by_keeper_config(&catalog, "gerrant", big_net_id).is_none());
         assert!(vendor_by_keeper_config(&catalog, "not_pinned", harpoon_id).is_none());
+    }
+
+    #[test]
+    fn duplicate_keeper_display_names_keep_distinct_config_ids() {
+        let Some(catalog) = data(ClientRevision::R289) else {
+            return;
+        };
+        let shop = |inv: &str, config: &str| ShopRecord {
+            inv: inv.to_string(),
+            title: "Fishing shop".to_string(),
+            keepers: vec!["Shop keeper".to_string()],
+            keeper_configs: vec![config.to_string()],
+            sell: 1000,
+            buy: 700,
+            delta: 10,
+            scope: String::new(),
+            allstock: false,
+            items: Vec::new(),
+        };
+        let fixture = [
+            shop("fishingshop", "gerrant"),
+            shop("fishingshop2", "harry"),
+        ];
+        // Real content names these two keepers "Gerrant" and "Harry". Give both the
+        // shared display name the shops list, so the join must tell them apart by
+        // config, not by name.
+        let mut npc_names = catalog.npc_names().expect("npc names").clone();
+        for row in &mut npc_names.rows {
+            if row.config == "gerrant" || row.config == "harry" {
+                row.display = Some("Shop keeper".to_string());
+            }
+        }
+        let joined = join_vendor_keepers(&npc_names, &fixture);
+        assert_eq!(joined.len(), 2);
+        assert_eq!(joined[0].name, joined[1].name);
+        assert_ne!(joined[0].id, joined[1].id);
+        assert_eq!(
+            joined[0].id,
+            catalog.npc_by_config("gerrant").expect("Gerrant config").id
+        );
+        assert_eq!(
+            joined[1].id,
+            catalog.npc_by_config("harry").expect("Harry config").id
+        );
+    }
+
+    #[test]
+    fn all_keepers_are_exactly_the_joined_vendor_set_on_both_revisions() {
+        use std::collections::BTreeSet;
+
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let Some(catalog) = data(revision) else {
+                return;
+            };
+            let keepers: BTreeSet<_> = keepers(&catalog)
+                .map(|keeper| {
+                    (
+                        keeper.record.inv.as_str(),
+                        keeper.keeper_config,
+                        keeper.keeper_id,
+                    )
+                })
+                .collect();
+            let mut vendors = BTreeSet::new();
+            for record in shops_for(&catalog) {
+                for item in &record.items {
+                    let item_id = catalog.item_by_alias(&item.obj).expect("posted item").id;
+                    for vendor in vendors_for(&catalog, item_id) {
+                        vendors.insert((
+                            vendor.record.inv.as_str(),
+                            vendor.keeper_config,
+                            vendor.keeper_id,
+                        ));
+                    }
+                }
+            }
+            assert!(!keepers.is_empty(), "{revision:?}");
+            assert_eq!(keepers, vendors, "{revision:?}");
+            assert_eq!(
+                keepers.len(),
+                joined_shops(&catalog)
+                    .expect("generated shop facts")
+                    .vendor_keepers
+                    .len(),
+                "no repeated identity on {revision:?}"
+            );
+        }
     }
 
     #[test]
@@ -1097,7 +1385,51 @@ mod tests {
                 .all(|shop| shop.get("keeper_configs").is_none()),
             "keeper config joins must not change the posted ShopRecord shape"
         );
-        assert!(!obj.contains_key("generalshop1"));
         assert!(!obj.contains_key("magearena_staffshop"));
+    }
+
+    /// The selected revisions expose the same posted shop object.
+    #[test]
+    fn posted_shop_json_matches_across_revisions() {
+        let (Some(data_274), Some(data_289)) =
+            (data(ClientRevision::R274), data(ClientRevision::R289))
+        else {
+            return;
+        };
+        let r274 =
+            serde_json::to_vec(&content_json_value(&data_274)).expect("274 posted shop JSON");
+        let r289 =
+            serde_json::to_vec(&content_json_value(&data_289)).expect("289 posted shop JSON");
+        assert_eq!(r274, r289);
+    }
+
+    /// Adding Path shops does not change the original twelve posted records.
+    #[test]
+    fn original_shop_json_still_matches_base_snapshot_bytes() {
+        use sha2::{Digest, Sha256};
+
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let Some(catalog) = data(revision) else {
+                return;
+            };
+            let shops = shops_for(&catalog);
+            assert_eq!(
+                shops[..12]
+                    .iter()
+                    .map(|shop| shop.inv.as_str())
+                    .collect::<Vec<_>>(),
+                POSTED_INVS[..12],
+            );
+            let bytes = serde_json::to_vec(&ContentShops {
+                shops: &shops[..12],
+            })
+            .expect("original posted shops");
+            assert_eq!(bytes.len(), 18_481, "{revision:?}");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(&bytes)),
+                "bb81f8403311dfbdc446a114324b1aa2c57c90ff76af00cdaab601a8d098bd35",
+                "{revision:?}",
+            );
+        }
     }
 }

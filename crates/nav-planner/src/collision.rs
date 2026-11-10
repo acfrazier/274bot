@@ -37,6 +37,20 @@ const WALK_BLOCK: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32
 pub const SQ_BLOCKED: u32 = CollisionFlag::WALK_SCENERY as u32
     | CollisionFlag::BLOCK_NPCS_AND_PLAYERS as u32
     | CollisionFlag::WR_GRND as u32;
+/// Raw north wall-face bit from the client collision flags.
+pub const WALL_NORTH: u32 = CollisionFlag::W_N as u32;
+/// Raw east wall-face bit from the client collision flags.
+pub const WALL_EAST: u32 = CollisionFlag::W_E as u32;
+/// Raw south wall-face bit from the client collision flags.
+pub const WALL_SOUTH: u32 = CollisionFlag::W_S as u32;
+/// Raw west wall-face bit from the client collision flags.
+pub const WALL_WEST: u32 = CollisionFlag::W_W as u32;
+
+/// The client walk-block mask used by legacy boolean-grid conversion.
+pub const WALK_BLOCK_FLAGS: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+
+/// The client scenery-block bit used by collision fixtures and conversion.
+pub const WALK_SCENERY: u32 = CollisionFlag::WALK_SCENERY as u32;
 
 /// Raw walk wall bit → the client's directional `PL_WALK_*` movement mask.
 const WALK_BITS: [(u32, u32); 8] = [

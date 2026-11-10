@@ -300,6 +300,81 @@ pub struct BankPickReceipt {
     pub outcome: BankPickOutcome,
 }
 
+/// Revision-bound service rows shared by every bot using the same nav world.
+///
+/// Bank placements come from the selected bank roster. Shop rows come from
+/// pinned `keepers.npc` config/`owned_shop` joins and selected NPC placements.
+#[derive(Debug, Clone)]
+pub enum ServiceFacts {
+    /// The existing selected-content named-bank roster.
+    Bank(Arc<NamedBankFacts>),
+    /// Pinned keeper placements with access rings resolved once at world bind.
+    ShopKeeper(Arc<api::service_pick::ShopKeeperFacts>),
+}
+
+impl ServiceFacts {
+    /// The row domain this shared selected-content owner contains.
+    pub fn kind(&self) -> api::service_pick::ServiceKind {
+        match self {
+            Self::Bank(_) => api::service_pick::ServiceKind::Bank,
+            Self::ShopKeeper(_) => api::service_pick::ServiceKind::ShopKeeper,
+        }
+    }
+}
+
+/// One off-pump route-cost pick over the complete account-eligible row domain.
+#[derive(Debug, Clone)]
+pub struct ServicePickRequest {
+    /// Must match `facts.kind()`; a mismatch is not a selectable domain.
+    pub kind: api::service_pick::ServiceKind,
+    /// The player's observed world tile and level.
+    pub from: WorldTile,
+    /// The account's walk restrictions; service searches force teleports off.
+    pub options: WalkOptions,
+    /// The revision-bound shared rows; a request copies no access lists.
+    pub facts: ServiceFacts,
+    /// Eligible owner row indices, air-nearest first only for equal-cost ties.
+    pub eligible: Arc<[u16]>,
+    /// Break equal route costs by `eligible` order, never by a partial search.
+    pub prefer_order: bool,
+}
+
+/// An established route result or an explicit undecided service pick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServicePickOutcome {
+    /// The cheapest reachable access in the complete eligible target set.
+    Routed {
+        /// The chosen row in the bound facts owner.
+        index: u16,
+        /// A prevalidated stand outside the selected service footprint.
+        access_tile: WorldTile,
+        /// The router's accumulated tick cost.
+        cost: u32,
+    },
+    /// No account-eligible row had usable access before searching.
+    NoCandidate,
+    /// The complete target search established absence of a permitted path.
+    NoPath {
+        /// Only still-unknown gates on the cheapest relaxed diagnosis route.
+        unresolved: Option<Arc<[api::selected::QuestGate]>>,
+    },
+    /// The search work limit was reached; reachability remains undecided.
+    BudgetExhausted,
+    /// The selection window expired or work was refused; not proof of absence.
+    NotSettled,
+}
+
+/// Run-fenced response to one [`ServicePickRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServicePickReceipt {
+    /// The native action request this observation answers.
+    pub request_id: u64,
+    /// The requesting run and observed snapshot stamp.
+    pub evidence: EvidenceStamp,
+    /// The established or undecided search result.
+    pub outcome: ServicePickOutcome,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Withdrawal {
     pub id: i32,
@@ -2678,6 +2753,65 @@ impl NativeMachine for Select {
     fn cancel(&mut self) {}
 }
 
+/// One typed off-pump service pick, without a service owner's retry policy.
+///
+/// The host applies the run/request fence and returns an explicit undecided
+/// outcome on refusal or expiry. Owners decide whether that outcome merits a
+/// retry; this machine never substitutes an air-nearest result.
+pub struct SelectService {
+    request: Option<ServicePickRequest>,
+    request_id: Option<u64>,
+    immediate: Option<ServicePickOutcome>,
+}
+
+impl NativeMachine for SelectService {
+    type Args = ServicePickRequest;
+    type Output = ServicePickOutcome;
+
+    fn begin(request: Self::Args, _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let immediate = if request.kind != request.facts.kind() {
+            Some(ServicePickOutcome::NotSettled)
+        } else if request.eligible.is_empty() {
+            Some(ServicePickOutcome::NoCandidate)
+        } else {
+            None
+        };
+        Ok(Self {
+            request: immediate.is_none().then_some(request),
+            request_id: None,
+            immediate,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(outcome) = self.immediate.take() {
+            return Poll::Ready(Ok(outcome));
+        }
+        if let Some(receipt) = self.request_id.and_then(|id| cx.service_pick_receipt(id)) {
+            return Poll::Ready(Ok(receipt.outcome.clone()));
+        }
+        if self.request_id.is_none() {
+            let Some(request) = self.request.take() else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            return match cx.service_pick(request) {
+                Ok(request_id) => {
+                    self.request_id = Some(request_id);
+                    Poll::Pending
+                }
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
+        Poll::Pending
+    }
+
+    fn cancel(&mut self) {
+        self.request = None;
+        self.request_id = None;
+        self.immediate = None;
+    }
+}
+
 /// The arguments of a pick that leaves one bank out.
 #[derive(Debug, Clone)]
 pub struct SelectOtherArgs {
@@ -2847,6 +2981,7 @@ impl NativeMachine for Withdraw {
 }
 
 impl Withdraw {
+    #[cfg(test)]
     pub(crate) fn transfer_in_flight(&self) -> bool {
         self.core.transfer_in_flight()
     }
@@ -2991,14 +3126,15 @@ mod tests {
         let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
             panic!("Select must emit a real typed pick");
         };
+        let expected_eligible: &[u16] = if allow_air_fallback {
+            &[1, 2, 0]
+        } else {
+            &[0, 1, 2]
+        };
         assert_eq!(
             request.eligible.as_ref(),
-            if allow_air_fallback {
-                &[1, 2, 0]
-            } else {
-                &[0, 1, 2]
-            },
-            "only select-only requests capture a stable air-ranked eligible roster"
+            expected_eligible,
+            "selection applies its ranking to the eligible banks"
         );
         // Drop the real action without dispatch or receipt: the host never
         // admits it. Its authority stays for a test that answers it.
@@ -3404,6 +3540,164 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn service_request(
+        kind: api::service_pick::ServiceKind,
+        eligible: &[u16],
+    ) -> ServicePickRequest {
+        ServicePickRequest {
+            kind,
+            from: WorldTile {
+                x: 5,
+                z: 5,
+                level: 0,
+            },
+            options: WalkOptions::default(),
+            facts: ServiceFacts::Bank(Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+                "service",
+                WorldTile {
+                    x: 6,
+                    z: 5,
+                    level: 0,
+                },
+            )]))),
+            eligible: Arc::from(eligible),
+            prefer_order: false,
+        }
+    }
+
+    #[test]
+    fn service_select_refuses_empty_or_mismatched_domains_without_host_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::ServiceKind;
+        for (kind, eligible, expected) in [
+            (ServiceKind::Bank, &[][..], ServicePickOutcome::NoCandidate),
+            (
+                ServiceKind::ShopKeeper,
+                &[0][..],
+                ServicePickOutcome::NotSettled,
+            ),
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            let mut ledger = None;
+            let result = with_tick(&snapshot, &mut ledger, 1, |frame| {
+                let handle = frame
+                    .actions
+                    .begin::<SelectService>(service_request(kind, eligible), &mut frame.cx)
+                    .unwrap();
+                frame.actions.poll(&handle, &mut frame.cx)
+            });
+            assert_eq!(result, Poll::Ready(Ok(expected)));
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+
+    #[test]
+    fn service_select_waits_allocation_free_and_preserves_every_host_outcome() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::ServiceKind;
+        for expected in [
+            ServicePickOutcome::Routed {
+                index: 0,
+                access_tile: WorldTile {
+                    x: 5,
+                    z: 5,
+                    level: 0,
+                },
+                cost: 0,
+            },
+            ServicePickOutcome::NoCandidate,
+            ServicePickOutcome::NoPath { unresolved: None },
+            ServicePickOutcome::BudgetExhausted,
+            ServicePickOutcome::NotSettled,
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
+                let handle = frame
+                    .actions
+                    .begin::<SelectService>(service_request(ServiceKind::Bank, &[0]), &mut frame.cx)
+                    .unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+                handle
+            });
+            let pending = ledger.as_mut().unwrap();
+            assert_eq!(pending.outbox.len(), 1);
+            let action = pending.outbox.remove(0);
+            assert!(matches!(action.effect, HostEffect::ServicePick(_)));
+            let allocations = allocation_counter::measure(|| {
+                for tick in 2..=1001 {
+                    with_tick(&snapshot, &mut ledger, tick, |frame| {
+                        frame.cx.active_now = Duration::from_secs(3_600);
+                        assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+                    });
+                }
+            });
+            assert_eq!(allocations, allocation_counter::AllocationInfo::default());
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+            ledger.as_mut().unwrap().complete_service_pick(
+                &action.authority(),
+                ServicePickReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: action.run(),
+                        tick: 1002,
+                        sequence: 1002,
+                    },
+                    outcome: expected.clone(),
+                },
+            );
+            let result = with_tick(&snapshot, &mut ledger, 1002, |frame| {
+                frame.actions.poll(&handle, &mut frame.cx)
+            });
+            assert_eq!(result, Poll::Ready(Ok(expected)));
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+
+    #[test]
+    fn cancelling_service_select_revokes_queued_work_and_rejects_its_late_result() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
+            let handle = frame
+                .actions
+                .begin::<SelectService>(
+                    service_request(api::service_pick::ServiceKind::Bank, &[0]),
+                    &mut frame.cx,
+                )
+                .unwrap();
+            assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            handle
+        });
+        let action = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(action.live());
+        drop(handle);
+        assert!(!action.live(), "cancelled work cannot reach host admission");
+        ledger.as_mut().unwrap().complete_service_pick(
+            &action.authority(),
+            ServicePickReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: action.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                outcome: ServicePickOutcome::NotSettled,
+            },
+        );
+        assert!(ledger.as_ref().unwrap().pick.is_none());
     }
 
     fn fishing(base: i32) -> [StatView; 1] {

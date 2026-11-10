@@ -16,7 +16,7 @@ pub const CARD: CompiledCard = CompiledCard {
     name: "Gatherer",
     description: "Gather selected woodcutting, mining and fishing resources from live observation.",
     category: "Gathering",
-    schema_version: 4,
+    schema_version: 5,
     schema,
     per_account_settings: &[],
     prepare,
