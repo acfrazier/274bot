@@ -679,7 +679,7 @@ impl Provisioner {
                             &gear,
                             plan.bank,
                             plan.bank_required,
-                            super::inventory::capacity_keep_with_held_foods(
+                            super::compile::inventory::capacity_keep_with_held_foods(
                                 stock,
                                 spillover_keep,
                                 |id| survival.tables().food(id).is_some(),
@@ -1159,11 +1159,15 @@ impl Provisioner {
                 .first_withdrawal()
                 .or_else(|| active_need.map(|need| &need.need));
             let keep = if survival.is_some() {
-                super::inventory::capacity_keep_with_held_foods(stock, spillover_keep, |id| {
-                    plan.survival
-                        .as_ref()
-                        .is_some_and(|model| model.tables().food(id).is_some())
-                })
+                super::compile::inventory::capacity_keep_with_held_foods(
+                    stock,
+                    spillover_keep,
+                    |id| {
+                        plan.survival
+                            .as_ref()
+                            .is_some_and(|model| model.tables().food(id).is_some())
+                    },
+                )
             } else {
                 Arc::clone(spillover_keep)
             };

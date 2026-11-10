@@ -7,7 +7,7 @@ use super::path::{
     QuestRequirementKindDocument, StepDocument,
 };
 #[path = "inventory.rs"]
-mod inventory;
+pub(super) mod inventory;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;

@@ -1641,7 +1641,7 @@ impl LoadoutRun {
             } else {
                 &[]
             };
-            if !crate::quester::inventory::gear_allowed(
+            if !crate::quester::compile::inventory::gear_allowed(
                 selected,
                 item.id,
                 snapshot.stock(),

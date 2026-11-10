@@ -551,7 +551,7 @@ impl CompiledSurvival {
         owner: Option<&CompiledProvisioning>,
     ) -> bool {
         owner.is_none_or(|owner| {
-            super::inventory::gear_allowed(
+            super::compile::inventory::gear_allowed(
                 self.tables.selected(),
                 id,
                 stock,
