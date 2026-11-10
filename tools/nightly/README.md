@@ -134,9 +134,14 @@ instead of substituting another revision's input.
 
 Preparation runs before `lanes`, so post-ADR test lanes use their tree's
 `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack` and adjacent
-`.navflags` for `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`. A missing
-generated output fails with the generator diagnostic; it never falls back to
-the v18 reference. Pre-ADR trees keep the configured `NIGHTLY_NAV_FIXTURE`.
+`.navflags` for `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`. They also
+receive `RS2VM_ENGINE_274`, `RS2VM_CONTENT_274`, `RS2VM_ENGINE_289` and
+`RS2VM_CONTENT_289`, selected from the same exact-revision roots as generation.
+`RS2VM_BUN` uses `BUN_EXECUTABLE` or the Bun executable on `PATH`. A missing
+root fails with the exact-root diagnostic. A missing generated output fails
+with the generator diagnostic. These lanes never fall back to the v18
+reference. Pre-ADR trees keep the configured `NIGHTLY_NAV_FIXTURE` and do not
+receive the interpreter inputs.
 
 The Mac guest installs locked npm dependencies for the staged Engine A and
 optional 274 engine roots, then uses Engine A's `tsx` executable as
@@ -968,12 +973,14 @@ error in it. If the task is stopped during that step, the missed night has no su
    `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
    Each test lane gets the Linux CI test inputs. Post-ADR trees set the three nav
    pack names to `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack`
-   and its `.navflags`; pre-ADR trees use the v18 reference fixture.
-   `ISOLATED_289_ENGINE_DIR` and `ISOLATED_289_CONTENT_DIR` use the exact
-   revision-289 local-data inputs. `ENGINE_DIR` and `WORLD_ENGINE_DIR` use the
-   pristine engine copy; `BOT_NAV_SNAPSHOT_ROOT` uses the decoded snapshot
-   folder. `T5W_INSPECT_CAPTURE_BASELINE` uses the inspection fixture when the
-   host holds it.
+   and its `.navflags`; pre-ADR trees use the v18 reference fixture. Post-ADR
+   lanes also receive all four `RS2VM_ENGINE_<REV>` and
+   `RS2VM_CONTENT_<REV>` roots from the exact-revision inputs, plus `RS2VM_BUN`
+   from `BUN_EXECUTABLE` or `PATH`. Pre-ADR lanes do not receive these
+   interpreter inputs. `ENGINE_DIR` and `WORLD_ENGINE_DIR` use the pristine
+   engine copy; `BOT_NAV_SNAPSHOT_ROOT` uses the decoded snapshot folder.
+   `T5W_INSPECT_CAPTURE_BASELINE` uses the inspection fixture when the host
+   holds it.
    Each lane gets its own throwaway
    `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
    decoded snapshot, and `BOT_NAV_BUILD=skip`, `CARGO_INCREMENTAL=0`,

@@ -3106,11 +3106,10 @@ def run_latency_pass(branch: str, binary: Path | None, cells: list[str], bands: 
 
 
 def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) -> dict:
-    """Return local test inputs, choosing packs from the tested tree's format.
+    """Return local test inputs, choosing assets from the tested tree's format.
 
-    Post-ADR trees use their generated pack for this runner's revision. Legacy
-    trees keep the configured reference fixture. When a generated pack is
-    required, missing outputs use the generator's diagnostic.
+    Post-ADR trees use their generated pack and exact local-data roots. Legacy
+    trees keep the configured reference fixture and do not receive these roots.
     """
     generated_tree = tree is not None and (tree / "tools/local-data/build.py").is_file()
     if generated_tree:
@@ -3134,14 +3133,17 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
     if INSPECT_BASELINE.is_file():
         env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
     if generated_tree:
-        engine_289 = os.environ.get("NIGHTLY_GAME_DATA_289_ENGINE")
-        content_289 = os.environ.get("NIGHTLY_GAME_DATA_289_CONTENT")
-        if REVISION == "289":
-            engine_289 = engine_289 or str(ENGINE_PRISTINE / "engine")
-            content_289 = content_289 or str(ENGINE_PRISTINE / "content")
-        if engine_289 and content_289:
-            env["ISOLATED_289_ENGINE_DIR"] = str(Path(engine_289).expanduser().resolve())
-            env["ISOLATED_289_CONTENT_DIR"] = str(Path(content_289).expanduser().resolve())
+        inputs = local_data_environment(tree, tree / "target")
+        for revision in ("274", "289"):
+            for kind in ("ENGINE", "CONTENT"):
+                env[f"RS2VM_{kind}_{revision}"] = inputs[f"GAME_DATA_{revision}_{kind}"]
+        bun = os.environ.get("BUN_EXECUTABLE") or shutil.which("bun")
+        if not bun:
+            raise RuntimeError("missing local-data input RS2VM_BUN: no Bun executable is configured")
+        bun_path = Path(bun).expanduser().resolve()
+        if not bun_path.is_file():
+            raise RuntimeError(f"missing local-data input RS2VM_BUN: {bun_path}")
+        env["RS2VM_BUN"] = str(bun_path)
     return env
 
 
