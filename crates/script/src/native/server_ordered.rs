@@ -160,6 +160,7 @@ mod tests {
                 evidence: self.evidence,
                 revision: self.revision,
                 snapshot: SnapshotView::new(None, self.evidence),
+                shop_keepers: None,
                 retained: &mut self.retained,
                 action_id: self.owner.id.get(),
                 observed_walk_outcome_seq: 0,
@@ -456,11 +457,14 @@ mod tests {
         // `(lease, WaitDeadline)` slot each. The quiet read's own wall bound
         // for the hold (F2 of the hold model) adds one `Instant` (16 B) to
         // its record: each click renews it, and the begin's time cannot move.
-        // The typed bank selection outcome adds 8 B to its inline receipt.
+        // The typed bank selection outcome adds 8 B to its inline receipt, and
+        // the typed service pick (its own outcome and request identity) adds 8 B
+        // more: 1,024 B on 64-bit targets.
         assert_eq!(
             std::mem::size_of::<Ledger>(),
             944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
                 + std::mem::size_of::<std::time::Instant>()
+                + 8
                 + 8
         );
         let mut frame = Frame::new();

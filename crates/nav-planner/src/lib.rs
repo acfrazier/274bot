@@ -25,6 +25,7 @@ pub mod producer;
 pub mod quest_gates;
 pub mod reachability;
 pub mod router;
+pub mod service_pick;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod tile;
@@ -43,6 +44,10 @@ pub fn debug_enabled() -> bool {
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_pick_tests.rs"]
+mod service_pick_tests;
 
 #[cfg(test)]
 #[path = "world_memory_tests.rs"]

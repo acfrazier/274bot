@@ -1,4 +1,4 @@
-use super::super::select::PlacementClass;
+use super::super::select::{AvoidedTile, PlacementClass};
 use super::*;
 use crate::native::WalkStallReason;
 use crate::quester::families::tests::{def, with_tick, with_tick_scene_reach};
@@ -11,13 +11,17 @@ use api::snapshot::{
 };
 
 fn fixture() -> (Gatherer, GameSnapshot) {
-    let (config, mut snapshot) = FamilyPreparation::run(|families| {
+    fixture_with_banks(Arc::default())
+}
+
+fn fixture_with_banks(banks: Arc<NamedBankFacts>) -> (Gatherer, GameSnapshot) {
+    let (config, mut snapshot) = FamilyPreparation::run(move |families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut cx = crate::native::PrepareContext {
             zones: None,
             revision: api::selected::ClientRevision::R289,
             selected,
-            banks: Arc::default(),
+            banks,
             families,
         };
         super::super::test_full_pack_fixture(&mut cx, "normal", 1).unwrap()
@@ -331,7 +335,18 @@ fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
     (gatherer, snapshot)
 }
 
-fn catherby_return_plan(
+fn move_actor_to(snapshot: &mut GameSnapshot, at: WorldTile) {
+    let mut player = snapshot
+        .local_player()
+        .expect("the fixture has an observed player")
+        .clone();
+    player.player.network = at;
+    player.player.actor.tile = at;
+    player.player.actor.moving = false;
+    snapshot.seed_local_player(player);
+}
+
+fn resource_return_plan(
     gatherer: &Gatherer,
     snapshot: &GameSnapshot,
     here: WorldTile,
@@ -356,7 +371,7 @@ fn catherby_return_plan(
             collision: None,
         },
     ) else {
-        panic!("the fixture has a return stand in each work-area quadrant");
+        panic!("the fixture has a return stand");
     };
     plan.plan
 }
@@ -368,15 +383,15 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
         .local_player()
         .expect("the fixture has an observed player")
         .player
-        .network;
-    let observed_plan = catherby_return_plan(&gatherer, &snapshot, observed_here);
+        .actor
+        .tile;
     let old_here = WorldTile {
-        x: observed_plan.tile.x
-            - i32::from(gatherer.area.expect("the fixture has a work area").radius),
-        z: observed_plan.tile.z,
-        level: observed_plan.tile.level,
+        x: observed_here.x - i32::from(gatherer.area.expect("the fixture has a work area").radius),
+        z: observed_here.z,
+        level: observed_here.level,
     };
-    let initial = catherby_return_plan(&gatherer, &snapshot, old_here);
+    move_actor_to(&mut snapshot, old_here);
+    let initial = resource_return_plan(&gatherer, &snapshot, old_here);
     let current = WorldTile {
         x: initial.tile.x,
         z: initial.tile.z + i32::from(RESOURCE_APPROACH_RADIUS) + 1,
@@ -392,16 +407,10 @@ fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, Tar
     );
     // Fishing observation stands are selected from content, not clamped toward
     // the player (select.rs:1060-1077). A fresh plan can correctly keep its goal.
-    let replan = catherby_return_plan(&gatherer, &snapshot, current);
+    move_actor_to(&mut snapshot, current);
+    let replan = resource_return_plan(&gatherer, &snapshot, current);
     gatherer.trip = TripStep::Return;
     gatherer.target = Some(initial.clone());
-    let mut player = snapshot
-        .local_player()
-        .expect("the fixture has a player")
-        .clone();
-    player.player.network = current;
-    player.player.actor.moving = false;
-    snapshot.seed_local_player(player);
     (gatherer, snapshot, initial, replan, current)
 }
 
@@ -437,7 +446,7 @@ fn assert_return_recovery_submitted(gatherer: &Gatherer) {
         gatherer.last_event.as_ref(),
         "return recovery action submitted after transient Stalled"
     );
-    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 1);
+    assert_eq!(gatherer.scratch.walk.retry.actions(), 1);
 }
 fn catherby_npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
     NpcView {
@@ -932,6 +941,8 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
             z: 3200,
             level: 0,
         }));
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
         (config, snapshot)
     })
     .unwrap()
@@ -953,7 +964,7 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
 fn gatherer_bank_pick(bank_choice: Option<&'static str>) -> crate::native_bank::BankPickRequest {
     let (mut gatherer, snapshot) = bank_fixture(bank_choice);
     let mut ledger = None;
-    gatherer.trip = TripStep::Select;
+    gatherer.trip = TripStep::Deposit;
     with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
     ledger
@@ -1221,7 +1232,7 @@ fn seed_kitchen_journal_page(snapshot: &mut GameSnapshot) {
 
 fn assert_original_allow_gatherer(gatherer: &Gatherer, allow: crate::native::PrereqAllow) {
     match &gatherer.active {
-        Active::Select(select) => assert_eq!(select.original_allow(), Some(allow)),
+        Active::Acquire(run) => assert_eq!(run.original_allow(), Some(allow)),
         _ => panic!("gatherer no longer owns the bank selection"),
     }
 }
@@ -1243,7 +1254,7 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
     );
 
     let mut ledger = None;
-    gatherer.trip = TripStep::Select;
+    gatherer.start_trip(TripStep::Deposit);
     with_journal_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
     with_journal_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
     let (original_request, original_authority) =
@@ -1280,9 +1291,8 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
         },
     );
     with_journal_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
-    assert!(matches!(gatherer.active, Active::Select(_)));
-    assert_eq!(gatherer.trip, TripStep::Select);
-    assert!(gatherer.scratch.selected_bank.is_none());
+    assert!(matches!(gatherer.active, Active::Acquire(_)));
+    assert_eq!(gatherer.trip, TripStep::Deposit);
     assert_original_allow_gatherer(&gatherer, allow);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
@@ -1299,7 +1309,6 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
     ));
-    assert!(gatherer.scratch.selected_bank.is_none());
     assert_no_gatherer_bank_work(&ledger, original_id);
 
     accept_caller_interaction(&mut ledger, 4);
@@ -1320,7 +1329,6 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
         Some(api::selected::Truth::True),
         "the journal fact is available only after the modal close was observed"
     );
-    assert!(gatherer.scratch.selected_bank.is_none());
     assert_no_gatherer_bank_work(&ledger, original_id);
 
     let mut reissued = caller_reissued_bank_pick(&ledger, original_id);
@@ -1352,7 +1360,7 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
         crate::native_bank::BankPickOutcome::Selected(crate::native_bank::SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
-            kind: PickKind::Reachable,
+            kind: crate::native_bank::PickKind::Reachable,
             access: Some(Arc::new(crate::bank::BankStandAccess {
                 bank,
                 stand_tile: bank_tile,
@@ -1367,15 +1375,7 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
         gatherer.poll_active(tick)
     });
     assert!(gatherer.failure.is_none());
-    assert_eq!(gatherer.trip, TripStep::Access);
-    assert_eq!(
-        gatherer
-            .scratch
-            .selected_bank
-            .as_ref()
-            .map(|selected| selected.access_tile),
-        Some(bank_tile)
-    );
+    assert!(matches!(gatherer.active, Active::Acquire(_)));
 
     snapshot.seed_locs(vec![api::snapshot::LocView {
         id: 2213,
@@ -1425,7 +1425,6 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
     with_journal_tick(&snapshot, &mut ledger, 14, |tick| {
         gatherer.poll_active(tick)
     });
-    assert_eq!(gatherer.trip, TripStep::Open);
     with_journal_tick(&snapshot, &mut ledger, 15, |tick| gatherer.begin_trip(tick));
     with_journal_tick(&snapshot, &mut ledger, 16, |tick| {
         gatherer.poll_active(tick)
@@ -1445,7 +1444,7 @@ fn gatherer_preserves_detailed_bank_no_candidate_without_wrapping_it() {
     }
     let (mut gatherer, snapshot) = bank_fixture(Some("Varrock East"));
     let mut ledger = None;
-    gatherer.trip = TripStep::Select;
+    gatherer.start_trip(TripStep::Deposit);
     with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
     let (_, authority) = caller_bank_pick(&ledger).expect("bank pick was emitted");
@@ -1849,11 +1848,13 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
             tick,
         );
         if observation == TargetObservation::Active || !loaded {
-            assert_eq!(
-                gatherer.failure.as_ref().unwrap().code.as_ref(),
-                "walk-failed",
-                "a still-present or unobserved tree must retain the routing failure"
+            assert!(
+                gatherer.failure.is_none(),
+                "a transient route end waits for a fresh plan: {:?}",
+                gatherer.failure
             );
+            assert!(gatherer.scratch.walk.retry.waiting_for_next_tick(2));
+            assert!(gatherer.scratch.walk.retry.pending());
         } else {
             assert!(
                 gatherer.failure.is_none(),
@@ -1862,6 +1863,9 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
             gatherer.begin_idle(tick, true);
         }
     });
+    if observation == TargetObservation::Active || !loaded {
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
     if observation != TargetObservation::Active && loaded {
         assert_eq!(gatherer.target.as_ref().unwrap().tile, other);
         assert!(matches!(gatherer.active, Active::Walk(_)));
@@ -1891,7 +1895,7 @@ fn route_ended_depleted_tree_reselects_without_blocking() {
 }
 
 #[test]
-fn route_ended_still_present_tree_keeps_the_routing_failure() {
+fn route_ended_still_present_tree_schedules_retry() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -1899,11 +1903,336 @@ fn route_ended_still_present_tree_keeps_the_routing_failure() {
 }
 
 #[test]
-fn route_ended_unloaded_tree_keeps_the_routing_failure() {
+fn route_ended_unloaded_tree_schedules_retry() {
     if !api::test_support::game_data_available() {
         return;
     }
     assert_route_ended_tree_reselection(TargetObservation::Gone, false);
+}
+
+fn no_path_receipt(evidence: api::quest_progress::EvidenceStamp, detail: &str) -> WalkReceipt {
+    WalkReceipt {
+        goal: None,
+        request_id: 19,
+        evidence,
+        end: WalkEnd::NoPath,
+        blocked: None,
+        detail: Some(Arc::from(detail)),
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: None,
+    }
+}
+fn refused_walk_receipt(
+    evidence: api::quest_progress::EvidenceStamp,
+    refusal: crate::native::WalkRefusal,
+    escape: Option<crate::combat::guard::Escape>,
+) -> WalkReceipt {
+    WalkReceipt {
+        goal: None,
+        request_id: 23,
+        evidence,
+        end: WalkEnd::Refused,
+        blocked: None,
+        detail: None,
+        refusal: Some(refusal),
+        assessment: None,
+        escape,
+        prereq_allow: None,
+    }
+}
+
+fn live_escape(tick: u32) -> crate::combat::guard::Escape {
+    crate::combat::guard::Escape {
+        action: crate::combat::guard::EscapeAction::Retreat,
+        state: crate::combat::guard::EscapeState::Running,
+        owner: crate::combat::guard::EscapeOwner::Host,
+        allow: crate::native::WalkAllow::default(),
+        from: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 1,
+            z: 0,
+            level: 0,
+        },
+        hp: 1,
+        floor: 2,
+        volley: 1,
+        tick,
+        generation: 1,
+        switches: 0,
+        last_hit: 0,
+        retired: None,
+    }
+}
+
+#[test]
+fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let first = gatherer.target.clone().expect("initial tree target");
+    let alternate_tile = alternative_tree(&gatherer, &first);
+    let first_loc = snapshot.locs()[0].clone();
+    let mut alternate_loc = first_loc.clone();
+    alternate_loc.tile = alternate_tile;
+    snapshot.seed_locs(vec![first_loc.clone()]);
+
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = WorldTile {
+        x: first.tile.x - 3,
+        ..first.tile
+    };
+    snapshot.seed_local_player(player);
+    gatherer.cancel_active();
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: first.clone(),
+                class: PlacementClass::Unloaded,
+                observation_goals: None,
+            },
+            tick,
+        );
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    let first_request = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request),
+            _ => None,
+        })
+        .expect("the initial approach walk");
+    assert_eq!(first_request.target, first.tile);
+
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "first approach route lost"),
+            tick,
+        );
+        assert!(gatherer.failure.is_none());
+        assert!(gatherer.scratch.walk.retry.waiting_for_next_tick(3));
+        gatherer.begin_idle(tick, false);
+    });
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the retry must wait for a newer observed game tick"
+    );
+
+    let mut observed = snapshot.local_player().unwrap().clone();
+    if alternate_tile.x.abs_diff(first.tile.x) >= alternate_tile.z.abs_diff(first.tile.z) {
+        observed.player.network.x = if alternate_tile.x > first.tile.x {
+            alternate_tile.x.saturating_add(3)
+        } else {
+            alternate_tile.x.saturating_sub(3)
+        };
+        observed.player.network.z = alternate_tile.z;
+    } else {
+        observed.player.network.x = alternate_tile.x;
+        observed.player.network.z = if alternate_tile.z > first.tile.z {
+            alternate_tile.z.saturating_add(3)
+        } else {
+            alternate_tile.z.saturating_sub(3)
+        };
+    }
+    snapshot.seed_local_player(observed);
+    snapshot.seed_locs(vec![first_loc.clone(), alternate_loc.clone()]);
+    let mut retry_evidence = None;
+    with_tick(&snapshot, &mut ledger, 4, |tick| {
+        retry_evidence = Some(tick.cx.evidence());
+        gatherer.begin_idle(tick, false);
+    });
+    let request = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request),
+            _ => None,
+        })
+        .expect("the fresh approach plan");
+    assert_eq!(request.target, first.tile);
+    assert_eq!(request.required_after, retry_evidence.unwrap());
+    assert!(gatherer.failure.is_none());
+    assert_eq!(
+        gatherer.last_event.as_ref(),
+        "resource approach retry submitted from the observed position"
+    );
+
+    snapshot.seed_locs(vec![first_loc.clone(), alternate_loc.clone()]);
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 5, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "second approach route lost"),
+            tick,
+        );
+    });
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer
+        .avoid
+        .iter()
+        .any(|entry| entry.tile == first.tile && entry.until == u32::MAX));
+    assert_eq!(
+        gatherer.scratch.walk.last_detail.as_deref(),
+        Some("second approach route lost")
+    );
+
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = first.tile;
+    snapshot.seed_local_player(player);
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert_eq!(
+        gatherer.target.as_ref().unwrap().tile,
+        alternate_tile,
+        "the shunned target must yield to another content target"
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 7, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "alternate approach route lost"),
+            tick,
+        );
+    });
+    assert!(gatherer.failure.is_none());
+    with_tick(&snapshot, &mut ledger, 8, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert_eq!(gatherer.target.as_ref().unwrap().tile, alternate_tile);
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 9, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "last approach route detail"),
+            tick,
+        );
+    });
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("the total approach phase budget must end the retry");
+    assert_eq!(failure.code.as_ref(), "walk-failed");
+    assert!(failure.message.contains("last approach route detail"));
+    assert_eq!(gatherer.scratch.walk.failures, MAX_FAILED_WALKS_PER_PHASE);
+}
+
+#[test]
+fn successful_approach_retry_resets_the_budget_for_the_next_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let target = gatherer.target.clone().expect("initial tree target");
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = WorldTile {
+        x: target.tile.x - 3,
+        ..target.tile
+    };
+    snapshot.seed_local_player(player);
+    gatherer.cancel_active();
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: target.clone(),
+                class: PlacementClass::Unloaded,
+                observation_goals: None,
+            },
+            tick,
+        );
+    });
+
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "first route lost"),
+            tick,
+        );
+    });
+    assert!(gatherer.scratch.walk.retry.pending());
+    with_tick(&snapshot, &mut ledger, 4, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    assert_eq!(gatherer.scratch.walk.retry.actions(), 1);
+
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = target.tile;
+    snapshot.seed_local_player(player);
+    with_tick(&snapshot, &mut ledger, 5, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            WalkReceipt {
+                goal: None,
+                request_id: 20,
+                evidence: tick.cx.evidence(),
+                end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+                prereq_allow: None,
+            },
+            tick,
+        );
+    });
+    assert_eq!(gatherer.scratch.walk.retry.actions(), 0);
+    assert!(gatherer.scratch.walk.target.is_none());
+    assert!(gatherer.scratch.walk.last_detail.is_none());
+
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = WorldTile {
+        x: target.tile.x - 3,
+        ..target.tile
+    };
+    snapshot.seed_local_player(player);
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+    assert_eq!(
+        gatherer.last_event.as_ref(),
+        "approaching target",
+        "the next walk starts a new budget rather than a retry"
+    );
+    ledger.as_mut().unwrap().outbox.clear();
+    with_tick(&snapshot, &mut ledger, 7, |tick| {
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            no_path_receipt(tick.cx.evidence(), "next walk route lost"),
+            tick,
+        );
+    });
+    assert!(gatherer.failure.is_none());
+    assert!(gatherer.scratch.walk.retry.pending());
 }
 
 #[test]
@@ -2200,6 +2529,200 @@ fn second_transient_return_stall_is_terminal_without_a_third_walk() {
 }
 
 #[test]
+fn escape_refusals_wait_for_escape_end_without_shunning_or_spending_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    assert_eq!(gatherer.trip, TripStep::Idle);
+    let initial = gatherer.target.clone().expect("initial tree target");
+    let area = gatherer.area.expect("the fixture has a work area");
+    gatherer.area = Some(WorkArea { radius: 50, ..area });
+    let method = &gatherer.prepared.catalog.methods()[usize::from(initial.method_index)];
+    let mut candidate_tiles = {
+        let world = snapshot.world();
+        gatherer
+            .prepared
+            .catalog
+            .spots(method, &gatherer.area.unwrap().region())
+            .unwrap()
+            .filter(|spot| spot.entity == initial.entity && tile_loaded(spot.origin, world))
+            .map(|spot| spot.origin)
+            .collect::<Vec<_>>()
+    };
+    candidate_tiles.push(initial.tile);
+    candidate_tiles.sort_unstable_by_key(|tile| (tile.x, tile.z, tile.level));
+    candidate_tiles.dedup();
+    assert!(
+        candidate_tiles.len() >= 4,
+        "the loaded content area has at least four tree targets"
+    );
+    candidate_tiles.retain(|tile| *tile != initial.tile);
+    candidate_tiles.truncate(3);
+    candidate_tiles.push(initial.tile);
+
+    let EntityId::Loc(resource_id) = initial.entity else {
+        panic!("the fixture target is a location");
+    };
+    let base_loc = snapshot.locs()[0].clone();
+    snapshot.seed_locs(
+        candidate_tiles
+            .iter()
+            .map(|tile| {
+                let mut loc = base_loc.clone();
+                loc.id = resource_id;
+                loc.tile = *tile;
+                loc.distance = 0;
+                loc
+            })
+            .collect(),
+    );
+    move_actor_to(
+        &mut snapshot,
+        WorldTile {
+            x: initial.tile.x.saturating_add(3),
+            ..initial.tile
+        },
+    );
+    gatherer.cancel_active();
+
+    for now in 2..=5 {
+        with_tick(&snapshot, &mut ledger, now, |tick| {
+            if now == 2 {
+                gatherer.start_target(
+                    SelectedTarget {
+                        plan: initial.clone(),
+                        class: PlacementClass::Live,
+                        observation_goals: None,
+                    },
+                    tick,
+                );
+            } else {
+                let target = gatherer.target.as_ref().unwrap();
+                assert_eq!(
+                    observe_target(tick.cx.snapshot(), &gatherer.prepared.catalog, target),
+                    Some(TargetObservation::Active),
+                    "the original resource stays observable"
+                );
+                assert_eq!(
+                    gatherer.scratch.walk.target,
+                    Some(WalkRetryTarget::EscapeResource(
+                        initial.entity,
+                        initial.tile
+                    ))
+                );
+                gatherer.begin_idle(tick, false);
+            }
+            assert!(matches!(gatherer.active, Active::Walk(_)));
+            assert_eq!(
+                gatherer.target.as_ref().map(|target| target.tile),
+                Some(initial.tile),
+                "a live escape must not switch to another target at tick {now}"
+            );
+            let evidence = tick.cx.evidence();
+            gatherer.active = Active::None;
+            gatherer.handle_walk(
+                refused_walk_receipt(
+                    evidence,
+                    crate::native::WalkRefusal::EscapeInProgress,
+                    Some(live_escape(u32::try_from(now).unwrap())),
+                ),
+                tick,
+            );
+            assert!(gatherer.failure.is_none());
+            assert_eq!(gatherer.scratch.walk.failures, 0);
+            assert!(gatherer
+                .avoid
+                .iter()
+                .all(|entry| *entry == AvoidedTile::EMPTY));
+            assert_eq!(
+                gatherer.scratch.walk.target,
+                Some(WalkRetryTarget::EscapeResource(
+                    initial.entity,
+                    initial.tile
+                )),
+                "the resource identity stays pending until the escape ends"
+            );
+            assert_eq!(
+                gatherer.target.as_ref().map(|target| target.tile),
+                Some(initial.tile)
+            );
+            assert!(gatherer.scratch.walk.retry.waiting_for_next_tick(now));
+        });
+        ledger.as_mut().unwrap().outbox.clear();
+    }
+
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    assert!(gatherer.failure.is_none());
+    assert_eq!(gatherer.scratch.walk.failures, 0);
+    assert!(gatherer
+        .avoid
+        .iter()
+        .all(|entry| *entry == AvoidedTile::EMPTY));
+    assert_eq!(
+        gatherer.target.as_ref().map(|target| target.tile),
+        Some(initial.tile)
+    );
+    assert!(matches!(gatherer.active, Active::Walk(_)));
+}
+
+#[test]
+fn idle_exhaustion_reports_the_last_walk_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        gatherer.tick(tick).unwrap()
+    });
+    let initial = gatherer.target.clone().expect("initial tree target");
+    move_actor_to(
+        &mut snapshot,
+        WorldTile {
+            x: initial.tile.x.saturating_add(3),
+            ..initial.tile
+        },
+    );
+    gatherer.cancel_active();
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        gatherer.start_target(
+            SelectedTarget {
+                plan: initial.clone(),
+                class: PlacementClass::Live,
+                observation_goals: None,
+            },
+            tick,
+        );
+        let evidence = tick.cx.evidence();
+        gatherer.active = Active::None;
+        gatherer.handle_walk(
+            refused_walk_receipt(evidence, crate::native::WalkRefusal::Unsurvivable, None),
+            tick,
+        );
+    });
+    assert!(gatherer.failure.is_none());
+    assert_eq!(gatherer.scratch.walk.failures, 1);
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.begin_idle(tick, false);
+    });
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("Idle exhaustion must end after all targets are excluded");
+    assert_eq!(failure.code.as_ref(), "walk-failed");
+    assert!(failure
+        .message
+        .contains("no alternate resource target remains"));
+    assert!(failure.message.contains("route is unsurvivable"));
+}
+#[test]
 fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
     if !api::test_support::game_data_available() {
         return;
@@ -2277,21 +2800,33 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
             .map(|failure| failure.code.as_ref()),
         Some("return-failed")
     );
-    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 0);
+    assert_eq!(gatherer.scratch.walk.retry.actions(), 0);
     if let Some(ledger) = ledger {
         assert!(ledger.outbox.is_empty());
     }
 }
 
 #[test]
-fn typed_bank_deposit_failure_keeps_the_content_reason() {
+fn acquired_bank_deposit_failure_keeps_the_content_reason() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let (mut gatherer, _) = fixture();
-    gatherer.deposit_failure(ActionError::BankDeposit(
-        crate::bank::ops::DepositFailure::FullStack,
-    ));
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        let request = gatherer.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
+        let run = AcquireRun::new(
+            request,
+            AcquirePlan::empty(),
+            &gatherer.prepared.banks,
+            &tick.cx,
+        );
+        gatherer.acquire_failure(
+            run,
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
+            tick,
+        );
+    });
     let failure = gatherer
         .failure
         .expect("the typed deposit failure is terminal");
@@ -2403,7 +2938,13 @@ fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
         with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
         assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        assert_eq!(
+            gatherer.trip,
+            TripStep::Supply {
+                return_to_work: true,
+                deposit_products: false,
+            }
+        );
         assert_eq!(gatherer.retained.deposited, fish_count as u32);
         assert_eq!(
             crate::bank::ops::count_id(snapshot.inventory(), 3062),
@@ -2439,7 +2980,13 @@ fn unbankable_items_stop_only_when_the_pack_remains_full_after_deposit() {
             );
         } else {
             assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-            assert_eq!(gatherer.trip, TripStep::Withdraw);
+            assert_eq!(
+                gatherer.trip,
+                TripStep::Supply {
+                    return_to_work: true,
+                    deposit_products: false,
+                }
+            );
         }
         assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 3062), 28);
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -2463,23 +3010,25 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
     gatherer.tool.id = -1;
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
-        let verdict = SupplyPlan::plan(
-            &gatherer.prepared,
-            tick.cx.snapshot().stats().unwrap().value,
-            tick.cx.snapshot().stock(),
-        );
         assert!(
-            gatherer.admit_supply(verdict),
+            gatherer.admit_supply(&tick.cx),
             "the missing tool needs a trip"
         );
     });
-    assert_eq!(gatherer.trip, TripStep::Select);
-    // Arrival at the open bank follows the same Deposit boundary as disposal.
-    gatherer.trip = TripStep::Deposit;
+    assert_eq!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: true,
+        }
+    );
     with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
     assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-    assert_eq!(gatherer.trip, TripStep::Withdraw);
+    let Active::Acquire(run) = &gatherer.active else {
+        panic!("the supply request owns the transfer");
+    };
+    assert_eq!(run.progress().2, "Withdraw");
     with_tick(&snapshot, &mut ledger, 4, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 5, |tick| gatherer.poll_active(tick));
     let mode = ledger.as_mut().unwrap().outbox.remove(0);
@@ -2514,6 +3063,20 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
             ..
         })
     ));
+    let withdrawal = ledger.as_mut().unwrap().outbox.remove(0);
+    ledger.as_mut().unwrap().complete_interaction(
+        &withdrawal.authority(),
+        crate::native::InteractionReceipt {
+            request_id: withdrawal.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: withdrawal.run(),
+                tick: 6,
+                sequence: 6,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
     snapshot.seed_inventory(
         vec![
             snapshot.inventory()[0].clone(),
@@ -2526,11 +3089,94 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
         28,
     );
     with_tick(&snapshot, &mut ledger, 7, |tick| gatherer.poll_active(tick));
-    assert!(gatherer.scratch.withdrew_supplies);
     assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-    assert_eq!(gatherer.trip, TripStep::Close);
+    let Active::Acquire(run) = &gatherer.active else {
+        panic!("the request must close its bank before publishing a receipt");
+    };
+    assert_eq!(run.progress().2, "Close");
+    with_tick(&snapshot, &mut ledger, 8, |tick| gatherer.poll_active(tick));
+    let close = ledger.as_mut().unwrap().outbox.remove(0);
+    assert!(matches!(
+        close.effect,
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Close)
+    ));
+    ledger.as_mut().unwrap().complete_interaction(
+        &close.authority(),
+        crate::native::InteractionReceipt {
+            request_id: close.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: close.run(),
+                tick: 8,
+                sequence: 8,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+    with_tick(&snapshot, &mut ledger, 9, |tick| gatherer.poll_active(tick));
+    assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+    assert!(gatherer.scratch.withdrew_supplies);
+    assert!(gatherer.scratch.kept_unbankable);
+    assert_eq!(gatherer.trip, TripStep::Validate);
     assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 303), 1);
     assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 3062), 28);
+}
+
+#[test]
+fn late_tool_wear_preserves_the_bank_return_and_receipt_attribution() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut stats = snapshot.stats().to_vec();
+    stats.retain(|stat| stat.index != 0);
+    stats.push(StatView {
+        index: 0,
+        name: "attack".into(),
+        effective: 1,
+        base: 1,
+        xp: 0,
+        used: true,
+    });
+    snapshot.seed_stats(stats);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1351, "Bronze axe"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Wield".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    gatherer.trip = TripStep::Validate;
+    gatherer.scratch.kept_unbankable = true;
+    gatherer.scratch.withdrew_supplies = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        assert!(gatherer.admit_supply(&tick.cx));
+    });
+    assert_eq!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: false,
+        }
+    );
+    assert!(gatherer.scratch.kept_unbankable);
+    assert!(gatherer.scratch.withdrew_supplies);
+    with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
+    let actions = &ledger.as_ref().unwrap().outbox;
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        &actions[0].effect,
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held { action, .. })
+            if action == "Wield"
+    ));
 }
 
 #[test]

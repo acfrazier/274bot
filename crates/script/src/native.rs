@@ -842,6 +842,7 @@ pub fn with_test_tick<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: WalkCancelReason::None,
             snapshot,
+            shop_keepers: frame.compiled().shop_keepers,
             revision,
             retained: &mut retained,
             action_id: 0,
@@ -931,6 +932,7 @@ pub struct ActionContext<'a> {
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,
+    pub(crate) shop_keepers: Option<&'a Arc<api::service_pick::ShopKeeperFacts>>,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
@@ -1321,12 +1323,22 @@ const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 /// two fresh replans. Quester walk first set this cap in b26097813.
 pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
 
+/// The Gatherer's per-walk bound: the initial request and one fresh plan from
+/// the observed position (USER-0.2.3-GATHERER §1 and §3; the same bound as
+/// `MAX_RETURN_RECOVERY_ATTEMPTS`). Targets that still fail are shunned and
+/// spend the run's per-phase budget, so the retries stay finite.
+pub(crate) const GATHER_WALK_MAX_ATTEMPTS: u8 = 2;
+
 /// Shares Quester's walk-step retry budget and next-tick recovery state with
 /// every family that owns an approach walk.
 pub(crate) struct WalkRetryState {
     recovery: ReturnStallRecovery,
-    // Read only while recovery is pending; that state owns whether this tick is set.
+    // Read only while recovery is pending or held; those states own whether
+    // this tick is set.
     retry_after_tick: u64,
+    /// A wait that spends no retry budget, such as a refused walk or a target
+    /// excluded for the next pick.
+    held: bool,
 }
 
 impl Default for WalkRetryState {
@@ -1334,11 +1346,52 @@ impl Default for WalkRetryState {
         Self {
             recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
             retry_after_tick: 0,
+            held: false,
         }
     }
 }
 
 impl WalkRetryState {
+    /// A retry state whose budget is `max_attempts` requests in all, the
+    /// initial one included. The Gatherer's walks use
+    /// [`GATHER_WALK_MAX_ATTEMPTS`]: one fresh plan from the observed position.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            recovery: ReturnStallRecovery::with_max_attempts(max_attempts),
+            retry_after_tick: 0,
+            held: false,
+        }
+    }
+
+    /// The Gatherer's failure test: the ordinary failures of
+    /// [`Self::retryable_receipt`] and a plain refusal that names no typed
+    /// reason or blocked zone (AGENTS.md:131 covers NoPath, RouteEnded, Failed,
+    /// untyped Refused and Stalled). A typed refusal stays terminal.
+    pub(crate) fn observe_gather_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        let untyped_refusal = receipt.end == WalkEnd::Refused
+            && receipt.refusal.is_none()
+            && receipt
+                .blocked
+                .as_deref()
+                .is_none_or(|blocked| blocked.is_empty());
+        self.observe_approach_retry(
+            receipt,
+            tick,
+            Self::retryable_receipt(receipt) || untyped_refusal,
+        )
+    }
+
+    /// A transient Traveller stall (expired or dropped hop) on a return
+    /// walk; every other end stays terminal for the owner.
+    pub(crate) fn observe_return_stall(&mut self, end: &WalkEnd, tick: u64) -> bool {
+        if self.recovery.observe(end) {
+            self.retry_after_tick = tick;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
         if self.recovery.observe_receipt(receipt) {
             self.retry_after_tick = tick;
@@ -1387,8 +1440,8 @@ impl WalkRetryState {
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
-            "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
-            QUEST_WALK_MAX_ATTEMPTS,
+            "walk-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+            self.recovery.max_attempts,
             receipt.end,
         );
         true
@@ -1412,7 +1465,13 @@ impl WalkRetryState {
     }
 
     pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
-        self.pending() && tick <= self.retry_after_tick
+        (self.pending() || self.held) && tick <= self.retry_after_tick
+    }
+
+    /// Wait until an observed tick after `tick` without spending retry budget.
+    pub(crate) fn hold_next_tick(&mut self, tick: u64) {
+        self.held = true;
+        self.retry_after_tick = tick;
     }
 
     pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
@@ -1424,15 +1483,23 @@ impl WalkRetryState {
     pub(crate) fn action_submitted(&mut self) {
         self.recovery.action_submitted();
         self.retry_after_tick = 0;
+        self.held = false;
     }
 
     pub(crate) fn reset(&mut self) {
         self.recovery.reset();
         self.retry_after_tick = 0;
+        self.held = false;
     }
 
     pub(crate) fn retry_attempt_number(&self) -> u8 {
         self.recovery.retry_attempt_number()
+    }
+
+    /// Recovery actions already submitted.
+    #[cfg(test)]
+    pub(crate) fn actions(&self) -> u8 {
+        self.recovery.actions()
     }
 }
 
@@ -2287,6 +2354,58 @@ mod walk_permission_tests {
             receipt.failure_detail().as_deref(),
             Some("escape in progress")
         );
+    }
+
+    fn walk_retry_receipt(
+        end: WalkEnd,
+        blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+        refusal: Option<WalkRefusal>,
+    ) -> WalkReceipt {
+        WalkReceipt {
+            goal: None,
+            request_id: 19,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end,
+            blocked,
+            detail: None,
+            refusal,
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        }
+    }
+
+    #[test]
+    fn typed_walk_refusal_does_not_schedule_a_fresh_plan() {
+        let receipt =
+            walk_retry_receipt(WalkEnd::Refused, None, Some(WalkRefusal::EscapeInProgress));
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!WalkRetryState::retryable_receipt(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
+    }
+
+    #[test]
+    fn blocked_zones_do_not_schedule_a_fresh_plan() {
+        let receipt = walk_retry_receipt(
+            WalkEnd::NoPath,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(17)])),
+            None,
+        );
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!WalkRetryState::retryable_receipt(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
     }
 
     #[test]

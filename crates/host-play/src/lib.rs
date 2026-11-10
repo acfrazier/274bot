@@ -649,12 +649,16 @@ mod survival_eat_live_tests;
 pub use script_runtime::measures_captured_native_bank_pick_cpu;
 #[cfg(feature = "test-support")]
 pub use script_runtime::resolve_script_cross_zones_for_live_test;
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+mod buy_reply_probe_live;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]
 mod gather_held_live;
 #[cfg(test)]
 mod gather_return_live;
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+mod gather_tool_buy_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
@@ -672,6 +676,9 @@ mod relog_live_tests;
 #[cfg(test)]
 mod walk_optins_live_tests;
 
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+#[path = "acquire_shop_live.rs"]
+mod acquire_shop_live;
 #[cfg(test)]
 #[path = "nav_door_toggle_live_settlement_tests.rs"]
 mod nav_door_toggle_live_settlement_tests;

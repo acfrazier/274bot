@@ -1580,7 +1580,7 @@ fn blocked_native_work_never_automatically_restarts() {
         return;
     }
     let (mut slot, _) = receiver(41, SettingsApply::Applied);
-    Arc::make_mut(
+    let status = Arc::make_mut(
         slot.compiled
             .as_mut()
             .unwrap()
@@ -1588,11 +1588,33 @@ fn blocked_native_work_never_automatically_restarts() {
             .status
             .as_mut()
             .unwrap(),
-    )
-    .phase = NativePhase::Blocked;
+    );
+    status.phase = NativePhase::Blocked;
+    status.failure = Some(ScriptFailure {
+        code: Arc::from("test-blocked"),
+        message: Arc::from("terminal blocked fixture"),
+    });
+    let blocked = slot.native_status().expect("terminal blocked status");
+    assert_eq!(blocked.phase, NativePhase::Blocked);
+    assert!(blocked.failure.is_some());
     let run = slot.native_run();
     let now = Instant::now();
     slot.watchdog.arm_fresh(now);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(
+        !slot.dispatch_open(),
+        "a terminal native failure closes gameplay dispatch"
+    );
+    assert!(
+        !slot.watchdog.frozen(),
+        "the restart guard must not rely on the watchdog freeze"
+    );
+    assert_eq!(
+        slot.restart_from_identity(now)
+            .expect_err("a terminal native failure must deny restart"),
+        "watchdog restart cancelled: blocked"
+    );
+    assert_eq!(slot.native_run(), run);
     assert_eq!(
         slot.feed_watchdog(
             now + crate::watchdog::HARD_STALL,
@@ -1606,11 +1628,8 @@ fn blocked_native_work_never_automatically_restarts() {
     );
     assert!(
         slot.watchdog.frozen(),
-        "blocked time must not spend recovery deadlines"
+        "a terminal native failure freezes watchdog deadlines"
     );
-    assert!(slot
-        .restart_from_identity(now + crate::watchdog::HARD_STALL)
-        .is_err());
     assert_eq!(slot.native_run(), run);
     assert_eq!(slot.state(), RunState::Running);
 }
@@ -1827,16 +1846,31 @@ fn gatherer_snapshot_for_resource(
 }
 
 fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u32) {
+    gatherer_tick_with_bank(slot, snapshot, tick, None);
+}
+
+fn gatherer_tick_with_bank(
+    slot: &mut SlotScript,
+    snapshot: &api::snapshot::GameSnapshot,
+    tick: u32,
+    bank: Option<&api::bank_memory::BankMemory>,
+) {
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut NullDriver::default(),
         tick: u64::from(tick),
-        here: None,
+        here: snapshot.local_player().map(|local| {
+            let tile = local.player.actor.tile;
+            (tile.x, tile.z, tile.level)
+        }),
         walk: None,
         walk_with: None,
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: crate::CompiledTick::default(),
+        compiled: crate::CompiledTick {
+            bank_memory: bank,
+            ..Default::default()
+        },
     });
 }
 
@@ -1850,6 +1884,7 @@ fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
     let mut bag = SettingsBag::new();
     bag.insert("disposition".into(), serde_json::json!("Power"));
     bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+    bag.insert("buyTools".into(), serde_json::json!(false));
     if knife {
         bag.insert("tickMethod".into(), serde_json::json!("Knife"));
         bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
@@ -1865,6 +1900,66 @@ fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     slot
+}
+
+#[test]
+fn gatherer_bank_seen_status_demotes_to_a_saved_hint_after_relog() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use api::bank_memory::{BankMemory, FrameEvent};
+    use api::snapshot::ItemContainer;
+
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut row = snapshot.equipment()[0].clone();
+    row.container = ItemContainer::Bank;
+    row.count = 2;
+    snapshot.seed_main_modal(10, Vec::new());
+    snapshot.seed_bank_observation(5382, 1, Some(vec![row]), Vec::new());
+    let mut memory = BankMemory::default();
+    let observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 3 * 86_400;
+    assert_eq!(memory.track(&snapshot, observed_at), FrameEvent::Opened);
+    let mut slot = gatherer_slot(93);
+    let bank_seen = |slot: &SlotScript| {
+        let status = slot
+            .native_status()
+            .expect("published native Gatherer status");
+        let field = status
+            .fields
+            .iter()
+            .find(|field| field.key == "bank_seen")
+            .expect("the shared status projection includes bank_seen");
+        let crate::native::StatusValue::Text(value) = &field.value else {
+            panic!("bank_seen is a typed text field");
+        };
+        Arc::clone(value)
+    };
+    gatherer_tick_with_bank(&mut slot, &snapshot, 1, Some(&memory));
+    assert_eq!(bank_seen(&slot).as_ref(), "Session, 3 days ago, 1 rows");
+    let before = slot.native_run().expect("the compiled run is active");
+
+    memory.relogged();
+    snapshot.seed_main_modal(-1, Vec::new());
+    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    gatherer_tick_with_bank(&mut slot, &snapshot, 2, Some(&memory));
+    assert_ne!(
+        slot.native_run()
+            .expect("the rekeyed run is active")
+            .session,
+        before.session,
+    );
+    assert_eq!(
+        bank_seen(&slot).as_ref(),
+        "Hint (saved), 3 days ago, 1 rows"
+    );
+    slot.stop();
 }
 
 #[test]
@@ -1978,6 +2073,10 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
             );
             assert_ne!(operation, "Drop", "the tool is protected");
             equip_tick = Some(tick);
+            assert!(
+                !slot.has_native_actions(),
+                "wear-only acquisition must not also queue a bank operation",
+            );
             break;
         }
     }
@@ -2722,10 +2821,16 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // baseline slot never uses it. Dev 91d2ca897 measures 9,938 / 9,990 for the oak and Knife
     // samples; Linux now 9,978 / 10,030, so 10030 + 8 B headroom = 10038. macOS (merlot, aarch64)
     // measures 9,621 / 10,178 / 10,230 for ordinary / oak Off / oak Knife; 10230 + 8 B = 10238.
+    // Gatherer shop: +144 B per bot against that head, measured on macOS (merlot, aarch64) as
+    // 9,765 / 10,322 / 10,374, so 10374 + 8 B = 10382. The 144 B are the boxed Gatherer 1,584 ->
+    // 1,568 B (-16), the boxed GatherScratch 104 -> 144 B (+40; prepared+instance +24 B in all),
+    // the two added status rows `bank_seen` and `block_reason` (2 * 56 = +112) and the Ledger
+    // 1,016 -> 1,024 B (+8) allocated at the first poll. Linux (x86_64) takes the same +144 on
+    // the 10038 cap, pending the aubaine measurement.
     #[cfg(target_os = "macos")]
-    let exclusive_cap = 10238;
+    let exclusive_cap = 10382;
     #[cfg(not(target_os = "macos"))]
-    let exclusive_cap = 10038;
+    let exclusive_cap = 10182;
     for (oak, knife, exclusive) in measurements {
         assert!(
             (0..=exclusive_cap).contains(&exclusive),
@@ -3636,10 +3741,14 @@ mod api_gather_seat {
         // authority now allocated on first use (see
         // `the_slot_runtime_context_and_lazy_authority_have_known_sizes`) and the CastNpcSeat the
         // boxed ApiSeat now holds inline (`slot/api.rs`, `slot/cast_npc.rs`).
+        // Gatherer shop: +144 B against that head (macOS 10,099 -> 10,243 B: prepared+instance
+        // +24 B, polls +120 B), by the causes in `gatherer_exclusive_heap_stays_inside_the_
+        // measured_native_bound`. macOS cap 10,243 + 8 B headroom; Linux takes the same +144 on
+        // 10,043, pending the aubaine measurement.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10107;
+        let exclusive_limit = 10251;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 10043;
+        let exclusive_limit = 10187;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let exclusive_limit = 8848;
         assert!(
@@ -3972,22 +4081,22 @@ fn native_status_logs_each_phase_or_failure_change_once() {
     assert_eq!(lines[0].level, api::hostlog::Level::Info);
     assert_eq!(
         lines[0].message,
-        "native Gatherer phase=working failure=none"
+        "native Gatherer run=1 phase=working failure=none"
     );
     assert_eq!(lines[1].level, api::hostlog::Level::Info);
     assert_eq!(
         lines[1].message,
-        "native Gatherer phase=waiting failure=none"
+        "native Gatherer run=1 phase=waiting failure=none"
     );
     assert_eq!(lines[2].level, api::hostlog::Level::Info);
     assert_eq!(
         lines[2].message,
-        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with Failed"
+        "native Gatherer run=1 phase=blocked failure=walk-ended failure_message=walk ended with Failed"
     );
     assert_eq!(lines[3].level, api::hostlog::Level::Info);
     assert_eq!(
         lines[3].message,
-        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with a different reason"
+        "native Gatherer run=1 phase=blocked failure=walk-ended failure_message=walk ended with a different reason"
     );
     assert!(
         lines
@@ -4037,11 +4146,11 @@ fn native_status_logs_present_fields_as_plain_text() {
     assert_eq!(lines.len(), 2);
     assert_eq!(
         lines[0].message,
-        "native Gatherer phase=working failure=none waiting_for=bank trip action_state=banking last_event=bank trip due"
+        "native Gatherer run=1 phase=working failure=none waiting_for=bank trip action_state=banking last_event=bank trip due"
     );
     assert_eq!(
         lines[1].message,
-        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with Failed"
+        "native Gatherer run=1 phase=blocked failure=walk-ended failure_message=walk ended with Failed"
     );
     assert!(
         lines
@@ -4097,7 +4206,7 @@ fn native_status_logs_gatherer_method_area_target_and_reason() {
     assert_eq!(lines.len(), 1);
     assert_eq!(
         lines[0].message,
-        "native Gatherer phase=blocked failure=resource-unavailable failure_message=resource-unavailable: absent: 2; method=fishing.saltfish.op1; area=Custom (3086,3229,0) r12; planning=3092,3243,0 method=Net last_event=Network stall"
+        "native Gatherer run=1 phase=blocked failure=resource-unavailable failure_message=resource-unavailable: absent: 2; method=fishing.saltfish.op1; area=Custom (3086,3229,0) r12; planning=3092,3243,0 method=Net last_event=Network stall"
     );
 }
 
@@ -4271,7 +4380,7 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
         assert_eq!(blocked_lines[0].source, api::hostlog::Source::Script);
         assert_eq!(
             blocked_lines[0].message,
-            "native test phase=blocked failure=no-route failure_message=no reachable bank under the walk permissions"
+            "native test run=1 phase=blocked failure=no-route failure_message=no reachable bank under the walk permissions"
         );
     }
 }
@@ -5066,4 +5175,171 @@ fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
         slot.native_run(),
         "dispatch readmits the wait"
     );
+}
+
+#[test]
+fn vendor_facts_frame_port_borrows_the_world_arc_without_clones_or_allocations() {
+    let facts = Arc::new(api::service_pick::ShopKeeperFacts::default());
+    let mut driver = NullDriver::default();
+    let ctx = ScriptCtx {
+        driver: &mut driver,
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: crate::CompiledTick {
+            shop_keepers: Some(&facts),
+            ..Default::default()
+        },
+    };
+    let run = api::selected::RunKey {
+        slot: 10,
+        run: 1,
+        session: 1,
+    };
+    let mut retained = RetainedMemory::default();
+    let mut runtime = crate::native::ledger::Runtime::default();
+    let check = |cx: crate::native::ActionContext<'_>| {
+        assert!(std::ptr::eq(cx.shop_keepers.unwrap(), &facts));
+        assert_eq!(Arc::strong_count(&facts), 1);
+    };
+    check(super::compiled::frame_context(
+        &ctx,
+        run,
+        api::selected::ClientRevision::R289,
+        &mut retained,
+        &mut runtime,
+    ));
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..1_000 {
+            check(super::compiled::frame_context(
+                &ctx,
+                run,
+                api::selected::ClientRevision::R289,
+                &mut retained,
+                &mut runtime,
+            ));
+        }
+    });
+    assert_eq!(measured.count_total, 0);
+    assert_eq!(Arc::strong_count(&facts), 1);
+}
+
+#[test]
+fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use api::bank_memory::{BankMemory, Origin};
+
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    let mut memory = BankMemory::seeded(&[], Origin::Session);
+    let mut slot = gatherer_slot(94);
+    let started = Instant::now();
+    assert_eq!(
+        slot.feed_watchdog(started, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::None
+    );
+    let run = slot.native_run().unwrap();
+    gatherer_tick_with_bank(&mut slot, &snapshot, 1, Some(&memory));
+    let parked = slot.native_status().expect("parked Gatherer status");
+    assert_eq!(parked.phase, NativePhase::Blocked);
+    assert!(parked.failure.is_none(), "a supply park is not terminal");
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.native_run(), Some(run));
+    assert!(
+        slot.dispatch_open(),
+        "a no-failure supply park keeps gameplay dispatch open"
+    );
+    assert!(
+        !slot.watchdog.frozen(),
+        "a no-failure supply park does not freeze watchdog deadlines"
+    );
+    assert_eq!(
+        slot.evidence_wait_run,
+        Some(run),
+        "a no-failure supply park admits evidence-idle gameplay suspension"
+    );
+    assert!(!slot.has_native_actions());
+    assert!(!slot.foreground_action_active());
+    let reason = parked
+        .fields
+        .iter()
+        .find(|field| field.key == "block_reason")
+        .unwrap();
+    assert!(
+        matches!(&reason.value, crate::native::StatusValue::Text(text) if text.contains("axe") && text.contains("waiting:"))
+    );
+    let calls = crate::acquire::plan::calls_for_test();
+    for tick in 2..12 {
+        gatherer_tick_with_bank(&mut slot, &snapshot, tick, Some(&memory));
+    }
+    assert_eq!(crate::acquire::plan::calls_for_test(), calls);
+    assert_eq!(slot.native_status().as_deref(), Some(parked.as_ref()));
+
+    let wedge_at = started + crate::watchdog::WEDGE;
+    slot.watchdog.stamp_scheduler(wedge_at);
+    slot.note_game_packet_tick(wedge_at);
+    assert_eq!(
+        slot.feed_watchdog(wedge_at, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::None,
+        "only gameplay recovery pauses"
+    );
+    let packet_gap = wedge_at + crate::watchdog::SCHEDULER_WARN;
+    slot.watchdog.stamp_scheduler(packet_gap);
+    assert_eq!(
+        slot.feed_watchdog(packet_gap, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::WarnNoGamePackets,
+        "the transport warning remains active"
+    );
+
+    slot.pause();
+    assert_eq!(slot.state(), RunState::Paused);
+    slot.resume();
+    gatherer_tick_with_bank(&mut slot, &snapshot, 12, Some(&memory));
+    assert_eq!(crate::acquire::plan::calls_for_test(), calls + 1);
+    assert_eq!(slot.native_run(), Some(run));
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.evidence_wait_run, Some(run));
+
+    memory.relogged();
+    slot.on_is_up(false);
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    gatherer_tick_with_bank(&mut slot, &snapshot, 13, Some(&memory));
+    assert_eq!(crate::acquire::plan::calls_for_test(), calls + 1);
+    let rekeyed = slot.native_run().unwrap();
+    assert_eq!(rekeyed.run, run.run);
+    assert_ne!(rekeyed.session, run.session);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert!(
+        !slot.has_native_actions(),
+        "a saved bank hint cannot wake a park"
+    );
+
+    let stalled = packet_gap + crate::watchdog::HARD_STALL;
+    slot.note_game_packet_tick(stalled);
+    assert_eq!(
+        slot.feed_watchdog(stalled, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::Restart {
+            reason: crate::watchdog::RestartReason::Stall,
+        },
+        "the scheduler deadline remains active"
+    );
+    restart_and_settle(&mut slot, stalled);
+    let restarted = slot.native_run().unwrap();
+    assert!(restarted.run > run.run, "a no-failure block allows restart");
+    assert_eq!(slot.state(), RunState::Running);
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(slot.native_run().is_none());
+    assert!(slot.native_status().is_none());
+    assert!(slot.evidence_wait_run.is_none());
+    assert!(!slot.has_native_actions());
 }

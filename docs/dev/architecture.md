@@ -292,7 +292,8 @@ reasons to change.
 | `prayer.rs` | prayer queries | over fact rows and observed stats |
 | `quest_facts.rs`, `quest_facts/catalog.rs` | quest identity and prereqs; roster rows | stage resolution belongs to the Path |
 | `quest_progress.rs` | compact journal/progress evidence | shared by runner, host and nav provider |
-| `shop_facts.rs` | shop preset facts | ShopBuyout presets only |
+| `shop_facts.rs` | pinned shop and keeper facts | borrowed config/type joins; posted stock and content prices |
+| `service_pick.rs` | borrowed service candidates and shared resolved keeper rows | plain facts only; collision and search stay in `nav-planner` |
 | `clue_facts.rs` | clue row lookup | over the posted trail family |
 | `clue_logic.rs` | held-step identify | first held step in posted order |
 | `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
@@ -349,7 +350,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
 | `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
 | `canlight.rs` | canlight lookup and decoding | static policy and sidecar data |
-| `collision.rs` | runtime collision models | four planes, walk words, and shared packing primitives |
+| `collision.rs` | runtime collision models and shared masks | four planes, walk words, packed bits, and wall/scenery masks sourced from client flag definitions |
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
 | `map.rs` | bounded map-data boundary | errors, capped records/text and header-first checks; no UI or game actions |
@@ -375,6 +376,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `movement.rs` | shared directional step rule | router and local producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
+| `service_pick.rs`, `service_pick_tests.rs` | shared service-footprint access and complete-domain air/routed selection | prevalidated borrowed access; no `script` dependency; Bank and ShopKeeper share the routed target contract |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
 | `transport/` | runtime fare, web-action and Wilderness helpers | source derivation belongs to `nav-bake` |
@@ -609,7 +611,7 @@ the curated JS entry points, not aliases for Core types.
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native/tickcycle.rs` | allocation-free observed-tick technique core | interval evidence, animation serials, checked obligations and the run-level slip policy; host receipts are not server acknowledgements |
-| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
+| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, typed service picks, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `surface.rs`, `surface/test_support.rs` | runtime-neutral surface cards, run contract and core test factory | slot lifecycle owns trait objects and typed facts, not JS or wire state |
 | `native/recovery_hints.rs` | shared recovery-anchor cell | slot-owned hints survive surface retirement and restart |
@@ -619,7 +621,7 @@ the curated JS entry points, not aliases for Core types.
 | `slot/bank.rs`, `bank/seat_open.rs`, `bank/seat_transfer.rs` | native bank seat, opening and transfer continuations | shared `bank/ops.rs` and `bank/npc.rs` kernels; hooks use seat prompts, not a second isolate behavior |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
-| `acquire/` | shared acquisition planning, typed block evidence and one bank-trip runner | `plan.rs` pure per-need decisions; `run.rs` native bank, walk and wear execution; authored Quester sequences retain their existing order and refusal text |
+| `acquire/` | shared acquisition planning, typed block evidence and bank/shop execution | `plan.rs` pure per-need and coin decisions; `run.rs` bank, wear and child sequencing; `shop_run.rs` one active vendor route and purchase need; `buy.rs` one in-flight purchase with ordered same-keeper page reconciliation and counted final closure; authored Quester sequences retain their existing order and refusal text |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
 | `gatherer/` | Gatherer card and runner | woodcutting, mining and fishing from live observation: `select.rs` target choice, `gather.rs` resource actions, `gather_timing.rs` knife-cycle signals and emissions, `runner_timing.rs` parked cycle and run policy, `drop.rs` power drops, `supply.rs`, `recover.rs` death recovery, `area.rs`, `widen.rs`, `settings.rs`, `status.rs`, `oneop.rs` |
 | `combat/` | shared observed-state combat machine | melee, ranged and magic on one planner (`machine.rs`, `style/`); `policy.rs`, `prayer.rs`, `guard.rs` WalkGuard, `threats.rs`, `schedule.rs`, `select.rs`, `tables.rs`, `request.rs` |
@@ -727,7 +729,7 @@ libtest exception.
 | `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
 | `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness; the fleet launch panel and `tui-play` both stash (`fleet_catalog_starts`, feature `live-harness`) |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
-| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, bank selection as a bounded cursor job on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Its 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
+| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, and bank/service picks as bounded cursor jobs on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Service picks search the complete eligible access domain without teleports or bank fetch, retaining per-bot avoid rectangles and account gates; NoPath carries the separate unresolved-quest-gate diagnosis. The 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
 | `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions. Selected-bank walks use the same compact route adapter for Traveller and borrowed map paint, without expanding legacy route vectors. |
 | `admission.rs` | shared route-admission seam | advisory survivability estimate under Proceed; no net or poison-clear observer claimed |
 | `slot_bank_memory.rs` | slot thread's hand on its account bank memory | one shared handle per account; the slot thread is the only writer, never across file IO |

@@ -82,6 +82,8 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
+| `host.bank-mage-teller-native` | Run on chardonnay with Engine L at `127.0.0.1:47594` and HTTP port `3080`. The cell uses local 289 assets, named-bank catalog data, a minted account, and `LIVE_EVIDENCE_DIR`. |
+| `host.bank-npc-pick-burst`, `host.grinch-cross-region-return` | Run on aubaine with the Engine L endpoint at `127.0.0.1:44594` and HTTP port `1080`. The bank-pick burst requires ten disposable accounts; Grinch uses real cross-region bank returns. |
 | `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
 | `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
@@ -193,6 +195,25 @@ artifact selection. `--verify-cells` lists only this cell's picker-test selector
 it does not run or validate the external production-library proof.
 
 
+## Gatherer Shop lab routing
+
+The shared runner reads `tools/live-map/map.toml` from the `--repo` path.
+It does not read the map from the runner checkout.
+
+On Aubaine, ports `44594/1080` relay to Engine L at `47594/3080`. Use
+`--engine-game-port 44594 --engine-http-port 1080`. This keeps the older
+hard-coded A cells on the relay to L.
+
+Export `ENGINE_L_DIR` to the local Engine L directory. The runner has no
+default for this alias.
+
+On chardonnay, use Engine L only at `47594/3080`. Do not use `44594/1080`.
+Those ports belong to the Windows drivers. Set the runner engine ports to
+`47594/3080`.
+
+Use Engine Q only for quest cells at `44694/1180`. Leave
+`QUESTER_TICK_MS` unset. The runner routes quest cells to Q.
+
 
 Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
@@ -215,6 +236,19 @@ The NPC-hop test requires `WORLD_NAV_PACK` and reads its optional `WORLD_NAV_FLA
 `WORLD_ENGINE_DIR`, and `WORLD_CACHE_DIR` at `crates/host-play/tests/npc_hop_live.rs:87-115`.
 It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 `crates/host-play/tests/npc_hop_live.rs:53-58,308-323`.
+
+## Bank and acquisition call paths
+
+`host.bank-mage-teller-native` and `host.bank-npc-pick-burst` cover
+`crates/host-play/src/bank_npc_live.rs`. The first runs the real Mage Arena
+teller receipt; the second exercises the shared bank-pick retry burst.
+`crates/host-play/src/script_bank_harness.rs` is test-only and is excluded
+from live coverage by its exact `not_live.globs` entry.
+
+`host.grinch-cross-region-return` covers
+`crates/script/src/acquire/run.rs`: `Grinch::start_bank` constructs
+`AcquireRun` at `crates/script/src/grinch.rs:630`, and the live cross-region
+return cell is selected at `crates/host-play/tests/grinch_live.rs:119-123`.
 
 ## ScriptWalkArm call paths
 

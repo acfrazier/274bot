@@ -1268,8 +1268,8 @@ fishing bait and other non-products are kept. If protected items fill the pack
 and no selected product can be dropped, the card stops with `inventory-blocked`
 rather than gathering against a full inventory. Clear space and **Start** again.
 
-Fishing requires the selected method's tool and bait before gathering; missing
-bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
+Fishing requires the selected method's tool and bait before gathering. A missing
+required supply parks the running card while it waits for evidence. Moving fishing spots are re-acquired by NPC
 identity. Depleted resources are not clicked: a live lower-tier resource can
 be selected while the higher tier respawns. Wait deadlines use the observed
 group's respawn bound, capped at eight minutes since gameplay progress, and do
@@ -1358,9 +1358,10 @@ Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
 the combined held and loaded-bank stock. A usable partial refill continues
 gathering; `supply-missing` means a required tool, bait, configured food or a
-complete reserve cast is unavailable. Coins never gate a trip. Available
-withdrawals, including the tool, settle before another unavailable supply is
-reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
+complete reserve cast is unavailable. An optional coin top-up never gates a
+trip. A shop purchase does need enough coins for its quoted quantity.
+Available withdrawals settle before another unavailable supply is reported.
+Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Gatherer deposits succeed only
 after inventory confirms that no eligible deposit candidates remain.
 
@@ -1382,11 +1383,51 @@ A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory
 decides what the trip will find. A bank never seen is learned by walking to it,
 and a shortage predicted only by the saved hint still earns one verifying trip.
-Only a bank seen open this login that cannot serve a required tool, bait,
-configured food or complete reserve cast fails in place with `supply-missing`,
-without a walk. At the open bank the live rows are planned afresh and win over
-the memory. A wielded tool counts as carried, and so does a worn required item;
+Only a bank seen open this login can prove that a required supply is absent.
+With no admitted shop source, that shortage parks in place with
+`supply-missing`, without a walk. At the open bank the live rows are planned afresh and win over
+the memory. A lower usable tool tier uses that item's selected-cache name for
+its withdrawal, even when the trip was admitted before the bank was known.
+A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
+
+The `bank_seen` status field states where that bank information came from
+and its age when the status was last updated: `Session, 12 min ago, n rows`,
+`Hint (saved), 3 days ago, n rows`, or `unknown` before an observation.
+If the observation time cannot be compared with the current time, only the
+origin and row count are shown. A full pack is deposited before a missing
+supply is reported at the open bank. A usable axe or pickaxe already in the
+pack is equipped without a bank trip when its wield requirements are met;
+fishing tools remain carried.
+
+`buyTools` defaults to `true`. It admits shops only for the selected method's
+gathering tools and bait, not food, runes or optional coin top-ups. Gatherer
+uses a usable held, worn or session-banked tool before it considers a purchase.
+It does not buy an upgrade to replace a usable tool. When none is owned,
+shared acquisition chooses the best tier that the skill permits, a reachable
+vendor stocks, and the run budget can afford. A plan that wears the tool also
+requires the account to meet its wield requirement. Axes have no Woodcutting
+use gate. Shop choice uses the nearest reachable keeper for the chosen tier.
+Route permissions and access gates still apply. An undecided route search does
+not prove that a keeper is unreachable. The content price rule determines the
+coin reserve, capped by coins in the pack and observed bank. A usable partial
+refill can still continue gathering. A `no-vendor` refusal names the best tier
+found and the condition that failed. Coin, route and stock refusals retain
+their specific codes.
+
+Supply refusals keep the slot `Running` with native phase `Blocked` and no
+terminal failure. `block_reason` names the refused need and the evidence
+**when blocked**. These seven codes park: `supply-missing`, `too-few-coins`,
+`vendor-unreachable`, `vendor-pick-undecided`, `no-vendor`, `no-stock` and
+`no-space`. Gatherer closes an open bank, then waits without repeated walks,
+bank opens or planner calls. Fresh pack, worn or session-bank evidence can
+resolve the original need; a saved bank hint alone cannot. A usable held
+tool can wake a wielded need with one wear action and no bank trip.
+`no-stock` can also wake at its observed-tick revisit time, and `no-space`
+when enough slots are free. Resume or a relevant supply-setting change
+allows one new plan. Relog retains the park. Pause and Stop still work.
+Only gameplay recovery waits: scheduler, transport and session checks stay
+active. The panel, terminal and fleet show the parked reason and bank origin.
 
 `tickMethod` is one restart-required setting for Woodcutting, Mining and
 Fishing. It defaults to `Off`; the other value is `Knife`. `Knife` prepares
@@ -1467,12 +1508,11 @@ bank trip if needed, verifies equipment and requires an arrived return walk.
 Only a fresh product **and** XP gain increments `recoveries`. `recovery_step`
 reports 1–5 for the pending sequence, 6 while proving yield and 0 when idle.
 A second death before recovery and a completed disposal blocks with `died-again`.
-A blocked recovery stops the run, including a refused return. Watchdog recreation
-and reconnect retain both the step and chat watermark only while recovery is
-live, so old deaths cannot
-re-latch and gap deaths are still detected. No-stock failures remain
-`supply-missing`; missing respawn evidence is `respawn-not-observed`.
-Shop provisioning and self-defence are not offered.
+A refused return stops recovery. Supply shortages instead keep the recovery
+parked until its original need can be served. Watchdog recreation and reconnect
+retain the live recovery step and chat watermark, so old deaths cannot
+re-latch and gap deaths are still detected. Missing respawn evidence is
+`respawn-not-observed`. Self-defence is not offered.
 Skill, resource and location changes remain pending until the slot restarts.
 Bank and supply settings apply at a pending boundary, never midway through a
 bank batch.

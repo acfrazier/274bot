@@ -1,7 +1,9 @@
 use super::owner::Owner;
 use super::{ActionError, AssessReceipt, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
 use crate::interact::InteractReq;
-use crate::native_bank::{BankPickReceipt, BankPickRequest};
+use crate::native_bank::{
+    BankPickReceipt, BankPickRequest, ServicePickReceipt, ServicePickRequest,
+};
 use api::identity::ActiveClock;
 use api::selected::RunKey;
 use std::num::NonZeroU64;
@@ -190,6 +192,8 @@ pub enum HostEffect {
     Interaction(InteractReq),
     Walk(WalkRequest),
     BankPick(BankPickRequest),
+    /// Compute a typed service route choice under the same foreground fence.
+    ServicePick(ServicePickRequest),
     AssessWalk(WalkRequest),
     ServerOrdered(crate::surface::ServerOrderedEnvelope),
 }
@@ -246,9 +250,10 @@ impl HostAction {
     pub fn live(&self) -> bool {
         let owner = &self.custody.owner;
         match &self.effect {
-            HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
-                owner.interaction_live(self.request_id)
-            }
+            HostEffect::Interaction(_)
+            | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
+            | HostEffect::AssessWalk(_) => owner.interaction_live(self.request_id),
             HostEffect::Walk(_) => owner.walk_live(self.request_id),
             HostEffect::ServerOrdered(_) => owner.batch_live(self.request_id),
         }
@@ -294,6 +299,47 @@ pub(crate) struct QuietRead {
     pub hold_until: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickChannel {
+    Bank,
+    Service,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingPick {
+    pub request: NonZeroU64,
+    pub channel: PickChannel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PickReceipt {
+    Bank(BankPickReceipt),
+    Service(ServicePickReceipt),
+}
+
+impl PickReceipt {
+    fn channel(&self) -> PickChannel {
+        match self {
+            Self::Bank(_) => PickChannel::Bank,
+            Self::Service(_) => PickChannel::Service,
+        }
+    }
+
+    pub fn request_id(&self) -> u64 {
+        match self {
+            Self::Bank(receipt) => receipt.request_id,
+            Self::Service(receipt) => receipt.request_id,
+        }
+    }
+
+    pub fn evidence(&self) -> api::quest_progress::EvidenceStamp {
+        match self {
+            Self::Bank(receipt) => receipt.evidence,
+            Self::Service(receipt) => receipt.evidence,
+        }
+    }
+}
+
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
 pub struct Ledger {
@@ -305,8 +351,8 @@ pub struct Ledger {
     pub(crate) walk_events: Vec<WalkEvent>,
     pub(crate) interaction: Option<InteractionReceipt>,
     pub(crate) interaction_request: Option<NonZeroU64>,
-    pub(crate) bank_pick: Option<BankPickReceipt>,
-    pub(crate) bank_pick_request: Option<NonZeroU64>,
+    pub(crate) pick: Option<PickReceipt>,
+    pub(crate) pick_request: Option<PendingPick>,
     // Keep the 72-byte terminal envelope lazy instead of widening every native ledger.
     pub(crate) server_ordered: Option<Box<super::ServerOrderedCompletion>>,
     pub(crate) server_ordered_request: Option<NonZeroU64>,
@@ -355,8 +401,8 @@ impl Default for Ledger {
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
-            bank_pick: None,
-            bank_pick_request: None,
+            pick: None,
+            pick_request: None,
             server_ordered: None,
             server_ordered_request: None,
             assess_owner: None,
@@ -553,8 +599,8 @@ impl Ledger {
         self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;
-        self.bank_pick = None;
-        self.bank_pick_request = None;
+        self.pick = None;
+        self.pick_request = None;
         self.server_ordered = None;
         self.server_ordered_request = None;
         self.batch_receipts.fill(None);
@@ -636,19 +682,35 @@ impl Ledger {
     }
 
     pub fn complete_bank_pick(&mut self, authority: &HostAuthority, receipt: BankPickReceipt) {
+        self.complete_pick(authority, PickReceipt::Bank(receipt));
+    }
+
+    pub fn complete_service_pick(
+        &mut self,
+        authority: &HostAuthority,
+        receipt: ServicePickReceipt,
+    ) {
+        self.complete_pick(authority, PickReceipt::Service(receipt));
+    }
+
+    fn complete_pick(&mut self, authority: &HostAuthority, receipt: PickReceipt) {
         let request = authority.request_id();
         if !authority.live()
-            || request.get() != receipt.request_id
-            || authority.run() != receipt.evidence.run
-            || self.bank_pick_request != Some(request)
-            || self.bank_pick.is_some()
+            || request.get() != receipt.request_id()
+            || authority.run() != receipt.evidence().run
+            || self.pick_request
+                != Some(PendingPick {
+                    request,
+                    channel: receipt.channel(),
+                })
+            || self.pick.is_some()
             || !self.owner.as_ref().is_some_and(|owner| {
                 owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
             })
         {
             return;
         }
-        self.bank_pick = Some(receipt);
+        self.pick = Some(receipt);
     }
 }
 
@@ -1215,7 +1277,10 @@ mod tests {
             request: ledger.next_id().unwrap(),
             walk: false,
         };
-        ledger.bank_pick_request = Some(current.request);
+        ledger.pick_request = Some(PendingPick {
+            request: current.request,
+            channel: PickChannel::Bank,
+        });
         owner.set_interaction(current.request);
         let receipt = BankPickReceipt {
             request_id: current.request.get(),
@@ -1244,7 +1309,7 @@ mod tests {
                 ..receipt.clone()
             },
         );
-        assert!(ledger.bank_pick.is_none());
+        assert!(ledger.pick.is_none());
         ledger.complete_bank_pick(
             &current,
             BankPickReceipt {
@@ -1255,9 +1320,9 @@ mod tests {
                 ..receipt.clone()
             },
         );
-        assert!(ledger.bank_pick.is_none());
+        assert!(ledger.pick.is_none());
         ledger.complete_bank_pick(&current, receipt.clone());
-        assert_eq!(ledger.bank_pick, Some(receipt.clone()));
+        assert_eq!(ledger.pick, Some(PickReceipt::Bank(receipt.clone())));
         ledger.complete_bank_pick(
             &current,
             BankPickReceipt {
@@ -1276,15 +1341,115 @@ mod tests {
             },
         );
         assert_eq!(
-            ledger.bank_pick,
-            Some(receipt.clone()),
+            ledger.pick,
+            Some(PickReceipt::Bank(receipt.clone())),
             "a duplicate cannot replace the selected stand"
         );
         ledger.revoke();
         ledger.complete_bank_pick(&current, receipt);
+        assert!(ledger.pick.is_none(), "a late pick revived cancelled work");
+    }
+
+    #[test]
+    fn service_pick_receipts_require_matching_channel_owner_run_and_request() {
+        use crate::native_bank::ServicePickOutcome;
+
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
+        let mut ledger = Ledger::default();
+        let owner = Owner::new(run, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let old = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        let current = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        ledger.pick_request = Some(PendingPick {
+            request: current.request,
+            channel: PickChannel::Service,
+        });
+        owner.set_interaction(current.request);
+        let receipt = ServicePickReceipt {
+            request_id: current.request.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 4,
+                sequence: 4,
+            },
+            outcome: ServicePickOutcome::Routed {
+                index: 7,
+                access_tile: api::snapshot::WorldTile {
+                    x: 100,
+                    z: 200,
+                    level: 0,
+                },
+                cost: 11,
+            },
+        };
+        ledger.complete_bank_pick(
+            &current,
+            BankPickReceipt {
+                request_id: receipt.request_id,
+                evidence: receipt.evidence,
+                outcome: crate::native_bank::BankPickOutcome::Selected(
+                    crate::native_bank::SelectedBank {
+                        bank_index: 7,
+                        access_tile: api::snapshot::WorldTile {
+                            x: 100,
+                            z: 200,
+                            level: 0,
+                        },
+                        kind: crate::native_bank::PickKind::Reachable,
+                        access: None,
+                    },
+                ),
+            },
+        );
         assert!(
-            ledger.bank_pick.is_none(),
-            "a late pick revived cancelled work"
+            ledger.pick.is_none(),
+            "a bank receipt cannot answer a service request"
+        );
+        ledger.complete_service_pick(
+            &old,
+            ServicePickReceipt {
+                request_id: old.request.get(),
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.pick.is_none(), "the replaced request cannot answer");
+        ledger.complete_service_pick(
+            &current,
+            ServicePickReceipt {
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: run.next_session().unwrap(),
+                    ..receipt.evidence
+                },
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.pick.is_none(), "the old session cannot answer");
+        ledger.complete_service_pick(&current, receipt.clone());
+        ledger.complete_service_pick(
+            &current,
+            ServicePickReceipt {
+                outcome: ServicePickOutcome::NotSettled,
+                ..receipt.clone()
+            },
+        );
+        assert_eq!(ledger.pick, Some(PickReceipt::Service(receipt.clone())));
+        ledger.revoke();
+        ledger.complete_service_pick(&current, receipt);
+        assert!(
+            ledger.pick.is_none(),
+            "a late receipt cannot revive cancelled work"
         );
     }
 
@@ -1502,6 +1667,23 @@ mod tests {
     fn scene_fence_uses_four_bytes_and_tick_budget_stays_compact() {
         assert_eq!(std::mem::size_of::<SceneFence>(), 4);
         assert_eq!(std::mem::size_of::<TickBudget>(), 24);
+    }
+
+    #[test]
+    fn service_pick_shares_the_bank_slot_with_bounded_control_metadata() {
+        use std::mem::size_of;
+        assert_eq!(size_of::<PendingPick>(), 16);
+        assert_eq!(size_of::<Option<PendingPick>>(), 16);
+        let largest = size_of::<BankPickReceipt>().max(size_of::<ServicePickReceipt>());
+        assert!(size_of::<Option<PickReceipt>>() <= largest + 8);
+        println!(
+            "pick owner bytes: ledger={} pending={} bank_receipt={} service_receipt={} shared_receipt={}",
+            size_of::<Ledger>(),
+            size_of::<Option<PendingPick>>(),
+            size_of::<BankPickReceipt>(),
+            size_of::<ServicePickReceipt>(),
+            size_of::<Option<PickReceipt>>(),
+        );
     }
 
     fn scene_frame(level: i32, x: i32, z: i32, origin: (i32, i32)) -> api::snapshot::GameSnapshot {

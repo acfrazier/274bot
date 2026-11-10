@@ -880,6 +880,40 @@ fn world_login_uses_the_login_phase_not_script_idle() {
 }
 
 #[test]
+fn fleet_brief_marks_only_running_parked_scripts_as_blocked() {
+    let mut row = FleetRow::fixture("alice", Phase::Ready, None, None);
+    row.script = RunState::Running;
+    row.parked = true;
+    row.write_brief();
+    assert!(row.parked());
+    assert_eq!(row.brief(), "blocked");
+    assert!(crate::fleet::fleet_row_matches(
+        row.name(),
+        Some(&row),
+        "blocked"
+    ));
+
+    let mut copied = FleetRow::default();
+    copied.copy_from(&row);
+    assert!(copied.parked());
+    assert_eq!(copied.brief(), "blocked");
+
+    row.parked = false;
+    row.write_brief();
+    assert_eq!(row.brief(), "running");
+    assert!(!crate::fleet::fleet_row_matches(
+        row.name(),
+        Some(&row),
+        "blocked"
+    ));
+
+    row.script = RunState::Paused;
+    row.parked = true;
+    row.write_brief();
+    assert_eq!(row.brief(), "idle");
+}
+
+#[test]
 fn native_wait_and_refusal_override_running_but_not_pause() {
     use script::native::{NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue};
     use std::sync::Arc;
@@ -936,8 +970,8 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     assert_eq!(script_status_label(RunState::Running, None), "running");
 }
 
-/// The Status card's script line. A parked Quester shows its phase and why
-/// it parked; a terminal refusal on an idle run keeps the failure as the
+/// The Status card's script line. A parked Quester or Gatherer shows its phase
+/// and reason; a terminal refusal on an idle run keeps the failure as the
 /// reason; a slot that runs no script shows nothing extra.
 #[test]
 fn status_card_shows_the_script_phase_and_park_reason() {
@@ -984,6 +1018,29 @@ fn status_card_shows_the_script_phase_and_park_reason() {
     assert_eq!(phase.label(), "blocked");
     assert_eq!(phase.phase(), Some("blocked"));
     assert_eq!(phase.reason(), Some("no step for stage"));
+
+    let block_reason = "no Fly Fishing Feathers in the pack, worn, or in the bank";
+    let mut gatherer = SlotDetail::default();
+    gatherer.row.script = RunState::Running;
+    let gatherer = gatherer.with_native_status(Some(Arc::new(status(
+        NativePhase::Blocked,
+        vec![StatusField {
+            key: "block_reason",
+            label: "Block reason (evidence when blocked)",
+            value: StatusValue::Text(Arc::from(block_reason)),
+        }],
+        None,
+    ))));
+    let phase = gatherer
+        .script_phase()
+        .expect("a Running blocked Gatherer shows its reason");
+    assert_eq!(phase.label(), "blocked");
+    assert_eq!(phase.phase(), Some("blocked"));
+    assert_eq!(phase.reason(), Some(block_reason));
+    assert_eq!(
+        script_status_reason(gatherer.native_status().expect("status is retained")),
+        Some(block_reason)
+    );
 
     let mut refused = SlotDetail::default();
     refused.row.script = RunState::Idle;
@@ -1059,7 +1116,7 @@ fn status_card_shows_the_current_park_reason_not_an_earlier_quests() {
 }
 
 #[test]
-fn draft_path_status_is_projected_to_one_short_status_row() {
+fn bank_seen_and_draft_path_rows_include_comments_only_with_a_path_source() {
     use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
     use std::sync::Arc;
 
@@ -1073,17 +1130,70 @@ fn draft_path_status_is_projected_to_one_short_status_row() {
         phase: NativePhase::Working,
         active_settings: 1,
         pending_settings: None,
-        fields: Arc::from([StatusField {
-            key: "draft_status",
-            label: "Path status",
-            value: StatusValue::Text(Arc::from("Untested draft Path")),
-        }]),
+        fields: Arc::from([
+            StatusField {
+                key: "bank_seen",
+                label: "Bank seen (at status update)",
+                value: StatusValue::Text(Arc::from("Session, 12 min ago, 6 rows")),
+            },
+            StatusField {
+                key: "path_source",
+                label: "Path source",
+                value: StatusValue::Text(Arc::from("folder")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Step comment",
+                value: StatusValue::Text(Arc::from("Folder Path comment")),
+            },
+            StatusField {
+                key: "draft_status",
+                label: "Path status",
+                value: StatusValue::Text(Arc::from("Untested draft Path")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Empty step comment",
+                value: StatusValue::Text(Arc::from("")),
+            },
+        ]),
         survival: script::survival::SurvivalReport::default(),
         failure: None,
     };
     assert_eq!(
         script_status_rows(StatusView::new(&status)).collect::<Vec<_>>(),
-        vec![("Path status", "Untested draft Path")]
+        vec![
+            (
+                "Bank seen (at status update)",
+                "Session, 12 min ago, 6 rows"
+            ),
+            ("Path source", "folder"),
+            ("Step comment", "Folder Path comment"),
+            ("Path status", "Untested draft Path")
+        ]
+    );
+
+    let without_source = ScriptStatus {
+        fields: Arc::from([
+            StatusField {
+                key: "bank_seen",
+                label: "Bank seen (at status update)",
+                value: StatusValue::Text(Arc::from("Session, 12 min ago, 6 rows")),
+            },
+            StatusField {
+                key: "step_comment",
+                label: "Step comment",
+                value: StatusValue::Text(Arc::from("Folder Path comment")),
+            },
+        ]),
+        ..status
+    };
+    assert_eq!(
+        script_status_rows(StatusView::new(&without_source)).collect::<Vec<_>>(),
+        vec![(
+            "Bank seen (at status update)",
+            "Session, 12 min ago, 6 rows"
+        )]
     );
 }
 
@@ -1294,13 +1404,23 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
     s.poll();
     let alice = row(&s, "vs-alice");
     assert_eq!(
-        (alice.script_walk(), alice.manual_walk(), alice.brief()),
-        (true, false, "running")
+        (
+            alice.script_walk(),
+            alice.manual_walk(),
+            alice.parked(),
+            alice.brief()
+        ),
+        (true, false, false, "running")
     );
     let bob = row(&s, "vs-bob");
     assert_eq!(
-        (bob.script_walk(), bob.manual_walk(), bob.brief()),
-        (false, true, "running")
+        (
+            bob.script_walk(),
+            bob.manual_walk(),
+            bob.parked(),
+            bob.brief()
+        ),
+        (false, true, false, "running")
     );
 
     for name in ["vs-alice", "vs-bob"] {

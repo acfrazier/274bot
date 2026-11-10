@@ -1023,6 +1023,7 @@ fn a_held_tick_sends_no_close() {
         cure_poison: crate::survival::CurePoison::WhenNeeded,
         walk_danger: Some(&crate::native::AllowWalkDanger),
         wilderness: None,
+        shop_keepers: None,
         pvp_globals: None,
         selected: Some(&data),
         reach: None,

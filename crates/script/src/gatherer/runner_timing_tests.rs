@@ -487,11 +487,11 @@ fn not_due_kit_shortage_comes_from_built_plan_and_is_published_without_a_trip() 
     with_tick_bank(&snapshot, Some(&bank), &mut None, 1, |tick| {
         let stock = tick.cx.snapshot().stock();
         let stats = tick.cx.snapshot().stats().unwrap().value;
-        assert_eq!(
-            SupplyPlan::plan(&gatherer.prepared, stats, stock),
-            SupplyVerdict::NotDue
+        assert!(
+            !SupplyPlan::due(&gatherer.prepared, stats, stock),
+            "a known incomplete kit is not a trip"
         );
-        assert!(SupplyPlan::build(&gatherer.prepared, stats, stock, |_| 0).kit_missing());
+        assert!(SupplyPlan::tick_kit_missing(&gatherer.prepared, stock));
         assert!(gatherer.timing_for_target(&target, &tick.cx).is_none());
     });
     gatherer.refresh_tick_status();
@@ -524,7 +524,7 @@ fn cancellation_hold_and_bank_trip_drop_cycle_but_keep_run_policy() {
     assert!(gatherer.parked_cycle.is_none());
     assert_eq!(gatherer.tick_policy, policy);
     gatherer.parked_cycle = Some(cycle);
-    gatherer.start_trip();
+    gatherer.start_trip(TripStep::Deposit);
     assert!(gatherer.parked_cycle.is_none());
     assert_eq!(gatherer.tick_policy, policy);
 }

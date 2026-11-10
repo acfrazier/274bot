@@ -16,8 +16,9 @@
 //! Mining Power seeds one uncut sapphire to prove incidental-product disposal
 //! deterministically. Natural gem rolls are observations, never a pass gate.
 //! G2 cells cover moving fishing spots, supply gates, oak respawn and scene
-//! boundaries, Auto widening, and an id-seeded gas hazard. G3 cells cover
-//! banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
+//! boundaries, and Auto widening. Gas and random-event fixtures fail closed
+//! because the content has no deterministic account-only trigger. G3 cells
+//! cover banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
 //! The fixed harpoon Bank cell requires two positive deposit trips and fresh
 //! fishing yields after each return, and conserves the inventory-only harpoon.
 //! Its first trip also verifies that a seeded casket, spare net and beer are
@@ -26,10 +27,11 @@
 //! bag and the panel's friendly "Raw tuna / Raw swordfish" label, without seeded
 //! fish, resources, NPCs or an incidental-drop gate. Initial level/tool fixtures
 //! precede the progression baseline; proof gains come from the running script.
-//! G4a cells exercise guardian-owned random-event holds and verified death
-//! recovery, including terminal return refusals and watchdog recreation;
-//! each requires an own `BOT_LIVE_NAME_PREFIX`, like the other live cells.
-//! Fixture helpers alter locations only; they never inject products or XP.
+//! G4a cells verify death recovery, including terminal return refusals and
+//! watchdog recreation. Gas and random-event identity stay explicit live-proof
+//! limits because their real content outcomes are chance-gated.
+//! Fixtures seed only account-owned state; they never inject scene locations,
+//! products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
 //! suffix. Each cell uses an isolated HOME plus absolute paths for
 //! `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`.
@@ -65,6 +67,7 @@ const PREP_DEADLINE: Duration = Duration::from_secs(180);
 const POWER_DEADLINE: Duration = Duration::from_secs(1800);
 const WEDGE_DEADLINE: Duration = Duration::from_secs(900);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUIRED_CYCLES: u32 = 2;
 const REQUIRED_POST_DROP_GATHERS: u32 = 2;
 const LOG_ID: i32 = 1511;
@@ -89,8 +92,6 @@ const WILLOW_LOG_ID: i32 = 1519;
 const OAK_STUMP_ID: i32 = 1355;
 const OAK_RESPAWN_MAX_TICKS: u32 = 30;
 const AUTO_TREE_IDS: &[i32] = &[1276, 1278];
-const AUTO_STUMP_ID: i32 = 1342;
-const ABSENT_LOC_ID: i32 = 2732;
 const GAS_HAZARD_LOC_ID: i32 = 2121;
 const IRON_ROCK_IDS: &[i32] = &[2092, 2093];
 const MINE_PRODUCTS: &[i32] = &[
@@ -106,7 +107,11 @@ const DEATH_REGION_START: WorldTile = WorldTile {
     z: 3208,
     level: 0,
 };
-const AUTO_NEXT_TILES: &[(i32, i32)] = &[(2409, 3480), (2417, 3480), (2414, 3478)];
+const DEATH_RETURN_REFUSED_TARGET: WorldTile = WorldTile {
+    x: 3204,
+    z: 3525,
+    level: 0,
+};
 const FISH_NET_START: WorldTile = WorldTile {
     x: 3267,
     z: 3148,
@@ -149,6 +154,11 @@ const DRAYNOR_OAK_BANK_START: WorldTile = WorldTile {
     z: 3243,
     level: 0,
 };
+const DRAYNOR_OAK_TARGET: WorldTile = WorldTile {
+    x: 3106,
+    z: 3247,
+    level: 0,
+};
 const SEERS_MAPLE_BANK_START: WorldTile = WorldTile {
     x: 2727,
     z: 3501,
@@ -174,10 +184,19 @@ const OAK_EDGE_TARGET: WorldTile = WorldTile {
     z: 3205,
     level: 0,
 };
-const OAK_ABSENT_START: WorldTile = OAK_EDGE_TARGET;
+const OAK_NO_PLACEMENT_START: WorldTile = WorldTile {
+    x: 2809,
+    z: 3441,
+    level: 0,
+};
+const OAK_NO_PLACEMENT_BANK_BOOTH: WorldTile = WorldTile {
+    x: 2809,
+    z: 3442,
+    level: 0,
+};
 const AUTO_START: WorldTile = WorldTile {
-    x: 2394,
-    z: 3518,
+    x: 3295,
+    z: 3298,
     level: 0,
 };
 const GAS_START: WorldTile = WorldTile {
@@ -185,64 +204,6 @@ const GAS_START: WorldTile = WorldTile {
     z: 3310,
     level: 0,
 };
-const OAK_EDGE_SEEDS: &[(i32, i32)] = &[
-    (3192, 3213),
-    (3203, 3240),
-    (3203, 3246),
-    (3206, 3263),
-    (3241, 3253),
-    (3252, 3237),
-    (3260, 3223),
-];
-// This centroid has 45 trees: the required forty nearer exhausted placements
-// plus five guards that keep the entire first group exhausted.
-const AUTO_FELLED_TILES: &[(i32, i32)] = &[
-    (2374, 3503),
-    (2379, 3502),
-    (2382, 3501),
-    (2382, 3511),
-    (2385, 3518),
-    (2389, 3507),
-    (2390, 3504),
-    (2392, 3509),
-    (2393, 3515),
-    (2394, 3518),
-    (2395, 3506),
-    (2395, 3509),
-    (2398, 3506),
-    (2400, 3503),
-    (2403, 3499),
-    (2403, 3518),
-    (2407, 3509),
-    (2408, 3504),
-    (2412, 3481),
-    (2421, 3493),
-    (2424, 3488),
-    (2425, 3498),
-    (2426, 3501),
-    (2429, 3484),
-    (2430, 3488),
-    (2430, 3498),
-    (2431, 3481),
-    (2383, 3525),
-    (2390, 3521),
-    (2391, 3525),
-    (2393, 3526),
-    (2395, 3521),
-    (2395, 3529),
-    (2396, 3527),
-    (2398, 3527),
-    (2398, 3529),
-    (2400, 3520),
-    (2407, 3527),
-    (2411, 3524),
-    (2413, 3525),
-    (2415, 3522),
-    (2415, 3524),
-    (2424, 3527),
-    (2427, 3524),
-    (2430, 3528),
-];
 const NORMAL_STUMP_IDS: &[i32] = &[
     1342, 1343, 1345, 1347, 1348, 1349, 1351, 1352, 1353, 1354, 1355, 1358, 3880, 3884, 4819, 4821,
 ];
@@ -273,7 +234,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::OakRespawn) => "gatherer_wc_respawn",
             (Self::Woodcutting, LiveCase::OakNearEdge) => "gatherer_wc_near_edge",
             (Self::Woodcutting, LiveCase::LocationAuto) => "gatherer_location_modes",
-            (Self::Woodcutting, LiveCase::OakAbsentArea) => "gatherer_wc_absent",
+            (Self::Woodcutting, LiveCase::OakNoPlacementArea) => "gatherer_wc_area_no_placement",
             (Self::Mining, LiveCase::GasHazard) => "gatherer_mine_gas_hazard",
             (Self::Woodcutting, LiveCase::WoodcuttingBank) => "gatherer_wc_bank",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => {
@@ -333,7 +294,7 @@ impl Cell {
             LiveCase::PauseResumeOtherPlane => "GATHERER_RETURN_PAUSE_TILE",
             LiveCase::ReconnectReturn | LiveCase::BankTripRelog => "GATHERER_RECONNECT_RETURN_TILE",
             LiveCase::GasHazard => "GATHERER_GAS_TILE",
-            LiveCase::OakAbsentArea => "GATHERER_WC_ABSENT_TILE",
+            LiveCase::OakNoPlacementArea => "GATHERER_WC_NO_PLACEMENT_TILE",
             LiveCase::RandomEvent | LiveCase::MazeRandom => "GATHERER_WC_TILE",
             LiveCase::DeathReturn
             | LiveCase::DeathNoStock
@@ -420,7 +381,7 @@ impl Cell {
                 Self::Woodcutting,
                 LiveCase::OakRespawn
                 | LiveCase::OakNearEdge
-                | LiveCase::OakAbsentArea
+                | LiveCase::OakNoPlacementArea
                 | LiveCase::WoodcuttingBank
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
@@ -466,7 +427,7 @@ impl Cell {
                 Self::Woodcutting,
                 LiveCase::OakRespawn
                 | LiveCase::OakNearEdge
-                | LiveCase::OakAbsentArea
+                | LiveCase::OakNoPlacementArea
                 | LiveCase::WoodcuttingBank
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
@@ -501,7 +462,7 @@ impl Cell {
                 case,
                 LiveCase::OakRespawn
                     | LiveCase::OakNearEdge
-                    | LiveCase::OakAbsentArea
+                    | LiveCase::OakNoPlacementArea
                     | LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
                     | LiveCase::BankCostFirstGoal
@@ -711,7 +672,7 @@ impl Cell {
                 | LiveCase::FishBankSoak => 32,
                 LiveCase::FishHarpoonBankAuto => 40,
                 LiveCase::OakNearEdge => 64,
-                LiveCase::OakAbsentArea => 2,
+                LiveCase::OakNoPlacementArea => 2,
                 LiveCase::GasHazard => 12,
                 _ => 12,
             }),
@@ -834,6 +795,9 @@ impl Cell {
             bag.insert("site".into(), json!("fishing.fishing_guild"));
             bag.insert("disposition".into(), json!("Power"));
         }
+        if case.bank_tool_only() || case.is_death_recovery() {
+            bag.insert("buyTools".into(), json!(false));
+        }
         bag
     }
 
@@ -903,16 +867,8 @@ enum LiveCase {
     DeathRespawnRegion,
     DeathNoStock,
     DeathReturnRefused,
-    // Constructed only by the `live-probe` watchdog cells.
-    #[cfg_attr(
-        not(feature = "live-probe"),
-        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
-    )]
+    // Run by the `live-probe` watchdog cells; the unit tests construct both.
     DeathWatchdogPending,
-    #[cfg_attr(
-        not(feature = "live-probe"),
-        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
-    )]
     DeathWatchdogProving,
     FishNet,
     FishSpotMoves,
@@ -920,7 +876,7 @@ enum LiveCase {
     OakRespawn,
     OakNearEdge,
     LocationAuto,
-    OakAbsentArea,
+    OakNoPlacementArea,
     GasHazard,
     WoodcuttingBank,
     WoodcuttingBankUnwieldable,
@@ -973,7 +929,7 @@ impl LiveCase {
             Self::OakRespawn => "oak-respawn",
             Self::OakNearEdge => "oak-near-edge",
             Self::LocationAuto => "location-auto",
-            Self::OakAbsentArea => "oak-absent-area",
+            Self::OakNoPlacementArea => "oak-no-placement-area",
             Self::GasHazard => "gas-hazard",
             Self::WoodcuttingBank => "woodcutting-bank",
             Self::WoodcuttingBankUnwieldable => "woodcutting-bank-unwieldable",
@@ -1090,6 +1046,7 @@ enum Prep {
     WaitReseedConfirm,
     Seed,
     WaitSeed,
+    WaitAutoStart,
     WaitEdgeStart,
     Equip,
     WaitEquip,
@@ -1256,7 +1213,6 @@ struct FixturePlan {
     other_oak: Option<WorldTile>,
     edge_oak: Option<WorldTile>,
     preflight_edge: Option<WorldTile>,
-    auto_felled: Vec<WorldTile>,
     auto_next: Vec<WorldTile>,
     seed_locs: Vec<LocSeed>,
     chop_target: Option<WorldTile>,
@@ -1283,12 +1239,6 @@ enum FixtureStage {
 
 #[derive(Debug, Clone)]
 enum FixtureTask {
-    Seed {
-        seeds: Vec<LocSeed>,
-        next: usize,
-        return_to: WorldTile,
-        stage: FixtureStage,
-    },
     Chop {
         tile: WorldTile,
         stage: FixtureStage,
@@ -1300,6 +1250,7 @@ enum FixtureTask {
         stage: FixtureStage,
     },
 }
+
 #[derive(Debug, Default, Clone, Copy)]
 struct FixtureProgress {
     baseline_xp: i32,
@@ -1321,6 +1272,7 @@ struct Observation {
     fishing_npcs: BTreeMap<usize, FishTarget>,
     fishing_target_index: Option<usize>,
     live_oaks: BTreeSet<(i32, i32, i32)>,
+    bank_booths: BTreeSet<(i32, i32, i32)>,
     oak_stumps: BTreeSet<(i32, i32, i32)>,
     normal_trees: BTreeSet<(i32, i32, i32)>,
     normal_stumps: BTreeSet<(i32, i32, i32)>,
@@ -1364,14 +1316,10 @@ fn bank_conservation_satisfied(
     inventory_after: &BTreeMap<i32, i32>,
     bank_before: &BTreeMap<i32, i32>,
     bank_after: &BTreeMap<i32, i32>,
-    deposited_count: i64,
+    deposit_count_ok: bool,
     unneeded_after: &BTreeMap<i32, i32>,
 ) -> bool {
-    let expected_deposit_count = expected_items
-        .values()
-        .map(|count| i64::from(*count))
-        .sum::<i64>();
-    deposited_count == expected_deposit_count
+    deposit_count_ok
         && expected_items.iter().all(|(&id, &expected)| {
             inventory_after.get(&id).copied().unwrap_or(0) == 0
                 && bank_after
@@ -1391,6 +1339,52 @@ fn bank_conservation_satisfied(
             in_inventory.saturating_add(in_bank) >= expected
         })
         && unneeded_after.is_empty()
+}
+
+/// The Gatherer's deposited counter must equal the items the receipt expected.
+/// A relog cut taken at the Deposit step can land after the server processed
+/// the deposit, so the restarted trip finds the pack already empty and counts
+/// fewer items; the bank contents prove those items, so a trailing count is
+/// accepted for that one trip.
+fn deposit_count_acceptable(deposited: i64, expected: i64, confirmation_lost: bool) -> bool {
+    deposited == expected || (confirmation_lost && deposited < expected)
+}
+
+#[derive(Debug, Clone)]
+struct ReprovisionDepositEvidence {
+    session: u64,
+    opened_at: Instant,
+    observed_at: Instant,
+    expected_items: BTreeMap<i32, i32>,
+    bank_before: BTreeMap<i32, i32>,
+    bank_after: BTreeMap<i32, i32>,
+}
+
+impl ReprovisionDepositEvidence {
+    fn accounts_for(&self, id: i32, count: i32, left_in: Instant) -> bool {
+        self.opened_at <= left_in
+            && left_in <= self.observed_at
+            && self.expected_items.get(&id).is_some_and(|expected| {
+                count > 0
+                    && *expected >= count
+                    && self
+                        .bank_after
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(self.bank_before.get(&id).copied().unwrap_or(0))
+                        >= *expected
+            })
+    }
+
+    fn as_json(&self) -> Value {
+        json!({
+            "session": self.session,
+            "expected_items": self.expected_items,
+            "bank_before": self.bank_before,
+            "bank_after": self.bank_after,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1416,6 +1410,7 @@ struct BankTripReceipt {
     bank_loaded: bool,
     bank_increased: bool,
     deposit_count_matches_expected: bool,
+    deposit_confirmation_lost: bool,
     deposit_verified: bool,
     seeded_casket_banked: bool,
     positive_return: bool,
@@ -1489,6 +1484,24 @@ impl BankTripReceipt {
         })
     }
 
+    fn withdrawal_observed(
+        &self,
+        inventory_after: &BTreeMap<i32, i32>,
+        bank_after: &BTreeMap<i32, i32>,
+    ) -> bool {
+        inventory_after.iter().any(|(id, count)| {
+            let gained = count.saturating_sub(self.inventory_before.get(id).copied().unwrap_or(0));
+            gained > 0
+                && self
+                    .bank_before
+                    .get(id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(bank_after.get(id).copied().unwrap_or(0))
+                    == gained
+        })
+    }
+
     fn observe_deposit(
         &mut self,
         inventory_after: &BTreeMap<i32, i32>,
@@ -1516,7 +1529,11 @@ impl BankTripReceipt {
         self.inventory_only_needed = self.unneeded_items_after.is_empty();
         self.deposited_after = deposited_after;
         self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
-        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+        self.deposit_count_matches_expected = deposit_count_acceptable(
+            self.deposited_count,
+            self.expected_item_count(),
+            self.deposit_confirmation_lost,
+        );
 
         if bank_loaded {
             self.bank_loaded = true;
@@ -1557,7 +1574,7 @@ impl BankTripReceipt {
                 inventory_after,
                 &self.bank_before,
                 &self.bank_after,
-                self.deposited_count,
+                self.deposit_count_matches_expected,
                 &self.unneeded_items_after,
             );
 
@@ -1592,7 +1609,11 @@ impl BankTripReceipt {
         self.trip = trip;
         self.deposited_after = deposited_after;
         self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
-        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+        self.deposit_count_matches_expected = deposit_count_acceptable(
+            self.deposited_count,
+            self.expected_item_count(),
+            self.deposit_confirmation_lost,
+        );
         self.positive_return = self.deposited_count > 0 && self.expected_product_count() > 0;
         self.returned = true;
         if !self.deposit_verified
@@ -1721,6 +1742,159 @@ struct SiteReturnRequest {
     preferred_center: WorldTile,
 }
 
+#[derive(Debug, Default, Clone, serde::Serialize)]
+struct DeathReturnStopWitness {
+    allow_wilderness: Option<bool>,
+    permission_evidence_missing: bool,
+    respawn_tick: Option<u32>,
+    post_respawn_tiles: Vec<(u32, (i32, i32, i32))>,
+    observed_through_tick: Option<u32>,
+    wilderness_entered: bool,
+    tile_evidence_missing: bool,
+    terminal_detail: Option<String>,
+    terminal_tick: Option<u32>,
+    terminal_tile: Option<(i32, i32, i32)>,
+    terminal_request_id: Option<u64>,
+    latest_request_id: Option<u64>,
+    request_retired: bool,
+    terminal_stopped: bool,
+    quiet_through_tick: Option<u32>,
+    walking_after_failure: bool,
+    navigation_evidence_missing: bool,
+}
+
+impl DeathReturnStopWitness {
+    fn observe_permissions(&mut self, configured: Option<bool>, global: bool) {
+        if let Some(configured) = configured {
+            self.allow_wilderness =
+                Some(self.allow_wilderness.unwrap_or(false) || configured || global);
+        } else {
+            self.permission_evidence_missing = true;
+        }
+    }
+
+    fn observe_tile(
+        &mut self,
+        tick: u32,
+        tile: Option<(i32, i32, i32)>,
+        alive: bool,
+        in_wilderness: Option<bool>,
+    ) {
+        if self.respawn_tick.is_none() {
+            if !alive
+                || !tile.is_some_and(|(x, z, level)| {
+                    script::native::death::RESPAWN_SQUARE.contains(WorldTile { x, z, level })
+                })
+            {
+                return;
+            }
+            self.respawn_tick = Some(tick);
+        }
+        self.observed_through_tick = Some(tick);
+        match (tile, in_wilderness) {
+            (Some(tile), Some(in_wilderness)) => {
+                self.wilderness_entered |= in_wilderness;
+                if self
+                    .post_respawn_tiles
+                    .last()
+                    .is_none_or(|(_, prior)| *prior != tile)
+                {
+                    self.post_respawn_tiles.push((tick, tile));
+                }
+                if self.terminal_tick.is_some_and(|terminal| tick > terminal)
+                    && self.terminal_tile != Some(tile)
+                {
+                    self.walking_after_failure = true;
+                }
+            }
+            _ => self.tile_evidence_missing = true,
+        }
+    }
+
+    fn observe_terminal(
+        &mut self,
+        tick: u32,
+        tile: Option<(i32, i32, i32)>,
+        deaths: u8,
+        code: &str,
+        detail: &str,
+    ) {
+        if self.terminal_tick.is_none()
+            && self.respawn_tick.is_some()
+            && deaths == 1
+            && code == "return-failed"
+            && detail.contains("walk ended with ")
+        {
+            self.terminal_tick = Some(tick);
+            self.terminal_tile = tile;
+            self.terminal_detail = Some(detail.to_owned());
+            self.tile_evidence_missing |= tile.is_none();
+        }
+    }
+
+    fn observe_navigation(&mut self, tick: u32, nav: &Value, stopped: bool) {
+        let Some(terminal_tick) = self.terminal_tick else {
+            return;
+        };
+        let request_id = nav.get("request_id").and_then(Value::as_u64);
+        self.latest_request_id = request_id;
+        if let Some(prior) = self.terminal_request_id {
+            self.walking_after_failure |= request_id
+                .is_some_and(|current| current != 0 && (self.request_retired || current != prior));
+        } else {
+            self.terminal_request_id = request_id;
+        }
+        // AbortWalk retires the completed request to zero. Only a later
+        // nonzero request is a rearm; zero must still have no active work.
+        self.request_retired |= request_id == Some(0);
+        self.navigation_evidence_missing |= request_id.is_none();
+        self.terminal_stopped = stopped;
+        // The terminal frame may still contain the completed walk's cleanup.
+        // Later game ticks must contain neither active work nor a new request.
+        if tick > terminal_tick {
+            for key in [
+                "armed",
+                "route",
+                "route_work_pending",
+                "pending",
+                "requested",
+                "bank_fetch",
+                "carry",
+            ] {
+                match nav.get(key).and_then(Value::as_bool) {
+                    Some(active) => self.walking_after_failure |= active,
+                    None => self.navigation_evidence_missing = true,
+                }
+            }
+            if stopped && !self.walking_after_failure && !self.navigation_evidence_missing {
+                self.quiet_through_tick = Some(tick);
+            }
+        }
+    }
+
+    fn complete(&self) -> bool {
+        self.allow_wilderness == Some(false)
+            && !self.permission_evidence_missing
+            && self.respawn_tick.is_some()
+            && !self.post_respawn_tiles.is_empty()
+            && !self.wilderness_entered
+            && !self.tile_evidence_missing
+            && self.terminal_detail.is_some()
+            && self.terminal_tile.is_some()
+            && self.terminal_request_id.is_some()
+            && self.terminal_stopped
+            && !self.walking_after_failure
+            && !self.navigation_evidence_missing
+            && self
+                .terminal_tick
+                .zip(self.quiet_through_tick)
+                .is_some_and(|(terminal, quiet)| {
+                    quiet.saturating_sub(terminal) >= 3
+                        && self.observed_through_tick.is_some_and(|tick| tick >= quiet)
+                })
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct Witness {
     cycles: u32,
@@ -1743,6 +1917,7 @@ struct Witness {
     native_phases: BTreeSet<String>,
     failure_code: Option<String>,
     failure_message: Option<String>,
+    last_status_block_reason: Option<String>,
     products_seen: BTreeSet<i32>,
     dropped_product_ids: BTreeSet<i32>,
     natural_gems_seen: BTreeSet<i32>,
@@ -1753,8 +1928,6 @@ struct Witness {
     gas_hazard_xp_after_escape: bool,
     fixture_chop_observed: bool,
     fixture_chop_tiles: BTreeSet<(i32, i32, i32)>,
-    fixture_seeds_observed: usize,
-    fixture_seed_tiles: BTreeSet<(i32, i32, i32, i32)>,
     last_area: Option<String>,
     last_event: Option<String>,
     first_fish_target: Option<FishTarget>,
@@ -1910,16 +2083,18 @@ struct Witness {
     death_chat_observed_while_paused: bool,
     death_recovery_in_area: bool,
     death_command_tile: Option<(i32, i32, i32)>,
+    death_respawn_tile: Option<(i32, i32, i32)>,
     death_respawn_region_unchanged: bool,
     death_progress_baselines: BTreeMap<u8, (i32, i32, i64)>,
+    death_reprovision_deposits: Vec<ReprovisionDepositEvidence>,
     death_recovered: BTreeSet<u8>,
     death_products_after: BTreeSet<u8>,
     death_xp_after: BTreeSet<u8>,
     death_first_recovery_cycles: Option<u32>,
     death_first_recovery_post_drop_gathers: Option<u32>,
     death_haul_between: bool,
-    death_return_refused: bool,
-    death_return_stopped: bool,
+    death_return_stop: DeathReturnStopWitness,
+    death_no_stock_blocked_running: bool,
     death_watchdog_aged: bool,
     death_watchdog_generation_before: Option<u64>,
     death_watchdog_recreated: bool,
@@ -1946,6 +2121,9 @@ struct Witness {
     /// `BankTripRelog` at Access: the character's tile on the first frame of
     /// the walk to the bank.
     relog_access_origin: Option<(i32, i32, i32)>,
+    /// `BankTripRelog` cut at Deposit: the interrupted trip's receipt was
+    /// marked as possibly missing its deposit confirmation.
+    relog_deposit_flagged: bool,
 }
 
 /// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
@@ -2099,8 +2277,18 @@ fn relog_step_seen(steps: &[String], step: &str) -> bool {
 
 /// The trip steps a restarted bank trip must publish, in this order, after
 /// the new session (other steps may lie between).
-fn relog_steps_in_order(steps: &[String]) -> bool {
-    let mut wanted = ["Access", "Open", "Deposit"].into_iter();
+fn relog_steps_in_order(steps: &[String], fired_step: &str) -> bool {
+    // A cut at Deposit leaves the character at the bank: the restart reopens
+    // the bank without walking to the access tile again. When the server
+    // processed the deposit before the cut, the pack is already empty and the
+    // core skips the Deposit step, so only the reopen is required here; the
+    // receipt proves the deposit by the bank contents.
+    let order: &[&str] = if fired_step == "Deposit" {
+        &["Open"]
+    } else {
+        &["Access", "Open", "Deposit"]
+    };
+    let mut wanted = order.iter().copied();
     let mut next = wanted.next();
     for step in steps {
         if next == Some(step.as_str()) {
@@ -2147,9 +2335,20 @@ fn relog_log() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The Gatherer logged the restart of its bank trip at `step`.
-fn relog_restart_logged(step: &str) -> bool {
-    let needle = format!("step={step} ");
+/// The Gatherer logged the restart of its bank trip after a cut at `fired_step`.
+///
+/// The acquisition core owns Access and Open: a session change there restarts
+/// the whole trip request, so the restart line names the trip's own step
+/// (`Supply { .. }` for the supply request, `Deposit` for a deposit-only trip)
+/// and never the acquisition sub-step the cut landed in
+/// (`crates/script/src/gatherer/runner.rs` `restart_trip_after_session`).
+fn relog_restart_logged(fired_step: &str) -> bool {
+    let restart_step = if fired_step == "Deposit" {
+        "Deposit"
+    } else {
+        "Supply"
+    };
+    let needle = format!("step={restart_step} ");
     relog_log()
         .iter()
         .any(|line| line.contains("gatherer-bank-trip-restart") && line.contains(&needle))
@@ -2406,6 +2605,52 @@ impl GatherSlot {
             }
         }
     }
+
+    fn is_real_content_death_reprovision(&self) -> bool {
+        self.case.is_death_recovery()
+            && self.plan.seed_locs.is_empty()
+            && self.plan.oak_tiles.is_empty()
+    }
+
+    fn observe_reprovision_bank(&mut self, observation: &Observation) -> Result<(), String> {
+        // A slot with no prepared Gatherer settings has no deposit set to account
+        // against; its frame oracle settles a deposited item against the bank
+        // increase it left behind (`UnsettledItem::bank_before`).
+        if !self.is_real_content_death_reprovision()
+            || !self.snapshot.bank_loaded()
+            || self.bank_config.is_none()
+        {
+            return Ok(());
+        }
+        let session = self.snapshot.bank_session_generation();
+        let bank_after = self.snapshot_bank_counts();
+        if let Some(evidence) = self
+            .witness
+            .death_reprovision_deposits
+            .last_mut()
+            .filter(|evidence| evidence.session == session)
+        {
+            evidence.bank_after = bank_after;
+            evidence.observed_at = observation.captured_at;
+        } else {
+            let expected_items = bank_deposit_expectation(
+                &self.snapshot_inventory_counts(),
+                &self.native_deposit_ids()?,
+            );
+            self.witness
+                .death_reprovision_deposits
+                .push(ReprovisionDepositEvidence {
+                    session,
+                    opened_at: observation.captured_at,
+                    observed_at: observation.captured_at,
+                    expected_items,
+                    bank_before: bank_after.clone(),
+                    bank_after,
+                });
+        }
+        Ok(())
+    }
+
     fn fixture_progress(&self) -> FixtureProgress {
         let latest = self.latest.as_ref();
         let nearest_live_iron = latest.and_then(|row| {
@@ -2440,32 +2685,88 @@ impl GatherSlot {
                     })
             }
             LiveCase::OakNearEdge => {
-                (self.witness.preflight_build_observed || self.expected_preflight_build())
-                    && self
-                        .plan
-                        .seed_locs
-                        .iter()
-                        .find(|seed| seed.id == ABSENT_LOC_ID)
-                        .is_some_and(|seed| latest.has_loc(seed.id, seed.tile))
+                self.expected_preflight_build()
+                    && latest.build.is_some_and(|build| {
+                        self.plan.edge_oak.is_some_and(|tile| {
+                            build.outside_gap(tile_key(tile)).is_some_and(|gap| gap > 0)
+                                && !latest.live_oaks.contains(&tile_key(tile))
+                        }) && latest
+                            .tile
+                            .and_then(|tile| build.edge_distance(tile))
+                            .is_some_and(|distance| distance <= 20)
+                    })
             }
-            LiveCase::OakAbsentArea => self
-                .plan
-                .seed_locs
-                .iter()
-                .any(|seed| seed.id == ABSENT_LOC_ID && latest.has_loc(seed.id, seed.tile)),
-            LiveCase::LocationAuto => {
-                self.plan
-                    .auto_felled
+            LiveCase::OakNoPlacementArea => {
+                latest.bank_booths.iter().any(|&booth| {
+                    tile_distance(booth, self.target).is_some_and(|distance| distance <= 1)
+                        && tile_distance(booth, OAK_NO_PLACEMENT_BANK_BOOTH)
+                            .is_some_and(|distance| distance <= 1)
+                }) && latest
+                    .live_oaks
                     .iter()
-                    .all(|tile| latest.has_loc(AUTO_STUMP_ID, *tile))
-                    && self
-                        .plan
-                        .auto_next
-                        .iter()
-                        .any(|tile| latest.normal_trees.contains(&tile_key(*tile)))
+                    .all(|&oak| tile_distance(oak, self.target).is_none_or(|distance| distance > 2))
+            }
+            LiveCase::LocationAuto => {
+                latest
+                    .build
+                    .is_some_and(|build| build.contains(tile_key(self.target)))
+                    && latest.normal_trees.iter().all(|&tree| {
+                        tile_distance(tree, self.target).is_none_or(|distance| distance > 32)
+                    })
+                    && self.plan.auto_next.iter().any(|tile| {
+                        latest.normal_trees.contains(&tile_key(*tile))
+                            && tile_distance(tile_key(self.target), *tile)
+                                .is_some_and(|distance| (33..=128).contains(&distance))
+                    })
             }
             _ => true,
         }
+    }
+
+    fn observe_auto_start_area(&mut self) -> Result<(), String> {
+        let Some(latest) = self.latest.as_ref() else {
+            return Err("Auto fixture has no real-content observation".into());
+        };
+        if !latest
+            .build
+            .is_some_and(|build| build.contains(tile_key(self.target)))
+        {
+            return Err(format!(
+                "Auto start {:?} is outside the observed scene",
+                tile_key(self.target)
+            ));
+        }
+        if latest
+            .normal_trees
+            .iter()
+            .any(|&tree| tile_distance(tree, self.target).is_some_and(|distance| distance <= 32))
+        {
+            return Err(format!(
+                "Auto start {:?} has a real normal tree inside radius 32",
+                tile_key(self.target)
+            ));
+        }
+        let scene = self.snapshot.scene();
+        let approach_options = auto_approach_options(scene.width, scene.height);
+        let start_query = api::query::SceneQuery::new(scene, Some(self.target));
+        if !start_query.walkable(self.target) {
+            return Err(format!(
+                "Auto start {:?} is not a standable scene tile",
+                tile_key(self.target)
+            ));
+        }
+        let next = auto_next_group(self.target, &latest.normal_trees)
+            .into_iter()
+            .filter(|&tree| start_query.can_reach(tree, &approach_options))
+            .collect::<Vec<_>>();
+        if next.is_empty() {
+            return Err(format!(
+                "Auto start {:?} has no reachable real normal tree with an adjacent approach at distance 33..=128",
+                tile_key(self.target)
+            ));
+        }
+        self.plan.auto_next = next;
+        Ok(())
     }
 
     fn ready_to_start(&self) -> bool {
@@ -2584,6 +2885,11 @@ impl GatherSlot {
                 .map(|target| target.index)
         });
         let locs = self.snapshot.locs();
+        let bank_booths = locs
+            .iter()
+            .filter(|loc| loc.name.as_deref() == Some("Bank booth"))
+            .map(|loc| (loc.tile.x, loc.tile.z, loc.tile.level))
+            .collect();
         let live_oaks = locs
             .iter()
             .filter(|loc| loc.id == OAK_ID)
@@ -2624,6 +2930,7 @@ impl GatherSlot {
             fishing_npcs,
             fishing_target_index,
             live_oaks,
+            bank_booths,
             oak_stumps,
             normal_trees,
             normal_stumps,
@@ -2993,387 +3300,212 @@ impl GatherSlot {
         }
     }
 
-    fn advance_fixture(
+    fn advance_fixture_with_progress(
+        &mut self,
+        client: &mut client::client::Client,
+        progress: Option<&FixtureProgress>,
+    ) -> Result<(), String> {
+        if matches!(
+            self.fixture_task,
+            Some(FixtureTask::InjectAfterProgress { .. })
+        ) {
+            let progress = match progress {
+                Some(progress) => *progress,
+                None => self.fixture_progress(),
+            };
+            self.advance_inject_fixture(client, &progress)
+        } else {
+            self.advance_fixture(client)
+        }
+    }
+
+    /// Places the gas hazard loc beside the subject's iron rock with the
+    /// engine's `~loc` debug cheat once the subject has mined at least once.
+    fn advance_inject_fixture(
         &mut self,
         client: &mut client::client::Client,
         progress: &FixtureProgress,
     ) -> Result<(), String> {
-        let Some(task) = self.fixture_task.take() else {
+        let Some(FixtureTask::InjectAfterProgress {
+            seed,
+            mut tile,
+            mut return_to,
+            mut stage,
+        }) = self.fixture_task.take()
+        else {
             self.fixture_done = true;
             return Ok(());
         };
-        let next_task = match task {
-            FixtureTask::Seed {
-                seeds,
-                mut next,
-                return_to,
-                mut stage,
-            } => {
-                if next >= seeds.len()
-                    && matches!(
-                        stage,
-                        FixtureStage::Start
-                            | FixtureStage::WaitTile
-                            | FixtureStage::Place
-                            | FixtureStage::WaitLoc
-                    )
-                {
-                    stage = FixtureStage::Return;
-                }
-                let active_seed = if matches!(
-                    stage,
-                    FixtureStage::Start
-                        | FixtureStage::WaitTile
-                        | FixtureStage::Place
-                        | FixtureStage::WaitLoc
-                ) {
-                    Some(
-                        *seeds
-                            .get(next)
-                            .ok_or("fixture seed index escaped its plan")?,
-                    )
-                } else {
-                    None
-                };
-                let visit_tile = active_seed.map(|seed| {
-                    if !self.fixture_helper && self.case == LiveCase::OakNearEdge {
-                        // Observe the seeded northern zone without crossing the
-                        // western rebuild threshold that this cell must retain.
-                        WorldTile {
-                            x: return_to.x,
-                            ..seed.tile
-                        }
-                    } else {
-                        seed.tile
-                    }
-                });
-                match stage {
-                    FixtureStage::Start => {
-                        let visit = visit_tile.expect("seed stage has a visit tile");
-                        if self.snapshot.tile() == Some((visit.x, visit.z, visit.level)) {
-                            stage = FixtureStage::Place;
-                        } else {
-                            send_cheat(
-                                client,
-                                &interact::tele_args(visit.level, visit.x, visit.z),
-                            )?;
-                            stage = FixtureStage::WaitTile;
-                        }
-                    }
-                    FixtureStage::WaitTile => {
-                        let visit = visit_tile.expect("seed stage has a visit tile");
-                        if self.snapshot.tile() == Some((visit.x, visit.z, visit.level)) {
-                            stage = FixtureStage::Place;
-                        }
-                    }
-                    FixtureStage::Place => {
-                        let seed = active_seed.expect("seed stage has an active seed");
-                        if self.fixture_helper {
-                            // Refresh even an earlier run's still-visible stump;
-                            // its old expiry must not invalidate this run's setup.
-                            send_cheat(client, &format!("~loc {}", seed.alias))?;
-                            stage = FixtureStage::WaitLoc;
-                        } else if self
-                            .latest
-                            .as_ref()
-                            .is_some_and(|row| row.has_loc(seed.id, seed.tile))
-                        {
-                            next += 1;
-                            self.witness.fixture_seeds_observed = next;
-                            stage = FixtureStage::Start;
-                        } else {
-                            stage = FixtureStage::WaitLoc;
-                        }
-                    }
-                    FixtureStage::WaitLoc => {
-                        let seed = active_seed.expect("seed stage has an active seed");
-                        if self
-                            .latest
-                            .as_ref()
-                            .is_some_and(|row| row.has_loc(seed.id, seed.tile))
-                        {
-                            next += 1;
-                            self.witness.fixture_seeds_observed = next;
-                            stage = FixtureStage::Start;
-                        }
-                    }
-                    FixtureStage::Return => {
-                        if self.snapshot.tile() == Some((return_to.x, return_to.z, return_to.level))
-                        {
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                        send_cheat(
-                            client,
-                            &interact::tele_args(return_to.level, return_to.x, return_to.z),
-                        )?;
-                        stage = FixtureStage::WaitReturn;
-                    }
-                    FixtureStage::WaitReturn => {
-                        if self.snapshot.tile() == Some((return_to.x, return_to.z, return_to.level))
-                        {
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                    }
-                    FixtureStage::WaitStump => {
-                        return Err("seed actor entered the oak-fell wait state".into());
-                    }
-                }
-                FixtureTask::Seed {
-                    seeds,
-                    next,
-                    return_to,
-                    stage,
-                }
-            }
-            FixtureTask::Chop { tile, mut stage } => {
-                if self.snapshot.inventory().len() == 28 {
-                    if self.last_action.elapsed() >= Duration::from_millis(600) {
-                        if let Some(log) = self
-                            .snapshot
-                            .inventory()
-                            .iter()
-                            .find(|item| item.def.id == 1521 && item.count > 0)
-                        {
-                            Interactions::new(&self.snapshot, client)
-                                .interact(OpTarget::Item(log), ActionSpec::Label("Drop".into()));
-                            self.last_action = Instant::now();
-                        }
-                    }
-                    self.fixture_task = Some(FixtureTask::Chop {
-                        tile,
-                        stage: FixtureStage::Start,
-                    });
-                    return Ok(());
-                }
-                let stand = WorldTile {
-                    x: tile.x - 1,
-                    ..tile
-                };
-                match stage {
-                    FixtureStage::Start => {
-                        if self
-                            .latest
-                            .as_ref()
-                            .is_some_and(|row| row.has_loc(OAK_STUMP_ID, tile))
-                        {
-                            self.witness.fixture_chop_observed = true;
-                            self.witness.fixture_chop_tiles.insert(tile_key(tile));
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                        if self.snapshot.tile() != Some((stand.x, stand.z, stand.level)) {
-                            send_cheat(
-                                client,
-                                &interact::tele_args(stand.level, stand.x, stand.z),
-                            )?;
-                            stage = FixtureStage::WaitTile;
-                        } else {
-                            let loc = self.snapshot.locs().iter().find(|loc| {
-                                loc.id == OAK_ID
-                                    && loc.tile
-                                        == (WorldTile {
-                                            x: tile.x,
-                                            z: tile.z,
-                                            level: tile.level,
-                                        })
-                            });
-                            if let Some(loc) = loc {
-                                if !matches!(
-                                    Interactions::new(&self.snapshot, client).interact(
-                                        OpTarget::Loc(loc),
-                                        ActionSpec::Label("Chop down".into()),
-                                    ),
-                                    SendResult::Sent { .. }
-                                ) {
-                                    return Err(format!(
-                                        "fixture Chop down was refused at {tile:?}"
-                                    ));
-                                }
-                                stage = FixtureStage::WaitStump;
-                            }
-                        }
-                    }
-                    FixtureStage::WaitTile => {
-                        if self.snapshot.tile() == Some((stand.x, stand.z, stand.level)) {
-                            stage = FixtureStage::Start;
-                        }
-                    }
-                    FixtureStage::WaitStump => {
-                        if self
-                            .latest
-                            .as_ref()
-                            .is_some_and(|row| row.has_loc(OAK_STUMP_ID, tile))
-                        {
-                            self.witness.fixture_chop_observed = true;
-                            self.witness.fixture_chop_tiles.insert(tile_key(tile));
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                    }
-                    _ => return Err("oak feller entered an invalid fixture state".into()),
-                }
-                FixtureTask::Chop { tile, stage }
-            }
-            FixtureTask::InjectAfterProgress {
-                seed,
-                mut tile,
-                mut return_to,
-                mut stage,
-            } => match stage {
-                FixtureStage::Start => {
-                    if progress.xp <= progress.baseline_xp || progress.product_count <= 0 {
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
-                        }
-                    } else if let Some(target) = progress.nearest_live_iron {
+        match stage {
+            FixtureStage::Start => {
+                if progress.xp > progress.baseline_xp && progress.product_count > 0 {
+                    if let Some(target) = progress.nearest_live_iron {
                         tile = Some(target);
                         return_to = progress.tile.map(|(x, z, level)| WorldTile { x, z, level });
                         if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
                             stage = FixtureStage::Place;
-                            FixtureTask::InjectAfterProgress {
-                                seed,
-                                tile,
-                                return_to,
-                                stage,
-                            }
                         } else {
                             send_cheat(
                                 client,
                                 &interact::tele_args(target.level, target.x, target.z),
                             )?;
                             stage = FixtureStage::WaitTile;
-                            FixtureTask::InjectAfterProgress {
-                                seed,
-                                tile,
-                                return_to,
-                                stage,
-                            }
                         }
+                    }
+                }
+            }
+            FixtureStage::WaitTile => {
+                if let Some(target) = tile {
+                    if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
+                        stage = FixtureStage::Place;
+                    }
+                }
+            }
+            FixtureStage::Place => {
+                if let Some(target) = tile {
+                    if progress.nearest_live_iron == Some(target) {
+                        send_cheat(client, &format!("~loc {}", seed.alias))?;
+                        self.plan.inject_after_progress = Some(LocSeed {
+                            tile: target,
+                            ..seed
+                        });
+                        stage = FixtureStage::WaitLoc;
                     } else {
-                        FixtureTask::InjectAfterProgress {
-                            seed,
-                            tile,
-                            return_to,
-                            stage,
-                        }
+                        tile = None;
+                        return_to = None;
+                        stage = FixtureStage::Start;
                     }
                 }
-                FixtureStage::WaitTile => {
-                    if let Some(target) = tile {
-                        if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
-                            stage = FixtureStage::Place;
-                        }
-                    }
-                    FixtureTask::InjectAfterProgress {
-                        seed,
-                        tile,
-                        return_to,
-                        stage,
-                    }
-                }
-                FixtureStage::Place => {
-                    if let Some(target) = tile {
-                        if progress.nearest_live_iron == Some(target) {
-                            send_cheat(client, &format!("~loc {}", seed.alias))?;
-                            self.plan.inject_after_progress = Some(LocSeed {
-                                tile: target,
-                                ..seed
-                            });
-                            stage = FixtureStage::WaitLoc;
-                        } else {
-                            tile = None;
-                            return_to = None;
-                            stage = FixtureStage::Start;
-                        }
-                    }
-                    FixtureTask::InjectAfterProgress {
-                        seed,
-                        tile,
-                        return_to,
-                        stage,
-                    }
-                }
-                FixtureStage::WaitLoc => {
-                    if tile.is_some_and(|target| {
-                        self.latest
-                            .as_ref()
-                            .is_some_and(|row| row.has_loc(seed.id, target))
-                    }) {
-                        if return_to.is_some() {
-                            stage = FixtureStage::Return;
-                        } else {
-                            self.fixture_done = true;
-                            self.fixture_task = None;
-                            return Ok(());
-                        }
-                    }
-                    FixtureTask::InjectAfterProgress {
-                        seed,
-                        tile,
-                        return_to,
-                        stage,
-                    }
-                }
-                FixtureStage::Return => {
-                    let home = return_to.ok_or("hazard injector lost its return tile")?;
-                    if self.snapshot.tile() == Some((home.x, home.z, home.level)) {
+            }
+            FixtureStage::WaitLoc => {
+                if tile.is_some_and(|target| {
+                    self.latest
+                        .as_ref()
+                        .is_some_and(|row| row.has_loc(seed.id, target))
+                }) {
+                    if return_to.is_some() {
+                        stage = FixtureStage::Return;
+                    } else {
                         self.fixture_done = true;
-                        self.fixture_task = None;
                         return Ok(());
                     }
-                    send_cheat(client, &interact::tele_args(home.level, home.x, home.z))?;
-                    stage = FixtureStage::WaitReturn;
-                    FixtureTask::InjectAfterProgress {
-                        seed,
-                        tile,
-                        return_to,
-                        stage,
-                    }
                 }
-                FixtureStage::WaitReturn => {
-                    if return_to.is_some_and(|home| {
-                        self.snapshot.tile() == Some((home.x, home.z, home.level))
-                    }) {
-                        self.fixture_done = true;
-                        self.fixture_task = None;
-                        return Ok(());
-                    }
-                    FixtureTask::InjectAfterProgress {
-                        seed,
-                        tile,
-                        return_to,
-                        stage,
-                    }
+            }
+            FixtureStage::Return => {
+                let home = return_to.ok_or("hazard injector lost its return tile")?;
+                if self.snapshot.tile() == Some((home.x, home.z, home.level)) {
+                    self.fixture_done = true;
+                    return Ok(());
                 }
-                FixtureStage::WaitStump => {
-                    return Err("hazard injector entered the oak-fell wait state".into());
+                send_cheat(client, &interact::tele_args(home.level, home.x, home.z))?;
+                stage = FixtureStage::WaitReturn;
+            }
+            FixtureStage::WaitReturn => {
+                if return_to
+                    .is_some_and(|home| self.snapshot.tile() == Some((home.x, home.z, home.level)))
+                {
+                    self.fixture_done = true;
+                    return Ok(());
                 }
-            },
-        };
-        self.fixture_task = Some(next_task);
+            }
+            FixtureStage::WaitStump => {
+                return Err("hazard injector entered the oak-fell wait state".into());
+            }
+        }
+        self.fixture_task = Some(FixtureTask::InjectAfterProgress {
+            seed,
+            tile,
+            return_to,
+            stage,
+        });
         Ok(())
     }
 
-    fn advance_fixture_with_progress(
-        &mut self,
-        client: &mut client::client::Client,
-        progress: Option<&FixtureProgress>,
-    ) -> Result<(), String> {
-        if let Some(progress) = progress {
-            self.advance_fixture(client, progress)
-        } else {
-            let progress = self.fixture_progress();
-            self.advance_fixture(client, &progress)
+    fn advance_fixture(&mut self, client: &mut client::client::Client) -> Result<(), String> {
+        let Some(FixtureTask::Chop { tile, mut stage }) = self.fixture_task.take() else {
+            self.fixture_done = true;
+            return Ok(());
+        };
+        if self.snapshot.inventory().len() == 28 {
+            if self.last_action.elapsed() >= Duration::from_millis(600) {
+                if let Some(log) = self
+                    .snapshot
+                    .inventory()
+                    .iter()
+                    .find(|item| item.def.id == 1521 && item.count > 0)
+                {
+                    Interactions::new(&self.snapshot, client)
+                        .interact(OpTarget::Item(log), ActionSpec::Label("Drop".into()));
+                    self.last_action = Instant::now();
+                }
+            }
+            self.fixture_task = Some(FixtureTask::Chop {
+                tile,
+                stage: FixtureStage::Start,
+            });
+            return Ok(());
         }
+        let stand = WorldTile {
+            x: tile.x - 1,
+            ..tile
+        };
+        match stage {
+            FixtureStage::Start => {
+                if self
+                    .latest
+                    .as_ref()
+                    .is_some_and(|row| row.has_loc(OAK_STUMP_ID, tile))
+                {
+                    self.witness.fixture_chop_observed = true;
+                    self.witness.fixture_chop_tiles.insert(tile_key(tile));
+                    self.fixture_done = true;
+                    self.fixture_task = None;
+                    return Ok(());
+                }
+                if self.snapshot.tile() != Some((stand.x, stand.z, stand.level)) {
+                    send_cheat(client, &interact::tele_args(stand.level, stand.x, stand.z))?;
+                    stage = FixtureStage::WaitTile;
+                } else if let Some(loc) = self.snapshot.locs().iter().find(|loc| {
+                    loc.id == OAK_ID
+                        && loc.tile
+                            == (WorldTile {
+                                x: tile.x,
+                                z: tile.z,
+                                level: tile.level,
+                            })
+                }) {
+                    if !matches!(
+                        Interactions::new(&self.snapshot, client)
+                            .interact(OpTarget::Loc(loc), ActionSpec::Label("Chop down".into()),),
+                        SendResult::Sent { .. }
+                    ) {
+                        return Err(format!("fixture Chop down was refused at {tile:?}"));
+                    }
+                    stage = FixtureStage::WaitStump;
+                }
+            }
+            FixtureStage::WaitTile => {
+                if self.snapshot.tile() == Some((stand.x, stand.z, stand.level)) {
+                    stage = FixtureStage::Start;
+                }
+            }
+            FixtureStage::WaitStump => {
+                if self
+                    .latest
+                    .as_ref()
+                    .is_some_and(|row| row.has_loc(OAK_STUMP_ID, tile))
+                {
+                    self.witness.fixture_chop_observed = true;
+                    self.witness.fixture_chop_tiles.insert(tile_key(tile));
+                    self.fixture_done = true;
+                    self.fixture_task = None;
+                    return Ok(());
+                }
+            }
+            _ => return Err("oak feller entered an invalid fixture state".into()),
+        }
+        self.fixture_task = Some(FixtureTask::Chop { tile, stage });
+        Ok(())
     }
 
     fn pre_drain_wedge(&self) -> bool {
@@ -3412,6 +3544,9 @@ impl GatherSlot {
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
+        self.observe_reprovision_bank(&observation)?;
+        self.observe_bank_open(self.witness.status_deposited)?;
+        self.observe_bank_withdrawal();
         let bank_active = self.bank_conservation_active();
         let drop_baseline = self.last_observed_dropped;
         let product_drop_baseline = self.last_observed_product_drops;
@@ -3450,6 +3585,11 @@ impl GatherSlot {
                             receipt.expected_items.contains_key(&id)
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
+                && !self
+                    .witness
+                    .death_reprovision_deposits
+                    .iter()
+                    .any(|evidence| evidence.accounts_for(id, count, unsettled.left_in))
                 && !(!bank_active
                     && unsettled.bank_before.as_ref().is_some_and(|before| {
                         bank_counts
@@ -3506,7 +3646,10 @@ impl GatherSlot {
             for (slot, old) in &previous.inventory {
                 if !observation.inventory.contains_key(slot) {
                     if self.cell.products(self.case).contains(&old.id) {
-                        if bank_active {
+                        if bank_active
+                            || (self.is_real_content_death_reprovision()
+                                && self.snapshot.bank_loaded())
+                        {
                             self.unsettled_items.entry((old.id, old.count)).or_insert(
                                 UnsettledItem {
                                     since: Instant::now(),
@@ -3661,20 +3804,6 @@ impl GatherSlot {
             self.witness.player_tiles.insert(tile);
             if self.started && self.baseline.as_ref().and_then(|row| row.tile) != Some(tile) {
                 self.witness.script_moved_after_start = true;
-            }
-        }
-
-        for seed in &self.plan.seed_locs {
-            if observation.has_loc(seed.id, seed.tile)
-                && self.witness.fixture_seed_tiles.insert((
-                    seed.id,
-                    seed.tile.x,
-                    seed.tile.z,
-                    seed.tile.level,
-                ))
-            {
-                self.witness.fixture_seeds_observed =
-                    self.witness.fixture_seeds_observed.saturating_add(1);
             }
         }
 
@@ -3920,6 +4049,74 @@ impl GatherSlot {
             .ok_or_else(|| format!("{} bank settings are not a Gatherer config", self.name()))
     }
 
+    fn observe_bank_open(&mut self, current_deposited: i64) -> Result<(), String> {
+        if !self.bank_conservation_active()
+            || !self.snapshot.bank_loaded()
+            || self.witness.pending_bank_trip.is_some()
+        {
+            return Ok(());
+        }
+        let inventory_before = self.snapshot_inventory_counts();
+        let deposit_ids = self.native_deposit_ids()?;
+        if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
+            for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
+                if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
+                    return Err(format!(
+                        "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
+                        self.name()
+                    ));
+                }
+            }
+        }
+        let seeded_casket_expected =
+            if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
+                self.witness.seeded_casket_baseline_count
+            } else {
+                0
+            };
+        if seeded_casket_expected > 0
+            && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
+        {
+            return Err(format!(
+                "{} lost its seeded casket before the first bank deposit: {:?}",
+                self.name(),
+                inventory_before
+            ));
+        }
+        self.witness.pending_bank_trip = Some(BankTripReceipt::new(
+            self.witness.status_trips.saturating_add(1),
+            inventory_before,
+            &deposit_ids,
+            self.snapshot_bank_counts(),
+            current_deposited,
+            self.cell.products(self.case),
+            seeded_casket_expected,
+        ));
+        Ok(())
+    }
+
+    fn observe_bank_withdrawal(&mut self) {
+        if self.witness.bank_withdrawal_confirmed || !self.snapshot.bank_loaded() {
+            return;
+        }
+        let Some(receipt) = self.witness.pending_bank_trip.as_ref() else {
+            return;
+        };
+        self.witness.bank_withdrawal_confirmed = receipt.withdrawal_observed(
+            &self.snapshot_inventory_counts(),
+            &self.snapshot_bank_counts(),
+        );
+    }
+
+    fn status_claims_bank_close(&self, status: &script::native::ScriptStatus) -> bool {
+        // The acquisition completion event also follows wear-only requests.
+        // A missing bank field does not prove that no bank was involved.
+        text_field(status, "last_event") == Some("bank closed; validating equipment")
+            && (text_field(status, "bank") != Some("—")
+                || self.witness.pending_bank_trip.is_some()
+                || self.snapshot.bank_loaded())
+    }
+
     fn observe_bank_deposit(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -3928,51 +4125,17 @@ impl GatherSlot {
         if !self.bank_conservation_active() {
             return Ok(());
         }
-        let bank = text_field(status, "bank");
-        let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
-        let event = text_field(status, "last_event");
-        if bank_step == Some("Deposit")
-            && self.snapshot.bank_loaded()
-            && self.witness.pending_bank_trip.is_none()
+        self.observe_bank_open(current_deposited)?;
+        self.observe_bank_withdrawal();
+        if self.witness.relog_step.as_deref() == Some("Deposit")
+            && !self.witness.relog_deposit_flagged
         {
-            let inventory_before = self.snapshot_inventory_counts();
-            let deposit_ids = self.native_deposit_ids()?;
-            if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
-                for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
-                    if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
-                        return Err(format!(
-                            "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
-                            self.name()
-                        ));
-                    }
-                }
+            if let Some(receipt) = self.witness.pending_bank_trip.as_mut() {
+                receipt.deposit_confirmation_lost = true;
+                self.witness.relog_deposit_flagged = true;
             }
-            let seeded_casket_expected =
-                if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
-                    self.witness.seeded_casket_baseline_count
-                } else {
-                    0
-                };
-            if seeded_casket_expected > 0
-                && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
-            {
-                return Err(format!(
-                    "{} lost its seeded casket before the first bank deposit: {:?}",
-                    self.name(),
-                    inventory_before
-                ));
-            }
-            let receipt = BankTripReceipt::new(
-                self.witness.status_trips.saturating_add(1),
-                inventory_before,
-                &deposit_ids,
-                self.snapshot_bank_counts(),
-                current_deposited,
-                self.cell.products(self.case),
-                seeded_casket_expected,
-            );
-            self.witness.pending_bank_trip = Some(receipt);
         }
+        let event = text_field(status, "last_event");
         if event == Some("deposit confirmed") && self.witness.pending_bank_trip.is_none() {
             return Err(format!(
                 "{} confirmed a deposit without pre-deposit inventory evidence",
@@ -3980,13 +4143,22 @@ impl GatherSlot {
             ));
         }
 
+        // The core skips an empty deposit, including its status and event.
+        // Its observed pack and bank still prove the zero-item boundary.
+        let empty_deposit = self
+            .witness
+            .pending_bank_trip
+            .as_ref()
+            .is_some_and(|receipt| receipt.expected_items.is_empty());
         let should_observe_deposit =
             self.witness
                 .pending_bank_trip
                 .as_ref()
                 .is_some_and(|receipt| {
                     !receipt.deposit_verified
-                        && (event == Some("deposit confirmed") || receipt.deposit_confirmed)
+                        && (event == Some("deposit confirmed")
+                            || receipt.deposit_confirmed
+                            || empty_deposit)
                 });
         if should_observe_deposit {
             let inventory_after = self.snapshot_inventory_counts();
@@ -4009,11 +4181,11 @@ impl GatherSlot {
                     bank_loaded,
                     &bank_after,
                     current_deposited,
-                    event == Some("deposit confirmed"),
+                    event == Some("deposit confirmed") || empty_deposit,
                 );
             result.map_err(|error| format!("{}: {error}", self.name()))?;
         }
-        if event == Some("bank closed; validating equipment") {
+        if self.status_claims_bank_close(status) {
             let receipt = self.witness.pending_bank_trip.as_ref();
             if !receipt.is_some_and(|receipt| receipt.deposit_verified) {
                 return Err(format!(
@@ -4224,6 +4396,55 @@ impl GatherSlot {
                             &interact::tele_args(self.target.level, self.target.x, self.target.z),
                         )?;
                         self.phase = Prep::WaitEdgeStart;
+                    } else if self.case == LiveCase::LocationAuto {
+                        let scene = self.snapshot.scene();
+                        let player_tile =
+                            self.snapshot
+                                .tile()
+                                .map(|(x, z, level)| WorldTile { x, z, level });
+                        let scene_query = api::query::SceneQuery::new(scene, player_tile);
+                        let approach_options = auto_approach_options(scene.width, scene.height);
+                        let reachable = scene_query
+                            .flood_reach()
+                            .ok_or("Auto fixture has no observed collision reachability")?;
+                        let start = self
+                            .latest
+                            .as_ref()
+                            .and_then(|latest| {
+                                latest.build.and_then(|build| {
+                                    auto_start_candidate(
+                                        self.target,
+                                        build,
+                                        &latest.normal_trees,
+                                        |tile| reachable.at(&tile).0,
+                                        |tile| scene_query.walkable(tile),
+                                        |from, tree| {
+                                            api::query::SceneQuery::new(scene, Some(from))
+                                                .can_reach(
+                                                    tree,
+                                                    &approach_options,
+                                                )
+                                        },
+                                    )
+                                })
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "{} has no reachable standable empty Auto ring beside a real tree with a reachable adjacent approach",
+                                    self.name()
+                                )
+                            })?;
+                        self.target = start;
+                        if self.near_tile(start, 6) {
+                            self.observe_auto_start_area()?;
+                            self.phase = Prep::Equip;
+                        } else {
+                            send_cheat(
+                                client,
+                                &interact::tele_args(start.level, start.x, start.z),
+                            )?;
+                            self.phase = Prep::WaitAutoStart;
+                        }
                     } else if self.cell == Cell::Mining && self.case == LiveCase::Power {
                         send_cheat(client, "givebank rune_pickaxe 1")?;
                         send_cheat(client, &interact::tele_args(0, 2809, 3441))?;
@@ -4235,6 +4456,18 @@ impl GatherSlot {
                     } else {
                         self.phase = Prep::Equip;
                     }
+                }
+            }
+            Prep::WaitAutoStart => {
+                if self.snapshot.ingame()
+                    && self.snapshot.scene_state() == 2
+                    && self.near_target()
+                    && self.item_in_inventory()
+                    && self.stats_posted()
+                    && self.stat_level() >= self.requested_level
+                {
+                    self.observe_auto_start_area()?;
+                    self.phase = Prep::Equip;
                 }
             }
             Prep::WaitEdgeStart => {
@@ -4504,6 +4737,11 @@ impl GatherSlot {
                 self.witness.targets.insert(value);
             }
         }
+        if let Some(reason) =
+            text_field(status, "block_reason").filter(|reason| !reason.trim().is_empty())
+        {
+            self.witness.last_status_block_reason = Some(reason.to_owned());
+        }
         if self.case == LiveCase::FishSpotMoves {
             let phase = text_field(status, "phase");
             let event = text_field(status, "last_event");
@@ -4670,24 +4908,15 @@ impl GatherSlot {
                     .tile
                     .and_then(|tile| tile_distance(tile, self.target))
                     .is_some_and(|distance| distance <= 12);
-                if self.case == LiveCase::DeathRespawnRegion {
-                    self.witness.death_respawn_region_unchanged = self
-                        .witness
-                        .death_command_tile
-                        .zip(latest.tile)
-                        .is_some_and(|(death, respawn)| {
-                            let respawn_tile = WorldTile {
-                                x: respawn.0,
-                                z: respawn.1,
-                                level: respawn.2,
-                            };
-                            script::native::death::RESPAWN_SQUARE.contains(respawn_tile)
-                                && death.0.div_euclid(64) == respawn.0.div_euclid(64)
-                                && death.1.div_euclid(64) == respawn.1.div_euclid(64)
-                                && death.2 == respawn.2
-                        });
-                }
             }
+        }
+        if self.case == LiveCase::DeathRespawnRegion {
+            observe_death_respawn_region(
+                &mut self.witness,
+                current_recovery_step,
+                text_field(status, "last_event"),
+                self.latest.as_ref().and_then(|latest| latest.tile),
+            );
         }
         if self.case == LiveCase::MazeRandom
             && self.witness.maze_exited
@@ -4723,17 +4952,19 @@ impl GatherSlot {
             }
         }
         self.witness.last_status_bank = text_field(status, "bank").map(str::to_owned);
-        if let Some(bank) = self.witness.last_status_bank.as_deref() {
-            if let Some((_, step)) = bank.rsplit_once("; ") {
-                self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
-                self.witness.bank_return_step_seen |= step == "Return";
-                if step == "Return" {
-                    self.witness.bank_return_after_pause |= self.case
-                        == LiveCase::PauseResumeOtherPlane
-                        && self.witness.resume_observed;
-                    self.witness.bank_return_after_reconnect |=
-                        self.case == LiveCase::ReconnectReturn && self.witness.reconnect_observed;
-                }
+        let bank_step_is_return = self
+            .witness
+            .last_status_bank
+            .as_deref()
+            .and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step == "Return"));
+        if let Some(step_is_return) = bank_step_is_return {
+            self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
+            if step_is_return {
+                record_bank_return_step(&mut self.witness, "Return");
+                self.witness.bank_return_after_pause |=
+                    self.case == LiveCase::PauseResumeOtherPlane && self.witness.resume_observed;
+                self.witness.bank_return_after_reconnect |=
+                    self.case == LiveCase::ReconnectReturn && self.witness.reconnect_observed;
             }
         }
         if matches!(
@@ -4765,6 +4996,11 @@ impl GatherSlot {
                 .initial_area
                 .get_or_insert_with(|| area.to_owned());
             self.witness.last_area = Some(area.to_owned());
+            if self.case == LiveCase::LocationAuto
+                && auto_search_beyond_start_ring(self.target, area)
+            {
+                self.witness.auto_widen_seen = true;
+            }
             if let Some((_, deadline)) = area.split_once("; wait_until: ") {
                 self.witness.wait_until = deadline.trim().parse().ok();
             }
@@ -4790,12 +5026,6 @@ impl GatherSlot {
                     }
                 }
             }
-            if event == "bank selected" && self.witness.bank_selection_elapsed.is_none() {
-                self.witness.bank_selection_elapsed = self
-                    .witness
-                    .bank_trip_due_at
-                    .map(|started| Instant::now().duration_since(started));
-            }
             self.witness.last_status_event = Some(event.to_owned());
             if let Some(death) = event
                 .strip_prefix("recovered after death ")
@@ -4808,41 +5038,10 @@ impl GatherSlot {
                         Some(self.witness.post_drop_gathers);
                 }
             }
-            if event == "bank selected" {
-                self.witness.bank_selected = true;
-                if self.case == LiveCase::PowerToBank {
-                    let completed = self
-                        .witness
-                        .confirmed_drops
-                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
-                        >= self.witness.power_to_bank_edit_slots;
-                    if !self.witness.power_to_bank_edit_requested
-                        || !self.witness.power_to_bank_applied
-                        || !completed
-                    {
-                        return Err(format!(
-                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
-                            self.witness
-                        ));
-                    }
-                }
-            }
-            if event == "withdrawal confirmed" {
-                self.witness.bank_withdrawal_confirmed = true;
-            }
-            if self.case == LiveCase::FishBait
-                && event == "withdrawal confirmed"
-                && integer_field(status, "bait") == Some(3)
-            {
-                self.witness.bait_exact = true;
-            }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
             }
             self.witness.last_event = Some(event.to_owned());
-            if self.case == LiveCase::LocationAuto && event == "widening Auto within 128 tiles" {
-                self.witness.auto_widen_seen = true;
-            }
             if self.case == LiveCase::OakNearEdge
                 && event == "approaching target"
                 && text_field(status, "phase") == Some("walking")
@@ -4913,6 +5112,30 @@ impl GatherSlot {
             }
         }
 
+        if !self.witness.bank_selected && self.complete_bank_selection() {
+            if self.case == LiveCase::PowerToBank {
+                let completed = self
+                    .witness
+                    .confirmed_drops
+                    .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
+                    >= self.witness.power_to_bank_edit_slots;
+                if !self.witness.power_to_bank_edit_requested
+                    || !self.witness.power_to_bank_applied
+                    || !completed
+                {
+                    return Err(format!(
+                        "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
+                        self.witness
+                    ));
+                }
+            }
+            self.witness.bank_selected = true;
+            self.witness.bank_selection_elapsed = self
+                .witness
+                .bank_trip_due_at
+                .map(|started| Instant::now().duration_since(started));
+        }
+
         if self.case == LiveCase::FishBaitGate {
             self.witness.no_fish_xp = self.baseline.as_ref().is_some_and(|baseline| {
                 self.latest.as_ref().is_some_and(|latest| {
@@ -4960,10 +5183,17 @@ impl GatherSlot {
             }
             let expected_block = match self.case {
                 LiveCase::FishBaitGate => code == "supply-missing",
-                LiveCase::OakAbsentArea => {
-                    code == "resource-unavailable" && message.starts_with("resource-unavailable")
+                LiveCase::CoinRunesEmpty => {
+                    code == "supply-missing"
+                        && status.phase == script::native::NativePhase::Blocked
+                        && self.complete_bank_selection()
+                        && self.witness.bank_loaded_observed
+                        && text_field(status, "bank").is_some_and(|bank| bank.ends_with("; Supply"))
                 }
-                LiveCase::DeathNoStock => code == "supply-missing",
+                LiveCase::OakNoPlacementArea => {
+                    code == "area-invalid"
+                        && message == "no selected method has an accessible placement in the area"
+                }
                 LiveCase::MazeRandom => {
                     let inside = self
                         .latest
@@ -4977,8 +5207,15 @@ impl GatherSlot {
                     code == "random-trapped" && inside
                 }
                 LiveCase::DeathReturnRefused => {
-                    self.witness.death_return_refused |=
-                        code == "return-failed" && message.contains("walk ended with Refused");
+                    if let Some(latest) = &self.latest {
+                        self.witness.death_return_stop.observe_terminal(
+                            latest.tick,
+                            latest.tile,
+                            self.witness.last_deaths,
+                            &code,
+                            &message,
+                        );
+                    }
                     code == "return-failed"
                 }
                 _ => false,
@@ -5293,8 +5530,7 @@ impl GatherSlot {
                     tile_distance(tile_key(self.target), *tile)
                         .is_some_and(|distance| (33..=128).contains(&distance))
                 });
-                if self.witness.fixture_seeds_observed < self.plan.seed_locs.len()
-                    || !next_group_beyond_start_ring
+                if !next_group_beyond_start_ring
                     || !self.witness.auto_widen_seen
                     || !self.witness.auto_selected_next
                     || self.witness.auto_next_gather_tick.is_none()
@@ -5302,23 +5538,14 @@ impl GatherSlot {
                     || self.witness.last_xp <= self.baseline_xp()
                 {
                     return Err(format!(
-                        "{} did not seed all felled Auto placements, widen, and gather at the next group: {:?}",
+                        "{} did not widen beyond the empty start ring and gather at the real next group: {:?}",
                         self.name(),
                         self.witness
                     ));
                 }
                 Ok(())
             }
-            LiveCase::OakAbsentArea => {
-                let absent_seen = self
-                    .witness
-                    .status_values
-                    .get("absent")
-                    .is_some_and(|values| {
-                        values
-                            .iter()
-                            .any(|value| value.parse::<i64>().is_ok_and(|count| count > 0))
-                    });
+            LiveCase::OakNoPlacementArea => {
                 let no_output = self.witness.last_status_yielded == 0
                     && self.witness.last_status_dropped == 0
                     && !self.witness.script_moved_after_start
@@ -5326,14 +5553,13 @@ impl GatherSlot {
                         latest.product_count == 0 && latest.xp == self.baseline_xp()
                     });
                 if !self.witness.native_phases.contains("Blocked")
-                    || self.witness.failure_code.as_deref() != Some("resource-unavailable")
-                    || !absent_seen
+                    || self.witness.failure_code.as_deref() != Some("area-invalid")
                     || self.witness.native_phases.contains("Waiting")
                     || self.witness.wait_until.is_some()
                     || !no_output
                 {
                     return Err(format!(
-                        "{} did not fail promptly on the observed absent-only area: {:?}",
+                        "{} did not reject the area without a placement before moving, waiting, or producing output: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -5475,10 +5701,6 @@ impl GatherSlot {
                 ) || !self.complete_bank_selection()
                     || self.selected_bank_name() != Some(expected_bank)
                     || self.selected_bank_kind() != Some("Reachable")
-                    || self
-                        .latest
-                        .as_ref()
-                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
                         "{} did not gather real {resource} and complete the reachable {expected_bank} bank, deposit, return, and fresh-yield lifecycle without seeded scene locations: {:?}",
@@ -5611,15 +5833,16 @@ impl GatherSlot {
                 Ok(())
             }
             LiveCase::CoinRunesEmpty => {
-                let at_withdraw = self
+                let at_supply = self
                     .witness
                     .last_status_bank
                     .as_deref()
-                    .is_some_and(|bank| bank.ends_with("; Withdraw"));
+                    .is_some_and(|bank| bank.ends_with("; Supply"));
                 if self.witness.failure_code.as_deref() != Some("supply-missing")
-                    || !self.witness.bank_selected
+                    || !self.witness.native_phases.contains("Blocked")
+                    || !self.complete_bank_selection()
                     || !self.witness.bank_loaded_observed
-                    || !at_withdraw
+                    || !at_supply
                     || self.witness.status_trips != 0
                     || self.witness.last_status_yielded != 0
                     || self
@@ -5713,7 +5936,7 @@ impl GatherSlot {
                 if !self.complete_bank_selection()
                     || !self.witness.relog_fired
                     || !self.witness.relog_session_advanced
-                    || !relog_steps_in_order(&self.witness.relog_steps_after)
+                    || !relog_steps_in_order(&self.witness.relog_steps_after, &fired_step)
                     || !relog_restart_logged(&fired_step)
                     || !(self.witness.bank_withdrawal_confirmed
                         || relog_step_seen(&self.witness.relog_steps_after, "Close"))
@@ -5802,12 +6025,11 @@ impl GatherSlot {
             .as_deref()
             .and_then(|bank| bank.split(';').nth(1))
             .map(str::trim)
-            .filter(|kind| !kind.is_empty())
+            .filter(|kind| matches!(*kind, "NearShortcut" | "Reachable" | "AirFallback"))
     }
 
     fn complete_bank_selection(&self) -> bool {
-        self.witness.bank_selected
-            && self.selected_bank_name().is_some()
+        self.selected_bank_name().is_some()
             && self.selected_bank_kind().is_some()
             && self
                 .witness
@@ -5844,6 +6066,145 @@ fn tile_key(tile: WorldTile) -> (i32, i32, i32) {
 }
 fn tile_distance(tile: (i32, i32, i32), target: WorldTile) -> Option<i32> {
     (tile.2 == target.level).then(|| (tile.0 - target.x).abs().max((tile.1 - target.z).abs()))
+}
+fn observe_death_respawn_region(
+    witness: &mut Witness,
+    recovery_step: u8,
+    last_event: Option<&str>,
+    sampled_tile: Option<(i32, i32, i32)>,
+) {
+    if witness.last_deaths == 0 || witness.death_respawn_tile.is_some() {
+        return;
+    }
+    if recovery_step != 1 || last_event != Some("respawn observed; settling") {
+        return;
+    }
+    let Some(respawn) = sampled_tile else {
+        return;
+    };
+    let respawn_tile = WorldTile {
+        x: respawn.0,
+        z: respawn.1,
+        level: respawn.2,
+    };
+    witness.death_respawn_tile = Some(respawn);
+    witness.death_respawn_region_unchanged = script::native::death::RESPAWN_SQUARE
+        .contains(respawn_tile)
+        && witness.death_command_tile.is_some_and(|death| {
+            death.0.div_euclid(64) == respawn.0.div_euclid(64)
+                && death.1.div_euclid(64) == respawn.1.div_euclid(64)
+                && death.2 == respawn.2
+        });
+}
+
+fn auto_search_beyond_start_ring(start: WorldTile, area: &str) -> bool {
+    let Some((coords, search)) = area
+        .strip_prefix("auto (")
+        .and_then(|area| area.split_once(") r32; searched: "))
+    else {
+        return false;
+    };
+    let Some((searched, attempts)) = search.split_once("; tried: ") else {
+        return false;
+    };
+    let Some((tried, limit)) = attempts.split_once("; limit: ") else {
+        return false;
+    };
+    if limit != "128" || tried.parse::<usize>().is_err() {
+        return false;
+    }
+    let Ok(searched) = searched.parse::<u32>() else {
+        return false;
+    };
+    let Ok(anchor) = parse_tile("Auto area", coords) else {
+        return false;
+    };
+    let distance = anchor.x.abs_diff(start.x).max(anchor.z.abs_diff(start.z));
+    searched <= 128 && anchor.level == start.level && (33..=searched).contains(&distance)
+}
+
+fn auto_approach_options(width: i32, height: i32) -> api::query::SceneReachOptions {
+    api::query::SceneReachOptions {
+        // A tree outside the 32-tile ring can exceed the API's 400-expansion
+        // default. Search the observed scene, not an unbounded world region.
+        max_steps: Some(
+            u32::try_from(width)
+                .unwrap_or(0)
+                .saturating_mul(u32::try_from(height).unwrap_or(0)),
+        ),
+        adjacent_ok: true,
+    }
+}
+
+fn auto_start_candidate(
+    origin: WorldTile,
+    build: BuildRect,
+    normal_trees: &BTreeSet<(i32, i32, i32)>,
+    reachable: impl Fn(WorldTile) -> bool,
+    standable: impl Fn(WorldTile) -> bool,
+    tree_reachable: impl Fn(WorldTile, WorldTile) -> bool,
+) -> Option<WorldTile> {
+    if build.level != origin.level || build.width <= 0 || build.height <= 0 {
+        return None;
+    }
+    let min_x = build.base_x.max(origin.x.saturating_sub(48));
+    let max_x = (build.base_x + build.width - 1).min(origin.x.saturating_add(48));
+    let min_z = build.base_z.max(origin.z.saturating_sub(48));
+    let max_z = (build.base_z + build.height - 1).min(origin.z.saturating_add(48));
+    let mut best: Option<(i32, WorldTile)> = None;
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            let candidate = WorldTile {
+                x,
+                z,
+                level: build.level,
+            };
+            if !standable(candidate)
+                || normal_trees.iter().any(|&tree| {
+                    tile_distance(tree, candidate).is_some_and(|distance| distance <= 32)
+                })
+            {
+                continue;
+            }
+            let distance = tile_distance(tile_key(origin), candidate)?;
+            if best.is_some_and(|(best_distance, best_tile)| {
+                (distance, candidate.x, candidate.z) >= (best_distance, best_tile.x, best_tile.z)
+            }) {
+                continue;
+            }
+            if !reachable(candidate)
+                || !normal_trees.iter().any(|&tree| {
+                    let tree_tile = WorldTile {
+                        x: tree.0,
+                        z: tree.1,
+                        level: tree.2,
+                    };
+                    tile_distance(tree, candidate)
+                        .is_some_and(|distance| (33..=128).contains(&distance))
+                        && tree_reachable(candidate, tree_tile)
+                })
+            {
+                continue;
+            }
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, tile)| tile)
+}
+
+fn auto_next_group(start: WorldTile, normal_trees: &BTreeSet<(i32, i32, i32)>) -> Vec<WorldTile> {
+    normal_trees
+        .iter()
+        .filter_map(|&tree| {
+            tile_distance(tree, start)
+                .filter(|distance| (33..=128).contains(distance))
+                .map(|_| WorldTile {
+                    x: tree.0,
+                    z: tree.1,
+                    level: tree.2,
+                })
+        })
+        .collect()
 }
 
 /// Run on/off from the client's orb pair (the host's own auto-run echo,
@@ -6156,31 +6517,17 @@ fn fixture_plan(
             .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
     }
     let target = match case {
-        LiveCase::RandomEvent | LiveCase::MazeRandom => {
-            fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?
-        }
+        LiveCase::RandomEvent => fixture_tile(cell.tile_env(case), DRAYNOR_OAK_TARGET)?,
+        LiveCase::MazeRandom => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
         LiveCase::DeathReturn
         | LiveCase::DeathNoStock
         | LiveCase::DeathWatchdogPending
-        | LiveCase::DeathWatchdogProving => {
-            let tile = fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?;
-            plan.oak_tiles.push(tile);
-            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
-            tile
-        }
-        LiveCase::DeathRespawnRegion => {
-            let tile = fixture_tile(cell.tile_env(case), DEATH_REGION_START)?;
-            plan.oak_tiles.push(tile);
-            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
-            tile
-        }
+        | LiveCase::DeathWatchdogProving => fixture_tile(cell.tile_env(case), DRAYNOR_OAK_TARGET)?,
+        LiveCase::DeathRespawnRegion => fixture_tile(cell.tile_env(case), DEATH_REGION_START)?,
         LiveCase::DeathReturnRefused => {
-            // Authored oak in m48_55; its radius-12 return remains north of
-            // the wilderness boundary while allowWilderness stays false.
-            let tile = fixture_tile(cell.tile_env(case), world_tile(3101, 3535))?;
-            plan.oak_tiles.push(tile);
-            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
-            tile
+            // Use a quiet authored wilderness oak. After death, returning to it
+            // crosses the forbidden boundary with allowWilderness still false.
+            fixture_tile(cell.tile_env(case), DEATH_RETURN_REFUSED_TARGET)?
         }
         LiveCase::FishNet => fixture_tile("GATHERER_FISH_TILE", FISH_NET_START)?,
         LiveCase::FishSpotMoves => world_tile(2838, 3432),
@@ -6195,61 +6542,20 @@ fn fixture_plan(
             fixture_tile("GATHERER_WC_RESPAWN_START_TILE", first)?
         }
         LiveCase::OakNearEdge => {
-            let edge = fixture_tile("GATHERER_WC_EDGE_OAK_TILE", OAK_EDGE_TARGET)?;
-            plan.edge_oak = Some(edge);
+            plan.edge_oak = Some(fixture_tile("GATHERER_WC_EDGE_OAK_TILE", OAK_EDGE_TARGET)?);
             plan.preflight_edge = Some(fixture_tile(
                 "GATHERER_WC_EDGE_PREFLIGHT_TILE",
                 OAK_EDGE_PREFLIGHT,
             )?);
-            plan.oak_tiles.push(edge);
-            // Earlier absent/edge cells may have replaced this same placement.
-            plan.seed_locs.push(seed(edge, "oaktree", OAK_ID));
-            for &(x, z) in OAK_EDGE_SEEDS {
-                let tile = world_tile(x, z);
-                if tile == world_tile(3252, 3237) {
-                    plan.seed_locs.push(seed(tile, "fire", ABSENT_LOC_ID));
-                } else {
-                    plan.oak_tiles.push(tile);
-                    plan.seed_locs
-                        .push(seed(tile, "evergreen_large_stump", OAK_STUMP_ID));
-                }
-            }
             fixture_tile("GATHERER_WC_EDGE_START_TILE", OAK_EDGE_START)?
         }
-        LiveCase::OakAbsentArea => {
-            let tile = fixture_tile("GATHERER_WC_ABSENT_TILE", OAK_ABSENT_START)?;
-            plan.oak_tiles.push(tile);
-            plan.seed_locs.push(seed(tile, "fire", ABSENT_LOC_ID));
-            tile
+        LiveCase::OakNoPlacementArea => {
+            fixture_tile("GATHERER_WC_NO_PLACEMENT_TILE", OAK_NO_PLACEMENT_START)?
         }
-        LiveCase::LocationAuto => {
-            plan.auto_felled = AUTO_FELLED_TILES
-                .iter()
-                .map(|&(x, z)| world_tile(x, z))
-                .collect();
-            plan.auto_next = if std::env::var_os("GATHERER_AUTO_NEXT_TILE").is_some() {
-                vec![fixture_tile(
-                    "GATHERER_AUTO_NEXT_TILE",
-                    world_tile(2409, 3480),
-                )?]
-            } else {
-                AUTO_NEXT_TILES
-                    .iter()
-                    .map(|&(x, z)| world_tile(x, z))
-                    .collect()
-            };
-            plan.seed_locs = plan
-                .auto_felled
-                .iter()
-                .copied()
-                .map(|tile| seed(tile, "treestump2", AUTO_STUMP_ID))
-                .collect();
-            fixture_tile("GATHERER_AUTO_START_TILE", AUTO_START)?
-        }
+        LiveCase::LocationAuto => fixture_tile("GATHERER_AUTO_START_TILE", AUTO_START)?,
         LiveCase::GasHazard => {
             let tile = fixture_tile("GATHERER_GAS_TILE", GAS_START)?;
-            let hazard = seed(tile, "macro_ironrock1", GAS_HAZARD_LOC_ID);
-            plan.inject_after_progress = Some(hazard);
+            plan.inject_after_progress = Some(seed(tile, "macro_ironrock1", GAS_HAZARD_LOC_ID));
             tile
         }
         LiveCase::WoodcuttingBank
@@ -6282,20 +6588,6 @@ fn fixture_plan(
             tile,
             stage: FixtureStage::Start,
         }),
-        LiveCase::OakNearEdge
-        | LiveCase::OakAbsentArea
-        | LiveCase::LocationAuto
-        | LiveCase::DeathReturn
-        | LiveCase::DeathRespawnRegion
-        | LiveCase::DeathNoStock
-        | LiveCase::DeathReturnRefused
-        | LiveCase::DeathWatchdogPending
-        | LiveCase::DeathWatchdogProving => Some(FixtureTask::Seed {
-            seeds: plan.seed_locs.clone(),
-            next: 0,
-            return_to: target,
-            stage: FixtureStage::Start,
-        }),
         LiveCase::GasHazard => {
             plan.inject_after_progress
                 .map(|seed| FixtureTask::InjectAfterProgress {
@@ -6322,6 +6614,16 @@ fn fixture_plan(
         );
     }
     Ok((target, plan, task))
+}
+fn real_content_death_fixture(
+    _cell: Cell,
+    _case: LiveCase,
+) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String> {
+    let mut plan = FixturePlan::default();
+    plan.bank_seed.push(("bronze_axe".into(), 3));
+    plan.inventory_seed
+        .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
+    Ok((DRAYNOR_OAK_BANK_START, plan, None))
 }
 
 fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, String> {
@@ -6357,13 +6659,13 @@ fn selected_profile(
             std::env::var("GATHERER_GAME_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(45594)
+                .unwrap_or(47594)
         })),
         http_port: Some(
             std::env::var("GATHERER_HTTP_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(2080),
+                .unwrap_or(3080),
         ),
         cache_dir,
         nav_pack: Some(nav_pack),
@@ -6386,7 +6688,21 @@ fn selected_profile(
     Ok((profile, template))
 }
 
+include!("../src/clean_logout_guard.inc.rs");
+define_clean_logout_guard!(host_play::Play, CLEAN_LOGOUT_DEADLINE);
+
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
+    run_cell_with_fixture(cell, case, fixture_plan)
+}
+
+fn run_cell_with_fixture(
+    cell: Cell,
+    case: LiveCase,
+    fixture_builder: impl FnOnce(
+        Cell,
+        LiveCase,
+    ) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String>,
+) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
@@ -6484,7 +6800,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             catalog_root.display()
         ));
     }
-    let (target, mut plan, fixture_task) = fixture_plan(cell, case)?;
+    let (target, mut plan, fixture_task) = fixture_builder(cell, case)?;
     let temp = TempRoot::new(cell_name)?;
     let relog = relog_plan()?;
     let upstream_port = std::env::var("GATHERER_GAME_PORT")
@@ -6556,20 +6872,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         case,
         target,
         plan.clone(),
-        // The engine streams dynamic loc changes only in its nearby zone window.
-        // Visit each seeded zone before Start without rebuilding the 104-tile scene,
-        // so all forty exhausted placements are genuinely observed by the subject.
-        matches!(case, LiveCase::LocationAuto | LiveCase::OakNearEdge).then(|| FixtureTask::Seed {
-            seeds: plan
-                .seed_locs
-                .iter()
-                .copied()
-                .filter(|seed| case == LiveCase::LocationAuto || seed.id == ABSENT_LOC_ID)
-                .collect(),
-            next: 0,
-            return_to: target,
-            stage: FixtureStage::Start,
-        }),
+        None,
         false,
     )));
     let helper_state = if case == LiveCase::RandomEvent {
@@ -6608,6 +6911,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let frame_account = account.clone();
     let frame_helper_account = helper_account.clone();
     let frame_helper_state = helper_state.clone();
+    let frame_world = profile.world();
     let frame_helper_needs_progress = case == LiveCase::GasHazard;
     let capture_request = Arc::new(Mutex::new(None::<(PathBuf, Value)>));
     let capture_result = Arc::new(Mutex::new(None::<Result<(), String>>));
@@ -6640,6 +6944,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 };
                 if let Some(helper_state) = &frame_helper_state {
                     if let Ok(mut helper) = helper_state.lock() {
+                        // The foreign random event comes from the helper's own
+                        // `~macro_event 4` debug cheat (our 289 engine), after the
+                        // subject has released its own event and yielded again.
                         let spawn_foreign_event = frame_state.lock().ok().is_some_and(|main| {
                             main.case == LiveCase::RandomEvent
                                 && main.witness.random_owned_released
@@ -6669,10 +6976,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                             main.witness
                                 .fixture_chop_tiles
                                 .extend(helper.witness.fixture_chop_tiles.iter().copied());
-                            main.witness.fixture_seeds_observed = main
-                                .witness
-                                .fixture_seeds_observed
-                                .max(helper.witness.fixture_seeds_observed);
                         }
                     }
                 }
@@ -6756,6 +7059,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     )
                 })
                 .unwrap_or((false, false, None));
+            // The subject's own random event comes from the engine's
+            // `~macro_event 4` debug cheat (our 289 engine) once it has yielded.
             if spawn_owned_event && interact::cheat(client, "~macro_event 4").is_sent() {
                 if let Ok(mut slot) = frame_state.lock() {
                     slot.witness.random_owned_command_sent = true;
@@ -6806,6 +7111,27 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             }
             if let Ok(mut slot) = frame_state.lock() {
                 slot.frame(client, hold, None);
+                if case == LiveCase::DeathReturnRefused
+                    && slot.witness.death_recovery_command_sent > 0
+                {
+                    let tick = slot.latest.as_ref().map_or(0, |latest| latest.tick);
+                    let tile = slot.snapshot.tile();
+                    let alive = slot.snapshot.ingame()
+                        && slot.snapshot.scene_state() == 2
+                        && slot.snapshot.stats().iter().any(|stat| {
+                            stat.name.eq_ignore_ascii_case("Hitpoints") && stat.effective > 0
+                        });
+                    let in_wilderness =
+                        frame_world
+                            .as_ref()
+                            .zip(tile)
+                            .map(|(world, (x, z, level))| {
+                                world.graph.wilderness.contains(WorldTile { x, z, level })
+                            });
+                    slot.witness
+                        .death_return_stop
+                        .observe_tile(tick, tile, alive, in_wilderness);
+                }
             }
             let capture = frame_capture_request
                 .lock()
@@ -6864,6 +7190,12 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             helper_arm,
         )?;
     }
+    let mut logout_guard = (case == LiveCase::BankCostFirstGoal).then(|| CleanLogoutGuard {
+        play: &play,
+        account: &account,
+        label: cell_name,
+        attempted: false,
+    });
     let settings = cell.settings(case);
     let mut identity = json!({
         "phase": "identity",
@@ -7016,7 +7348,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     Err(error) => break Err(error),
                 }
             };
-            let bank_config = if case.is_bank_mode() {
+            let needs_bank_config = {
+                let slot = state.lock().map_err(|_| "live state poisoned")?;
+                case.is_bank_mode() || slot.is_real_content_death_reprovision()
+            };
+            let bank_config = if needs_bank_config {
                 let preparation = match play.script_prepare_config(
                     script::CompiledId("Gatherer"),
                     1,
@@ -7425,6 +7761,14 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             if let Err(error) = slot.apply_status(&status) {
                 slot.error = Some(error);
             }
+            if case == LiveCase::DeathNoStock
+                && status.phase == script::native::NativePhase::Blocked
+                && play.script_state(&account) == script::RunState::Running
+                && text_field(&status, "block_reason")
+                    .is_some_and(|reason| !reason.trim().is_empty())
+            {
+                slot.witness.death_no_stock_blocked_running = true;
+            }
             #[cfg(feature = "live-probe")]
             if case.is_named_site() {
                 let probe = play.manual_click_live_probe(&account);
@@ -7490,16 +7834,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     }
                 }
             }
-            if case == LiveCase::DeathReturnRefused && slot.witness.death_return_refused {
-                slot.witness.death_return_stopped |= play.script_state(&account)
-                    == script::RunState::Idle
-                    && play.script_native_run(&account).is_none()
-                    && play
-                        .script_lifecycle_receipt(&account)
-                        .is_some_and(|receipt| {
-                            receipt.state == script::ScriptTerminalState::Failed
-                        });
-            }
             if case == LiveCase::MazeRandom
                 && slot.witness.maze_blocked_inside
                 && !slot.witness.maze_stopped
@@ -7515,6 +7849,26 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     json!({"phase": "maze-stopped", "state": "Idle", "receipt": "Failed"})
                 );
             }
+        }
+        if case == LiveCase::DeathReturnRefused {
+            let stopped = play.script_state(&account) == script::RunState::Idle
+                && play.script_native_run(&account).is_none()
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Failed);
+            #[cfg(feature = "live-probe")]
+            let nav = play.manual_click_live_probe(&account)["nav"].clone();
+            #[cfg(not(feature = "live-probe"))]
+            let nav = Value::Null;
+            let mut slot = state.lock().map_err(|_| "live state poisoned")?;
+            let tick = slot.latest.as_ref().map_or(0, |latest| latest.tick);
+            slot.witness.death_return_stop.observe_permissions(
+                settings.get("allowWilderness").and_then(Value::as_bool),
+                play.walk_globals().allow_wilderness,
+            );
+            slot.witness
+                .death_return_stop
+                .observe_navigation(tick, &nav, stopped);
         }
         let (
             witness,
@@ -7636,7 +7990,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && (!fish_spot_soak
                         || Instant::now() >= started_at + PREP_DEADLINE + POWER_DEADLINE)
             }
-            LiveCase::FishBaitGate | LiveCase::OakAbsentArea => witness.failure_code.is_some(),
+            LiveCase::FishBaitGate | LiveCase::OakNoPlacementArea => witness.failure_code.is_some(),
             LiveCase::MazeRandom => maze_random_complete(&witness),
             LiveCase::OakRespawn => {
                 witness.all_oaks_depleted_at_wait && witness.first_regrown_gather_tick.is_some()
@@ -7717,7 +8071,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness
                         .last_status_bank
                         .as_deref()
-                        .is_some_and(|bank| bank.ends_with("; Withdraw"))
+                        .is_some_and(|bank| bank.ends_with("; Supply"))
             }
             LiveCase::PowerToBank => {
                 witness.power_to_bank_applied
@@ -7749,7 +8103,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             LiveCase::BankTripRelog => {
                 witness.relog_fired
                     && witness.relog_session_advanced
-                    && relog_steps_in_order(&witness.relog_steps_after)
+                    && relog_steps_in_order(
+                        &witness.relog_steps_after,
+                        witness.relog_step.as_deref().unwrap_or_default(),
+                    )
                     && witness.bank_return_step_seen
                     && witness.post_bank_yields >= 1
                     && latest
@@ -7852,6 +8209,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "resume_observed": witness.resume_observed,
             "death_recovery_in_area": witness.death_recovery_in_area,
             "death_command_tile": witness.death_command_tile,
+            "death_respawn_tile": witness.death_respawn_tile,
             "death_respawn_region_unchanged": witness.death_respawn_region_unchanged,
             "death_progress_baselines": witness.death_progress_baselines,
             "deaths": witness.last_deaths,
@@ -7861,8 +8219,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "death_products_after": witness.death_products_after,
             "death_xp_after": witness.death_xp_after,
             "death_haul_between": witness.death_haul_between,
-            "death_return_refused": witness.death_return_refused,
-            "death_return_stopped": witness.death_return_stopped,
+            "death_return_stop": witness.death_return_stop,
             "death_watchdog_aged": witness.death_watchdog_aged,
             "death_watchdog_generation_before": witness.death_watchdog_generation_before,
             "death_watchdog_recreated": witness.death_watchdog_recreated,
@@ -8002,6 +8359,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
             })),
             "fixture_chop_observed": witness.fixture_chop_observed,
+            "death_no_stock": (case == LiveCase::DeathNoStock).then(|| json!({
+                "native_phases": witness.native_phases,
+                "failure": witness.failure,
+                "failure_code": witness.failure_code,
+                "block_reason": witness.last_status_block_reason,
+                "running_while_blocked": witness.death_no_stock_blocked_running,
+                "deaths": witness.last_deaths,
+                "recovery_commands": witness.death_recovery_command_sent,
+                "bank": witness.last_status_bank,
+            })),
             "seeded_casket": {
                 "required": case.requires_seeded_casket(),
                 "alias": "casket",
@@ -8015,7 +8382,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "natural_first_observed_after_seeded_bank": witness.natural_casket_first_observed,
             },
             "fixture_chop_tiles": witness.fixture_chop_tiles,
-            "fixture_seeds_observed": witness.fixture_seeds_observed,
             "fish_targets": witness
                 .fish_targets
                 .iter()
@@ -8054,7 +8420,9 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "auto_widen_seen": witness.auto_widen_seen,
             "auto_selected_next": witness.auto_selected_next,
             "auto_next_gather_tick": witness.auto_next_gather_tick,
+            "auto_real_next_tiles": fixture_plan.auto_next,
             "gas_hazard_tile": witness.gas_hazard_tile,
+            "gas_hazard_seeded": witness.gas_hazard_seeded,
             "gas_hazard_observed": witness.gas_hazard_observed,
             "gas_hazard_escaped": witness.gas_hazard_escaped,
             "gas_hazard_xp_after_escape": witness.gas_hazard_xp_after_escape,
@@ -8082,6 +8450,23 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "xp": witness.last_xp,
         });
     }
+    if case == LiveCase::DeathReturn
+        && fixture_plan.seed_locs.is_empty()
+        && fixture_plan.oak_tiles.is_empty()
+    {
+        fixture_receipt["real_content_death_reprovision"] = json!({
+            "origin": target,
+            "resource": "oak",
+            "scene_locations_seeded": fixture_plan.seed_locs.len(),
+            "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
+            "deposit_evidence": witness
+                .death_reprovision_deposits
+                .iter()
+                .map(ReprovisionDepositEvidence::as_json)
+                .collect::<Vec<_>>(),
+        });
+    }
+
     if case.is_named_site() {
         receipt["named_site"] = json!({
             "id": cell.site_id_for_case(case),
@@ -8173,11 +8558,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             std::thread::sleep(POLL_INTERVAL);
         }
     }
-    play.script_stop(&account);
+    let clean_logout = if let Some(guard) = logout_guard.as_mut() {
+        guard.logout()
+    } else {
+        play.script_stop(&account);
+        Ok(())
+    };
+    drop(logout_guard);
     play.stop_slot(&account);
     if let Some(helper_account) = &helper_account {
         play.stop_slot(helper_account);
     }
+    clean_logout?;
     result?;
     let qualification = state.lock().map_err(|_| "live state poisoned")?.qualifies();
     qualification
@@ -8224,6 +8616,32 @@ impl QuesterSharedCoreState {
             self.runner.tick_with_hold(client, hold);
         }
     }
+}
+
+#[cfg(feature = "live-harness")]
+fn quester_shared_core_completed(
+    native_status: Option<&script::native::ScriptStatus>,
+    lifecycle: Option<&script::ScriptLifecycleReceipt>,
+    run_state: script::RunState,
+) -> Result<bool, String> {
+    if let Some(status) = native_status {
+        if status.card != script::CompiledId("Quester") {
+            return Err(format!(
+                "quester_sheep terminal status belongs to {:?}",
+                status.card
+            ));
+        }
+    }
+    let Some(receipt) = lifecycle else {
+        return Ok(false);
+    };
+    if receipt.state != script::ScriptTerminalState::Completed {
+        return Err(format!(
+            "quester_sheep native run ended {:?}: {receipt:?}",
+            receipt.state
+        ));
+    }
+    Ok(run_state == script::RunState::Idle)
 }
 
 #[cfg(feature = "live-harness")]
@@ -8390,6 +8808,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
             if slot.runner.take_relog_login() {
@@ -8418,27 +8837,29 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
                         "quester_sheep passed after {start_count} compiled Starts, expected one"
                     ));
                 }
-                if let Some(status) = native_status.as_ref() {
-                    if status.card != script::CompiledId("Quester") {
-                        break Err(format!(
-                            "quester_sheep terminal status belongs to {:?}",
-                            status.card
-                        ));
-                    }
-                    if status.phase == script::native::NativePhase::Complete {
+                match quester_shared_core_completed(
+                    native_status.as_deref(),
+                    lifecycle.as_ref(),
+                    run_state,
+                ) {
+                    Ok(true) => {
                         println!(
                             "{}",
                             json!({
                                 "phase": "witness",
                                 "live_case": CELL,
                                 "scenario": "quester_sheep",
-                                "card": status.card.0,
-                                "native_phase": format!("{:?}", status.phase),
+                                "card": "Quester",
+                                "native_phase": native_status.as_ref().map(|status| format!("{:?}", status.phase)),
+                                "run_state": format!("{run_state:?}"),
+                                "lifecycle": lifecycle,
                                 "start_count": start_count,
                             })
                         );
                         break Ok(());
                     }
+                    Ok(false) => {}
+                    Err(error) => break Err(error),
                 }
             }
             RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
@@ -8531,13 +8952,13 @@ fn gatherer_location_modes() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_WC_ABSENT_TILE and local 289 engine"]
-fn gatherer_wc_absent() {
-    run_cell(Cell::Woodcutting, LiveCase::OakAbsentArea).unwrap();
+#[ignore = "requires LIVE=1, GATHERER_WC_NO_PLACEMENT_TILE and local 289 engine"]
+fn gatherer_wc_area_no_placement() {
+    run_cell(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_GAS_TILE and local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_GAS_TILE, the engine's ~loc and ~tele debug cheats and local 289 engine"]
 fn gatherer_mine_gas_hazard() {
     run_cell(Cell::Mining, LiveCase::GasHazard).unwrap();
 }
@@ -8674,20 +9095,49 @@ fn relog_steps_must_restart_at_access_then_open_then_deposit() {
             .map(|step| (*step).to_owned())
             .collect::<Vec<_>>()
     };
-    assert!(relog_steps_in_order(&steps(&[
-        "Deposit", "Access", "Open", "Deposit", "Withdraw"
-    ])));
-    assert!(relog_steps_in_order(&steps(&["Access", "Open", "Deposit"])));
-    assert!(!relog_steps_in_order(&steps(&[
-        "Deposit", "Withdraw", "Close"
-    ])));
-    assert!(!relog_steps_in_order(&steps(&[
-        "Open", "Deposit", "Access"
-    ])));
-    assert!(!relog_steps_in_order(&[]));
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Access", "Open", "Deposit", "Withdraw"]),
+        "Access"
+    ));
+    assert!(relog_steps_in_order(
+        &steps(&["Access", "Open", "Deposit"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Deposit", "Withdraw", "Close"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Open", "Deposit", "Access"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(&[], "Access"));
+    // A cut at Deposit restarts at the open bank: no Access step is required,
+    // and an already-emptied pack skips the Deposit step.
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Open", "Deposit"]),
+        "Deposit"
+    ));
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Open", "Close", "Return"]),
+        "Deposit"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Deposit", "Withdraw", "Close"]),
+        "Deposit"
+    ));
+    assert!(!relog_steps_in_order(&[], "Deposit"));
+}
+
+#[test]
+fn a_trailing_deposit_count_is_accepted_only_when_the_relog_cut_lost_the_confirmation() {
+    assert!(deposit_count_acceptable(28, 28, false));
+    assert!(!deposit_count_acceptable(0, 28, false));
+    assert!(deposit_count_acceptable(0, 28, true));
+    assert!(!deposit_count_acceptable(29, 28, true));
 }
 #[test]
-#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, the engine's ~macro_event debug cheat (our 289 engine) and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -8713,6 +9163,17 @@ fn maze_random_complete(witness: &Witness) -> bool {
 #[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, and local 289 engine"]
+fn gatherer_death_reprovision_real_content() {
+    run_cell_with_fixture(
+        Cell::Woodcutting,
+        LiveCase::DeathReturn,
+        real_content_death_fixture,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -8778,6 +9239,7 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
         }
         LiveCase::DeathRespawnRegion => {
             witness.death_recovery_in_area
+                && witness.death_respawn_tile.is_some()
                 && witness.death_respawn_region_unchanged
                 && witness.death_recovered.contains(&1)
                 && witness.death_products_after.contains(&1)
@@ -8786,17 +9248,24 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
                 && witness.last_recoveries == 1
         }
         LiveCase::DeathNoStock => {
-            witness.failure_code.as_deref() == Some("supply-missing")
+            witness.failure.is_none()
+                && witness.failure_code.is_none()
+                && witness.native_phases.contains("Blocked")
+                && witness.death_no_stock_blocked_running
+                && witness
+                    .last_status_block_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty())
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
+                && witness.status_trips == 0
                 && witness
                     .last_status_bank
                     .as_deref()
-                    .is_some_and(|bank| bank.ends_with("; Withdraw"))
+                    .is_some_and(|bank| bank.contains("; access:"))
         }
         LiveCase::DeathReturnRefused => {
-            witness.death_return_refused
-                && witness.death_return_stopped
+            witness.death_return_stop.complete()
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
         }
@@ -8871,6 +9340,357 @@ mod bank_conservation_tests {
             28,
         );
         (config, snapshot)
+    }
+
+    fn open_bank_slot(items: &[(i32, i32)]) -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(items);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::WoodcuttingBank,
+            DRAYNOR_OAK_BANK_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_status(
+        step: &str,
+        event: &str,
+        deposited: i64,
+        trips: i64,
+    ) -> script::native::ScriptStatus {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        ScriptStatus {
+            survival: Default::default(),
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(format!("Draynor; {step}").into()),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(deposited),
+                },
+                StatusField {
+                    key: "trips",
+                    label: "Trips",
+                    value: StatusValue::Integer(trips),
+                },
+            ]),
+        }
+    }
+
+    fn unopened_bank_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        let (_, snapshot) = bank_fixture(&[]);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_close_status(bank: &str) -> script::native::ScriptStatus {
+        let mut status = bank_status("Validate", "bank closed; validating equipment", 0, 0);
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text(bank.into());
+        status
+    }
+
+    #[test]
+    fn bank_close_boundary_accepts_wear_only_without_claiming_a_bank_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = unopened_bank_slot();
+        slot.apply_status(&bank_close_status("—")).unwrap();
+        assert!(slot.witness.pending_bank_trip.is_none());
+        assert!(!slot.witness.bank_closed_observed);
+        assert!(!slot.witness.bank_loaded_observed);
+        assert_eq!(slot.witness.status_trips, 0);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_selected_bank_without_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = unopened_bank_slot();
+        assert!(slot
+            .apply_status(&bank_close_status("Draynor; Validate"))
+            .is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_missing_bank_field_without_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = unopened_bank_slot();
+        let mut status = bank_close_status("Draynor; Validate");
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .key = "not_bank";
+        assert!(slot.apply_status(&status).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_an_unverified_receipt_without_a_selected_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(!receipt.deposit_verified);
+        let (_, snapshot) = bank_fixture(&[(KEBAB_ID, 4)]);
+        slot.snapshot = snapshot;
+        assert!(slot.apply_status(&bank_close_status("—")).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_credits_a_verified_bank_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = open_bank_slot(&[]);
+        slot.snapshot.seed_ingame(2);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(vec![]), vec![]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_close_status("Draynor; Validate"))
+            .unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(receipt.deposit_verified);
+        // The status text alone is not closure evidence; the decoded modal going
+        // from open to closed is.
+        assert!(!slot.witness.bank_closed_observed);
+        slot.snapshot
+            .seed_bank_observation(-1, 2, Some(vec![]), vec![]);
+        slot.apply_status(&bank_close_status("Draynor; Validate"))
+            .unwrap();
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_an_empty_supply_deposit_without_a_deposit_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = open_bank_slot(&[]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_status("Withdraw", "bank trip due", 0, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            0,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 0, 1))
+            .unwrap();
+        assert_eq!(slot.witness.status_trips, 1);
+        assert!(slot.witness.bank_trips.is_empty());
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_only_the_observed_item_count_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert_eq!(receipt.expected_items, counts(&[(KEBAB_ID, 4)]));
+        assert_eq!(receipt.bank_before, counts(&[(KEBAB_ID, 2)]));
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 6)]);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            4,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 4, 1))
+            .unwrap();
+        assert_eq!(slot.witness.bank_trips.len(), 1);
+        assert!(slot.witness.bank_trips[0].deposit_verified);
+    }
+
+    #[test]
+    fn bank_open_boundary_rejects_items_that_vanish_without_a_bank_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        assert!(slot
+            .apply_status(&bank_status(
+                "Wear",
+                "bank closed; validating equipment",
+                4,
+                0,
+            ))
+            .is_err());
+    }
+
+    fn real_death_slot_at_bank() -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)]);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::DeathReturn,
+            target,
+            plan,
+            task,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn reprovision_deposit_observation(
+        slot: &mut GatherSlot,
+        bank_after: &[(i32, i32)],
+    ) -> Observation {
+        let before = slot.capture();
+        slot.observe_running(None, before.clone()).unwrap();
+        let (_, bank) = bank_fixture(bank_after);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        let after = slot.capture();
+        slot.observe_running(Some(before), after.clone()).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 3);
+        assert_eq!(slot.witness.confirmed_drops, 0);
+        for item in slot.unsettled_items.values_mut() {
+            item.since = Instant::now() - UNSETTLED_WINDOW;
+        }
+        after
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_accepts_observed_per_item_bank_increases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = real_death_slot_at_bank();
+        let after =
+            reprovision_deposit_observation(&mut slot, &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)]);
+        slot.observe_running(Some(after), slot.capture()).unwrap();
+        assert!(slot.unsettled_items.is_empty());
+        let evidence = &slot.witness.death_reprovision_deposits[0];
+        assert_eq!(
+            evidence.expected_items,
+            counts(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)])
+        );
+        assert_eq!(
+            evidence.bank_before,
+            counts(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)])
+        );
+        assert_eq!(
+            evidence.bank_after,
+            counts(&[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)])
+        );
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.opened_at - Duration::from_secs(1)));
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.observed_at + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_rejects_vanished_missing_or_short_bank_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for bank_after in [
+            vec![(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)],
+            vec![(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
+            vec![(KEBAB_ID, 8), (1521, 5)],
+        ] {
+            let mut slot = real_death_slot_at_bank();
+            let after = reprovision_deposit_observation(&mut slot, &bank_after);
+            let error = slot
+                .observe_running(Some(after), slot.capture())
+                .unwrap_err();
+            assert!(error.contains("was not conserved"), "{error}");
+            assert!(!slot.unsettled_items.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_real_death_variant_requires_exact_reprovision_bank_increases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for case in [
+            LiveCase::DeathReturn,
+            LiveCase::DeathRespawnRegion,
+            LiveCase::DeathNoStock,
+            LiveCase::DeathReturnRefused,
+            LiveCase::DeathWatchdogPending,
+            LiveCase::DeathWatchdogProving,
+        ] {
+            let mut slot = real_death_slot_at_bank();
+            slot.case = case;
+            let after = reprovision_deposit_observation(
+                &mut slot,
+                &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)],
+            );
+            slot.observe_running(Some(after), slot.capture()).unwrap();
+            assert!(slot.unsettled_items.is_empty(), "{case:?}");
+            assert_eq!(slot.witness.death_reprovision_deposits.len(), 1);
+
+            let mut missing = real_death_slot_at_bank();
+            missing.case = case;
+            let after = reprovision_deposit_observation(
+                &mut missing,
+                &[(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
+            );
+            let error = missing
+                .observe_running(Some(after), missing.capture())
+                .unwrap_err();
+            assert!(error.contains("was not conserved"), "{case:?}: {error}");
+        }
     }
 
     fn native_deposit_ids(items: &[(i32, i32)]) -> Arc<[i32]> {
@@ -9006,7 +9826,7 @@ mod bank_conservation_tests {
             &empty_inventory,
             &empty_bank,
             &bank_after,
-            5,
+            true,
             &empty_inventory,
         ));
         let product_lost_bank = counts(&[(KEBAB_ID, 1)]);
@@ -9016,7 +9836,7 @@ mod bank_conservation_tests {
             &empty_inventory,
             &empty_bank,
             &product_lost_bank,
-            5,
+            true,
             &empty_inventory,
         ));
 
@@ -9029,7 +9849,7 @@ mod bank_conservation_tests {
             &kebab_left,
             &empty_bank,
             &product_only_bank,
-            4,
+            true,
             &kebab_left_unneeded,
         ));
     }
@@ -9337,6 +10157,214 @@ mod bank_conservation_tests {
         let observation = slot.capture();
         slot.observe_running(Some(previous), observation.clone())?;
         slot.observe_running(Some(observation.clone()), observation)
+    }
+
+    fn coin_runes_empty_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        slot.case = LiveCase::CoinRunesEmpty;
+        let baseline = slot.capture();
+        slot.baseline = Some(baseline.clone());
+        slot.latest = Some(baseline);
+        slot
+    }
+
+    fn coin_runes_empty_status(step: &str, code: &str) -> script::native::ScriptStatus {
+        let mut status = soak_status(step, "bank trip due", 0, 0);
+        status.phase = script::native::NativePhase::Blocked;
+        status.failure = Some(script::native::ScriptFailure {
+            code: code.into(),
+            message: "no Fire rune in the pack, worn, or in the bank".into(),
+        });
+        status
+    }
+
+    #[test]
+    fn coin_runes_empty_accepts_a_loaded_supply_shortage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = coin_runes_empty_slot();
+        slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .unwrap();
+        slot.qualifies().unwrap();
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_the_retired_withdraw_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Withdraw", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unloaded_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = coin_runes_empty_slot();
+        slot.snapshot = GameSnapshot::new();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unselected_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = coin_runes_empty_slot();
+        let mut status = coin_runes_empty_status("Supply", "supply-missing");
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        assert!(slot.apply_status(&status).is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_a_different_failure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "return-failed"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_any_trip_yield_or_xp_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (trips, yielded, xp) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+            let mut slot = coin_runes_empty_slot();
+            slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+                .unwrap();
+            slot.witness.status_trips = trips;
+            slot.witness.last_status_yielded = yielded;
+            slot.latest.as_mut().unwrap().xp = xp;
+            assert!(slot.qualifies().is_err(), "{trips}/{yielded}/{xp}");
+        }
+    }
+
+    #[test]
+    fn bank_selection_observes_the_projection_without_a_retired_event() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for kind in ["Reachable", "AirFallback", "NearShortcut"] {
+            let mut slot = soak_slot_at_deposit();
+            slot.witness.bank_selected = false;
+            let mut status = soak_status("Access", "bank trip due", 0, 0);
+            let mut fields = status.fields.to_vec();
+            fields
+                .iter_mut()
+                .find(|field| field.key == "bank")
+                .unwrap()
+                .value = script::native::StatusValue::Text(
+                format!("Catherby; {kind}; access:2809,3441,0; Access").into(),
+            );
+            status.fields = fields.into();
+            slot.apply_status(&status).unwrap();
+            assert!(slot.complete_bank_selection(), "{kind}");
+            assert_eq!(slot.selected_bank_kind(), Some(kind));
+        }
+    }
+
+    #[test]
+    fn bank_selection_rejects_a_retired_event_without_a_selection_projection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = soak_slot_at_deposit();
+        slot.witness.bank_selected = false;
+        let mut status = soak_status("Select", "bank selected", 0, 0);
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        slot.apply_status(&status).unwrap();
+        assert!(!slot.witness.bank_selected);
+        assert!(!slot.complete_bank_selection());
+    }
+
+    fn slot_before_supply_withdrawal() -> GatherSlot {
+        let mut slot = soak_slot_at_deposit();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(bank_rows(&[(FEATHERS_ID, 3)])), vec![]);
+        slot.witness.pending_bank_trip = None;
+        let observation = slot.capture();
+        slot.observe_running(None, observation).unwrap();
+        slot
+    }
+
+    #[test]
+    fn bank_withdrawal_requires_matching_pack_and_bank_item_deltas() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(&mut slot, &[(NET_ID, 1), (FEATHERS_ID, 3)], &[]).unwrap();
+        assert!(slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_an_uncredited_pack_increase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 3)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_different_bank_delta_quantity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 1)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_retired_event_without_item_deltas() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut slot = slot_before_supply_withdrawal();
+        slot.apply_status(&soak_status("Withdraw", "withdrawal confirmed", 0, 0))
+            .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
     }
 
     fn age_unsettled(slot: &mut GatherSlot) {
@@ -9721,6 +10749,14 @@ fn is_mining_gem(id: i32) -> bool {
     MINE_PRODUCTS.contains(&id) && ![COPPER_ID, TIN_ID, IRON_ID, COAL_ID].contains(&id)
 }
 
+fn record_bank_return_step(witness: &mut Witness, step: &str) {
+    if step == "Return" {
+        // Return is persistent runner evidence that Close completed.
+        witness.bank_return_step_seen = true;
+        witness.bank_closed_observed = true;
+    }
+}
+
 fn real_content_bank_lifecycle_complete(
     case: LiveCase,
     witness: &Witness,
@@ -10043,6 +11079,93 @@ fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
             0,
         ),
         "the oak fixture tile list must also remain empty"
+    );
+}
+
+#[test]
+fn draynor_oak_lifecycle_requires_bank_close_and_fresh_post_bank_yield() {
+    let mut witness = Witness {
+        status_trips: 2,
+        bank_arrivals: 2,
+        status_deposited: 28,
+        bank_nonzero_roundtrips: 1,
+        post_bank_yields: 2,
+        bank_loaded_observed: true,
+        bank_withdrawal_confirmed: true,
+        last_status_yielded: 29,
+        last_xp: 3498,
+        last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Return".into()),
+        last_event: Some("returning to work area".into()),
+        ..Witness::default()
+    };
+    witness.products_seen.insert(1521);
+    witness.oak_live_tiles.insert((3106, 3247, 0));
+    let plan = FixturePlan::default();
+    let target = world_tile(3106, 3247);
+    let baseline_xp = 2411;
+
+    record_bank_return_step(&mut witness, "Return");
+    assert!(witness.bank_closed_observed);
+    assert!(real_content_bank_lifecycle_complete(
+        LiveCase::BankCostFirstGoal,
+        &witness,
+        &plan,
+        target,
+        baseline_xp,
+    ));
+
+    let valid_xp = witness.last_xp;
+    for xp in [baseline_xp, baseline_xp - 1] {
+        witness.last_xp = xp;
+        assert!(
+            witness.post_bank_yields >= 1,
+            "the negative XP case keeps a fresh post-bank yield"
+        );
+        assert!(
+            !real_content_bank_lifecycle_complete(
+                LiveCase::BankCostFirstGoal,
+                &witness,
+                &plan,
+                target,
+                baseline_xp,
+            ),
+            "XP at or below the baseline must not pass with a fresh yield"
+        );
+    }
+    witness.last_xp = valid_xp;
+
+    witness.post_bank_yields = 0;
+    witness.last_status_yielded = 28;
+    witness.last_xp = 3423;
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a bank return without a fresh gather must not pass"
+    );
+
+    witness.post_bank_yields = 2;
+    witness.last_status_yielded = 29;
+    witness.last_xp = 3498;
+    witness.bank_return_step_seen = false;
+    witness.bank_closed_observed = false;
+    witness.last_status_bank = Some("Draynor; Reachable; access:3092,3243,0; Close".into());
+    witness.last_event = Some("withdrawal confirmed".into());
+    record_bank_return_step(&mut witness, "Close");
+    assert!(!witness.bank_closed_observed);
+    assert!(
+        !real_content_bank_lifecycle_complete(
+            LiveCase::BankCostFirstGoal,
+            &witness,
+            &plan,
+            target,
+            baseline_xp,
+        ),
+        "a run that did not leave the open-bank Close step must not pass"
     );
 }
 
@@ -10631,9 +11754,7 @@ mod fish_harpoon_auto_fixture_tests {
         assert!(plan.inventory_seed.is_empty());
         assert!(plan.bank_seed.is_empty());
         assert!(plan.seed_locs.is_empty());
-        assert!(plan.auto_felled.is_empty());
         assert!(plan.auto_next.is_empty());
-        assert!(plan.inject_after_progress.is_none());
         assert!(task.is_none());
 
         let fixed = LiveCase::FishHarpoonBank;
@@ -10684,6 +11805,426 @@ mod fish_harpoon_auto_fixture_tests {
 }
 
 #[cfg(test)]
+mod auto_search_oracle_tests {
+    use super::*;
+
+    #[test]
+    fn initial_auto_search_beyond_empty_ring_qualifies_without_retry_event() {
+        for area in [
+            "auto (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3294,3331,0) r32; searched: 33; tried: 0; limit: 128",
+            "auto (3295,3426,0) r32; searched: 128; tried: 1; limit: 128",
+        ] {
+            assert!(auto_search_beyond_start_ring(AUTO_START, area), "{area}");
+        }
+    }
+
+    #[test]
+    fn auto_search_rejects_unresolved_or_in_ring_anchor() {
+        for area in [
+            "auto unresolved; searched: 64; tried: 0; limit: 128",
+            "start (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "site (3292,3347,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3295,3298,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3295,3330,0) r32; searched: 64; tried: 0; limit: 128",
+            "auto (3292,3347,1) r32; searched: 64; tried: 0; limit: 128",
+        ] {
+            assert!(!auto_search_beyond_start_ring(AUTO_START, area), "{area}");
+        }
+    }
+
+    #[test]
+    fn auto_search_rejects_unproven_or_out_of_bounds_search() {
+        for area in [
+            "auto (3292,3347,0) r32",
+            "auto (3292,3347,0) r32; searched: 32; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 129; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: unknown; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 64; tried: 0; limit: 256",
+            "auto (3292,3347,0) r31; searched: 64; tried: 0; limit: 128",
+            "auto (3292,3347,0) r32; searched: 64; tried: unknown; limit: 128",
+            "auto (3295,3427,0) r32; searched: 128; tried: 0; limit: 128",
+            "auto (3295,3363,0) r32; searched: 64; tried: 0; limit: 128",
+        ] {
+            assert!(!auto_search_beyond_start_ring(AUTO_START, area), "{area}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod gatherer_real_content_fixture_tests {
+    use super::*;
+    use api::query::{ArrivalProbe, CollisionArrivalProbe, SceneReachOptions};
+
+    fn auto_test_build() -> BuildRect {
+        BuildRect {
+            base_x: 3240,
+            base_z: 3248,
+            width: 104,
+            height: 104,
+            level: 0,
+        }
+    }
+
+    fn auto_real_scene_trees() -> BTreeSet<(i32, i32, i32)> {
+        // Complete ground-plane 1276/1278 placements in this 104x104 scene,
+        // from the authored map census m50_50 through m52_52.
+        BTreeSet::from([
+            tile_key(world_tile(3241, 3268)),
+            tile_key(world_tile(3241, 3332)),
+            tile_key(world_tile(3243, 3272)),
+            tile_key(world_tile(3244, 3314)),
+            tile_key(world_tile(3245, 3253)),
+            tile_key(world_tile(3245, 3267)),
+            tile_key(world_tile(3246, 3256)),
+            tile_key(world_tile(3246, 3259)),
+            tile_key(world_tile(3248, 3340)),
+            tile_key(world_tile(3256, 3326)),
+            tile_key(world_tile(3258, 3252)),
+            tile_key(world_tile(3260, 3252)),
+            tile_key(world_tile(3260, 3326)),
+            tile_key(world_tile(3262, 3249)),
+            tile_key(world_tile(3267, 3337)),
+            tile_key(world_tile(3267, 3340)),
+            tile_key(world_tile(3270, 3337)),
+            tile_key(world_tile(3270, 3341)),
+            tile_key(world_tile(3272, 3344)),
+            tile_key(world_tile(3273, 3335)),
+            tile_key(world_tile(3273, 3340)),
+            tile_key(world_tile(3274, 3347)),
+            tile_key(world_tile(3275, 3337)),
+            tile_key(world_tile(3275, 3344)),
+            tile_key(world_tile(3278, 3342)),
+            tile_key(world_tile(3278, 3348)),
+            tile_key(world_tile(3279, 3351)),
+            tile_key(world_tile(3282, 3336)),
+            tile_key(world_tile(3283, 3348)),
+            tile_key(world_tile(3290, 3340)),
+            tile_key(world_tile(3290, 3343)),
+            tile_key(world_tile(3293, 3337)),
+            tile_key(world_tile(3294, 3331)),
+            tile_key(world_tile(3295, 3351)),
+            tile_key(world_tile(3296, 3342)),
+            tile_key(world_tile(3298, 3331)),
+            tile_key(world_tile(3299, 3341)),
+            tile_key(world_tile(3301, 3346)),
+            tile_key(world_tile(3305, 3332)),
+            tile_key(world_tile(3305, 3340)),
+            tile_key(world_tile(3306, 3350)),
+            tile_key(world_tile(3309, 3344)),
+            tile_key(world_tile(3312, 3349)),
+            tile_key(world_tile(3314, 3348)),
+            tile_key(world_tile(3315, 3344)),
+            tile_key(world_tile(3319, 3349)),
+            tile_key(world_tile(3322, 3343)),
+            tile_key(world_tile(3329, 3340)),
+            tile_key(world_tile(3335, 3330)),
+        ])
+    }
+
+    #[test]
+    fn auto_approach_search_covers_the_scene_instead_of_the_default_400_expansions() {
+        let origin = AUTO_START;
+        let tree = world_tile(3294, 3331);
+        let probe = CollisionArrivalProbe::new(|_| Some(0));
+        assert!(!probe.can_reach_from(
+            origin,
+            tree,
+            &SceneReachOptions {
+                adjacent_ok: true,
+                ..Default::default()
+            },
+        ));
+        assert!(probe.can_reach_from(origin, tree, &auto_approach_options(104, 104)));
+        assert!(!probe.can_reach_from(origin, tree, &auto_approach_options(0, 104)));
+        assert!(!probe.can_reach_from(origin, tree, &auto_approach_options(104, -1)));
+    }
+
+    #[test]
+    fn auto_fixture_uses_observed_tree_placements_without_location_seeds() {
+        let (target, plan, task) = fixture_plan(Cell::Woodcutting, LiveCase::LocationAuto).unwrap();
+        assert_eq!(target, AUTO_START);
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(plan.auto_next.is_empty());
+        assert!(task.is_none());
+
+        let build = auto_test_build();
+        let real_scene_trees = auto_real_scene_trees();
+        let nearest_tree = world_tile(3294, 3331);
+        assert_eq!(tile_distance(tile_key(nearest_tree), AUTO_START), Some(33));
+        let start = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| true,
+            |candidate, tree| candidate == AUTO_START && tree == nearest_tree,
+        )
+        .expect("the authored nearest tree should have an empty reachable Auto ring");
+        assert_eq!(start, AUTO_START);
+        assert!(real_scene_trees
+            .iter()
+            .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
+        assert!(!auto_next_group(start, &real_scene_trees).is_empty());
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| false,
+            |_| true,
+            |_, _| true,
+        )
+        .is_none());
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| true,
+            |_, _| false,
+        )
+        .is_none());
+        assert!(auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |_| false,
+            |_, _| true,
+        )
+        .is_none());
+        let land_alternate = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |_| true,
+            |candidate| candidate != AUTO_START,
+            |_, _| true,
+        )
+        .expect("a blocked origin must not qualify merely because its flood includes it");
+        assert_ne!(land_alternate, AUTO_START);
+        let alternate = auto_start_candidate(
+            AUTO_START,
+            build,
+            &real_scene_trees,
+            |tile| tile != start,
+            |_| true,
+            |_, _| true,
+        )
+        .expect("an unreachable closest tile must not hide another empty ring");
+        assert_ne!(alternate, start);
+    }
+
+    #[test]
+    fn auto_fixture_candidate_is_reachable_standable_and_beside_authored_trees_in_nav_pack() {
+        let Some(pack_path) = std::env::var_os("NAV_PACK") else {
+            return;
+        };
+        let world = nav_planner::world::NavWorld::load_pack(&PathBuf::from(pack_path))
+            .expect("the selected real navigation pack must load");
+        let collision = &world.collision;
+        let build = auto_test_build();
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: build.base_x,
+            base_z: build.base_z,
+            level: build.level,
+            width: build.width,
+            height: build.height,
+            collision_flags: (0..build.width)
+                .flat_map(|x| {
+                    (0..build.height).map(move |z| {
+                        collision.walkable_word(build.base_x + x, build.base_z + z, build.level)
+                            as i32
+                    })
+                })
+                .collect(),
+        };
+        let origin_query = api::query::SceneQuery::new(&scene, Some(AUTO_START));
+        let reachable = origin_query
+            .flood_reach()
+            .expect("the real scene must admit its normal bounded reach flood");
+        let trees = auto_real_scene_trees();
+        let options = auto_approach_options(build.width, build.height);
+        let start = auto_start_candidate(
+            AUTO_START,
+            build,
+            &trees,
+            |tile| reachable.at(&tile).0,
+            |tile| origin_query.walkable(tile),
+            |from, tree| api::query::SceneQuery::new(&scene, Some(from)).can_reach(tree, &options),
+        )
+        .expect("the real nav pack must admit a reachable stand beside an authored tree");
+        assert!(collision.standable(start));
+        assert!(!world.graph.wilderness.contains(start));
+        assert!(reachable.at(&start).0);
+        assert!(trees
+            .iter()
+            .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
+        assert!(trees.iter().any(|&tree| {
+            tile_distance(tree, start).is_some_and(|distance| (33..=128).contains(&distance))
+                && api::query::SceneQuery::new(&scene, Some(start)).can_reach(
+                    WorldTile {
+                        x: tree.0,
+                        z: tree.1,
+                        level: tree.2,
+                    },
+                    &options,
+                )
+        }));
+    }
+
+    #[test]
+    fn refused_return_fixture_uses_the_authored_wilderness_oak() {
+        let (target, plan, task) =
+            fixture_plan(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
+        assert_eq!(target, DEATH_RETURN_REFUSED_TARGET);
+        assert_eq!(tile_distance((3227, 3533, 0), target), Some(23));
+        let settings = Cell::Woodcutting.settings(LiveCase::DeathReturnRefused);
+        assert_eq!(settings.get("allowWilderness"), Some(&json!(false)));
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(plan
+            .inventory_seed
+            .iter()
+            .any(|(alias, count)| alias == "bronze_axe" && *count == 1));
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn near_edge_fixture_starts_before_the_outside_oak_loads() {
+        let (target, plan, task) = fixture_plan(Cell::Woodcutting, LiveCase::OakNearEdge).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::OakNearEdge,
+            target,
+            plan,
+            task,
+            false,
+        );
+        let mut observation = slot.capture();
+        observation.tile = Some(tile_key(OAK_EDGE_START));
+        observation.build = Some(BuildRect {
+            base_x: (OAK_EDGE_PREFLIGHT.x.div_euclid(8) - 6) * 8,
+            base_z: (OAK_EDGE_PREFLIGHT.z.div_euclid(8) - 6) * 8,
+            width: 104,
+            height: 104,
+            level: OAK_EDGE_PREFLIGHT.level,
+        });
+        slot.latest = Some(observation.clone());
+        assert!(slot.fixture_ready());
+        slot.latest
+            .as_mut()
+            .unwrap()
+            .live_oaks
+            .insert(tile_key(OAK_EDGE_TARGET));
+        assert!(
+            !slot.fixture_ready(),
+            "an already loaded oak cannot prove scene-edge approach"
+        );
+        observation.tile = Some(tile_key(OAK_EDGE_PREFLIGHT));
+        slot.latest = Some(observation);
+        assert!(
+            !slot.fixture_ready(),
+            "the initial actor must be within twenty tiles of the edge"
+        );
+    }
+
+    #[test]
+    fn macro_event_cases_use_debug_cheat_fixtures() {
+        let (gas_target, gas_plan, gas_task) =
+            fixture_plan(Cell::Mining, LiveCase::GasHazard).unwrap();
+        assert_eq!(gas_target, GAS_START);
+        assert_eq!(
+            Cell::Mining.resources(LiveCase::GasHazard),
+            vec!["iron".to_owned()]
+        );
+        let hazard = gas_plan.inject_after_progress.expect("gas hazard seed");
+        assert_eq!(hazard.tile, gas_target);
+        assert!(gas_plan.seed_locs.is_empty());
+        assert!(gas_plan.oak_tiles.is_empty());
+        assert!(gas_plan.inventory_seed.is_empty());
+        assert!(gas_plan.bank_seed.is_empty());
+        assert!(matches!(
+            gas_task,
+            Some(FixtureTask::InjectAfterProgress {
+                tile: None,
+                return_to: None,
+                stage: FixtureStage::Start,
+                ..
+            })
+        ));
+
+        let (random_target, random_plan, random_task) =
+            fixture_plan(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
+        assert_eq!(random_target, DRAYNOR_OAK_TARGET);
+        assert!(random_plan.seed_locs.is_empty());
+        assert!(random_plan.oak_tiles.is_empty());
+        assert!(random_plan.inventory_seed.is_empty());
+        assert!(random_plan.bank_seed.is_empty());
+        assert!(random_plan.inject_after_progress.is_none());
+        assert!(random_task.is_none());
+    }
+
+    #[test]
+    fn no_placement_oak_fixture_checks_real_catherby_booth_and_no_nearby_oaks() {
+        let (target, plan, task) =
+            fixture_plan(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
+        assert_eq!(target, OAK_NO_PLACEMENT_START);
+        assert_eq!(
+            tile_distance(tile_key(OAK_NO_PLACEMENT_BANK_BOOTH), target),
+            Some(1)
+        );
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(plan.inventory_seed.is_empty());
+        assert!(plan.bank_seed.is_empty());
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn no_placement_verdict_requires_area_invalid_without_gameplay() {
+        let fixture = || {
+            let (target, plan, task) =
+                fixture_plan(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
+            let mut slot = GatherSlot::new(
+                Cell::Woodcutting,
+                LiveCase::OakNoPlacementArea,
+                target,
+                plan,
+                task,
+                false,
+            );
+            let observation = slot.capture();
+            slot.baseline = Some(observation.clone());
+            slot.latest = Some(observation);
+            slot.witness.native_phases.insert("Blocked".into());
+            slot.witness.failure_code = Some("area-invalid".into());
+            slot
+        };
+        fixture().qualifies().unwrap();
+        let invalidators: [fn(&mut GatherSlot); 8] = [
+            |slot| slot.witness.failure_code = Some("resource-unavailable".into()),
+            |slot| slot.witness.last_status_yielded = 1,
+            |slot| slot.witness.last_status_dropped = 1,
+            |slot| slot.witness.script_moved_after_start = true,
+            |slot| {
+                slot.witness.native_phases.insert("Waiting".into());
+            },
+            |slot| slot.witness.wait_until = Some(1),
+            |slot| slot.latest.as_mut().unwrap().xp += 1,
+            |slot| slot.latest.as_mut().unwrap().product_count += 1,
+        ];
+        for invalidate in invalidators {
+            let mut slot = fixture();
+            invalidate(&mut slot);
+            assert!(slot.qualifies().is_err());
+        }
+    }
+}
+
+#[cfg(test)]
 mod named_site_fixture_tests {
     use super::*;
 
@@ -10712,9 +12253,7 @@ mod named_site_fixture_tests {
             assert!(plan.oak_tiles.is_empty());
             assert!(plan.inventory_seed.is_empty());
             assert!(plan.bank_seed.is_empty());
-            assert!(plan.auto_felled.is_empty());
             assert!(plan.auto_next.is_empty());
-            assert!(plan.inject_after_progress.is_none());
             assert!(task.is_none());
         }
     }
@@ -10920,6 +12459,118 @@ mod named_site_fixture_tests {
         ] {
             nav["requested_destination"] = goal;
             assert!(!site_nav_targets_area(&nav, anchor));
+        }
+    }
+
+    fn initial_site_nav() -> Value {
+        json!({
+            "armed": true,
+            "requested": true,
+            "request_id": 2,
+            "arrival": "Area",
+            "requested_radius": 0,
+            "requested_destination": [2846, 3437, 0],
+        })
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_unloaded_resource_approach() {
+        assert!(site_initial_nav_matches(
+            Cell::Fishing,
+            &initial_site_nav(),
+            world_tile(2844, 3429),
+            "surveying",
+            "0_44_53_rarefish",
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_loaded_woodcutting_approach() {
+        let mut nav = initial_site_nav();
+        nav["requested_radius"] = json!(1);
+        assert!(site_initial_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            world_tile(2844, 3429),
+            "walking",
+            "Oak",
+        ));
+    }
+
+    #[test]
+    fn initial_fishing_approach_rejects_a_radius_one_arrival() {
+        let mut nav = initial_site_nav();
+        nav["requested_radius"] = json!(1);
+        assert!(!site_initial_nav_matches(
+            Cell::Fishing,
+            &nav,
+            world_tile(2844, 3429),
+            "surveying",
+            "0_44_53_rarefish",
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_non_approach_phases() {
+        for phase in ["", "banking", "gathering", "blocked"] {
+            assert!(!site_initial_nav_matches(
+                Cell::Fishing,
+                &initial_site_nav(),
+                world_tile(2844, 3429),
+                phase,
+                "0_44_53_rarefish",
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_a_missing_resource_target() {
+        for phase in ["walking", "surveying"] {
+            for target in ["", "—"] {
+                assert!(!site_initial_nav_matches(
+                    Cell::Fishing,
+                    &initial_site_nav(),
+                    world_tile(2844, 3429),
+                    phase,
+                    target,
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_an_unarmed_walk() {
+        let mut nav = initial_site_nav();
+        nav["armed"] = json!(false);
+        for phase in ["walking", "surveying"] {
+            assert!(!site_initial_nav_matches(
+                Cell::Fishing,
+                &nav,
+                world_tile(2844, 3429),
+                phase,
+                "0_44_53_rarefish",
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_goals_outside_the_selected_site() {
+        let mut nav = initial_site_nav();
+        for goal in [
+            json!([2857, 3429, 0]),
+            json!([2846, 3437, 1]),
+            json!([2846, 3437]),
+        ] {
+            nav["requested_destination"] = goal;
+            for phase in ["walking", "surveying"] {
+                assert!(!site_initial_nav_matches(
+                    Cell::Fishing,
+                    &nav,
+                    world_tile(2844, 3429),
+                    phase,
+                    "0_44_53_rarefish",
+                ));
+            }
         }
     }
 
@@ -11177,5 +12828,444 @@ mod named_site_fixture_tests {
             anchor,
             target
         ));
+    }
+}
+
+#[cfg(test)]
+mod real_content_death_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn death_reprovision_fixture_seeds_account_only() {
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+
+        assert_eq!(target, DRAYNOR_OAK_BANK_START);
+        assert_eq!(plan.bank_seed, vec![("bronze_axe".into(), 3)]);
+        assert_eq!(
+            plan.inventory_seed,
+            DEATH_FILLERS
+                .iter()
+                .map(|(_, alias)| ((*alias).into(), 1))
+                .collect::<Vec<_>>()
+        );
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn death_no_stock_fixture_seeds_only_account_inventory() {
+        let case = LiveCase::DeathNoStock;
+        let settings = Cell::Woodcutting.settings(case);
+        assert_eq!(settings.get("buyTools"), Some(&json!(false)));
+
+        let (target, plan, task) = fixture_plan(Cell::Woodcutting, case).unwrap();
+        assert_eq!(target, DRAYNOR_OAK_TARGET);
+        assert_eq!(
+            plan.inventory_seed,
+            std::iter::once(("bronze_axe".to_owned(), 1))
+                .chain(
+                    DEATH_FILLERS
+                        .iter()
+                        .map(|(_, alias)| ((*alias).to_owned(), 1))
+                )
+                .collect::<Vec<_>>()
+        );
+        assert!(plan.bank_seed.is_empty());
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn death_no_stock_accepts_blocked_running_without_failure() {
+        let witness = Witness {
+            native_phases: BTreeSet::from(["Blocked".to_owned()]),
+            last_status_block_reason: Some("required tool unavailable".into()),
+            death_no_stock_blocked_running: true,
+            last_deaths: 1,
+            death_recovery_command_sent: 1,
+            last_status_bank: Some("Draynor; Reachable; access:3092,3243,0; Supply".into()),
+            ..Witness::default()
+        };
+        assert!(interrupts_complete(LiveCase::DeathNoStock, &witness));
+
+        let mut failed = witness.clone();
+        failed.failure_code = Some("supply-missing".into());
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &failed));
+
+        let mut stopped = witness;
+        stopped.death_no_stock_blocked_running = false;
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &stopped));
+    }
+}
+
+#[cfg(test)]
+mod death_oracle_tests {
+    use super::*;
+
+    fn no_stock_witness(bank: &str, trips: i64) -> Witness {
+        Witness {
+            native_phases: BTreeSet::from(["Blocked".to_owned()]),
+            death_no_stock_blocked_running: true,
+            last_status_block_reason: Some("missing Bronze axe".into()),
+            last_deaths: 1,
+            death_recovery_command_sent: 1,
+            last_status_bank: Some(bank.into()),
+            status_trips: trips,
+            ..Witness::default()
+        }
+    }
+
+    fn death_region_witness(death_tile: (i32, i32, i32)) -> Witness {
+        Witness {
+            death_recovery_in_area: true,
+            death_command_tile: Some(death_tile),
+            death_recovered: BTreeSet::from([1]),
+            death_products_after: BTreeSet::from([1]),
+            death_xp_after: BTreeSet::from([1]),
+            last_deaths: 1,
+            last_recoveries: 1,
+            ..Witness::default()
+        }
+    }
+
+    #[test]
+    fn death_no_stock_accepts_supply_bank_without_formatter_suffix() {
+        let witness = no_stock_witness("Draynor; Reachable; access:3092,3243,0; Supply", 0);
+        assert!(interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_no_stock_rejects_a_repeated_supply_trip() {
+        let witness = no_stock_witness("Draynor; Reachable; access:3092,3243,0; Withdraw", 1);
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_no_stock_rejects_missing_bank_access_or_an_error() {
+        let mut witness = no_stock_witness("Draynor; Supply", 0);
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+        witness.last_status_bank = Some("Draynor; Reachable; access:3092,3243,0; Supply".into());
+        witness.failure_code = Some("bank-unavailable".into());
+        assert!(!interrupts_complete(LiveCase::DeathNoStock, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_accepts_a_delayed_same_region_sample() {
+        let death_tile = (3219, 3208, 0);
+        let respawn_tile = (3224, 3221, 0);
+        let mut witness = death_region_witness(death_tile);
+
+        observe_death_respawn_region(
+            &mut witness,
+            0,
+            Some("death observed; inventory unknown"),
+            Some(death_tile),
+        );
+        assert_eq!(witness.death_respawn_tile, None);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some(respawn_tile),
+        );
+        assert_eq!(witness.death_respawn_tile, Some(respawn_tile));
+        assert!(witness.death_respawn_region_unchanged);
+        assert!(interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_rejects_a_different_region_sample() {
+        let mut witness = death_region_witness((3264, 3208, 0));
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some((3224, 3221, 0)),
+        );
+        assert_eq!(witness.death_respawn_tile, Some((3224, 3221, 0)));
+        assert!(!witness.death_respawn_region_unchanged);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+    }
+
+    #[test]
+    fn death_respawn_region_rejects_a_non_respawn_tile() {
+        let mut witness = death_region_witness((3219, 3208, 0));
+        observe_death_respawn_region(
+            &mut witness,
+            1,
+            Some("respawn observed; settling"),
+            Some((3225, 3218, 0)),
+        );
+        assert_eq!(witness.death_respawn_tile, Some((3225, 3218, 0)));
+        assert!(!witness.death_respawn_region_unchanged);
+        assert!(!interrupts_complete(LiveCase::DeathRespawnRegion, &witness));
+    }
+}
+
+#[cfg(all(test, feature = "live-harness"))]
+mod quester_shared_core_completion_tests {
+    use super::*;
+    use script::{RunState, ScriptLifecycleReceipt, ScriptTerminalState};
+
+    fn receipt(state: ScriptTerminalState) -> ScriptLifecycleReceipt {
+        ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state,
+            tick: 100,
+            reason: "terminal fixture".into(),
+        }
+    }
+
+    #[test]
+    fn durable_completion_survives_native_status_teardown() {
+        assert!(quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn absent_completion_and_active_runs_do_not_pass() {
+        assert!(!quester_shared_core_completed(None, None, RunState::Idle).unwrap());
+        assert!(!quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Running,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn other_terminal_states_do_not_pass() {
+        for state in [
+            ScriptTerminalState::Failed,
+            ScriptTerminalState::Stopped,
+            ScriptTerminalState::Cancelled,
+        ] {
+            assert!(
+                quester_shared_core_completed(None, Some(&receipt(state)), RunState::Idle).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn another_cards_status_does_not_pass() {
+        let status = script::native::ScriptStatus {
+            survival: Default::default(),
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: script::native::NativePhase::Complete,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([]),
+        };
+        assert!(quester_shared_core_completed(
+            Some(&status),
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod death_return_stop_oracle_tests {
+    use super::*;
+
+    fn quiet_nav(request_id: u64) -> Value {
+        json!({
+            "request_id": request_id,
+            "armed": false,
+            "route": false,
+            "route_work_pending": false,
+            "pending": false,
+            "requested": false,
+            "bank_fetch": false,
+            "carry": false,
+        })
+    }
+
+    fn stopped_return(detail: &str) -> Witness {
+        let mut stop = DeathReturnStopWitness::default();
+        stop.observe_permissions(Some(false), false);
+        stop.observe_tile(50, Some((3222, 3218, 0)), true, Some(false));
+        stop.observe_tile(99, Some((3092, 3243, 0)), true, Some(false));
+        stop.observe_terminal(100, Some((3092, 3243, 0)), 1, "return-failed", detail);
+        stop.observe_navigation(100, &quiet_nav(42), true);
+        stop.observe_tile(103, Some((3092, 3243, 0)), true, Some(false));
+        stop.observe_navigation(103, &quiet_nav(42), true);
+        Witness {
+            death_return_stop: stop,
+            last_deaths: 1,
+            death_recovery_command_sent: 1,
+            ..Witness::default()
+        }
+    }
+
+    #[test]
+    fn no_path_after_death_passes_and_keeps_the_walk_detail() {
+        let witness = stopped_return("walk ended with NoPath");
+        assert!(interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        assert_eq!(
+            witness.death_return_stop.terminal_detail.as_deref(),
+            Some("walk ended with NoPath")
+        );
+        assert!(interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &stopped_return("walk ended with Refused")
+        ));
+    }
+
+    #[test]
+    fn request_retirement_after_terminal_is_cleanup_not_a_walk() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(0), true);
+        witness
+            .death_return_stop
+            .observe_tile(104, Some((3092, 3243, 0)), true, Some(false));
+        assert!(interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        witness
+            .death_return_stop
+            .observe_navigation(105, &quiet_nav(42), true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+
+        let mut active_retired = stopped_return("walk ended with NoPath");
+        let mut nav = quiet_nav(0);
+        nav["armed"] = json!(true);
+        active_retired
+            .death_return_stop
+            .observe_navigation(104, &nav, true);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &active_retired
+        ));
+    }
+
+    #[test]
+    fn entering_wilderness_after_respawn_fails() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness
+            .death_return_stop
+            .observe_tile(60, Some((3204, 3525, 0)), true, Some(true));
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+    }
+
+    #[test]
+    fn continuing_or_rearming_walk_after_terminal_failure_fails() {
+        for key in [
+            "armed",
+            "route",
+            "route_work_pending",
+            "pending",
+            "requested",
+            "bank_fetch",
+            "carry",
+        ] {
+            let mut witness = stopped_return("walk ended with NoPath");
+            let mut nav = quiet_nav(42);
+            nav[key] = json!(true);
+            witness
+                .death_return_stop
+                .observe_navigation(104, &nav, true);
+            assert!(
+                !interrupts_complete(LiveCase::DeathReturnRefused, &witness),
+                "active {key} must fail"
+            );
+        }
+        let mut rearmed = stopped_return("walk ended with NoPath");
+        rearmed
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(43), true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &rearmed));
+        let mut moving = stopped_return("walk ended with NoPath");
+        moving
+            .death_return_stop
+            .observe_tile(104, Some((3093, 3243, 0)), true, Some(false));
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &moving));
+    }
+
+    #[test]
+    fn missing_or_contradictory_safety_evidence_fails() {
+        let mut granted = stopped_return("walk ended with NoPath");
+        granted
+            .death_return_stop
+            .observe_permissions(Some(false), true);
+        granted
+            .death_return_stop
+            .observe_permissions(Some(false), false);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &granted));
+
+        let mut no_permission = stopped_return("walk ended with NoPath");
+        no_permission
+            .death_return_stop
+            .observe_permissions(None, false);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &no_permission
+        ));
+
+        let mut no_tile = stopped_return("walk ended with NoPath");
+        no_tile
+            .death_return_stop
+            .observe_tile(104, None, true, None);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &no_tile));
+
+        let mut no_nav = stopped_return("walk ended with NoPath");
+        no_nav
+            .death_return_stop
+            .observe_navigation(104, &Value::Null, true);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &no_nav));
+
+        let mut still_running = stopped_return("walk ended with NoPath");
+        still_running
+            .death_return_stop
+            .observe_navigation(104, &quiet_nav(42), false);
+        assert!(!interrupts_complete(
+            LiveCase::DeathReturnRefused,
+            &still_running
+        ));
+    }
+
+    #[test]
+    fn terminal_requires_the_death_and_three_fresh_quiet_ticks() {
+        let mut witness = stopped_return("walk ended with NoPath");
+        witness.death_return_stop.quiet_through_tick = Some(102);
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+        witness.death_return_stop.quiet_through_tick = Some(103);
+        witness.last_deaths = 0;
+        assert!(!interrupts_complete(LiveCase::DeathReturnRefused, &witness));
+
+        let mut premature = DeathReturnStopWitness::default();
+        premature.observe_tile(50, Some((3222, 3218, 0)), true, Some(false));
+        premature.observe_terminal(
+            100,
+            Some((3092, 3243, 0)),
+            0,
+            "return-failed",
+            "walk ended with NoPath",
+        );
+        assert!(premature.terminal_detail.is_none());
+        premature.observe_terminal(
+            100,
+            Some((3092, 3243, 0)),
+            1,
+            "supply-missing",
+            "walk ended with NoPath",
+        );
+        assert!(premature.terminal_detail.is_none());
     }
 }

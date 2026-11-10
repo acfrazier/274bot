@@ -32,15 +32,8 @@ impl Gatherer {
         let arm = &method.tick_arm;
         let tool = arm.for_tool(self.tool.id);
         let stock = cx.snapshot().stock();
-        let kit_missing = stock.bank.is_some_and(|bank| {
-            SupplyPlan::build(
-                &self.prepared,
-                cx.snapshot().stats().map_or(&[], |stats| stats.value),
-                stock,
-                |id| bank.count(id).unwrap_or(0),
-            )
-            .kit_missing()
-        });
+        let kit_missing =
+            stock.bank.is_some() && SupplyPlan::tick_kit_missing(&self.prepared, stock);
         let off = if method.id.0.as_ref() == "woodcutting.normal" {
             Some(OffReason::NotInRelease)
         } else if arm.kind == TickArmKind::None {

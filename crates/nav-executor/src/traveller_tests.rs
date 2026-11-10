@@ -6,12 +6,13 @@ use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType};
 use client::config::{IfType, IfTypeMut, LocType, NpcType, ObjType};
 use client::dash3d::ClientNpc;
-use client::io::{ClientRevision, ClientStream, ServerProt};
+use client::io::{ClientRevision, ClientStream, PacketObserver, ServerProt};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::traveller::{
     door_tile, BlockedWhy, FollowRun, HopFailure, LegPhase, NpcHopBlockReason, Poll, TransportHop,
-    TravelOptions, TravelOutcome, Traveller, WebCutFailure,
+    TravelOptions, TravelOutcome, Traveller, WalkPacketBudget, WebCutFailure,
 };
 use nav_planner::essence::essence_session_for_wizard;
 use nav_planner::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
@@ -97,6 +98,30 @@ fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     c.bump_gens(ServerProt::PLAYER_INFO);
     snap.rebuild(c);
+}
+
+struct FollowPacketCounter {
+    revision: ClientRevision,
+    committed: AtomicU64,
+}
+
+impl PacketObserver for FollowPacketCounter {
+    fn packet_body_length(&self, opcode: u8) -> i16 {
+        api::prot::packet_metadata(self.revision, opcode)
+            .map_or(-3, |metadata| metadata.length as i16)
+    }
+
+    fn packet_committed(&self, _opcode: u8, _encoded_length: usize) {
+        self.committed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn committed_packet_count(&self) -> Option<u64> {
+        Some(self.committed.load(Ordering::Relaxed))
+    }
+}
+
+fn packet_commit_count(client: &Client) -> u64 {
+    <Client as Driver>::packet_commit_count(client).expect("real packet observer is installed")
 }
 
 #[test]
@@ -8295,6 +8320,103 @@ fn follow_click_ahead_sends_the_next_hop_before_exact_stand() {
 }
 
 #[test]
+fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 1, 1);
+    let packets = Arc::new(FollowPacketCounter {
+        revision: c.revision(),
+        committed: AtomicU64::new(0),
+    });
+    let observer: Arc<dyn PacketObserver> = packets;
+    c.out.set_observer(Some(observer));
+    let before = packet_commit_count(&c);
+
+    // Keep the real client's route inside the collision-map boundary.
+    let tiles: Vec<(i32, i32)> = (1..=101).map(|z| (3201, 3200 + z)).collect();
+    let route = Route {
+        legs: vec![walk_leg(&tiles)],
+        dest: WorldTile {
+            x: 3201,
+            z: 3301,
+            level: 0,
+        },
+        ticks: 50.0,
+    };
+    let mut t = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+
+    // A precondition refusal commits nothing and does not spend the tick's
+    // real-packet allowance.
+    c.scene_state = 1;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    snap.rebuild(&c);
+    assert_eq!(snap.tick(), 1);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(packet_commit_count(&c), before);
+
+    // The same active follow sends once after the scene becomes ready.
+    c.scene_state = 2;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    snap.rebuild(&c);
+    assert_eq!(snap.tick(), 1);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(packet_commit_count(&c), before + 1);
+
+    // Client tile changes can re-poll the active follow without a new
+    // PLAYER_INFO tick; those same-tick click-ahead sends remain pending.
+    for z in [13, 14] {
+        plant_player(&mut c, 1, z + 1);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        snap.rebuild(&c);
+        assert_eq!(snap.tick(), 1);
+        assert!(t
+            .follow(&mut c, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(packet_commit_count(&c), before + 1);
+    }
+
+    // One new PLAYER_INFO tick releases the deferred walk.
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(snap.tick(), 2);
+    assert!(t
+        .follow(&mut c, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(packet_commit_count(&c), before + 2);
+
+    // Later ticks continue click-ahead at the same movement cadence.
+    for (tick, z, commits) in [(3, 29, 3), (4, 45, 4), (5, 61, 5), (6, 77, 6), (7, 93, 7)] {
+        plant_player(&mut c, 1, z + 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.tick(), tick);
+        assert!(t
+            .follow(&mut c, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(packet_commit_count(&c), before + commits);
+    }
+
+    // The final hop still requires the exact destination tile.
+    plant_player(&mut c, 1, 101);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(snap.tick(), 8);
+    assert!(matches!(
+        t.follow(&mut c, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at }) if at == WorldTile {
+            x: 3201,
+            z: 3301,
+            level: 0,
+        }
+    ));
+    assert_eq!(packet_commit_count(&c), before + 7);
+}
+
+#[test]
 fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
     let tiles: Vec<WorldTile> = (0..120)
         .map(|z| WorldTile {
@@ -8568,6 +8690,8 @@ fn executor_state_size_pins() {
     // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
+    // +8 B: the last actual walk-packet tick, shared across the active follow.
+    assert_eq!(std::mem::size_of::<WalkPacketBudget>(), 8);
     // Prerequisite refusal-page tracking adds 176 B to the active hop union.
     // Full physical identity retains takeoff and destination: +24 B over the
     // former anchor-only crossing. It names both A1 approaches and A2 directions.
@@ -8577,8 +8701,9 @@ fn executor_state_size_pins() {
         std::mem::size_of::<FollowRun>()
     );
     // Route indices: the same +48 B as the NavBot reason in host-play/src/script_native_walk_tests.rs.
-    assert_eq!(std::mem::size_of::<Traveller>(), 1104);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 1064);
+    // The walk-packet budget's +8 B reaches both through the active follow.
+    assert_eq!(std::mem::size_of::<Traveller>(), 1112);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1072);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

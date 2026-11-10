@@ -547,7 +547,7 @@ pub struct ReturnObservation<'a> {
     pub here: WorldTile,
     pub now: u64,
     pub skill_stat: i32,
-    pub avoided: &'a [AvoidedTile; MAX_AVOID],
+    pub avoided: &'a [AvoidedTile],
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
     pub collision: Option<nav_planner::contract::CollisionView<'a>>,
@@ -636,7 +636,7 @@ pub fn classify_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
     scene: PlacementScene<'_>,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     let PlacementScene {
@@ -679,7 +679,7 @@ fn classify_fishing_placement(
     method: &GatherMethod,
     scene: PlacementScene<'_>,
     here: WorldTile,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     if matches!(spot.entity, EntityId::Loc(_)) {
@@ -750,7 +750,7 @@ pub fn select(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
     select_with_access(
@@ -790,7 +790,7 @@ fn select_with_access(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
     quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
 ) -> SelectionResult {
@@ -1628,13 +1628,13 @@ fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> boo
         .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
 }
 
-fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
+fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile], now: u64) -> bool {
     avoided
         .iter()
         .any(|entry| u64::from(entry.until) > now && entry.tile == tile)
 }
 
-fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MAX_AVOID]) -> u64 {
+fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile]) -> u64 {
     avoided
         .iter()
         .filter(|entry| {

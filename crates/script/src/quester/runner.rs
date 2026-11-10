@@ -5576,7 +5576,9 @@ mod tests {
         // added `layout: Layout` to `quest_journal::native::JournalMachine`
         // (192 -> 200 B); the Quester holds two `ActionHandle<JournalMachine>`
         // (`journal`, `gang_reader`), +8 B each. No Quester field of this input grew.
-        assert_eq!(bytes, 3656, "Quester changed its measured per-bot layout");
+        // The shop phase then grew `AcquireRun` by 40 B, and the Quester's
+        // `Provisioner` holds one inline: 3696 B (macOS aarch64).
+        assert_eq!(bytes, 3696, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",

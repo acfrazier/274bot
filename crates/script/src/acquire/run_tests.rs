@@ -1,7 +1,7 @@
 use super::*;
 use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::native::ledger::{HostEffect, Ledger};
-use crate::native::{ActionError, InteractionReceipt, WalkEnd};
+use crate::native::{ActionError, InteractionReceipt, WalkEnd, WalkReceipt, WalkRequest};
 use crate::native_bank::{BankAction, BankItem};
 use api::bank_memory::{BankMemory, Origin};
 use api::named_banks::{BankPreferences, NamedBank};
@@ -232,6 +232,16 @@ fn first_effect(ledger: &TestLedger) -> &HostEffect {
 }
 
 fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
+    complete_pick_at(ledger, 0, bank, STAND, tick);
+}
+
+fn complete_pick_at(
+    ledger: &mut TestLedger,
+    bank_index: u16,
+    bank: NamedBank,
+    access_tile: WorldTile,
+    tick: u64,
+) {
     let ledger = ledger.as_mut().expect("bank selection queued a pick");
     let action = ledger.outbox.remove(0);
     assert!(matches!(&action.effect, HostEffect::BankPick(_)));
@@ -246,12 +256,12 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
                 sequence: tick,
             },
             outcome: crate::native_bank::BankPickOutcome::Selected(SelectedBank {
-                bank_index: 0,
-                access_tile: STAND,
+                bank_index,
+                access_tile,
                 kind: PickKind::Reachable,
                 access: Some(Arc::new(BankStandAccess {
                     bank,
-                    stand_tile: STAND,
+                    stand_tile: access_tile,
                     kind: AccessKind::Booth,
                     stand_op: 1,
                     name: None,
@@ -260,6 +270,54 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
             }),
         },
     );
+}
+
+fn bank_pick_eligible(ledger: &TestLedger) -> Arc<[u16]> {
+    match first_effect(ledger) {
+        HostEffect::BankPick(request) => Arc::clone(&request.eligible),
+        _ => panic!("bank selection must queue a pick"),
+    }
+}
+
+fn last_walk_request(ledger: &TestLedger) -> &WalkRequest {
+    ledger
+        .as_ref()
+        .expect("walk request queued")
+        .outbox
+        .iter()
+        .rev()
+        .find_map(|action| match &action.effect {
+            HostEffect::Walk(request) => Some(request),
+            _ => None,
+        })
+        .expect("walk request queued")
+}
+
+fn complete_walk(ledger: &mut TestLedger, tick: u64, end: WalkEnd, detail: &str) {
+    let ledger = ledger.as_mut().expect("walk request queued");
+    let index = ledger
+        .outbox
+        .iter()
+        .rposition(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .expect("walk request queued");
+    let action = ledger.outbox.remove(index);
+    let authority = action.authority();
+    ledger.walk = Some(WalkReceipt {
+        goal: None,
+        request_id: authority.request_id().get(),
+        evidence: EvidenceStamp {
+            run: authority.run(),
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked: None,
+        detail: Some(Arc::from(detail)),
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: None,
+    });
 }
 
 fn complete_interaction(ledger: &mut TestLedger, tick: u64) -> HostEffect {
@@ -302,6 +360,531 @@ fn is_close(effect: &HostEffect) -> bool {
         effect,
         HostEffect::Interaction(crate::interact::InteractReq::Close)
     )
+}
+
+/// The Gatherer's three-bank roster: Draynor first, so a pick has banks to
+/// choose from. Each test starts an access walk to the first bank.
+struct Roster {
+    snapshot: GameSnapshot,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+    named: [NamedBank; 3],
+    tiles: [WorldTile; 3],
+}
+
+fn roster() -> Roster {
+    let (mut snapshot, _, _) = fixture();
+    let tile = |x, z| WorldTile { x, z, level: 0 };
+    let tiles = [tile(3210, 3210), tile(3253, 3420), tile(3208, 3220)];
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    }));
+    let named = [
+        NamedBank::new("Draynor", tiles[0]),
+        NamedBank::new("Varrock East", tiles[1]),
+        NamedBank::new("Lumbridge", tiles[2]),
+    ];
+    let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(named.to_vec()));
+    Roster {
+        snapshot,
+        banks,
+        named,
+        tiles,
+    }
+}
+
+/// A Gatherer-style run (it brings its own access recovery) walking to the
+/// first bank of the roster at tick 2.
+fn access_walker(roster: &Roster, ledger: &mut TestLedger) -> AcquireRun {
+    let mut run = new_run(
+        authored_request(None, false, Vec::new()),
+        &roster.snapshot,
+        None,
+        ledger,
+        &roster.banks,
+    )
+    .with_access_recovery();
+    assert!(poll_at(&mut run, &roster.snapshot, None, ledger, 1, OpenGate::Open).is_pending());
+    assert_eq!(&*bank_pick_eligible(ledger), &[0, 1, 2]);
+    complete_pick_at(ledger, 0, roster.named[0], roster.tiles[0], 1);
+    assert!(poll_at(&mut run, &roster.snapshot, None, ledger, 2, OpenGate::Open).is_pending());
+    assert_eq!(last_walk_request(ledger).target, roster.tiles[0]);
+    run
+}
+
+/// The host answers a pick that found no bank with the typed negative
+/// receipt; `sentinel` answers with the selection's own no-candidate marker.
+fn complete_no_pick(ledger: &mut TestLedger, tick: u64, sentinel: bool) {
+    let ledger = ledger.as_mut().expect("bank selection queued a pick");
+    let action = ledger.outbox.remove(0);
+    assert!(matches!(&action.effect, HostEffect::BankPick(_)));
+    let authority = action.authority();
+    ledger.complete_bank_pick(
+        &authority,
+        BankPickReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            outcome: if sentinel {
+                crate::native_bank::BankPickOutcome::Selected(SelectedBank {
+                    bank_index: u16::MAX,
+                    access_tile: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    kind: PickKind::NoCandidate,
+                    access: None,
+                })
+            } else {
+                crate::native_bank::BankPickOutcome::NoCandidate {
+                    detail: Arc::from("bank selection failed: NoPath"),
+                }
+            },
+        },
+    );
+}
+
+fn ordinary_walk_ends() -> Vec<WalkEnd> {
+    use crate::native::{WalkStall, WalkStallReason};
+    let stall = |why| {
+        WalkEnd::Stalled(Arc::new(WalkStall {
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            aiming: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            why,
+            tries: 60,
+        }))
+    };
+    vec![
+        WalkEnd::NoPath,
+        WalkEnd::Failed,
+        WalkEnd::Blocked,
+        WalkEnd::RouteEnded,
+        stall(WalkStallReason::Expired),
+        stall(WalkStallReason::Dropped),
+        stall(WalkStallReason::EndBlocked),
+    ]
+}
+
+/// An ordinary walk failure at the bank is not terminal (AGENTS.md: a walk
+/// failure is never terminal until its bounded retries are spent). The first
+/// failure walks again to the same stand from the observed position on a
+/// fresh tick. The second picks again with the failed bank dropped and walks
+/// to the pick. The third ends the run with the last receipt's detail.
+#[test]
+fn access_recovers_each_ordinary_walk_failure_within_the_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let retry_position = WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0,
+    };
+    for end in ordinary_walk_ends() {
+        let mut roster = roster();
+        let mut ledger = None;
+        let mut run = access_walker(&roster, &mut ledger);
+
+        complete_walk(&mut ledger, 3, end.clone(), "first receipt");
+        assert!(
+            poll_at(
+                &mut run,
+                &roster.snapshot,
+                None,
+                &mut ledger,
+                3,
+                OpenGate::Open
+            )
+            .is_pending(),
+            "{end:?}: the retry waits for a fresh tick"
+        );
+        roster
+            .snapshot
+            .seed_local_player(crate::quester::families::tests::local_player(
+                retry_position,
+            ));
+        assert!(poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            4,
+            OpenGate::Open
+        )
+        .is_pending());
+        assert_eq!(
+            last_walk_request(&ledger).target,
+            roster.tiles[0],
+            "{end:?}"
+        );
+        assert_eq!(last_walk_request(&ledger).required_after.tick, 4, "{end:?}");
+
+        complete_walk(&mut ledger, 5, end.clone(), "second receipt");
+        assert!(poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            5,
+            OpenGate::Open
+        )
+        .is_pending());
+        assert!(poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            6,
+            OpenGate::Open
+        )
+        .is_pending());
+        assert_eq!(
+            &*bank_pick_eligible(&ledger),
+            &[1, 2],
+            "{end:?}: the failed bank 0 is dropped"
+        );
+        match first_effect(&ledger) {
+            HostEffect::BankPick(request) => assert_eq!(request.from, retry_position),
+            _ => panic!("the pick must start from the observed position"),
+        }
+        complete_pick_at(&mut ledger, 1, roster.named[1], roster.tiles[1], 6);
+        assert!(poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            7,
+            OpenGate::Open
+        )
+        .is_pending());
+        assert_eq!(
+            last_walk_request(&ledger).target,
+            roster.tiles[1],
+            "{end:?}"
+        );
+
+        complete_walk(&mut ledger, 8, end.clone(), "third receipt");
+        let Poll::Ready(Err(error)) = poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            8,
+            OpenGate::Open,
+        ) else {
+            panic!("{end:?}: the spent access recovery budget must end the run");
+        };
+        assert!(
+            format!("{error:?}").contains("third receipt"),
+            "{end:?}: the last receipt's detail is kept: {error:?}"
+        );
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "{end:?}: no further walk"
+        );
+    }
+}
+
+/// User input, cancellation, a safety refusal and an escape abort end the
+/// access walk at once: the owner must not retry them.
+#[test]
+fn access_walk_cancellation_and_refusals_stay_terminal_at_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for end in [
+        WalkEnd::UserInput,
+        WalkEnd::Cancelled,
+        WalkEnd::Refused,
+        WalkEnd::Aborted,
+    ] {
+        let roster = roster();
+        let mut ledger = None;
+        let mut run = access_walker(&roster, &mut ledger);
+        complete_walk(&mut ledger, 3, end.clone(), "refused");
+        let Poll::Ready(Err(_)) = poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            3,
+            OpenGate::Open,
+        ) else {
+            panic!("{end:?} is terminal");
+        };
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "{end:?}: no replan"
+        );
+    }
+}
+
+/// When the banks left after dropping the failed one have no route, the
+/// second recovery picks again with the failed bank allowed and walks to it;
+/// the failure after that is terminal with its detail.
+#[test]
+fn access_reselect_without_another_reachable_bank_walks_to_the_failed_one_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut roster = roster();
+    let mut ledger = None;
+    let mut run = access_walker(&roster, &mut ledger);
+    complete_walk(&mut ledger, 3, WalkEnd::NoPath, "first receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        3,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        4,
+        OpenGate::Open
+    )
+    .is_pending());
+    complete_walk(&mut ledger, 5, WalkEnd::NoPath, "second receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        5,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        6,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(!bank_pick_eligible(&ledger).contains(&0));
+    complete_no_pick(&mut ledger, 6, false);
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        7,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        8,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(
+        bank_pick_eligible(&ledger).contains(&0),
+        "the failed bank is allowed again"
+    );
+    complete_pick_at(&mut ledger, 0, roster.named[0], roster.tiles[0], 8);
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        9,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert_eq!(last_walk_request(&ledger).target, roster.tiles[0]);
+    roster.snapshot.seed_tick(10);
+    complete_walk(&mut ledger, 10, WalkEnd::NoPath, "third receipt");
+    let Poll::Ready(Err(error)) = poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        10,
+        OpenGate::Open,
+    ) else {
+        panic!("the budget is spent");
+    };
+    assert!(format!("{error:?}").contains("third receipt"), "{error:?}");
+}
+
+/// A pick that finds no bank during the recovery ends the run with the last
+/// receipt's detail, not the generic reason.
+#[test]
+fn access_recovery_pick_without_any_bank_keeps_the_last_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let roster = roster();
+    let mut ledger = None;
+    let mut run = access_walker(&roster, &mut ledger);
+    complete_walk(&mut ledger, 3, WalkEnd::Failed, "first receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        3,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        4,
+        OpenGate::Open
+    )
+    .is_pending());
+    complete_walk(&mut ledger, 5, WalkEnd::Failed, "second receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        5,
+        OpenGate::Open
+    )
+    .is_pending());
+    let mut result = Poll::Pending;
+    for tick in [6, 8] {
+        assert!(poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            tick,
+            OpenGate::Open
+        )
+        .is_pending());
+        complete_no_pick(&mut ledger, tick, false);
+        result = poll_at(
+            &mut run,
+            &roster.snapshot,
+            None,
+            &mut ledger,
+            tick + 1,
+            OpenGate::Open,
+        );
+    }
+    let Poll::Ready(Err(error)) = result else {
+        panic!("no bank is left");
+    };
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("second receipt"),
+        "the last reason is kept: {message}"
+    );
+    assert!(
+        message.contains("bank selection failed: NoPath"),
+        "the typed receipt's detail is kept: {message}"
+    );
+}
+
+/// The selection's own no-candidate sentinel (no bank eligible at all) takes
+/// the same recovery and last-reason handling as the typed receipt.
+#[test]
+fn access_recovery_sentinel_pick_widens_then_keeps_the_last_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let roster = roster();
+    let mut ledger = None;
+    let mut run = access_walker(&roster, &mut ledger);
+    complete_walk(&mut ledger, 3, WalkEnd::Failed, "first receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        3,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        4,
+        OpenGate::Open
+    )
+    .is_pending());
+    complete_walk(&mut ledger, 5, WalkEnd::Failed, "second receipt");
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        5,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        6,
+        OpenGate::Open
+    )
+    .is_pending());
+    complete_no_pick(&mut ledger, 6, true);
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        7,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        8,
+        OpenGate::Open
+    )
+    .is_pending());
+    assert!(bank_pick_eligible(&ledger).contains(&0), "the pick widens");
+    complete_no_pick(&mut ledger, 8, true);
+    let Poll::Ready(Err(error)) = poll_at(
+        &mut run,
+        &roster.snapshot,
+        None,
+        &mut ledger,
+        9,
+        OpenGate::Open,
+    ) else {
+        panic!("no bank is left");
+    };
+    assert!(format!("{error:?}").contains("second receipt"), "{error:?}");
 }
 
 #[test]
@@ -1238,6 +1821,119 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 }
 
 #[test]
+fn live_replan_withdraws_an_alternative_by_its_selected_name_after_deposit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const BRONZE_AXE: i32 = 1351;
+    const RUNE_AXE: i32 = 1359;
+    let (mut snapshot, bank, banks) = fixture();
+    snapshot.seed_inventory(
+        vec![item(
+            PRODUCT,
+            "Product",
+            2,
+            ItemContainer::Inventory,
+            &["Use"],
+        )],
+        28,
+    );
+    open_bank(
+        &mut snapshot,
+        Some(vec![bank_row(BRONZE_AXE, "Bronze axe", 3)]),
+        vec![side_row(PRODUCT, "Product", 2)],
+    );
+    let mut tool = need(
+        RUNE_AXE,
+        "Rune axe",
+        1,
+        1,
+        Presence::Carried,
+        NeedKind::Required,
+        SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+    );
+    tool.alternatives = Arc::from([RUNE_AXE, BRONZE_AXE]);
+    let request = request(
+        BankStage::Planned,
+        vec![tool],
+        Some(DepositSpec::Ids {
+            products: Arc::from([PRODUCT]),
+            keep: Arc::from([]),
+        }),
+        Some(bank),
+        false,
+        false,
+        CloseBank::LeaveOpen,
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::interact::InteractReq::InvButton { id: PRODUCT, .. })
+    ));
+    snapshot.seed_inventory(Vec::new(), 28);
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(BRONZE_AXE, "Bronze axe", 3),
+            bank_row(PRODUCT, "Product", 2),
+        ]),
+        Vec::new(),
+    );
+    let mut withdrawal_tick = None;
+    for tick in 2..=5 {
+        assert!(poll_at(&mut run, &snapshot, None, &mut ledger, tick, OpenGate::Open).is_pending());
+        if ledger.as_ref().unwrap().outbox.is_empty() {
+            continue;
+        }
+        match complete_interaction(&mut ledger, tick) {
+            HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                on: false,
+                ..
+            }) => {}
+            HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                name,
+                bank_item_id,
+                count,
+                ..
+            }) => {
+                assert_eq!(bank_item_id, BRONZE_AXE);
+                assert_eq!(
+                    name, "Bronze axe",
+                    "the host validates both the id and name"
+                );
+                assert_eq!(count, 1);
+                withdrawal_tick = Some(tick);
+                break;
+            }
+            _ => panic!("live re-plan dispatched an unexpected effect"),
+        }
+    }
+    let withdrawal_tick = withdrawal_tick.expect("the alternative must be withdrawn");
+    snapshot.seed_inventory(
+        vec![item(
+            BRONZE_AXE,
+            "Bronze axe",
+            1,
+            ItemContainer::Inventory,
+            &["Wield"],
+        )],
+        28,
+    );
+    let receipt = done(poll_at(
+        &mut run,
+        &snapshot,
+        None,
+        &mut ledger,
+        withdrawal_tick + 1,
+        OpenGate::Open,
+    ));
+    assert!(receipt.complete && receipt.withdrew_any && receipt.bank_open);
+    assert_eq!(receipt.deposited, 2);
+}
+
+#[test]
 fn quester_interrupts_acquire_run_at_transfer_boundary() {
     if !api::test_support::game_data_available() {
         return;
@@ -1518,7 +2214,16 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
     assert!(
-        matches!(first_effect(&ledger), HostEffect::Interaction(crate::interact::InteractReq::Held { action, .. }) if action.as_str() == "Wield")
+        matches!(
+            first_effect(&ledger),
+            HostEffect::Interaction(crate::interact::InteractReq::Held {
+                action,
+                slot: Some(0),
+                target_item_id: Some(ITEM),
+                ..
+            }) if action.as_str() == "Wield"
+        ),
+        "wear must preserve the exact observed inventory id/slot for host resolution"
     );
     assert!(!ledger
         .as_ref()
@@ -1551,6 +2256,105 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
     ));
     assert!(receipt.complete);
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn shop_wear_resolution_uses_the_actual_tier_or_skips_a_carried_tool() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for wear in [Some(1351), None] {
+        let (mut snapshot, _bank, banks) = fixture();
+        let held_id = wear.unwrap_or(1359);
+        let mut row = item(
+            held_id,
+            "Observed axe",
+            1,
+            ItemContainer::Inventory,
+            &["Wield"],
+        );
+        row.slot = 7;
+        snapshot.seed_inventory(vec![row], 28);
+        let mut tool = need(
+            1349,
+            "Iron axe",
+            1,
+            1,
+            Presence::Wielded,
+            NeedKind::Required,
+            SourceSet::PACK | SourceSet::WORN | SourceSet::SHOP,
+        );
+        tool.alternatives = Arc::from([1349, 1351, 1359]);
+        let request = request(
+            BankStage::Planned,
+            vec![tool],
+            None,
+            None,
+            false,
+            false,
+            CloseBank::LeaveOpen,
+        );
+        let mut plan = AcquirePlan::empty();
+        plan.purchases[0] = Some(Purchase {
+            need: 0,
+            item: 1349,
+            target: 1,
+            minimum: 1,
+        });
+        plan.purchase_count = 1;
+        let mut ledger = None;
+        let mut run = crate::quester::families::tests::with_tick_bank(
+            &snapshot,
+            None,
+            &mut ledger,
+            1,
+            |tick| AcquireRun::new(request, plan, &banks, &tick.cx),
+        );
+        assert!(matches!(
+            run.wears.as_deref(),
+            Some([WearStep::PendingPurchase(0)])
+        ));
+        // Resolve the same private outcome seam used after the routed shop run.
+        run.settle_shop_wear(0, wear);
+        run.purchase_index = 1;
+        let outcome = poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open);
+        if let Some(id) = wear {
+            assert!(outcome.is_pending());
+            assert!(matches!(
+                first_effect(&ledger),
+                HostEffect::Interaction(crate::interact::InteractReq::Held {
+                    slot: Some(7),
+                    target_item_id: Some(target),
+                    ..
+                }) if *target == id
+            ));
+            complete_interaction(&mut ledger, 1);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_equipment(vec![item(
+                id,
+                "Observed axe",
+                1,
+                ItemContainer::Equipment,
+                &[],
+            )]);
+            assert!(
+                done(poll_at(
+                    &mut run,
+                    &snapshot,
+                    None,
+                    &mut ledger,
+                    2,
+                    OpenGate::Open,
+                ))
+                .complete
+            );
+        } else {
+            assert!(done(outcome).complete);
+        }
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
 }
 
 #[test]
@@ -1820,7 +2624,8 @@ fn open_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
     assert!(matches!(
         poll_at(&mut run, &snapshot, None, &mut ledger, 26, OpenGate::Open),
         Poll::Ready(Err(ActionError::Failed(message)))
-            if message.as_ref() == "bank-unavailable: bank did not open after 3 attempts"
+            if message.as_ref()
+                == format!("bank-unavailable: bank did not open after {MAX_OPEN_ATTEMPTS} attempts")
     ));
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
@@ -1865,13 +2670,164 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 }
 
 #[test]
+fn chained_request_plans_from_open_rows_instead_of_stale_session_memory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (remembered, observed) in [(0, 7), (7, 0)] {
+        let (mut snapshot, _bank, _banks) = fixture();
+        open_bank(
+            &mut snapshot,
+            Some(if observed > 0 {
+                vec![bank_row(ITEM, "Widget", observed)]
+            } else {
+                Vec::new()
+            }),
+            Vec::new(),
+        );
+        let memory = BankMemory::seeded(&[(ITEM, remembered)], Origin::Session);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                5,
+                1,
+                Presence::Held,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::BANK,
+            )],
+            None,
+            None,
+            false,
+            true,
+            CloseBank::LeaveOpen,
+        );
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                let remembered_verdict =
+                    plan::plan(&request, &tick.cx.snapshot().stock(), WorldFacts::default())
+                        .unwrap();
+                let current_verdict = plan_current(&request, &tick.cx).unwrap();
+                if observed > 0 {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Blocked(_)));
+                    let AcquireVerdict::Plan(plan) = current_verdict else {
+                        panic!("the open bank has the required item");
+                    };
+                    assert_eq!(plan.withdrawal_count, 1);
+                    let row = plan.withdrawals[0].as_ref().unwrap();
+                    assert_eq!((row.id, row.target), (ITEM, 5));
+                } else {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Plan(_)));
+                    let AcquireVerdict::Blocked(block) = current_verdict else {
+                        panic!("the open bank disproves the stale remembered stock");
+                    };
+                    assert_eq!(block.reason, BlockReason::SupplyMissing);
+                    assert_eq!(block.looked.bank.unwrap().count, 0);
+                }
+            },
+        );
+        assert!(ledger.is_none(), "planning never emits an action");
+    }
+}
+
+#[test]
+fn wear_admission_keeps_the_gatherer_tool_failure_codes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (case, expected) in [
+        (0, "tool-missing: the selected tool left the inventory"),
+        (1, "tool-missing: the selected tool has no observed name"),
+        (
+            2,
+            "tool-unusable: the selected tool has no observed equip action",
+        ),
+    ] {
+        let (mut snapshot, _bank, banks) = fixture();
+        let row = item(ITEM, "Widget", 1, ItemContainer::Inventory, &["Wield"]);
+        snapshot.seed_inventory(vec![row.clone()], 28);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                1,
+                1,
+                Presence::Wielded,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::WORN,
+            )],
+            None,
+            None,
+            false,
+            false,
+            CloseBank::Close,
+        );
+        let mut ledger = None;
+        let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+        let mut changed = row;
+        let inventory = match case {
+            0 => Vec::new(),
+            1 => {
+                changed.def.name = None;
+                vec![changed]
+            }
+            2 => {
+                changed.actions.clear();
+                vec![changed]
+            }
+            _ => unreachable!(),
+        };
+        snapshot.seed_inventory(inventory, 28);
+        assert!(matches!(
+            poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open),
+            Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == expected
+        ));
+        assert!(ledger.is_none(), "a missing equip action emits nothing");
+    }
+}
+
+#[test]
+fn shut_bank_with_stuck_side_root_fails_before_wear_or_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut snapshot, bank, banks) = fixture();
+    open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
+    let side = snapshot.modals().side;
+    let mut request = authored_request(Some(bank), false, Vec::new());
+    request.close = CloseBank::Close;
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(is_close(first_effect(&ledger)));
+    complete_interaction(&mut ledger, 1);
+    snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+    snapshot.seed_side_modal(side);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert!(matches!(
+        poll_at(&mut run, &snapshot, None, &mut ledger, 9, OpenGate::Open),
+        Poll::Ready(Err(ActionError::Failed(message)))
+            if message.as_ref() == "bank-close-failed: bank did not close"
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
 fn bank_machine_and_acquire_run_size_of_pinned() {
     use std::mem::size_of;
     println!(
-        "BankMachine={} AcquireRun={} AcquireRequest={} BankReceipt={} Provisioner={} Gatherer={} Quester={} SurvivalStep={}",
+        "BankMachine={} AcquireRun={} AcquireRequest={} AcquireReceipt={} BankReceipt={} Provisioner={} Gatherer={} Quester={} SurvivalStep={}",
         size_of::<crate::native_bank::BankMachine>(),
         size_of::<AcquireRun>(),
         size_of::<AcquireRequest>(),
+        size_of::<AcquireReceipt>(),
         size_of::<BankReceipt>(),
         size_of::<crate::quester::provision::Provisioner>(),
         size_of::<crate::gatherer::Gatherer>(),
@@ -1879,12 +2835,19 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<crate::survival::SurvivalStep>(),
     );
     assert!(size_of::<crate::native_bank::BankMachine>() <= 768);
+    // Measured on Linux x86_64 at the round-4 head: 744 bytes. Keep 24 bytes
+    // of explicit headroom under the 768-byte cap.
     assert!(size_of::<AcquireRun>() <= 768);
+    assert!(size_of::<WearStep>() <= 8);
+    assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
     // Per-run inline state that had only a printed size. Measured 880 B and
-    // 224 B on the 64-bit CI targets; pinned at the reading plus 8 B.
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 888);
+    // 224 B on the 64-bit CI targets; pinned at the reading plus 8 B. The
+    // Provisioner holds an `AcquireRun`, which grew 40 B with the shop phase
+    // (the ordered purchase queue, the held-target counters and the lazy
+    // shop run): 920 B measured on macOS aarch64, pinned at 928.
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 928);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 
@@ -2069,4 +3032,46 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
         Poll::Ready(Err(ActionError::Cancelled))
     ));
     assert_eq!(run.target, Some(target));
+}
+
+#[test]
+fn acquisition_receipt_preserves_more_than_255_landed_units() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (snapshot, _bank, banks) = fixture();
+    let mut ledger = None;
+    let mut run =
+        crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 1, |tick| {
+            AcquireRun::new(
+                request(
+                    BankStage::Planned,
+                    Vec::new(),
+                    None,
+                    None,
+                    false,
+                    false,
+                    CloseBank::Close,
+                ),
+                AcquirePlan::empty(),
+                &banks,
+                &tick.cx,
+            )
+        });
+    // The shop stage accumulates u32 landed counts. Receipt projection must
+    // preserve those units rather than narrowing or saturating them at 255.
+    run.bought = 300;
+    let receipt = done(poll_at(
+        &mut run,
+        &snapshot,
+        None,
+        &mut ledger,
+        2,
+        OpenGate::Open,
+    ));
+    assert_eq!(receipt.bought, 300);
+    assert!(receipt.complete);
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
 }

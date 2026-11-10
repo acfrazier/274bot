@@ -891,6 +891,16 @@ const SHOP_INVENTORY_SOURCES = [
     { inv: 'axeshop', file: 'scripts/areas/area_lumbridge/configs/lumbridge.inv' },
     { inv: 'pickaxeshop', file: 'scripts/areas/area_falador/configs/dwarven_mine.inv' },
     { inv: 'magicguildshop', file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.inv' },
+    { inv: 'death_pub', file: 'scripts/areas/area_burthorpe/configs/burthorpe.inv' },
+    { inv: 'generalshop1', file: 'scripts/areas/area_lumbridge/configs/lumbridge.inv' },
+    { inv: 'generalshop2', file: 'scripts/areas/area_varrock/configs/varrock.inv' },
+    { inv: 'generalshop6', file: 'scripts/areas/area_rimmington/configs/rimmington.inv' },
+    { inv: 'shantayshop', file: 'scripts/areas/area_desert/configs/shantaypass.inv' },
+    { inv: 'khazardshop', file: 'scripts/areas/area_ardougne_east/configs/port_khazard/port_khazard.inv' },
+    { inv: 'gnomeshop_heck', file: 'scripts/areas/area_gnome/configs/gnome.inv' },
+    { inv: 'wydinstore', file: 'scripts/areas/area_port_sarim/configs/port_sarim.inv' },
+    { inv: 'clotheshop', file: 'scripts/areas/area_varrock/configs/varrock.inv' },
+    { inv: 'boozeshop', file: 'scripts/areas/area_karamja/configs/karamja.inv' },
 ] as const;
 
 const SHOP_KEEPER_SOURCES = [
@@ -903,6 +913,15 @@ const SHOP_KEEPER_SOURCES = [
     { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['bob'] },
     { file: 'scripts/areas/area_falador/configs/dwarven_mine.npc', configs: ['nurmof'] },
     { file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc', configs: ['magic_store_owner'] },
+    { file: 'scripts/quests/quest_death/configs/quest_death.npc', configs: ['death_barman'] },
+    { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['generalshopkeeper1'] },
+    { file: 'scripts/areas/area_varrock/configs/varrock.npc', configs: ['generalshopkeeper2', 'thessalia'] },
+    { file: 'scripts/areas/area_rimmington/configs/rimmington.npc', configs: ['generalshopkeeper6'] },
+    { file: 'scripts/areas/area_desert/configs/shantaypass.npc', configs: ['shantay'] },
+    { file: 'scripts/areas/area_ardougne_east/configs/port_khazard/port_khazard.npc', configs: ['khazard_shopkeeper'] },
+    { file: 'scripts/areas/area_gnome/configs/gnome.npc', configs: ['gnome_heckelfunch'] },
+    { file: 'scripts/areas/area_port_sarim/configs/port_sarim.npc', configs: ['wydin'] },
+    { file: 'scripts/areas/area_karamja/configs/karamja.npc', configs: ['zambo'] },
 ] as const;
 
 type ShopItemSource = {
