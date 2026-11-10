@@ -1103,7 +1103,7 @@ fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
     let wc = bake_collision(fx, &defs, &HashSet::new());
     let data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 item data");
-    derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data)).0
+    derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data), None).0
 }
 
 fn write_static_route_journal(fx: &Fixture) {
@@ -3482,7 +3482,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     let defs = loc_defs(&[]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |data: &api::game_data::SelectedGameData| {
-        derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(data))
+        derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(data), None)
     };
     // Old revisions keep the table, regardless of selected-map differences.
     let baseline = derive_transports(fx.path(), &defs, &wc);
@@ -10780,7 +10780,7 @@ p_telejump(0_46_149_63_13);
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data, None).0
     };
     let mut baseline = derive(None);
     for revision in [
@@ -10887,7 +10887,7 @@ p_telejump($coord);
     }]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data, None).0
     };
     let mut baseline = derive(None);
     for revision in [
@@ -11032,7 +11032,7 @@ switch_coord (loc_coord) {
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data, None).0
     };
     let mut baseline = derive(None);
     for revision in [
@@ -11136,7 +11136,7 @@ switch_coord (loc_coord) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
             .expect("R377 game data");
         let graph =
-            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(&data)).0;
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(&data), None).0;
         assert!(
             graph.edges.iter().all(|edge| edge.loc_id != 1723),
             "unsupported stair body must not gain an unconditional edge: {body}"
@@ -11186,7 +11186,7 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data, None).0
     };
     let mut baseline = derive(None);
     for revision in [

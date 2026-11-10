@@ -1301,6 +1301,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         &game_data,
         shadow,
     )?;
+    assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph).map_err(|detail| {
         crate::GenerationError::TransportValidation {
             validator: crate::TransportValidator::WildernessTeleportLegality,

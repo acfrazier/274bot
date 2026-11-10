@@ -101,14 +101,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
     let facts = selected.quest_identity().expect("selected quest facts");
     let quests = QuestSource { facts };
     let collision = open_collision(2724, 3345, 12, 12);
-    let (graph, _, _) = super::super::derive_transports_with_audit(
-        fx.path(),
-        &loc_defs(&[]),
-        &collision,
-        None,
-        Some(&quests),
-        None,
-    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(fx.path(), &loc_defs(&[]), &collision, None, Some(&quests), None, None);
 
     let gate_edges = graph
         .edges
@@ -178,14 +171,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         }
     }
 
-    let (without_quest, _, _) = super::super::derive_transports_with_audit(
-        fx.path(),
-        &loc_defs(&[]),
-        &collision,
-        None,
-        None,
-        None,
-    );
+    let (without_quest, _, _) = super::super::derive_transports_with_audit(fx.path(), &loc_defs(&[]), &collision, None, None, None, None);
     assert!(!without_quest
         .edges
         .iter()
@@ -211,14 +197,7 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
         (2893, 1, 1),
     ]);
     let collision = open_collision(90, 90, 80, 40);
-    let (graph, _, _) = super::super::derive_transports_with_audit(
-        fx.path(),
-        &defs,
-        &collision,
-        None,
-        Some(&quests),
-        None,
-    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None, None);
 
     for (index, loc_id) in JUNGLE_LOC_IDS.into_iter().enumerate() {
         let edges = graph
@@ -427,14 +406,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         "maps/m1_1.jm2",
         "==== LOC ====\n0 36 36: 2887 10 0\n0 37 36: 2889 10 0\n",
     );
-    let (graph, _, _) = super::super::derive_transports_with_audit(
-        with_jungle_landing.path(),
-        &defs,
-        &collision,
-        None,
-        Some(&quests),
-        None,
-    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(with_jungle_landing.path(), &defs, &collision, None, Some(&quests), None, None);
     let takeoff = WorldTile {
         x: 99,
         z: 100,
@@ -476,14 +448,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
     let without_jungle_landing = Fixture::new();
     write_legends_content(&without_jungle_landing);
     without_jungle_landing.write("maps/m1_1.jm2", "==== LOC ====\n0 36 36: 2887 10 0\n");
-    let (graph, _, _) = super::super::derive_transports_with_audit(
-        without_jungle_landing.path(),
-        &defs,
-        &collision,
-        None,
-        Some(&quests),
-        None,
-    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(without_jungle_landing.path(), &defs, &collision, None, Some(&quests), None, None);
     assert!(
         !graph.edges.iter().any(|edge| {
             edge.loc_id == 2887 && edge.takeoff == Some(takeoff) && edge.to == blocked_tile
@@ -505,14 +470,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
     let complete = Fixture::new();
     write_legends_content(&complete);
     write_jungle_map(&complete, &[2887]);
-    let (ready, _, _) = super::super::derive_transports_with_audit(
-        complete.path(),
-        &defs,
-        &collision,
-        None,
-        Some(&quests),
-        None,
-    );
+    let (ready, _, _) = super::super::derive_transports_with_audit(complete.path(), &defs, &collision, None, Some(&quests), None, None);
     assert!(
         ready
             .edges
@@ -542,14 +500,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
         write_legends_content(&fx);
         fx.write("pack/obj.pack", obj_pack);
         write_jungle_map(&fx, &[2887]);
-        let (graph, _, _) = super::super::derive_transports_with_audit(
-            fx.path(),
-            &defs,
-            &collision,
-            None,
-            quest_source,
-            None,
-        );
+        let (graph, _, _) = super::super::derive_transports_with_audit(fx.path(), &defs, &collision, None, quest_source, None, None);
         assert!(
             !graph.edges.iter().any(|edge| {
                 edge.kind == TransportKind::AgilityShortcut && edge.loc_id == 2887
@@ -588,14 +539,7 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let facts = selected.quest_identity().expect("selected quest facts");
     let quests = QuestSource { facts };
-    let (graph, _, _) = super::super::derive_transports_with_audit(
-        fx.path(),
-        &loc_defs(&[]),
-        &open_collision(2724, 3345, 12, 12),
-        None,
-        Some(&quests),
-        None,
-    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(fx.path(), &loc_defs(&[]), &open_collision(2724, 3345, 12, 12), None, Some(&quests), None, None);
     assert_eq!(
         graph
             .edges

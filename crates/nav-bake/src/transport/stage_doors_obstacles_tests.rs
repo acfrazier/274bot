@@ -89,7 +89,7 @@ fn obstacle_graph_with_facts(
     ]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
     let quests = QuestSource { facts };
-    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0
+    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None, None).0
 }
 
 struct ObstacleSignals(&'static str, i32, EvidenceStamp);

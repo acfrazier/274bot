@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::config::LocType;
+use client::dash3d::{CollisionFlag, LocShape};
 use nav_planner::collision::WorldCollision;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,

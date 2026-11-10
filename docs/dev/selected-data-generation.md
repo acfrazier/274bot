@@ -141,7 +141,6 @@ cargo run --locked -p nav-bake --bin nav-pack -- \
   --out target/local-data/nav/289/274bot.navpack
 ```
 
-
 Add `--nav-shadow REPORT_JSON` to write the optional interpreter report. The
 report records per-entry machine results, edge differences, and measured
 limits. It does not change the baked pack or its sidecars.
@@ -149,10 +148,20 @@ limits. It does not change the baked pack or its sidecars.
 Measure process peak resident bytes separately, with and without this option.
 The report's byte counts cover each machine entry, not the whole bake process.
 
-The real-engine parity tests compare arithmetic, loc life cycles, and zone list
-order with the selected 274 and 289 engines. These tests use the engine's real
-`World`, `Zone`, `Loc`, script state, and command handlers. They do not start a
-server tick or listener. Each engine process has a 120-second deadline.
+Each retained path has transfer evidence. A join adds the counts from the paths
+it represents. Aggregate counts record dispatcher events, so they need not match
+the number of retained results.
+
+An NPC loop summary requires a stable population and a fresh iterator. An NPC add
+or delete instruction on a closed pass stops the path as unsupported at its
+iterator step. It does not use the engine's NPC capacity as a work bound.
+
+The real-engine parity tests compare arithmetic, string-enum stack types, loc
+life cycles, and zone list order with the selected 274 and 289 engines. They use
+the engine's real `World`, `Zone`, `Loc`, script state, and command handlers. The
+tests do not start a server tick or listener. Each engine process has a 120-second
+deadline. They also read `ScriptOpcodePointers` from each engine. A supported
+read row must not require protected player access.
 
 Select the same input roots used for generation:
 

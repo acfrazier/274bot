@@ -72,11 +72,13 @@ const read_pointers = readNames.map(name => {
 });
 const { default: NumberOps } = await load('engine/script/handlers/NumberOps');
 const { default: LocOps } = await load('engine/script/handlers/LocOps');
+const { default: EnumOps } = await load('engine/script/handlers/EnumOps');
+const { default: EnumType } = await load('cache/config/EnumType');
 const { default: Loc } = await load('engine/entity/Loc');
 const { EntityLifeCycle } = await load('engine/entity/EntityLifeCycle');
 const { CoordGrid } = await load('engine/CoordGrid');
 const { default: LocType } = await load('cache/config/LocType');
-for (const name of ['ParamType', 'LocType']) {
+for (const name of ['ParamType', 'LocType', 'EnumType']) {
     const { default: type } = await load('cache/config/' + name);
     type.load(root + '/data/pack');
 }
@@ -95,6 +97,30 @@ for (const [name, a, b] of inputs) {
     NumberOps[ScriptOpcode[name]](state);
     arithmetic.push(state.popInt());
 }
+let stringEnum;
+for (const type of EnumType.configs) {
+    if (!type) continue;
+    for (const [key, value] of type.values) {
+        if (typeof value === 'string') { stringEnum = { type, key, value }; break; }
+    }
+    if (stringEnum) break;
+}
+if (!stringEnum) throw new Error('a real enum with a string entry is required');
+const { type: enumType, key: enumKey, value: enumValue } = stringEnum;
+let absentKey = -2147483648;
+while (enumType.values.has(absentKey)) absentKey++;
+const enumCall = key => {
+    const state = fresh();
+    for (const value of [enumType.inputtype, enumType.outputtype, enumType.id, key]) state.pushInt(value);
+    EnumOps[ScriptOpcode.ENUM](state);
+    return state;
+};
+const enumPresent = enumCall(enumKey);
+const enumAbsent = enumCall(absentKey);
+const enum_stack_cases = [
+    enumPresent.isp === 0 && enumPresent.ssp === 1 && enumPresent.popString() === enumValue,
+    enumAbsent.isp === 1 && enumAbsent.ssp === 0 && enumAbsent.popInt() === enumType.defaultInt
+];
 const types = LocType.configs.filter(type => type && type.id < 16384 && !type.blockwalk).slice(0, 3).map(type => type.id);
 if (types.length !== 3) throw new Error('three real non-blocking loc types are required');
 const [a, b, c] = types;
@@ -194,7 +220,7 @@ const zones = zoneKeys.map(([x, z, level]) => ({
     locs: [...World.gameMap.getZone(x << 3, z << 3, level).getAllLocsSafe()].map(loc => [loc.x, loc.z, loc.level, loc.type, loc.shape, loc.angle])
 }));
 await new Promise((resolve, reject) => {
-    process.stdout.write('RS2VM_ORACLE_JSON=' + JSON.stringify({ arithmetic, types, life, zones, read_pointers }) + '\n',
+    process.stdout.write('RS2VM_ORACLE_JSON=' + JSON.stringify({ arithmetic, enum_stack_cases, types, life, zones, read_pointers }) + '\n',
         error => error ? reject(error) : resolve());
 });
 process.exit(0);
@@ -203,6 +229,7 @@ process.exit(0);
 #[derive(Deserialize)]
 struct EngineOracle {
     arithmetic: Vec<i32>,
+    enum_stack_cases: [bool; 2],
     types: [i32; 3],
     life: HashMap<String, Vec<bool>>,
     zones: Vec<EngineZone>,
@@ -505,6 +532,10 @@ fn assert_engine_parity(revision: u16) {
     assert_eq!(
         observed.arithmetic, expected,
         "revision {revision} engine arithmetic"
+    );
+    assert_eq!(
+        observed.enum_stack_cases, [true, true],
+        "revision {revision} real string-enum present and absent stack types"
     );
     assert_eq!(
         observed.read_pointers.len(),
