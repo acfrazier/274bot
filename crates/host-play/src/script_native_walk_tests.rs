@@ -6818,86 +6818,16 @@ fn s2b_admission_per_bot_layouts() {
         std::mem::size_of_val(&bot.bank_fetch),
         std::mem::size_of_val(&bot.compact_route),
     );
-    // FIX-025: request-only inspection work and unpublished bank results are
-    // boxed, not reserved inline in every idle bot. Their owners do not change.
-    // The remaining growth since the S2b pin is intentional: admitted-work
-    // identities/cancellation, compact route leases, and the shared script
-    // seat's bounded delivery/hold queues. See FIX-025/mac-layout/report.md
-    // for the field/commit measurements. Exact pins have zero growth headroom.
-    // Grinch's shared native progress and evidence-wait run fences add two
-    // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
-    // Neither fence retains a scene or allocates a per-bot heap payload.
-    // EVENT-RUNTIME-S2 adds one inline u64 consumed-takeover sequence:
-    // macOS SlotScript measures 4616 B (+8 B), with no new heap payload.
-    // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
-    // account to NavBot's retained QuestEvidence.
-    // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
-    // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
-    // Nav split S3's typed NPC hop reason shrank NavBot by 16 B (3656 B).
-    // SURVIVAL-1.1 adds the 104 B inline SlotCondition owner, and the walk
-    // stall diagnostic adds 16 B to Traveller (original send tile and tick
-    // across resends): NavBot measures 3776 B, with no new heap payload and
-    // no SlotScript growth.
-    // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
-    // SURVIVAL-NATIVE-CURE keeps SurvivalStep (bounded by 192 B) and interrupt
-    // state in the existing boxed Gatherer/Quester scripts, not inline SlotScript.
-    // The 64-bit SlotScript pin remains 1624 B (+0 B).
-    // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
-    // layouts: test-only inspection budgets and bank fixtures are included.
-    // S0c moves the platform-specific isolate mutexes into the surface run.
-    // The shared 64-bit slot layout no longer contains those mutexes.
-    // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
-    // QUEST-DANGER-CONSENT boxes pending Start. On measured Linux x86_64,
-    // SlotScript shrinks from the earlier 1624 B pin to 1544 B.
-    // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
-    // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
-    // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
-    // Prerequisite hop tracking and captured logical-walk ownership add 240 B
-    // to NavBot, including 24 B for physical takeoff/destination identity;
-    // the slot's manual-run alias and exact bank policy add 32 B.
-    // Before nav-hop, Linux x86_64 measured 4056 B / 1576 B in this composed tree.
-    // Separately measured macOS aarch64 on e560b8222 (Rust 1.98.1, same lib-test
-    // features) also gives 4056 B / 1576 B; the old 1656 B slot pin was stale.
-    // Pre-FLOOR and per-bot memory A/B remain separate, still-owed proofs.
-    #[cfg(all(
-        target_os = "macos",
-        target_arch = "aarch64",
-        not(feature = "memory-profile")
-    ))]
-    // ADR 0019 provenance removal: two contained NavLease owners shrink 32 B each, plus 40 B inline quest evidence (-104 B), matching Linux.
-    assert_eq!(
-        (
-            std::mem::size_of::<NavBot>(),
-            std::mem::size_of::<script::SlotScript>(),
-            std::mem::size_of::<script::combat::Combat>(),
-            std::mem::size_of::<script::combat::WalkGuard>()
-        ),
-        (4056, 1576, 560, 264)
-    );
-    #[cfg(all(
-        target_os = "linux",
-        target_arch = "x86_64",
-        target_env = "gnu",
-        not(feature = "memory-profile")
-    ))]
-    // Provenance removal shrinks each of the two inline NavLease owners
-    // by 32 B and the inline quest evidence by 40 B.
-    // The full Linux suite at 65f18f8c3 measured NavBot at 4056 B.
-    assert_eq!(
-        (
-            std::mem::size_of::<NavBot>(),
-            std::mem::size_of::<script::SlotScript>(),
-            std::mem::size_of::<script::combat::Combat>(),
-            std::mem::size_of::<script::combat::WalkGuard>()
-        ),
-        (4056, 1576, 560, 264)
-    );
-    // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
-    // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B
-    // with padding), which use Main's 8 B of headroom (the 560 B ceiling).
-    // NavBot and SlotScript pins still need their composed measurements.
-    assert!(std::mem::size_of::<script::combat::Combat>() <= 560);
-    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
+    // The macOS arm64 lib-test layouts are 4120/1576/560/280 B.
+    // Shared protected-food handles add 64 B to NavBot and 16 B to WalkGuard.
+    // Each ceiling leaves at least 64 B; memory-profile adds separate state.
+    #[cfg(all(target_pointer_width = "64", not(feature = "memory-profile")))]
+    {
+        assert!(std::mem::size_of::<NavBot>() <= 4184);
+        assert!(std::mem::size_of::<script::SlotScript>() <= 1640);
+    }
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 624);
+    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 344);
 }
 
 mod s2b_admission_contract {

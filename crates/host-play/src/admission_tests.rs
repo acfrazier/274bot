@@ -2577,10 +2577,14 @@ mod survival_provisioning {
         assert!(status.need > 0 && status.need <= 28);
         assert_eq!(status.pack, 0);
         assert_eq!(status.bank, Some(0));
+        let (missing_item, exposure) = missing
+            .split_once(" [stage ")
+            .expect("the shortfall names its stage and exposure");
+        assert!(exposure.starts_with(path.provisioning.stages[0].0.as_ref()));
         assert!(selected
             .items()
             .iter()
-            .any(|item| item.name.as_deref() == Some(missing.as_str())));
+            .any(|item| item.name.as_deref() == Some(missing_item)));
         assert!(ledger
             .as_ref()
             .is_none_or(|ledger| ledger.test_outbox().is_empty()));
