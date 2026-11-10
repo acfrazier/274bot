@@ -954,6 +954,7 @@ impl TuiApp {
     pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
         let next = view.globals();
         let keep = |held: bool, draft: bool, next: bool| if held { draft } else { next };
+        let danger_held = self.holds(NavPreference::AllowDangerZones);
         self.nav = frontend_core::WalkGlobals::new(
             keep(
                 self.holds(NavPreference::AllowTeleports),
@@ -971,7 +972,7 @@ impl TuiApp {
                 next.allow_bank_fetch(),
             ),
             keep(
-                self.holds(NavPreference::AllowDangerZones),
+                danger_held,
                 self.nav.allow_danger_zones(),
                 next.allow_danger_zones(),
             ),
@@ -985,7 +986,12 @@ impl TuiApp {
                 self.nav.allow_quest_start(),
                 next.allow_quest_start(),
             ),
-        );
+        )
+        .with_survivable_routing(keep(
+            danger_held,
+            self.nav.survivable_routing(),
+            next.survivable_routing(),
+        ));
         self.script_scope_notice_ack = keep(
             self.holds(NavPreference::ScriptScopeNoticeAck),
             self.script_scope_notice_ack,

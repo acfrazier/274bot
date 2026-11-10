@@ -342,6 +342,7 @@ eight lobsters with a required quantity of four provide four survival bites.
 Tools, step arguments, and predicates do not reserve a food quantity by ID alone.
 The schema does not yet distinguish survival supplies from quest-consumed food;
 the declared `must_have` quantity is the conservative reservation.
+
 The current sizing model supports one ordinary food kind. A mixture reports a
 specific model limit, not missing combat facts.
 There is no prayer, regeneration, or escape credit.

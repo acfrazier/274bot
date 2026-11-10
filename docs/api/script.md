@@ -1839,15 +1839,19 @@ grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
-walks. Danger routing has two levels: **Never** (the default) and **Always**
-(the user's global override; it stores `allow_danger_zones=true`). A saved
-setting from the previous release that holds the removed middle level
-(“When survivable”, `survivable_routing=true`) loads as Never, with one info
-log line; the next level change clears that key. With Never, a script walk
+walks. Danger routing has three levels: **Never** (the default), **When
+survivable**, and **Always** (the global override). The middle level stores
+`allow_danger_zones=false` and `survivable_routing=true`. Reading a saved
+middle pair keeps it selected and does not rewrite the file. **Always** wins
+if both danger bits are true.
+
+With `host_play::NET_AVAILABLE` false, **When survivable** behaves exactly
+like **Never** for every script, walk and crossing combination. It uses the
+runtime safety net only when that net is available. With Never, a script walk
 crosses danger zones only when the script requests it, and the 1% death bound
-is enforced on that walk. While `host_play::NET_AVAILABLE` is false, walks with
-no request keep the router's result, including origin-inside escapes and
-endpoint completion, with assessments informational only.
+is enforced on that walk. Walks with no request keep the router's result,
+including origin-inside escapes and endpoint completion, with assessments
+informational only.
 The map danger control remains an explicit grant for this walk only. Native scripts cannot use BankBudget, even when
 global bank fetch is enabled. Native bank selection ranks walking routes
 without teleports; the walk to the chosen bank may still use granted teleports.
@@ -1863,8 +1867,9 @@ too long for one row, such as the saved Load order) lands together, or
 none does. Both frontends refresh a
 shared durable walk-permission projection for danger controls and inherited
 script rows (re-read from the file at most once a second), and manual
-admission reads it again. An absent file or a valid old file without the new
-key uses the middle-level default. A file that is not a JSON object clears
+admission reads it again. An absent file defaults to **Never**. If an older
+file lacks `survivable_routing`, that bit defaults to false; `allow_danger_zones`
+still selects **Never** or **Always**. A file that is not a JSON object clears
 every grant until the next preference save moves it aside, byte for byte,
 to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
 audit line) and starts fresh preferences. A file refused for itself (owner,

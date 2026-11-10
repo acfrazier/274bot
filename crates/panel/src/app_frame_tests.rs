@@ -1805,6 +1805,75 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
 }
 
+/// The production panel frame opens the real combo and submits one middle
+/// danger-level command after the operator picks its second entry.
+#[test]
+fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
+    use frontend_core::DangerLevel;
+
+    let _isolated = IsolatedStores::enter("frame-danger-routing-middle");
+    let (mut session, _dir) = session_with_play("frame-danger-routing-middle", &["alice"]);
+    session.nav_settings_open = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!("panel_driver_selects_when_survivable_from_the_open_dropdown: no headless GPU, skipped");
+        return;
+    };
+    rig.frames_until("the panel preferences", |rig| {
+        rig.session().panel_preferences_ready()
+    });
+    super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
+    rig.frame(Pointer::Away);
+    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Never);
+
+    let items = super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
+    let combo = items
+        .get(9)
+        .copied()
+        .expect("the real Nav config frame draws the Danger routing combo");
+    let center = |bounds: [f32; 4]| {
+        [
+            (bounds[0] + bounds[2]) * 0.5,
+            (bounds[1] + bounds[3]) * 0.5,
+        ]
+    };
+    let combo_center = center(combo);
+    for pressed in [false, true, false] {
+        rig.frame_at(combo_center, pressed, Pointer::Away);
+    }
+
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        rig.frame_at(combo_center, false, Pointer::Away);
+        choices = super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(std::mem::take);
+        if choices.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(
+        choices.len(),
+        3,
+        "the actual popup displays every Danger routing level"
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
+        ["Never", "When survivable", "Always"]
+    );
+
+    crate::session::take_submitted_commands();
+    let middle = center(choices[1]);
+    for pressed in [false, false, true, false] {
+        rig.frame_at(middle, pressed, Pointer::Away);
+    }
+    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::WhenSurvivable);
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![frontend_core::OperatorCommand::SetDangerLevel(
+            DangerLevel::WhenSurvivable
+        )]
+    );
+}
+
 /// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
 /// whose pump phase is the production `frame_pumps` order and whose staged
 /// GameInput submit follows it. The CI lanes have no GPU adapter

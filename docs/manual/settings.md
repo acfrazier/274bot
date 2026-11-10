@@ -54,12 +54,19 @@ a first run; an unreadable or malformed settings file denies them until the
 next save. The grants are additive: the global switch or the script's own
 grant allows the step, and only a per-request Forbid narrows it.
 
-**Danger routing** decides if a walk may pass dangerous monsters. It has two
-levels. **Never** is the default. A walk avoids dangerous monsters unless its
-script asks to cross them. A requested crossing passes only when the chance
-of death is at most 1%. **Always** lets every walk cross, without that check; the
-window warns `Global danger-zone override is enabled.` A setting saved as
-**When survivable** by an earlier release loads as **Never**.
+**Danger routing** decides if a walk may pass dangerous monsters. It has
+three levels. **Never** is the default. A walk avoids dangerous monsters
+unless its script asks to cross them. A requested crossing passes only when
+the chance of death is at most 1%.
+
+**When survivable** stays selectable and keeps its saved middle-level pair:
+`allow_danger_zones=false` and `survivable_routing=true`. Reading this pair
+does not rewrite it. While the runtime safety net is held, this level behaves
+exactly like Never. It uses the net only when the net is available. If both
+danger bits are true, **Always** takes precedence.
+
+**Always** lets every walk cross without the survival check. The window warns
+`Global danger-zone override is enabled.`
 
 One notice explains the scope. Read it once, then click **Dismiss walk
 permissions notice**.
