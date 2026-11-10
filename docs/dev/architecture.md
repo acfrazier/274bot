@@ -548,10 +548,12 @@ The conservative classifier preserves one-based operation slots and distinguishe
 bank candidates/map symbols from service evidence. It does not change the frozen
 catalog-facing bank roster or execute an operation.
 
-Image/catalogue schema 1 identities use domain-separated SHA-256 binary preimages
-(documented in `map/identity.rs`), with decoded client identity rather than
-transfer CRCs. Image policy includes exact encoder/compression-library versions.
-Nav/service changes affect the merged catalogue key, not terrain identity.
+Image/catalogue identities use domain-separated SHA-256 binary preimages
+(documented in `map/identity.rs`). They describe output and release assets;
+they are not cache admission keys. Non-release map caches are keyed by
+revision and the cache's own format version, and opening one does not compare
+an expected input identity. Image policy includes exact
+encoder/compression-library versions but no producer-source digest.
 `274bot.navpois` carries bounded typed feature records generated from jm2 NPC
 rows, rs2 bank-service handlers and `maps/labels.txt`. Its producer and
 decoder enforce the sidecar format and record structure; it has no file digest
@@ -563,14 +565,15 @@ Disk consumers use `ClientPois::decode`, `ImageManifest::decode`,
 not unchecked serde construction. JSON is capped at 1 MiB; lists/text are bounded,
 keys sorted and unique, and filenames derived from typed tile keys. Image headers
 are fixed to 256-pixel interiors with one-pixel gutters, RGBA8 noninterlaced PNG.
-`TileReceipt::verify_png` verifies the receipt and IHDR before pixel allocation;
-the PNG decoder still owns full chunk/CRC validation.
+Non-release tiles are checked for their PNG header before pixel allocation;
+the PNG decoder still owns full chunk/CRC validation. `TileReceipt::verify_png`
+(length, SHA-256 and header) is used only for release-shipped tiles.
 
 `PartialEntry` provides checked synchronous resume. The admitted host cache job
-decodes checkpoint metadata, then verifies one completed payload per host unit
-before exposing its receipt to the producer cursor. Ready readers require a
-canonical complete directory and validated manifest. Ordinary image open does
-not hash or decode the pyramid. The cache-job owner (`host-play`) owns the
+decodes checkpoint metadata and each completed payload per host unit; it does
+not compare payload receipts. Ready readers require a canonical complete
+directory and a decodable manifest. Ordinary image open does not hash or
+decode the pyramid. The cache-job owner (`host-play`) owns the
 prepared-cache `Arc`, locks, atomic publication, cancellation and quotas.
 
 Release packages ship the 289 catalogue and terrain: release packaging bakes the nav
@@ -582,17 +585,17 @@ the published directories as `map/<revision>/catalogues/<key>/` and
 (`ShippedCatalogue`: catalogue identity, key, the catalogue manifest's
 receipt, record and payload totals) and
 `map/<revision>/274bot.mapimages.json` (`ShippedImages`: image identity, key,
-the image manifest's receipt, tile totals). The cache job installs each
-artifact only for exactly the bound client cache's identity for that
-artifact: every tile's length and SHA-256 is checked against the pinned
-image manifest as it is copied into the key's `.partial` directory, and the
-catalogue payload is checked against its pinned manifest's receipt and
-record count; both are recorded by receipt and published by the same writer
-and rename as a local derive or bake, so readers never see a second loader.
-A published key is never replaced, and shipped files are only read. Foreign
-shipped data is ignored; damaged or partial shipped files fail closed (the
-catalogue derive runs locally at once; the local terrain bake stays behind
-the operator's consent and adopts the tiles already verified).
+the image manifest's receipt, tile totals). The cache job selects shipped
+artifacts by revision and the bundle's own metadata, not by the bound client
+cache's identity. Under ADR 0019 item 2 every tile's length and SHA-256 is
+checked against the shipped image manifest as it is copied into the key's
+`.partial` directory, and the catalogue payload is checked against its
+shipped manifest's receipt and record count; both are recorded by receipt
+and published by the same writer and rename as a local derive or bake, so
+readers never see a second loader. A published key is never replaced, and
+shipped files are only read. Damaged or partial shipped files fail closed
+(the catalogue derive runs locally at once; the local terrain bake stays
+behind the operator's consent and adopts the tiles already verified).
 
 ### script
 
