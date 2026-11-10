@@ -14,6 +14,9 @@ const DYNAMIC_HELD_TARGET: i32 = 28;
 const MAX_INVENTORY_METADATA_ITEMS: usize = 4096;
 const MAX_RECIPE_NESTING_DEPTH: usize = super::MAX_RECIPE_NESTING_DEPTH;
 
+/// Sorted managed IDs and their carried-only subset.
+pub(super) type ManagedItemSets = (Arc<[i32]>, Arc<[i32]>);
+
 /// Items a single stage may need held, plus the equipment positions its authored
 /// steps can alter or require. Item quantities are per-ID maxima, not sums.
 pub(crate) struct StageInventory {
@@ -209,7 +212,7 @@ impl<'a> Collector<'a> {
         }
     }
 
-    fn finish_managed(self) -> (Arc<[i32]>, Arc<[i32]>) {
+    fn finish_managed(self) -> ManagedItemSets {
         (
             Arc::from(self.managed.into_iter().collect::<Vec<_>>()),
             Arc::from(self.carried.into_iter().collect::<Vec<_>>()),
@@ -229,7 +232,7 @@ pub(super) fn compile_managed_items(
     header: &QuestHeaderDocument,
     role: &PathRoleDocument,
     cx: &CompileContext<'_>,
-) -> Result<(Arc<[i32]>, Arc<[i32]>), CompileError> {
+) -> Result<ManagedItemSets, CompileError> {
     let mut collector = Collector::managed(cx.selected);
     for item in &header.items {
         collector.add_alias(&item.obj, 1, false, false)?;
