@@ -2294,7 +2294,9 @@ mod tests {
                         complete_open_stand(&mut ledger, tick);
                         snapshot.seed_bank_observation(-1, tick, None, Vec::new());
                     }
-                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode { .. }) => {
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    }) => {
                         complete_open_stand(&mut ledger, tick);
                     }
                     HostEffect::Interaction(crate::interact::InteractReq::Close) => {
