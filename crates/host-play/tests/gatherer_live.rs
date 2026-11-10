@@ -1316,14 +1316,10 @@ fn bank_conservation_satisfied(
     inventory_after: &BTreeMap<i32, i32>,
     bank_before: &BTreeMap<i32, i32>,
     bank_after: &BTreeMap<i32, i32>,
-    deposited_count: i64,
+    deposit_count_ok: bool,
     unneeded_after: &BTreeMap<i32, i32>,
 ) -> bool {
-    let expected_deposit_count = expected_items
-        .values()
-        .map(|count| i64::from(*count))
-        .sum::<i64>();
-    deposited_count == expected_deposit_count
+    deposit_count_ok
         && expected_items.iter().all(|(&id, &expected)| {
             inventory_after.get(&id).copied().unwrap_or(0) == 0
                 && bank_after
@@ -1343,6 +1339,15 @@ fn bank_conservation_satisfied(
             in_inventory.saturating_add(in_bank) >= expected
         })
         && unneeded_after.is_empty()
+}
+
+/// The Gatherer's deposited counter must equal the items the receipt expected.
+/// A relog cut taken at the Deposit step can land after the server processed
+/// the deposit, so the restarted trip finds the pack already empty and counts
+/// fewer items; the bank contents prove those items, so a trailing count is
+/// accepted for that one trip.
+fn deposit_count_acceptable(deposited: i64, expected: i64, confirmation_lost: bool) -> bool {
+    deposited == expected || (confirmation_lost && deposited < expected)
 }
 
 #[derive(Debug, Clone)]
@@ -1405,6 +1410,7 @@ struct BankTripReceipt {
     bank_loaded: bool,
     bank_increased: bool,
     deposit_count_matches_expected: bool,
+    deposit_confirmation_lost: bool,
     deposit_verified: bool,
     seeded_casket_banked: bool,
     positive_return: bool,
@@ -1523,7 +1529,11 @@ impl BankTripReceipt {
         self.inventory_only_needed = self.unneeded_items_after.is_empty();
         self.deposited_after = deposited_after;
         self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
-        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+        self.deposit_count_matches_expected = deposit_count_acceptable(
+            self.deposited_count,
+            self.expected_item_count(),
+            self.deposit_confirmation_lost,
+        );
 
         if bank_loaded {
             self.bank_loaded = true;
@@ -1564,7 +1574,7 @@ impl BankTripReceipt {
                 inventory_after,
                 &self.bank_before,
                 &self.bank_after,
-                self.deposited_count,
+                self.deposit_count_matches_expected,
                 &self.unneeded_items_after,
             );
 
@@ -1599,7 +1609,11 @@ impl BankTripReceipt {
         self.trip = trip;
         self.deposited_after = deposited_after;
         self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
-        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+        self.deposit_count_matches_expected = deposit_count_acceptable(
+            self.deposited_count,
+            self.expected_item_count(),
+            self.deposit_confirmation_lost,
+        );
         self.positive_return = self.deposited_count > 0 && self.expected_product_count() > 0;
         self.returned = true;
         if !self.deposit_verified
@@ -2107,6 +2121,9 @@ struct Witness {
     /// `BankTripRelog` at Access: the character's tile on the first frame of
     /// the walk to the bank.
     relog_access_origin: Option<(i32, i32, i32)>,
+    /// `BankTripRelog` cut at Deposit: the interrupted trip's receipt was
+    /// marked as possibly missing its deposit confirmation.
+    relog_deposit_flagged: bool,
 }
 
 /// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
@@ -2260,8 +2277,15 @@ fn relog_step_seen(steps: &[String], step: &str) -> bool {
 
 /// The trip steps a restarted bank trip must publish, in this order, after
 /// the new session (other steps may lie between).
-fn relog_steps_in_order(steps: &[String]) -> bool {
-    let mut wanted = ["Access", "Open", "Deposit"].into_iter();
+fn relog_steps_in_order(steps: &[String], fired_step: &str) -> bool {
+    // A cut at Deposit leaves the character at the bank: the restart reopens
+    // the bank and deposits without walking to the access tile again.
+    let order: &[&str] = if fired_step == "Deposit" {
+        &["Open", "Deposit"]
+    } else {
+        &["Access", "Open", "Deposit"]
+    };
+    let mut wanted = order.iter().copied();
     let mut next = wanted.next();
     for step in steps {
         if next == Some(step.as_str()) {
@@ -4100,6 +4124,14 @@ impl GatherSlot {
         }
         self.observe_bank_open(current_deposited)?;
         self.observe_bank_withdrawal();
+        if self.witness.relog_step.as_deref() == Some("Deposit")
+            && !self.witness.relog_deposit_flagged
+        {
+            if let Some(receipt) = self.witness.pending_bank_trip.as_mut() {
+                receipt.deposit_confirmation_lost = true;
+                self.witness.relog_deposit_flagged = true;
+            }
+        }
         let event = text_field(status, "last_event");
         if event == Some("deposit confirmed") && self.witness.pending_bank_trip.is_none() {
             return Err(format!(
@@ -5901,7 +5933,7 @@ impl GatherSlot {
                 if !self.complete_bank_selection()
                     || !self.witness.relog_fired
                     || !self.witness.relog_session_advanced
-                    || !relog_steps_in_order(&self.witness.relog_steps_after)
+                    || !relog_steps_in_order(&self.witness.relog_steps_after, &fired_step)
                     || !relog_restart_logged(&fired_step)
                     || !(self.witness.bank_withdrawal_confirmed
                         || relog_step_seen(&self.witness.relog_steps_after, "Close"))
@@ -8068,7 +8100,10 @@ fn run_cell_with_fixture(
             LiveCase::BankTripRelog => {
                 witness.relog_fired
                     && witness.relog_session_advanced
-                    && relog_steps_in_order(&witness.relog_steps_after)
+                    && relog_steps_in_order(
+                        &witness.relog_steps_after,
+                        witness.relog_step.as_deref().unwrap_or_default(),
+                    )
                     && witness.bank_return_step_seen
                     && witness.post_bank_yields >= 1
                     && latest
@@ -9057,17 +9092,45 @@ fn relog_steps_must_restart_at_access_then_open_then_deposit() {
             .map(|step| (*step).to_owned())
             .collect::<Vec<_>>()
     };
-    assert!(relog_steps_in_order(&steps(&[
-        "Deposit", "Access", "Open", "Deposit", "Withdraw"
-    ])));
-    assert!(relog_steps_in_order(&steps(&["Access", "Open", "Deposit"])));
-    assert!(!relog_steps_in_order(&steps(&[
-        "Deposit", "Withdraw", "Close"
-    ])));
-    assert!(!relog_steps_in_order(&steps(&[
-        "Open", "Deposit", "Access"
-    ])));
-    assert!(!relog_steps_in_order(&[]));
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Access", "Open", "Deposit", "Withdraw"]),
+        "Access"
+    ));
+    assert!(relog_steps_in_order(
+        &steps(&["Access", "Open", "Deposit"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Deposit", "Withdraw", "Close"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Open", "Deposit", "Access"]),
+        "Access"
+    ));
+    assert!(!relog_steps_in_order(&[], "Access"));
+    // A cut at Deposit restarts at the open bank: no Access step is required.
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Open", "Deposit"]),
+        "Deposit"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Deposit", "Withdraw", "Close"]),
+        "Deposit"
+    ));
+    assert!(!relog_steps_in_order(
+        &steps(&["Deposit", "Open"]),
+        "Deposit"
+    ));
+    assert!(!relog_steps_in_order(&[], "Deposit"));
+}
+
+#[test]
+fn a_trailing_deposit_count_is_accepted_only_when_the_relog_cut_lost_the_confirmation() {
+    assert!(deposit_count_acceptable(28, 28, false));
+    assert!(!deposit_count_acceptable(0, 28, false));
+    assert!(deposit_count_acceptable(0, 28, true));
+    assert!(!deposit_count_acceptable(29, 28, true));
 }
 #[test]
 #[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, the engine's ~macro_event debug cheat (our 289 engine) and local 289 engine"]
@@ -9759,7 +9822,7 @@ mod bank_conservation_tests {
             &empty_inventory,
             &empty_bank,
             &bank_after,
-            5,
+            true,
             &empty_inventory,
         ));
         let product_lost_bank = counts(&[(KEBAB_ID, 1)]);
@@ -9769,7 +9832,7 @@ mod bank_conservation_tests {
             &empty_inventory,
             &empty_bank,
             &product_lost_bank,
-            5,
+            true,
             &empty_inventory,
         ));
 
@@ -9782,7 +9845,7 @@ mod bank_conservation_tests {
             &kebab_left,
             &empty_bank,
             &product_only_bank,
-            4,
+            true,
             &kebab_left_unneeded,
         ));
     }
