@@ -993,7 +993,7 @@ fn risk_sample(play: &Play, account: &str) -> Option<Value> {
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account)?;
     let admission = bot.admission.as_deref()?;
-    let assessment = bot.last_assessment.as_deref()?;
+    let assessment = risk_assessment(bot)?;
     Some(json!({
         "request_id": bot.route_request_id,
         "admission": format!("{admission:?}"),
@@ -1006,6 +1006,16 @@ fn risk_sample(play: &Play, account: &str) -> Option<Value> {
         "foods": assessment.input.food_iter().collect::<Vec<_>>(),
         "reason": assessment.reason.as_ref(),
     }))
+}
+
+// Successful publication keeps the current assessment; only refusals must be
+// retained after the route is cleared. Do not read the refusal cache alone.
+fn risk_assessment(
+    bot: &crate::script_runtime::NavBot,
+) -> Option<&script::combat::risk::RouteAssessment> {
+    bot.assessment
+        .as_deref()
+        .or(bot.last_assessment.as_deref())
 }
 
 fn gnome_risk_proven(assessment: Option<&Value>) -> bool {
@@ -1324,6 +1334,44 @@ fn gnome_maze_keeps_the_real_food_guard_and_complete_giant_facts() {
     assert_eq!(risk.unknown, script::combat::risk::UnknownKind::Known);
     assert!(risk.max_hit > 0 && risk.attack_roll > 0);
     assert_eq!(risk.rate, 6);
+}
+
+#[test]
+fn gnome_maze_samples_current_success_before_retained_refusal() {
+    use script::combat::risk::{PoisonTest, RouteAssessment, Verdict};
+
+    let assessment = |reason: &str| {
+        Arc::new(RouteAssessment {
+            verdict: Verdict::Survivable,
+            plan: Default::default(),
+            crossings: Box::default(),
+            more: 0,
+            supplies: Box::default(),
+            hp_after: 80,
+            volley: 0,
+            bound: 0.0,
+            poison_test: PoisonTest::NotNeeded,
+            input: Default::default(),
+            generation: 1,
+            reason: Arc::from(reason),
+        })
+    };
+    let mut bot = crate::script_runtime::NavBot {
+        assessment: Some(assessment("current")),
+        last_assessment: Some(assessment("retained")),
+        ..Default::default()
+    };
+    assert_eq!(
+        risk_assessment(&bot).map(|row| row.reason.as_ref()),
+        Some("current")
+    );
+    bot.assessment = None;
+    assert_eq!(
+        risk_assessment(&bot).map(|row| row.reason.as_ref()),
+        Some("retained")
+    );
+    bot.last_assessment = None;
+    assert!(risk_assessment(&bot).is_none());
 }
 
 #[test]
