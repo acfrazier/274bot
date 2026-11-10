@@ -2926,10 +2926,11 @@ mod tests {
         if !api::test_support::game_data_available() {
             return;
         }
-        let protected: Arc<[super::FoodReserve]> = Arc::from([super::FoodReserve {
-            id: food_id("bread"),
-            qty: 1,
-        }]);
+        let protected: Arc<[crate::combat::FoodReserve]> =
+            Arc::from([crate::combat::FoodReserve {
+                id: food_id("bread"),
+                qty: 1,
+            }]);
 
         let mut reserved_only = Scene::new(43);
         reserved_only.stats[3].effective = 1;

@@ -641,7 +641,7 @@ fn must_have_food_reserves_only_the_declared_quantity_in_survival_targets() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let mut baseline = None;
+    let mut baseline: Option<(i32, f64)> = None;
     for reserved in [0, 4] {
         let (path, quests, mut snapshot) = survival_fixture_document(true, false, |document| {
             owned(document);
