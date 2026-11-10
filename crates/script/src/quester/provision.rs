@@ -2537,36 +2537,52 @@ mod tests {
         let Some(unusable) = unusable else {
             panic!("the revision data has an unusable food-kind fixture");
         };
-        let (path, _, mut snapshot) = survival_fixture_document(true, true, |document| {
-            document.roles[0].sequences[0].steps[0].settle =
-                crate::quester::path::PredicateDocument::Fact {
-                    kind: "has_item".into(),
-                    version: 1,
-                    args: serde_json::json!({"obj": protected_alias}),
-                };
-        });
+        let (path, _, mut snapshot) =
+            survival_fixture_document(true, true, |document| {
+                document.quest.as_mut().unwrap().items.push(
+                    crate::quester::path::QuestItemDocument {
+                        obj: protected_alias.into(),
+                        qty: 1,
+                        kind: crate::quester::path::QuestItemKindDocument::MustHave,
+                        acquire: None,
+                        from_stage: None,
+                    },
+                );
+                document.roles[0].sequences[0].steps[0].settle =
+                    crate::quester::path::PredicateDocument::Fact {
+                        kind: "has_item".into(),
+                        version: 1,
+                        args: serde_json::json!({"obj": protected_alias}),
+                    };
+            });
         assert!(path.provisioning.carried_items.contains(&protected_id));
         snapshot.seed_inventory(Vec::new(), 28);
         let survival = path.provisioning.survival.as_ref().unwrap();
-        let mut bank_rows = vec![(protected_id, 28), (expected_id, 28), (unusable.0, 28)];
-        bank_rows.push((unavailable, 0));
-        let memory = BankMemory::seeded(&bank_rows, Origin::Session);
-        let need = survival
-            .plan(
-                0,
-                Stock {
-                    bank: Some(&memory),
-                    ..snapshot_view(&snapshot, 1).stock()
-                },
-                survival_input(&snapshot, survival),
-                Some(&path.provisioning),
-            )
-            .unwrap();
-        assert_eq!(
-            need.food.as_ref().map(|(item, _)| item.id),
-            Some(expected_id),
-            "exclude protected, unusable, and unavailable food kinds"
-        );
+        for (protected_stock, expected) in [(1, expected_id), (2, protected_id)] {
+            let bank_rows = [
+                (protected_id, protected_stock),
+                (expected_id, 28),
+                (unusable.0, 28),
+                (unavailable, 0),
+            ];
+            let memory = BankMemory::seeded(&bank_rows, Origin::Session);
+            let need = survival
+                .plan(
+                    0,
+                    Stock {
+                        bank: Some(&memory),
+                        ..snapshot_view(&snapshot, 1).stock()
+                    },
+                    survival_input(&snapshot, survival),
+                    Some(&path.provisioning),
+                )
+                .unwrap();
+            assert_eq!(
+                need.food.as_ref().map(|(item, _)| item.id),
+                Some(expected),
+                "exclude only the required quantity, plus unusable and unavailable kinds"
+            );
+        }
     }
 
     #[test]
