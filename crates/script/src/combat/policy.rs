@@ -282,17 +282,6 @@ fn can_protect_style(attack: StyleObs, protect: StyleObs) -> bool {
 
 /// Largest held heal fitting the HP deficit, otherwise the smallest eligible
 /// heal. Recovery applies the cap, not the nominal heal.
-pub(crate) fn food_by(
-    hp: i32,
-    hp_max: i32,
-    inventory: impl Iterator<Item = (i32, i32)>,
-    tables: &CombatTables,
-    gate: Option<i32>,
-    eligible: impl Fn(&FoodFact) -> bool,
-) -> Option<i32> {
-    food_by_excluding(hp, hp_max, inventory, tables, gate, &[], eligible)
-}
-
 pub(crate) fn food_by_excluding(
     hp: i32,
     hp_max: i32,

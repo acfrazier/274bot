@@ -3285,12 +3285,13 @@ mod tests {
         let lobster = food_id("lobster");
         let shrimp = food_id("shrimp");
         let pick = |hp: i32| {
-            policy::food_by(
+            policy::food_by_excluding(
                 hp,
                 40,
                 [(lobster, 1), (shrimp, 1)].into_iter(),
                 &scene.tables,
                 None,
+                &[],
                 |_| true,
             )
         };

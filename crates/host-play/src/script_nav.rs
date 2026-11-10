@@ -5787,7 +5787,7 @@ impl ScriptWalkArm {
         let danger_guard = route_food;
         let mut allow = request.allow;
         allow.food = route_food;
-        let guard = if protect || request.food_guard || request.cure_guard || danger_guard {
+        let guard = if request.protect || request.food_guard || request.cure_guard || danger_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
                 EvidenceStamp {
@@ -5802,7 +5802,7 @@ impl ScriptWalkArm {
                 script::combat::guard::shared_tables().ok()
             };
             let admission = match tables {
-                Some(tables) if protect => script::combat::WalkGuard::begin_with_protected(
+                Some(tables) if request.protect => script::combat::WalkGuard::begin_with_protected(
                     &request,
                     &view,
                     tables,
