@@ -5714,7 +5714,10 @@ mod tests {
         let bytes = std::mem::size_of::<Quester>();
         // Survival adds a 208 B capacity snapshot and 32 B of stage state
         // to the 3696 B composed baseline. Keep 64 B of headroom.
-        assert!(bytes <= 4000, "Quester changed its per-bot layout: {bytes} B");
+        assert!(
+            bytes <= 4000,
+            "Quester changed its per-bot layout: {bytes} B"
+        );
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
