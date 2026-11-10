@@ -188,7 +188,9 @@ const life = {};
     const selected_first = state.activeLoc === first;
     call(state, 'LOC_ADD', [at(16303, 16300), a, 0, 0, 500]);
     const selected_second = state.activeLoc === second;
-    const order = [...World.gameMap.getZone(16303, 16300, 0).getAllLocsSafe()].filter(loc => loc.x === 16303 && loc.z === 16300);
+    // LOC_FINDALLZONE's LocIterator calls getAllLocsSafe(true), not the default forward order.
+    const order = [...World.gameMap.getZone(16303, 16300, 0).getAllLocsSafe(true)]
+        .filter(loc => loc.x === 16303 && loc.z === 16300);
     life.list_order = [selected_first, selected_second, order[0] === first && order[1] === second];
 }
 // Use the engine's real ground and loc decoders. No server services start,
@@ -534,7 +536,8 @@ fn assert_engine_parity(revision: u16) {
         "revision {revision} engine arithmetic"
     );
     assert_eq!(
-        observed.enum_stack_cases, [true, true],
+        observed.enum_stack_cases,
+        [true, true],
         "revision {revision} real string-enum present and absent stack types"
     );
     assert_eq!(
