@@ -313,7 +313,12 @@ impl CompiledSurvival {
                     Food {
                         item: item.id,
                         heal: u8::try_from(fact.heal).map_err(|_| UnknownWhy::Overflow)?,
-                        count: stock.total(item.id).unwrap_or(0).min(*target).clamp(0, 28) as u8,
+                        count: stock
+                            .held(item.id)
+                            .unwrap_or(0)
+                            .saturating_add(stock.banked(item.id).unwrap_or(0))
+                            .min(*target)
+                            .clamp(0, 28) as u8,
                     },
                 ));
                 unknown = unknown.or(why);
@@ -329,6 +334,20 @@ impl CompiledSurvival {
                 bound,
                 unknown,
             };
+            // An unread bank cannot invalidate observed food or force a
+            // better-kit trip when the carried supplies already meet the bound.
+            if choice.is_none()
+                && need.bound <= risk::consts::DEATH_BOUND
+                && need.food.as_ref().is_none_or(|(item, target)| {
+                    stock.held(item.id).is_some_and(|held| held >= *target)
+                })
+                && need
+                    .gear
+                    .iter()
+                    .all(|item| stock.carried(item.id).is_some_and(|count| count > 0))
+            {
+                return Ok(need);
+            }
             if best.as_ref().is_none_or(|best| {
                 let admitted = need.bound <= risk::consts::DEATH_BOUND;
                 let best_admitted = best.bound <= risk::consts::DEATH_BOUND;
@@ -389,7 +408,11 @@ impl CompiledSurvival {
             if fallback.is_none_or(|previous| food_candidate_better(candidate, previous)) {
                 fallback = Some(candidate);
             }
-            if stock.total(item.id).unwrap_or(0) > 0
+            if stock
+                .held(item.id)
+                .unwrap_or(0)
+                .saturating_add(stock.banked(item.id).unwrap_or(0))
+                > 0
                 && available.is_none_or(|previous| food_candidate_better(candidate, previous))
             {
                 available = Some(candidate);

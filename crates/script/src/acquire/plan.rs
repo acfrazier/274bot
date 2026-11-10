@@ -71,6 +71,8 @@ pub enum UnmetCause {
     AssessmentUnavailable,
     /// The assessed survival bound exceeds the accepted threshold.
     SurvivalBound,
+    /// No eligible bank has a route from the account's current position.
+    NoReachableBank,
 }
 
 impl UnmetCause {
@@ -80,6 +82,7 @@ impl UnmetCause {
             Self::NoRoom => "no free pack slot for it",
             Self::AssessmentUnavailable => "survival assessment unavailable",
             Self::SurvivalBound => "survival bound above 1%",
+            Self::NoReachableBank => "no reachable bank for optional supplies",
         }
     }
 }

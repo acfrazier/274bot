@@ -96,6 +96,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   once with its stage, NPCs, target and actual cause. Mixed survival food
   has a specific model-limit message. An unavailable calculation does not
   stop preparation.
+- Survival preparation counts held food even before the bank has been read.
+  It does not visit a bank when carried supplies already meet the bound.
+  If no bank is reachable for automatic supplies, it reports the shortfall
+  instead of repeating the scan and parking the Path. Required quest supplies
+  and route admission keep their existing checks.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.

@@ -1013,9 +1013,7 @@ fn risk_sample(play: &Play, account: &str) -> Option<Value> {
 fn risk_assessment(
     bot: &crate::script_runtime::NavBot,
 ) -> Option<&script::combat::risk::RouteAssessment> {
-    bot.assessment
-        .as_deref()
-        .or(bot.last_assessment.as_deref())
+    bot.assessment.as_deref().or(bot.last_assessment.as_deref())
 }
 
 fn gnome_risk_proven(assessment: Option<&Value>) -> bool {

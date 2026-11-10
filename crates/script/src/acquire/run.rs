@@ -1019,7 +1019,8 @@ impl AcquireRun {
     /// No bank is eligible. The Gatherer (which brings its own access
     /// recovery) reports the typed receipt's detail and the last access-walk
     /// failure; every other owner keeps the stable terminal outcome.
-    fn no_bank_candidate(&self, detail: Option<Arc<str>>) -> ActionError {
+    fn no_bank_candidate(&mut self, detail: Option<Arc<str>>) -> ActionError {
+        self.pick_kind = Some(PickKind::NoCandidate);
         let Some(state) = self.access_recovery.as_ref() else {
             return ActionError::Unavailable(Arc::from("no eligible bank"));
         };
@@ -1030,6 +1031,12 @@ impl AcquireRun {
             message.push_str(reason);
         }
         ActionError::Blocked(Arc::from(message))
+    }
+
+    /// Only a settled, typed bank-pick refusal permits an optional owner to
+    /// continue without a bank. Other acquisition errors remain failures.
+    pub(crate) fn bank_unavailable(&self) -> bool {
+        self.pick_kind == Some(PickKind::NoCandidate)
     }
 
     /// The last access-walk failure's reason, kept by the owner across a

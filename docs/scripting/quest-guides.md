@@ -328,6 +328,8 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 Before a risky stage, the bank check prices the stage's declared NPC fights and
 permitted `cross` zones with the shared survival model. It selects from the
 guide's combat loadouts and ordinary food the account holds or banks.
+An unread bank does not remove credit for food already held. If carried gear
+and food meet the bound, preparation does not visit a bank for a better kit.
 
 The existing loadout run withdraws and wears gear first, one piece at a time.
 Worn gear uses no inventory slots. Required quest items reserve their space
@@ -345,6 +347,11 @@ admission remains the decision point: a script-requested crossing must pass the
 1% death bound. A global danger override proceeds without passing that bound,
 with its food guard armed. A compatibility walk also proceeds, but keeps its
 existing behavior: no food guard and no food credit.
+
+If no eligible bank has a route from the current position, preparation records
+the automatic supply shortfall and continues without another scan that stage.
+It does not treat an unread bank as empty. Required quest supplies still fail
+when their bank cannot be reached.
 
 Survival deposits preserve the Path's managed items and held survival food.
 Automatic gear cannot replace protected worn gear, take an authored equipment

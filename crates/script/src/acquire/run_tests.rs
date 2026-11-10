@@ -1422,6 +1422,7 @@ fn acquire_no_candidate_keeps_unavailable_terminal_outcome() {
         Poll::Ready(Err(ActionError::Unavailable(message)))
             if message.as_ref() == "no eligible bank"
     ));
+    assert!(run.bank_unavailable());
 }
 
 #[test]
