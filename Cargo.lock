@@ -4213,6 +4213,7 @@ dependencies = [
 name = "scenario"
 version = "0.2.8"
 dependencies = [
+ "allocation-counter",
  "api",
  "client",
  "image",

@@ -26,7 +26,9 @@ pub use native::{
 };
 mod decode;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
+mod varbit;
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
+pub use varbit::{varbit_value, VarbitObservation, VarbitUnavailable, VarbitValue};
 mod context;
 pub use context::ReadContext;
 

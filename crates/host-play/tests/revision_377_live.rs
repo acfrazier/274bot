@@ -1,6 +1,6 @@
 //! Revision-377 constructor and bounded live interaction qualification.
 //!
-//! Both tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
+//! The live tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
 //! They use the canonical `--revision 377` local profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
 //! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
@@ -38,6 +38,8 @@ mod quester_imp;
 mod quester_doric;
 #[path = "revision_377_live/quester_journal.rs"]
 mod quester_journal;
+#[path = "revision_377_live/varbit.rs"]
+mod varbit;
 
 use std::fs;
 use std::path::{Path, PathBuf};

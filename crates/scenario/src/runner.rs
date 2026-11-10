@@ -8,8 +8,12 @@ use std::time::{Duration, Instant};
 
 use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
+#[cfg(feature = "varbit-observation")]
+use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
+#[cfg(feature = "varbit-observation")]
+use client::config::Cache;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::world::NavWorld;
@@ -1185,6 +1189,37 @@ impl ScenarioRunner {
                         .relog_session
                         .is_some_and(|session| client.gens.session != session);
             }
+            #[cfg(feature = "varbit-observation")]
+            if let StepKind::ObserveVarbit { id } = self.current_step().kind {
+                if !matches!(arm, Proof::VarbitEquals { id: proof_id, .. } if proof_id == id) {
+                    self.finish_fail(&format!(
+                        "step {} ({}): ObserveVarbit requires a matching VarbitEquals wait arm",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            } else if matches!(arm, Proof::VarbitEquals { .. }) {
+                self.finish_fail(&format!(
+                    "step {} ({}): VarbitEquals requires an ObserveVarbit step",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
+            }
+            #[cfg(feature = "varbit-observation")]
+            let arm_holds = match self.holds_with_varbit_cache(arm, &client.cache) {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "step {} ({}): varbit unavailable: {unavailable:?}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            };
+            #[cfg(not(feature = "varbit-observation"))]
             let arm_holds = self.holds(arm);
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
@@ -1313,8 +1348,36 @@ impl ScenarioRunner {
                 ));
             }
         }
-        if matches!(self.phase, Phase::Proving) && self.holds(self.scenario.proof) {
-            self.finish_pass();
+        if matches!(self.phase, Phase::Proving) {
+            #[cfg(feature = "varbit-observation")]
+            if let Proof::VarbitEquals { id, .. } = self.scenario.proof {
+                let requested = self.scenario.steps.iter().any(|step| {
+                    matches!(
+                        &step.kind,
+                        StepKind::ObserveVarbit { id: observed } if *observed == id
+                    )
+                });
+                if !requested {
+                    self.finish_fail("terminal VarbitEquals requires an ObserveVarbit step");
+                    return;
+                }
+            }
+            #[cfg(feature = "varbit-observation")]
+            let proof_holds = match self.holds_with_varbit_cache(self.scenario.proof, &client.cache)
+            {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "terminal proof: varbit unavailable: {unavailable:?}"
+                    ));
+                    return;
+                }
+            };
+            #[cfg(not(feature = "varbit-observation"))]
+            let proof_holds = self.holds(self.scenario.proof);
+            if proof_holds {
+                self.finish_pass();
+            }
         }
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
             && self.started.elapsed() > self.deadline
@@ -1538,6 +1601,36 @@ impl ScenarioRunner {
                 Some(&self.xp_baselines),
                 self.fresh_xp_baseline,
             ),
+        }
+    }
+
+    #[cfg(feature = "varbit-observation")]
+    fn holds_with_varbit_cache(
+        &self,
+        proof: Proof,
+        cache: &Cache,
+    ) -> Result<bool, VarbitUnavailable> {
+        match proof {
+            Proof::VarbitEquals {
+                id,
+                value,
+                observed_base_varp,
+            } => {
+                if self.on_stop_script() && !self.script_idle {
+                    return Ok(false);
+                }
+                let result = varbit_value(&self.snapshot, cache, id)?;
+                let observed = match result.observation {
+                    VarbitObservation::Unknown {
+                        base_varp,
+                        base_value,
+                    } => observed_base_varp.is_some_and(|witness| {
+                        witness.varp_id == base_varp && witness.value == base_value
+                    }),
+                };
+                Ok(observed && result.value == value)
+            }
+            other => Ok(self.holds(other)),
         }
     }
 
@@ -2150,6 +2243,8 @@ impl ScenarioRunner {
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
             | StepKind::ObserveRandomEvent { .. } => Ok(()),
+            #[cfg(feature = "varbit-observation")]
+            StepKind::ObserveVarbit { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {

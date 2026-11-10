@@ -157,7 +157,11 @@ pub(crate) fn client_377_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "varbit-observation")]
+    use api::snapshot::{varbit_value, VarbitObservation, VarbitValue};
     use client::client::{ClientConfig, ClientNpc};
+    #[cfg(feature = "varbit-observation")]
+    use client::config::runtime_377::VarpFields377;
     use client::config::runtime_377::{CacheFields377, InterfaceFields377, NpcFields377};
     use client::config::{Cache, CacheRevision377, IfType, IfTypeMut, NpcType};
     use client::dash3d::ClientPlayer;
@@ -398,5 +402,55 @@ mod tests {
         next_game_tick(&mut runner, &mut client);
         assert_eq!(client.out.pos, after_retry);
         assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+    #[cfg(feature = "varbit-observation")]
+    #[test]
+    fn selected_377_snapshot_reads_the_cache_varbit_definition() {
+        let mut client = scene_client(ClientRevision::R377);
+        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        cache.varbits.push(Default::default());
+        cache.varbits[0].basevar = 0;
+        cache.varbits[0].startbit = 2;
+        cache.varbits[0].endbit = 4;
+        cache.varps.push(Default::default());
+        cache.revision_377 = Some(Box::new(CacheRevision377 {
+            config: CacheFields377 {
+                varps: vec![VarpFields377 {
+                    code1: 0,
+                    code2: 0,
+                    tracked: false,
+                    code4: false,
+                    code6: false,
+                    code7: 0,
+                    scope: 0,
+                    transmit: true,
+                    code12: 0,
+                    code14: false,
+                    debugname: None,
+                }],
+                ..Default::default()
+            },
+            interfaces: InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        }));
+        client.var.push(44);
+        client.gens.varp = client.gens.varp.wrapping_add(1);
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert_eq!(
+            varbit_value(&snapshot, &client.cache, 0),
+            Ok(VarbitValue {
+                value: 3,
+                observation: VarbitObservation::Unknown {
+                    base_varp: 0,
+                    base_value: 44,
+                },
+            })
+        );
     }
 }

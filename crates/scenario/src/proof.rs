@@ -10,6 +10,18 @@ use api::snapshot::{
 use nav_planner::arrival::arrived;
 use nav_planner::tile::{chebyshev, Tile};
 
+/// Caller-supplied evidence that a base varp was observed in the current
+/// session. The runner matches its index and value to the current query, but
+/// callers must ensure it came from an independent observation.
+#[cfg(feature = "varbit-observation")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedVarpWitness {
+    /// The base-varp index named by the selected varbit definition.
+    pub varp_id: i32,
+    /// The base-varp value independently observed in the current session.
+    pub value: i32,
+}
+
 /// A named predicate over observable game state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Proof {
@@ -152,6 +164,16 @@ pub enum Proof {
     /// `varp(id) == value`: an exact transmitted varp value. An absent id
     /// fails closed, just like [`Proof::Varp`].
     VarpExact { id: i32, value: i32 },
+    /// `varbit(id) == value`: a cache-backed bit range. Snapshot rows carry no
+    /// per-index receive receipt, so the base observation is Unknown. The
+    /// proof remains false unless `observed_base_varp` witnesses the selected
+    /// definition's base-varp index and current value.
+    #[cfg(feature = "varbit-observation")]
+    VarbitEquals {
+        id: i32,
+        value: i32,
+        observed_base_varp: Option<ObservedVarpWitness>,
+    },
     /// `stat(id) >= min`: a decoded stat-family value. `id == 16` is run
     /// energy; every other id reads the snapshot stat table's effective
     /// level.
@@ -433,6 +455,8 @@ impl Proof {
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::VarpExact { id, value } => format!("varp({id})=={value}"),
+            #[cfg(feature = "varbit-observation")]
+            Proof::VarbitEquals { id, value, .. } => format!("varbit({id})=={value}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
@@ -757,6 +781,8 @@ impl Proof {
                 .iter()
                 .find(|v| v.index == *id)
                 .is_some_and(|v| v.value == *value),
+            #[cfg(feature = "varbit-observation")]
+            Proof::VarbitEquals { .. } => false,
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             // Newest line only (`snap.chat()` is the ring head). A line a

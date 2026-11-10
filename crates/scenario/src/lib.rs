@@ -585,6 +585,11 @@ pub enum StepKind {
     ObserveRandomEvent {
         cell: random_episode::RandomEventCell,
     },
+    /// Read a cache-defined varbit against the current base-varp snapshot.
+    /// The receive status is Unknown; a matching caller-supplied witness is
+    /// required for the equality proof. This step sends no client action.
+    #[cfg(feature = "varbit-observation")]
+    ObserveVarbit { id: i32 },
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.
     /// No-op on the client. File cards wait a one-game-tick arm; compiled

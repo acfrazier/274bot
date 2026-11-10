@@ -3,6 +3,15 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Next — Unreleased
+
+### Scenario observations
+
+- Scenario runners can extract cache-defined varbits with a no-send step.
+  Snapshot availability is explicitly Unknown because rows lack per-index
+  receive receipts; `VarbitEquals` requires a matching observed-varp witness.
+  An unrequested observer adds no per-tick allocations.
+
 ## [0.2.9] — Unreleased
 
 ### Breaking changes

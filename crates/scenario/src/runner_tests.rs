@@ -1,6 +1,12 @@
 use super::*;
+#[cfg(feature = "varbit-observation")]
+use crate::proof::ObservedVarpWitness;
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfTypeMut};
+#[cfg(feature = "varbit-observation")]
+use client::config::runtime_377::{CacheFields377, InterfaceFields377, VarpFields377};
+#[cfg(feature = "varbit-observation")]
+use client::config::CacheRevision377;
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
 use client::io::{ClientProt, ServerProt};
@@ -5062,4 +5068,245 @@ fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
     c.ingame = false;
     runner.snapshot.rebuild(&c);
     assert!(!proof.check(&runner.snapshot, None));
+}
+
+#[cfg(feature = "varbit-observation")]
+fn varbit_observation_scenario(
+    id: i32,
+    value: i32,
+    observed_base_varp: Option<ObservedVarpWitness>,
+) -> Scenario {
+    Scenario {
+        name: "varbit-observation",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "observe the selected varbit",
+            kind: StepKind::ObserveVarbit { id },
+            wait: wait(
+                Proof::VarbitEquals {
+                    id,
+                    value,
+                    observed_base_varp,
+                },
+                2,
+            ),
+        }],
+        proof: Proof::VarbitEquals {
+            id,
+            value,
+            observed_base_varp,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+#[cfg(feature = "varbit-observation")]
+fn install_varbit_fixture(client: &mut Client, raw_value: i32, transmit: bool) {
+    let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+    cache.varbits.push(Default::default());
+    cache.varbits[0].basevar = 0;
+    cache.varbits[0].startbit = 2;
+    cache.varbits[0].endbit = 4;
+    cache.varps.push(Default::default());
+    cache.revision_377 = Some(Box::new(CacheRevision377 {
+        config: CacheFields377 {
+            varps: vec![VarpFields377 {
+                code1: 0,
+                code2: 0,
+                tracked: false,
+                code4: false,
+                code6: false,
+                code7: 0,
+                scope: 0,
+                transmit,
+                code12: 0,
+                code14: false,
+                debugname: None,
+            }],
+            ..Default::default()
+        },
+        interfaces: InterfaceFields377 {
+            client_code_layers: Default::default(),
+            type1_fields: Vec::new(),
+            null_string_masks: Vec::new(),
+            initial_overlays: Vec::new(),
+        },
+    }));
+    client.var.push(raw_value);
+    client.bump_gens(ServerProt::VARP_SMALL);
+}
+
+#[cfg(feature = "varbit-observation")]
+#[test]
+fn varbit_observer_is_no_send_and_runner_replacement_reads_fresh_state() {
+    let mut client = seeded_client();
+    install_varbit_fixture(&mut client, 44, true);
+    let sent_before = client.out.pos;
+
+    let witness = Some(ObservedVarpWitness {
+        varp_id: 0,
+        value: 44,
+    });
+    let mut repeated = varbit_observation_scenario(0, 3, witness);
+    repeated.steps.push(Step {
+        name: "observe the selected varbit again",
+        kind: StepKind::ObserveVarbit { id: 0 },
+        wait: wait(
+            Proof::VarbitEquals {
+                id: 0,
+                value: 3,
+                observed_base_varp: witness,
+            },
+            2,
+        ),
+    });
+    let mut first = ScenarioRunner::new(repeated);
+    first.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if first.status() == RunnerStatus::Passed {
+            break;
+        }
+        first.tick(&mut client);
+    }
+    assert_eq!(first.status(), RunnerStatus::Passed);
+    assert_eq!(client.out.pos, sent_before, "observation must not send");
+    drop(first);
+
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.var[0] = 8;
+    client.bump_gens(ServerProt::VARP_SMALL);
+    let mut replacement = ScenarioRunner::new(varbit_observation_scenario(
+        0,
+        2,
+        Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 8,
+        }),
+    ));
+    replacement.set_scene_settle(Duration::ZERO);
+    replacement.tick(&mut client);
+    assert_eq!(replacement.status(), RunnerStatus::Passed);
+    assert_eq!(client.out.pos, sent_before, "replacement must not send");
+    drop(replacement);
+
+    let mut missing = ScenarioRunner::new(varbit_observation_scenario(1, 0, None));
+    missing.set_scene_settle(Duration::ZERO);
+    missing.tick(&mut client);
+    let RunnerStatus::Failed(message) = missing.status() else {
+        panic!(
+            "missing varbit must finish unavailable: {:?}",
+            missing.status()
+        );
+    };
+    assert!(message.contains("unavailable"), "{message}");
+    assert!(message.contains("MissingDefinition"), "{message}");
+    assert_eq!(
+        client.out.pos, sent_before,
+        "missing observation must not send"
+    );
+}
+#[cfg(feature = "varbit-observation")]
+#[test]
+fn unknown_zero_needs_a_matching_witness_even_when_metadata_says_private() {
+    let mut client = seeded_client();
+    install_varbit_fixture(&mut client, 0, false);
+    let sent_before = client.out.pos;
+
+    let mut unobserved = ScenarioRunner::new(varbit_observation_scenario(0, 0, None));
+    unobserved.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if matches!(
+            unobserved.status(),
+            RunnerStatus::Passed | RunnerStatus::Failed(_)
+        ) {
+            break;
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        unobserved.tick(&mut client);
+    }
+    assert!(
+        matches!(unobserved.status(), RunnerStatus::Failed(_)),
+        "an unknown zero passed without a witness: {:?}",
+        unobserved.status()
+    );
+    drop(unobserved);
+
+    for witness in [
+        ObservedVarpWitness {
+            varp_id: 1,
+            value: 0,
+        },
+        ObservedVarpWitness {
+            varp_id: 0,
+            value: 1,
+        },
+    ] {
+        let mut mismatched = ScenarioRunner::new(varbit_observation_scenario(0, 0, Some(witness)));
+        mismatched.set_scene_settle(Duration::ZERO);
+        for _ in 0..8 {
+            if matches!(
+                mismatched.status(),
+                RunnerStatus::Passed | RunnerStatus::Failed(_)
+            ) {
+                break;
+            }
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            mismatched.tick(&mut client);
+        }
+        assert!(
+            matches!(mismatched.status(), RunnerStatus::Failed(_)),
+            "a mismatched base-varp witness was accepted: {:?}",
+            mismatched.status()
+        );
+        drop(mismatched);
+    }
+
+    let mut observed = ScenarioRunner::new(varbit_observation_scenario(
+        0,
+        0,
+        Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 0,
+        }),
+    ));
+    observed.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if observed.status() == RunnerStatus::Passed {
+            break;
+        }
+        observed.tick(&mut client);
+    }
+    assert_eq!(observed.status(), RunnerStatus::Passed);
+    assert_eq!(
+        client.out.pos, sent_before,
+        "varbit observations must not send client output"
+    );
+}
+
+#[cfg(feature = "varbit-observation")]
+#[test]
+fn enabled_but_unrequested_varbit_observer_allocates_nothing_per_tick() {
+    let mut client = seeded_client();
+    let mut runner = ScenarioRunner::new(stat_scenario(100, 100_000));
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        runner.tick(&mut client);
+    }
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..128 {
+            runner.tick(&mut client);
+        }
+    });
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert_eq!(measured.count_total, 0, "idle varbit observer allocated");
+    assert_eq!(
+        measured.bytes_total, 0,
+        "idle varbit observer allocated bytes"
+    );
 }
