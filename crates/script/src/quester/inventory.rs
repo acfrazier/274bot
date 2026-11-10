@@ -100,7 +100,6 @@ pub(crate) fn capacity_keep_with_held_foods(
     Arc::from(keep)
 }
 
-
 struct ItemFacts {
     id: i32,
     name: Arc<str>,

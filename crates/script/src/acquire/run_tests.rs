@@ -1884,9 +1884,10 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
     assert!(size_of::<AcquireRun>() <= 984);
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
-    // Capacity deposits replace the 24-byte Vec with a bounded, allocation-free
-    // 28-row snapshot. That adds 208 bytes through the inline bank child.
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1120);
+    // Provisioner is measured at 1120 B. Its full 240 B growth is the
+    // inline bank snapshot (+208 B) plus survival/gear stage state (+32 B).
+    // The 1184 B ceiling leaves the default 64 B headroom.
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1184);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 

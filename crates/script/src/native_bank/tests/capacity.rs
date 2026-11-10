@@ -49,6 +49,7 @@ fn request(keep: &Arc<[i32]>, slots: u8) -> BankRequest {
 
 #[test]
 fn large_capacity_keep_set_allocates_nothing_per_begin_or_scan() {
+    eprintln!("ProtectedCounts={}", std::mem::size_of::<ProtectedCounts>());
     let (snapshot, keep) = fixture();
     assert!(keep.len() > MAX_MEMO);
     with_tick(&snapshot, &mut None, 1, |tick| {
@@ -145,7 +146,9 @@ fn full_pack_capacity_deposit_keeps_every_held_food_during_gear_withdrawal() {
         ops::deposit_capacity_next(&keep, None, Some(&side), Some(&pack), true),
         DepositScan::Click(click) if click.id == 4_003
     ));
-    assert!(keep.iter().all(|food| pack.iter().any(|row| row.def.id == *food)));
+    assert!(keep
+        .iter()
+        .all(|food| pack.iter().any(|row| row.def.id == *food)));
 }
 #[test]
 fn capacity_deposit_stops_when_previously_absent_kept_id_arrives() {

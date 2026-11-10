@@ -69,6 +69,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   space for the stage's items, and reports supply or capacity shortfalls.
   Quest item protection also works for Paths with more than 64 managed items.
   Crossing admission still makes the final survival decision.
+- Survival preparation excludes quest food from eating and survival credit.
+  It preserves held food during gear deposits and reports each shortfall
+  once with its stage, NPCs, target and actual cause. Mixed survival food
+  has a specific model-limit message. An unavailable calculation does not
+  stop preparation.
 - A Quester step can declare the content message that shows one of its failed
   attempts (`failure_signal`). Such an attempt no longer counts toward the
   no-progress park, so a chance step, such as Dwarf Cannon's railing repair,

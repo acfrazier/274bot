@@ -257,7 +257,7 @@ Use `ordered` for stages whose steps leave nothing observable behind, such as Ha
 
 Provisioning checks the inventory first and plans from the account's bank memory, which the host updates whenever the bank is open; the Quester keeps no bank receipt of its own. Collecting or making an item outside the bank does not change that memory.
 
-Unless `quest.owns_inventory` bypasses preparation, missing required or acquirable items, coin floats, active-loadout carry floats, and tools needed by a gather step may cause a bank check. An item with `from_stage` is ignored until the quest reaches that stage (an Unknown stage keeps it out), so it causes neither an acquisition nor the initial bank scan early.
+Missing required or acquirable items, coin floats, active-loadout carry floats, and gather tools may cause a bank check. `quest.owns_inventory` leaves these quest supplies to the Path, but still runs survival preparation. An item with `from_stage` is ignored until that stage, including its acquisition and initial bank scan.
 
 For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
 
@@ -306,18 +306,25 @@ Worn gear uses no inventory slots. Required quest items reserve their space
 next. Food then fills the remaining space, up to the model's target.
 
 The food calculation uses the live food guard's threshold and content timing.
-Only carried, homogeneous ordinary food receives route-admission credit.
+Food that the Path needs carried is excluded from survival credit and from
+automatic eating. The current sizing model supports one other ordinary food
+kind. A mixture reports a specific model limit, not missing combat facts.
 There is no prayer, regeneration, or escape credit.
 
 A supply shortfall does not itself stop preparation. Status and the unmet-need
 log name the item, target quantity, and quantity obtained. Actual route
 admission remains the decision point: a script-requested crossing must pass the
-1% death bound. A global danger override or compatibility walk can proceed
-without passing that bound, with its food guard armed.
+1% death bound. A global danger override proceeds without passing that bound,
+with its food guard armed. A compatibility walk also proceeds, but keeps its
+existing behavior: no food guard and no food credit.
 
-If combat facts or a future attacker are unknown, preparation does not claim a
-passing target. It takes available ordinary food within the same slot limit
-and reports the unavailable assessment.
+Survival deposits preserve the Path's managed items and held survival food.
+Automatic gear cannot replace protected worn gear, take an authored equipment
+slot, or equip an item that the Path needs carried.
+
+If combat facts, food timing, or a future attacker are unknown, preparation
+does not claim a passing target. It reports the stage, NPCs, and actual cause.
+A planner error is also informational. Preparation continues to admission.
 
 
 ## Rules of thumb

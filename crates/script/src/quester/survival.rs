@@ -202,6 +202,10 @@ impl CompiledSurvival {
         &self.tables
     }
 
+    pub(super) fn equipment_slots(&self) -> u16 {
+        self.equipment_slots
+    }
+
     pub fn stage_has_risk(&self, stage: usize) -> bool {
         self.stages
             .get(stage)
@@ -210,6 +214,32 @@ impl CompiledSurvival {
 
     pub(crate) fn stage_inventory(&self, stage: usize) -> Option<&super::compile::StageInventory> {
         self.stages.get(stage).map(|stage| &stage.inventory)
+    }
+
+    /// Name the priced NPCs only when preparation emits a stage result.
+    pub(super) fn stage_targets(&self, stage: usize) -> String {
+        let Some(stage) = self.stages.get(stage) else {
+            return "unknown exposure".to_owned();
+        };
+        let mut text = String::new();
+        for (index, exposure) in stage.exposures.iter().enumerate() {
+            if stage.exposures[..index]
+                .iter()
+                .any(|row| row.ident == exposure.ident)
+            {
+                continue;
+            }
+            if !text.is_empty() {
+                text.push_str(", ");
+            }
+            if let Some(npc) = self.tables.npc(exposure.ident) {
+                text.push_str(npc.display.as_deref().unwrap_or(&npc.config));
+            } else {
+                use std::fmt::Write;
+                let _ = write!(&mut text, "exposure {}", exposure.ident);
+            }
+        }
+        text
     }
 
     pub fn plan(
@@ -225,6 +255,7 @@ impl CompiledSurvival {
             self.add_gear(kit, &mut required, stock, owner)?;
         }
         let mut best: Option<SurvivalNeed> = None;
+        let food_unknown = self.food_unknown(stock, owner);
         // Prefer an already worn kit when it is as safe as a banked guide kit.
         for choice in std::iter::once(None).chain(self.choices.iter().map(Some)) {
             if choice.is_some_and(|kit| {
@@ -261,20 +292,8 @@ impl CompiledSurvival {
                 &self.tables,
                 no_food,
             ));
-            if input.food_len > 1
-                || input.more_food()
-                || input.food_len == 1
-                    && self.tables.food(input.food_ids[0]).is_none_or(|fact| {
-                        fact.eat_delay_arg != Some(2)
-                            || fact.message_delay.is_some_and(|delay| delay > 0)
-                    })
-                || owner.is_some_and(|owner| {
-                    input.food_ids[..usize::from(input.food_len)]
-                        .iter()
-                        .any(|id| owner.carried_items.contains(id))
-                })
-            {
-                unknown = Some(UnknownWhy::MissingFacts);
+            unknown = unknown.or(food_unknown);
+            if unknown.is_some() {
                 bound = 1.0;
             }
             let food = if bound <= risk::consts::DEATH_BOUND {
@@ -331,8 +350,8 @@ impl CompiledSurvival {
         unknown: bool,
         owner: Option<&CompiledProvisioning>,
     ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
-        // The guard's homogeneous picker is exact. A different carried food
-        // would change its decisions, so do not credit a hypothetical mixture.
+        // Retain the existing one-kind sizing until the shared fight solver
+        // replaces it. Protected Path food is not a survival food kind.
         let held_food = stock
             .pack
             .into_iter()
@@ -426,6 +445,31 @@ impl CompiledSurvival {
         )))
     }
 
+    fn food_unknown(
+        &self,
+        stock: Stock<'_>,
+        owner: Option<&CompiledProvisioning>,
+    ) -> Option<UnknownWhy> {
+        let mut held = None;
+        let mut mixed = false;
+        for row in stock.pack.into_iter().flatten() {
+            if row.count <= 0
+                || owner.is_some_and(|owner| owner.carried_items.contains(&row.def.id))
+            {
+                continue;
+            }
+            let Some(fact) = self.tables.food(row.def.id) else {
+                continue;
+            };
+            if fact.eat_delay_arg != Some(2) || fact.message_delay.is_some_and(|delay| delay > 0) {
+                return Some(UnknownWhy::UnsupportedFood);
+            }
+            mixed |= held.is_some_and(|id| id != row.def.id);
+            held = Some(row.def.id);
+        }
+        mixed.then_some(UnknownWhy::MixedFood)
+    }
+
     fn food_count(
         &self,
         stage: &StageSurvival,
@@ -506,24 +550,16 @@ impl CompiledSurvival {
         stock: Stock<'_>,
         owner: Option<&CompiledProvisioning>,
     ) -> bool {
-        let Some(owner) = owner else {
-            return true;
-        };
-        if owner.carried_items.contains(&id) {
-            return false;
-        }
-        let Some(mask) = self.wear_mask(id) else {
-            return false;
-        };
-        mask & self.equipment_slots == 0
-            && !stock.worn.into_iter().flatten().any(|row| {
-                row.count > 0
-                    && row.def.id != id
-                    && owner.managed_items.contains(&row.def.id)
-                    && self
-                        .wear_mask(row.def.id)
-                        .is_none_or(|worn| mask & worn != 0)
-            })
+        owner.is_none_or(|owner| {
+            super::inventory::gear_allowed(
+                self.tables.selected(),
+                id,
+                stock,
+                &owner.managed_items,
+                &owner.carried_items,
+                self.equipment_slots,
+            )
+        })
     }
 
     fn owned_defence(

@@ -589,8 +589,28 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
     snapshot.seed_inventory(vec![bread], 28);
     let mut bank = bank_items(false);
     bank[0].count = 8;
+    snapshot.seed_bank_observation(1, 0, Some(bank.clone()), Vec::new());
+    let mut memory = BankMemory::default();
+    memory.track(&snapshot, 0);
+    let model = path.provisioning.survival.as_ref().unwrap();
+    let expected = model
+        .plan(
+            0,
+            api::stock::Stock {
+                bank: Some(&memory),
+                ..snapshot_view(&snapshot, 0).stock()
+            },
+            survival_input(&snapshot, model),
+            Some(&path.provisioning),
+        )
+        .unwrap();
+    assert!(
+        expected.unknown.is_none(),
+        "quest bread is not a model unknown"
+    );
+    let target = expected.food.as_ref().unwrap().1;
     let observed = prepare(&path, &quests, &mut snapshot, bank);
-    assert_eq!(food_count(&observed), 8);
+    assert_eq!(food_count(&observed), target.min(8));
     assert!(observed.deposited.is_empty());
     assert_eq!(
         ops::count_id(
@@ -599,9 +619,161 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
         ),
         1
     );
-    assert!(observed.provisioner.unmet_logged.iter().any(|need| {
-        matches!(need.cause, UnmetCause::NoRoom) && need.need == 28 && need.have == 8
-    }));
+    assert_eq!(
+        observed.provisioner.unmet_logged.len(),
+        usize::from(target > 8)
+    );
+    if target > 8 {
+        let need = &observed.provisioner.unmet_logged[0];
+        assert_eq!(need.cause, UnmetCause::NoSupply);
+        assert_eq!((need.need, need.have), (target, 8));
+    }
+}
+
+#[test]
+fn two_held_ordinary_food_kinds_report_the_existing_model_limit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (path, _quests, mut snapshot) = survival_fixture_document(true, false, owned);
+    snapshot.seed_inventory(
+        vec![
+            item("lobster", 0, ItemContainer::Inventory),
+            item("trout", 1, ItemContainer::Inventory),
+        ],
+        28,
+    );
+    let bank = bank_items(false);
+    snapshot.seed_bank_observation(1, 0, Some(bank), Vec::new());
+    let mut memory = BankMemory::default();
+    memory.track(&snapshot, 0);
+    let model = path.provisioning.survival.as_ref().unwrap();
+    let target = model
+        .plan(
+            0,
+            api::stock::Stock {
+                bank: Some(&memory),
+                ..snapshot_view(&snapshot, 0).stock()
+            },
+            survival_input(&snapshot, model),
+            Some(&path.provisioning),
+        )
+        .unwrap();
+    assert_eq!(
+        target.unknown,
+        Some(crate::combat::risk::UnknownWhy::MixedFood)
+    );
+    assert!(target.food.is_some());
+}
+
+#[test]
+fn held_message_delay_food_reports_the_existing_timing_limit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (path, _quests, mut snapshot) = survival_fixture_document(true, false, owned);
+    snapshot.seed_inventory(
+        vec![item("tbwt_cooked_karambwan", 0, ItemContainer::Inventory)],
+        28,
+    );
+    let bank = bank_items(false);
+    snapshot.seed_bank_observation(1, 0, Some(bank), Vec::new());
+    let mut memory = BankMemory::default();
+    memory.track(&snapshot, 0);
+    let model = path.provisioning.survival.as_ref().unwrap();
+    let target = model
+        .plan(
+            0,
+            api::stock::Stock {
+                bank: Some(&memory),
+                ..snapshot_view(&snapshot, 0).stock()
+            },
+            survival_input(&snapshot, model),
+            Some(&path.provisioning),
+        )
+        .unwrap();
+    assert_eq!(
+        target.unknown,
+        Some(crate::combat::risk::UnknownWhy::UnsupportedFood)
+    );
+    assert!(target.food.is_some());
+}
+
+#[test]
+fn protected_food_is_excluded_before_input_validation_and_the_food_row_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (path, _quests, mut snapshot) = survival_fixture_document(true, false, owned);
+    let model = path.provisioning.survival.as_ref().unwrap();
+    let mut foods: Vec<_> = model
+        .tables()
+        .selected()
+        .items()
+        .iter()
+        .filter_map(|item| {
+            model
+                .tables()
+                .food(item.id)
+                .filter(|food| food.heal >= 0)
+                .map(|food| (item, food.heal))
+        })
+        .collect();
+    foods.sort_by_key(|(item, heal)| (std::cmp::Reverse(*heal), item.id));
+    assert!(foods.len() > 6);
+    let protected: Vec<_> = foods[..6].iter().map(|(item, _)| item.id).collect();
+    let (ordinary, _) = foods.last().unwrap();
+    let mut pack: Vec<_> = foods[..6]
+        .iter()
+        .map(|(item, _)| {
+            item_view(
+                item.id,
+                item.name.as_deref().unwrap_or("Food"),
+                1,
+                ItemContainer::Inventory,
+            )
+        })
+        .collect();
+    pack.push(item_view(
+        ordinary.id,
+        ordinary.name.as_deref().unwrap_or("Food"),
+        1,
+        ItemContainer::Inventory,
+    ));
+    for (slot, row) in pack.iter_mut().enumerate() {
+        row.slot = slot as i32;
+    }
+    snapshot.seed_inventory(pack.clone(), 28);
+    let capture = |snapshot: &GameSnapshot, excluded: &[i32]| {
+        let frame = crate::combat::frame::Frame::borrow(snapshot_view(snapshot, 1)).unwrap();
+        crate::combat::risk::RiskInput::capture_excluding(
+            &frame,
+            model.tables(),
+            &crate::combat::ThreatSet::default(),
+            api::condition::PoisonState::Clear,
+            false,
+            excluded,
+        )
+    };
+    let all = capture(&snapshot, &[]);
+    assert_eq!(all.food_len, 6);
+    assert!(all.more_food());
+    let filtered = capture(&snapshot, &protected);
+    assert_eq!(filtered.food_len, 1);
+    assert_eq!(filtered.food_ids[0], ordinary.id);
+    assert!(!filtered.more_food());
+    assert_eq!(
+        filtered.free_slots, all.free_slots,
+        "protected food still occupies slots"
+    );
+
+    let mut unknown = item_view(i32::MAX, "Unpriced quest food", 1, ItemContainer::Inventory);
+    unknown.actions = vec![Some("Eat".to_owned())];
+    let mut ordinary = pack.pop().unwrap();
+    ordinary.slot = 1;
+    snapshot.seed_inventory(vec![unknown, ordinary], 28);
+    assert!(capture(&snapshot, &[]).missing_facts());
+    assert!(!capture(&snapshot, &[i32::MAX]).missing_facts());
 }
 
 #[test]

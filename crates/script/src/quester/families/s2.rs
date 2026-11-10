@@ -1429,12 +1429,9 @@ impl LoadoutStartPlan {
                 equipment_slots,
                 protect_worn,
             } => {
-                let selected =
-                    Some(api::game_data::for_revision(cx.tick.cx.revision()).map_err(|_| {
-                        ActionError::Unavailable(Arc::from(
-                            "selected equipment facts unavailable",
-                        ))
-                    })?);
+                let selected = Some(api::game_data::for_revision(cx.tick.cx.revision()).map_err(
+                    |_| ActionError::Unavailable(Arc::from("selected equipment facts unavailable")),
+                )?);
                 Ok(LoadoutRun {
                     bank: None,
                     worn: Arc::from(Vec::<Arc<[BankItem]>>::new()),
