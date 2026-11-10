@@ -2497,7 +2497,7 @@ mod tests {
                 crate::quester::path::PredicateDocument::Fact {
                     kind: "has_item".into(),
                     version: 1,
-                    args: serde_json::json!({"obj": protected_name, "qty": 1}),
+                    args: serde_json::json!({"obj": protected_name}),
                 };
         });
         assert!(path.provisioning.carried_items.contains(&protected_id));
