@@ -725,26 +725,36 @@ fn request_only_lethal_crossing_is_refused_with_the_bound() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let (admission, decision) = decided_admission(crate::DangerLevel::Never, true, false, input(1));
-    assert_eq!(decision.policy, RiskPolicy::Avoid);
-    assert!(decision.permitted && decision.enforce);
-    let (result, all_zone_search) = route_through_known_zone(&admission);
-    assert!(all_zone_search, "a request permits any zone");
-    assert_eq!(
-        result.refusal,
-        Some(WalkRefusal::Unsurvivable),
-        "a requested crossing does not skip the 1% bound"
-    );
-    let assessment = result.assessment.as_ref().expect("a routed assessment");
-    assert!(assessment.bound > 0.01, "bound {}", assessment.bound);
-    assert!(
-        assessment.reason.contains("upper bound"),
-        "{}",
-        assessment.reason
-    );
-    assert!(crate::walk_permissions::walk_arms_danger_food_guard(
-        decision, true, false
-    ));
+    for level in [crate::DangerLevel::Never, crate::DangerLevel::WhenSurvivable] {
+        let (admission, decision) = decided_admission(level, true, false, input(1));
+        assert_eq!(
+            decision,
+            crate::DangerLevel::Never.decide(
+                script::native::WalkPermissions::default(),
+                script::native::WalkOptions::default(),
+                true
+            )
+        );
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
+        assert!(decision.permitted && decision.enforce);
+        let (result, all_zone_search) = route_through_known_zone(&admission);
+        assert!(all_zone_search, "a request permits any zone");
+        assert_eq!(
+            result.refusal,
+            Some(WalkRefusal::Unsurvivable),
+            "a requested crossing does not skip the 1% bound"
+        );
+        let assessment = result.assessment.as_ref().expect("a routed assessment");
+        assert!(assessment.bound > 0.01, "bound {}", assessment.bound);
+        assert!(
+            assessment.reason.contains("upper bound"),
+            "{}",
+            assessment.reason
+        );
+        assert!(crate::walk_permissions::walk_arms_danger_food_guard(
+            decision, true, false
+        ));
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -753,22 +763,31 @@ fn request_only_safe_crossing_is_admitted() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let (admission, decision) =
-        decided_admission(crate::DangerLevel::Never, true, false, input(99));
-    assert_eq!(decision.policy, RiskPolicy::Avoid);
-    assert!(decision.enforce);
-    let (result, _) = route_through_known_zone(&admission);
-    let assessment = result.assessment.as_ref().expect("a routed assessment");
-    assert!(
-        assessment.bound <= 0.01,
-        "the safe crossing is within the bound: {}",
-        assessment.bound
-    );
-    assert_eq!(
-        result.refusal, None,
-        "a request whose route passes the bound is admitted: {}",
-        assessment.reason
-    );
+    for level in [crate::DangerLevel::Never, crate::DangerLevel::WhenSurvivable] {
+        let (admission, decision) = decided_admission(level, true, false, input(99));
+        assert_eq!(
+            decision,
+            crate::DangerLevel::Never.decide(
+                script::native::WalkPermissions::default(),
+                script::native::WalkOptions::default(),
+                true
+            )
+        );
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
+        assert!(decision.enforce);
+        let (result, _) = route_through_known_zone(&admission);
+        let assessment = result.assessment.as_ref().expect("a routed assessment");
+        assert!(
+            assessment.bound <= 0.01,
+            "the safe crossing is within the bound: {}",
+            assessment.bound
+        );
+        assert_eq!(
+            result.refusal, None,
+            "a request whose route passes the bound is admitted: {}",
+            assessment.reason
+        );
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -1551,7 +1570,11 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
-    for level in [crate::DangerLevel::Never, crate::DangerLevel::Always] {
+    for level in [
+        crate::DangerLevel::Never,
+        crate::DangerLevel::WhenSurvivable,
+        crate::DangerLevel::Always,
+    ] {
         let mut globals = crate::WalkGlobals::default();
         globals.set_danger_level(level);
         let options = globals.manual_options(false);

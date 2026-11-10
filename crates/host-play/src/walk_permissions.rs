@@ -10,11 +10,11 @@ use script::native::{PrereqAllow, RiskPolicy, WalkBit, WalkOptions, WalkPermissi
 /// Runtime net activation is held until the integrated S2c gate passes.
 pub const NET_AVAILABLE: bool = false;
 
-/// Stored global danger-routing level: the safe default, or the user's
-/// global override.
+/// Stored global danger-routing level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DangerLevel {
     Never,
+    WhenSurvivable,
     Always,
 }
 
@@ -22,33 +22,30 @@ impl DangerLevel {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Never => "Never",
+            Self::WhenSurvivable => "When survivable",
             Self::Always => "Always",
         }
     }
 
     pub const fn next(self) -> Self {
         match self {
-            Self::Never => Self::Always,
+            Self::Never => Self::WhenSurvivable,
+            Self::WhenSurvivable => Self::Always,
             Self::Always => Self::Never,
         }
     }
 
-    /// The one danger decision: `permitted = global override || script request`.
+    /// The single production danger decision for one walk.
     ///
-    /// - The global override is the `Always` level. It has no exception. A
-    ///   rs2b0t-compatible (compat v1) script counts as the global override:
-    ///   [`WalkGlobals::for_script_family`] raises the level to `Always` for
-    ///   it, so it reaches this function as the override, not as a third grant.
-    /// - A script requests through its card setting, a walk option `Allow`, or
-    ///   a named crossing (`crossing_requested`: a Quester stage or step
-    ///   `cross`, or a compat `crossZones`).
+    /// `Always` grants every zone without admission enforcement.
+    /// `WhenSurvivable` grants zones only when the runtime net is available,
+    /// while admission enforces `Avoid`. Until then, it is exactly `Never`.
     ///
-    /// A permitted walk may cross any zone. The override runs in admission mode
-    /// `Proceed`: the walk goes and the survival model's bound is informational.
-    /// A request without the override runs in enforced `Avoid` mode: the route is
-    /// judged by the 1% death bound, and an unsurvivable route is refused. No
-    /// permission reads `Avoid`. A walk option `Forbid` never narrows danger
-    /// permission.
+    /// A script requests through its card setting, a walk option `Allow`, or a
+    /// named crossing (`crossing_requested`: a Quester stage or step `cross`,
+    /// or a compat `crossZones`). Requests grant zones, but admission still
+    /// enforces the 1% death bound. A walk option `Forbid` does not narrow a
+    /// grant from another source.
     pub fn decide(
         self,
         script: WalkPermissions,
@@ -59,8 +56,9 @@ impl DangerLevel {
             || walk.allow_danger_zones == WalkBit::Allow
             || crossing_requested;
         let overridden = self == Self::Always;
+        let survivable = self == Self::WhenSurvivable && NET_AVAILABLE;
         DangerDecision {
-            permitted: overridden || requested,
+            permitted: overridden || requested || survivable,
             policy: if overridden {
                 RiskPolicy::Proceed
             } else {
@@ -111,6 +109,7 @@ pub struct WalkGlobals {
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
     pub allow_danger_zones: bool,
+    pub survivable_routing: bool,
     pub allow_prereq_dialogue: bool,
     pub allow_quest_start: bool,
 }
@@ -122,6 +121,7 @@ impl Default for WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
+            survivable_routing: false,
             allow_prereq_dialogue: true,
             allow_quest_start: true,
         }
@@ -136,6 +136,7 @@ impl WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
+            survivable_routing: false,
             allow_prereq_dialogue: false,
             allow_quest_start: false,
         }
@@ -151,18 +152,24 @@ impl WalkGlobals {
         preferences.walk_globals()
     }
 
-    /// Project the stored danger boolean to the two-level setting.
+    /// Project the stored danger booleans to the three-level setting.
     pub const fn danger_level(self) -> DangerLevel {
         if self.allow_danger_zones {
             DangerLevel::Always
+        } else if self.survivable_routing {
+            DangerLevel::WhenSurvivable
         } else {
             DangerLevel::Never
         }
     }
 
-    /// Set the stored boolean of a danger-routing level.
+    /// Set the canonical boolean representation of a danger-routing level.
     pub fn set_danger_level(&mut self, level: DangerLevel) {
-        self.allow_danger_zones = level == DangerLevel::Always;
+        (self.allow_danger_zones, self.survivable_routing) = match level {
+            DangerLevel::Never => (false, false),
+            DangerLevel::WhenSurvivable => (false, true),
+            DangerLevel::Always => (true, false),
+        };
     }
 
     /// A compat v1 (rs2b0t-compatible) script counts as the global danger
@@ -285,14 +292,6 @@ pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
             .map_or_else(WalkGlobals::default, |globals| *globals.lock().unwrap()),
     };
     globals.for_script_family(bot.is_some_and(|bot| bot.compat_v1))
-}
-
-/// Whether a saved `nav` object still holds the removed middle danger level
-/// ("When survivable": `survivable_routing` true, `allow_danger_zones` not
-/// true). That level loads as the default, Never.
-pub(crate) fn holds_removed_middle_level(nav: &serde_json::Map<String, serde_json::Value>) -> bool {
-    nav.get("survivable_routing") == Some(&serde_json::Value::Bool(true))
-        && nav.get("allow_danger_zones") != Some(&serde_json::Value::Bool(true))
 }
 
 /// Resolve native search options and the danger decision from the cached
@@ -1588,7 +1587,7 @@ mod tests {
         }
     }
     #[test]
-    fn walk_globals_round_trip_default_absent_old_file_and_fail_closed_error() {
+    fn walk_globals_round_trip_default_absent_old_file_and_saved_middle() {
         let scratch = script::IsolatedEnv::enter("walk-globals-round-trip");
         let preferences = preferences(&scratch);
         let path = preferences.path();
@@ -1599,6 +1598,7 @@ mod tests {
         assert!(!defaults.allow_wilderness);
         assert!(!defaults.allow_bank_fetch);
         assert!(!defaults.allow_danger_zones);
+        assert!(!defaults.survivable_routing);
         assert!(defaults.allow_prereq_dialogue);
         assert!(defaults.allow_quest_start);
         assert_eq!(defaults.danger_level(), DangerLevel::Never);
@@ -1613,16 +1613,28 @@ mod tests {
         preferences.reload().unwrap();
         assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
 
-        // The previous release's removed middle level ("When survivable")
-        // loads as the default, Never; the file is not rewritten.
+        // The saved middle level stays intact and does not rewrite the file.
         let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#;
         vault::write_private_file(&path, middle).unwrap();
         preferences.reload().unwrap();
-        let migrated = WalkGlobals::read(&preferences).unwrap();
-        assert_eq!(migrated, defaults);
-        assert_eq!(migrated.danger_level(), DangerLevel::Never);
+        let saved_middle = WalkGlobals::read(&preferences).unwrap();
+        assert!(!saved_middle.allow_danger_zones);
+        assert!(saved_middle.survivable_routing);
+        assert_eq!(saved_middle.danger_level(), DangerLevel::WhenSurvivable);
         assert_eq!(std::fs::read(&path).unwrap(), middle);
-        // Always with the old pair still reads Always.
+
+        // Always wins when both stored booleans are true.
+        vault::write_private_file(
+            &path,
+            br#"{"nav":{"allow_danger_zones":true,"survivable_routing":true}}"#,
+        )
+        .unwrap();
+        preferences.reload().unwrap();
+        let both = WalkGlobals::read(&preferences).unwrap();
+        assert!(both.allow_danger_zones && both.survivable_routing);
+        assert_eq!(both.danger_level(), DangerLevel::Always);
+
+        // The older Always pair still reads as Always.
         vault::write_private_file(
             &path,
             br#"{"nav":{"allow_danger_zones":true,"survivable_routing":false}}"#,
@@ -1644,6 +1656,7 @@ mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 allow_danger_zones: false,
+                survivable_routing: false,
                 allow_prereq_dialogue: false,
                 allow_quest_start: false,
             }
@@ -1653,33 +1666,54 @@ mod tests {
     /// The expected decision, written out independently of `decide`.
     fn expected_decision(level: DangerLevel, requested: bool) -> (bool, RiskPolicy, bool) {
         let overridden = level == DangerLevel::Always;
+        let survivable = level == DangerLevel::WhenSurvivable && NET_AVAILABLE;
         let policy = if overridden {
             RiskPolicy::Proceed
         } else {
             RiskPolicy::Avoid
         };
         (
-            overridden || requested,
+            overridden || requested || survivable,
             policy,
             !overridden && (NET_AVAILABLE || requested),
         )
     }
 
     #[test]
-    fn danger_level_round_trips_through_the_stored_boolean() {
-        for level in [DangerLevel::Never, DangerLevel::Always] {
+    fn danger_level_round_trips_through_its_stored_booleans() {
+        for (level, label, expected_bits) in [
+            (DangerLevel::Never, "Never", (false, false)),
+            (
+                DangerLevel::WhenSurvivable,
+                "When survivable",
+                (false, true),
+            ),
+            (DangerLevel::Always, "Always", (true, false)),
+        ] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
             assert_eq!(globals.danger_level(), level);
-            assert_eq!(globals.allow_danger_zones, level == DangerLevel::Always);
-            assert_eq!(level.next().next(), level);
+            assert_eq!(
+                (globals.allow_danger_zones, globals.survivable_routing),
+                expected_bits
+            );
+            assert_eq!(
+                globals,
+                serde_json::from_value(serde_json::to_value(globals).unwrap()).unwrap()
+            );
+            assert_eq!(level.label(), label);
+            assert_eq!(level.next().next().next(), level);
             assert_ne!(level.next(), level);
         }
     }
 
     #[test]
     fn complete_danger_precedence_table_is_tested_independently_of_net_activation() {
-        for level in [DangerLevel::Never, DangerLevel::Always] {
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
             for script_grant in [false, true] {
@@ -1709,6 +1743,31 @@ mod tests {
                             "{context}"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn held_middle_decision_matches_never_for_every_request_combination() {
+        const { assert!(!NET_AVAILABLE) };
+        for script_grant in [false, true] {
+            let script = WalkPermissions {
+                allow_danger_zones: script_grant,
+                ..WalkPermissions::default()
+            };
+            for walk_bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+                let walk = WalkOptions {
+                    allow_danger_zones: walk_bit,
+                    ..WalkOptions::default()
+                };
+                for crossing in [false, true] {
+                    let never = DangerLevel::Never.decide(script, walk, crossing);
+                    let middle = DangerLevel::WhenSurvivable.decide(script, walk, crossing);
+                    assert_eq!(
+                        middle, never,
+                        "script={script_grant}, walk={walk_bit:?}, crossing={crossing}"
+                    );
                 }
             }
         }
@@ -1837,7 +1896,11 @@ mod tests {
     /// gets no food guard. Its frozen behavior does not change.
     #[test]
     fn compat_v1_counts_as_the_global_override() {
-        for level in [DangerLevel::Never, DangerLevel::Always] {
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
             let seen = globals.for_script_family(true);
@@ -1869,7 +1932,11 @@ mod tests {
     /// enforced, exactly as [`DangerLevel::decide`] says.
     #[test]
     fn compat_walks_consume_the_one_danger_decision() {
-        for level in [DangerLevel::Never, DangerLevel::Always] {
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
             for compat_v1 in [false, true] {
                 let mut globals = WalkGlobals::fail_closed();
                 globals.set_danger_level(level);
@@ -1935,7 +2002,11 @@ mod tests {
     /// the override (the operator's own choice); otherwise no permission.
     #[test]
     fn manual_walks_consume_the_one_danger_decision() {
-        for level in [DangerLevel::Never, DangerLevel::Always] {
+        for level in [
+            DangerLevel::Never,
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+        ] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
             for this_walk in [false, true] {
