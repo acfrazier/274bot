@@ -12,6 +12,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Manifests bind run, actor and session identities; PNG sidecars include durable
   artifact SHA-256 hashes. Disarmed recording adds no tick or paint allocations.
 
+### Quantity actions
+
+- Named Make-X steps reuse published interface, count and button actions; Rust proofs
+  compare product, material and XP deltas with pre-action baselines.
+
 ## [0.2.9] — Unreleased
 
 ### Breaking changes

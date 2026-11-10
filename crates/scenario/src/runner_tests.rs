@@ -3143,7 +3143,7 @@ fn maze_episode_recovers_baseline_after_observer_begins_unready() {
     runner.set_scene_settle(Duration::ZERO);
     runner.snapshot.rebuild(&c);
     runner.phase = Phase::Running;
-    runner.begin_step();
+    runner.begin_step(c.gens.session);
     assert_eq!(
         runner.maze_episode.as_ref().unwrap().return_tile,
         None,
@@ -5153,4 +5153,38 @@ fn receipt_session_overflow_retains_the_current_event_identity() {
     );
     assert!(!receipt.manifest.complete);
     assert_eq!(receipt.events[0].session, client.gens.session);
+}
+
+#[test]
+fn quantity_action_baselines_arm_once_and_are_discarded_on_session_change() {
+    let scenario = crate::scenarios::fletching_make_x_scenario();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    let mut client = seeded_client();
+    set_inv(&mut client, &[(946, 1), (1511, 2)]);
+    client.stat_xp[9] = 500;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    runner.snapshot.rebuild(&client);
+    runner.snapshot.seed_transmission_ready(true, false);
+    runner.phase = Phase::Running;
+    runner.begin_step(client.gens.session);
+
+    assert_eq!(runner.delta_baselines.len(), 2);
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::InventoryItem && baseline.id == 52
+    }));
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::StatXp && baseline.id == 9
+    }));
+
+    runner.step = 1;
+    runner.begin_step(client.gens.session);
+    assert_eq!(runner.delta_baselines.len(), 3);
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::InventoryItem && baseline.id == 1511
+    }));
+
+    runner.step_sent = true;
+    client.gens.session += 1;
+    runner.tick_inner(&mut client, false);
+    assert!(runner.delta_baselines.is_empty());
 }
