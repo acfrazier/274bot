@@ -2188,6 +2188,77 @@ fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
     assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
 }
 
+fn assert_start_screen_warns_about_unqualified_guides_only_when_allowed(width: u16, height: u16) {
+    let evidence_root =
+        std::env::var_os("UNQUALIFIED_OPTIN_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    let flat = |shown: &str| shown.split_whitespace().collect::<Vec<_>>().join(" ");
+    for allowed in [false, true] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            (
+                "include_draft_guides".to_owned(),
+                serde_json::json!(allowed),
+            ),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-unqualified-warning"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Script), AppAction::None);
+
+        let shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height} allowed={allowed}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        let flat_shown = flat(&shown);
+        if allowed {
+            assert!(
+                flat_shown.contains("Warning: these guides are unqualified."),
+                "{width}x{height}: the warning is shown before Start: {shown}"
+            );
+            assert!(
+                flat_shown.contains("arthur"),
+                "{width}x{height}: the warning names the guide: {shown}"
+            );
+        } else {
+            assert!(
+                !flat_shown.contains("unqualified"),
+                "{width}x{height}: no warning while the setting is off: {shown}"
+            );
+        }
+        if let Some(root) = &evidence_root {
+            let directory = root.join("UNQUALIFIED-OPTIN");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!(
+                    "tui-start-{width}x{height}-allow-{}.txt",
+                    if allowed { "on" } else { "off" }
+                )),
+                &shown,
+            )
+            .expect("write TUI capture");
+        }
+    }
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_120x40() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(120, 40);
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_80x24() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(80, 24);
+}
+
 #[test]
 fn palette_start_opens_quester_zone_scope_before_start() {
     let evidence_root =
