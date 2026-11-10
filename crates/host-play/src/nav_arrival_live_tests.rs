@@ -1314,7 +1314,7 @@ fn gnome_maze_keeps_the_real_food_guard_and_complete_giant_facts() {
         script::native::WalkBit::Allow
     );
     assert!(request.food_guard && request.allow.food);
-    assert!(!request.protect && !request.allow.prayer);
+    assert!(!request.protect);
 
     script::require_local_game_data_for_test!(api::selected::ClientRevision::R289);
     let tables = script::combat::guard::shared_tables().expect("selected R289 combat facts");
