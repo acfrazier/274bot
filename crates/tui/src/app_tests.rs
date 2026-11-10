@@ -736,20 +736,23 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::Always);
-    app.script_scope_notice_ack = true;
     app.settings_state.row = 8;
-    let rows = draw(&mut app, 60, 14);
-    let (col, row) = find(&rows, "Danger routing:")
-        .expect("the selected global remains visible in a compact terminal");
-    app.on_click(col, row + 1);
-    assert_eq!(
-        app.nav.danger_level(),
+    app.script_scope_notice_ack = true;
+    for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
+        frontend_core::DangerLevel::Always,
         frontend_core::DangerLevel::Never,
-        "the wrapped continuation cycles the danger setting"
-    );
+    ] {
+        let rows = draw(&mut app, 60, 14);
+        let (col, row) = find(&rows, "Danger routing:")
+            .expect("the selected global remains visible in a compact terminal");
+        app.on_click(col, row + 1);
+        assert_eq!(
+            app.nav.danger_level(),
+            expected,
+            "the wrapped continuation cycles the danger setting"
+        );
+    }
     assert!(
         app.pause_script_on_manual_walk_abort,
         "a continuation never activates the next setting"
@@ -757,7 +760,7 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
 }
 
 #[test]
-fn danger_routing_cycles_never_and_always_with_no_migration_notice() {
+fn danger_routing_cycles_all_three_levels_without_a_migration_notice() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
@@ -765,9 +768,9 @@ fn danger_routing_cycles_never_and_always_with_no_migration_notice() {
     assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Never);
     let first = draw(&mut app, 100, 24);
     assert!(find(&first, "Danger routing: Never").is_some());
-    assert!(find(&first, "Danger routing has three levels").is_none());
     assert!(find(&first, "dismiss this notice").is_none());
     for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
         frontend_core::DangerLevel::Always,
         frontend_core::DangerLevel::Never,
     ] {

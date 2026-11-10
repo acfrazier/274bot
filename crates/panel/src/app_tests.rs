@@ -7306,14 +7306,11 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
     }
 }
 
-/// The Nav config Danger routing drop-down offers exactly Never and Always,
-/// and picking Always in the open popup, then committing the Nav config,
-/// submits `SetDangerLevel(Always)` (and nothing for the removed middle level).
+/// The Nav config Danger routing drop-down offers all three levels. Picking
+/// Always in the open popup submits `SetDangerLevel(Always)`.
 #[test]
-fn nav_danger_routing_drop_down_offers_two_levels_and_always_submits_set_danger_level() {
-    use frontend_core::{DangerLevel, OperatorCommand};
-
-    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-two");
+fn nav_danger_routing_drop_down_offers_three_levels_and_always_submits_set_danger_level() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-three");
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();
     super::amber_style(&mut ctx);
@@ -7337,15 +7334,15 @@ fn nav_danger_routing_drop_down_offers_two_levels_and_always_submits_set_danger_
     }
     assert_eq!(
         choices.len(),
-        2,
-        "the open drop-down lists exactly two items"
+        3,
+        "the open drop-down lists exactly three items"
     );
     assert_eq!(
         frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
-        ["Never", "Always"]
+        ["Never", "When survivable", "Always"]
     );
 
-    let always = rect_centre(choices[1]);
+    let always = rect_centre(choices[2]);
     for pressed in [false, false, true, false] {
         nav_routing_pointer_frame(&mut ctx, &mut nav, always, pressed);
     }
@@ -7356,6 +7353,50 @@ fn nav_danger_routing_drop_down_offers_two_levels_and_always_submits_set_danger_
     assert_eq!(
         crate::session::take_submitted_commands(),
         vec![OperatorCommand::SetDangerLevel(DangerLevel::Always)]
+    );
+}
+
+/// Selecting the middle entry commits exactly one global danger-level command.
+#[test]
+fn nav_danger_routing_drop_down_submits_when_survivable() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-middle");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if choices.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(choices.len(), 3, "the open drop-down lists every level");
+
+    let middle = rect_centre(choices[1]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, middle, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::WhenSurvivable);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(
+            DangerLevel::WhenSurvivable
+        )]
     );
 }
 

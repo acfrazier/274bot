@@ -450,7 +450,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_danger_zones(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
-                );
+                )
+                .with_survivable_routing(nav.survivable_routing());
             }
             6 => {
                 let nav = *self.nav;
@@ -461,7 +462,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_danger_zones(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
-                );
+                )
+                .with_survivable_routing(nav.survivable_routing());
             }
             7 => {
                 let nav = *self.nav;
@@ -472,7 +474,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_danger_zones(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
-                );
+                )
+                .with_survivable_routing(nav.survivable_routing());
             }
             8 => {
                 let next = self.nav.danger_level().next();
@@ -487,7 +490,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_danger_zones(),
                     !nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
-                );
+                )
+                .with_survivable_routing(nav.survivable_routing());
             }
             10 => {
                 let nav = *self.nav;
@@ -498,7 +502,8 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_danger_zones(),
                     nav.allow_prereq_dialogue(),
                     !nav.allow_quest_start(),
-                );
+                )
+                .with_survivable_routing(nav.survivable_routing());
             }
             11 => {
                 if let Some(pause) = self.pause_script_on_manual_walk_abort.as_deref_mut() {
@@ -1577,12 +1582,16 @@ mod tests {
     }
 
     #[test]
-    fn danger_routing_row_cycles_never_and_always() {
+    fn danger_routing_row_cycles_all_three_levels() {
         let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         assert_eq!(nav.danger_level(), DangerLevel::Never, "the default level");
-        for expected in [DangerLevel::Always, DangerLevel::Never, DangerLevel::Always] {
+        for expected in [
+            DangerLevel::WhenSurvivable,
+            DangerLevel::Always,
+            DangerLevel::Never,
+        ] {
             let mut state = SettingsState {
                 open: true,
                 row: 8,
@@ -1601,7 +1610,7 @@ mod tests {
     }
 
     #[test]
-    fn danger_routing_line_shows_label_and_explanation_at_both_levels_and_sizes() {
+    fn danger_routing_line_shows_label_and_explanation_at_all_levels_and_sizes() {
         let squeeze = |text: &str| -> String {
             text.chars()
                 .filter(|ch| !ch.is_whitespace() && *ch != '│')
@@ -1635,11 +1644,21 @@ mod tests {
                 );
                 if let Some(dir) = &capture_dir {
                     std::fs::create_dir_all(dir).unwrap();
-                    let name = format!(
-                        "settings-danger-{}-{w}x{h}.txt",
-                        level.label().to_lowercase()
-                    );
-                    std::fs::write(dir.join(name), &text).unwrap();
+                    let level_tag = level.label().to_ascii_lowercase().replace(' ', "-");
+                    let name = format!("settings-danger-{level_tag}-{w}x{h}.json");
+                    let capture = serde_json::json!({
+                        "tag": "tui-danger-routing-render",
+                        "test": "settings::tests::danger_routing_line_shows_label_and_explanation_at_all_levels_and_sizes",
+                        "level": level.label(),
+                        "width": w,
+                        "height": h,
+                        "text": text,
+                    });
+                    std::fs::write(
+                        dir.join(name),
+                        serde_json::to_vec_pretty(&capture).unwrap(),
+                    )
+                    .unwrap();
                 }
             }
         }

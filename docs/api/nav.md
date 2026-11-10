@@ -1195,15 +1195,19 @@ freezes manual/scenario movement during script Starting/Running/Paused/
 Stopping, native movement or an existing escape obligation.
 Advisory `assess_walk` never acquires that movement ownership.
 
-Danger routing has two levels: **Never**, the default, and **Always**, the
-user's global override. A saved setting from the previous release that holds
-the removed middle level (**When survivable**: `nav.survivable_routing` true and
-`nav.allow_danger_zones` not true) loads as Never; the host logs one info line
-per process and does not rewrite the file. The next change of the level clears
-the old key in the same write.
+Danger routing has three levels: **Never**, the default; **When survivable**;
+and **Always**, the global override. The middle level stores
+`nav.allow_danger_zones=false` and `nav.survivable_routing=true`. A saved
+middle-level pair remains selected when read. Reading it does not rewrite the
+file. If both stored bits are true, **Always** takes precedence.
 
-While `NET_AVAILABLE` is false (until the bot can track poison live), a walk
-with no danger request keeps exactly the router's outcome and route, including
+While `NET_AVAILABLE` is false, **When survivable** behaves exactly like
+**Never** for every script, walk and crossing combination. It uses the
+runtime safety net only when that net is available. Changing the level writes
+both stored bits together.
+
+With **Never** or **When survivable** and `NET_AVAILABLE` false, a walk with
+no danger request keeps exactly the router's outcome and route, including
 origin-inside walks and destination-zone completion. Its assessment is
 informational, not a new admission refusal; a manual NoPath neither creates a
 walk arm nor stops the one already walking. A script's request is enforced.

@@ -125,10 +125,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   zones per route is gone: a guide can declare any number. Start still lists
   the zones a guide declares. A walk option that forbids danger zones no
   longer overrides the global setting.
-- Danger routing has two levels: **Never** (the default) and **Always**. The
-  **When survivable** level is gone: it never did more than **Never**, and a
-  script's own request now gets the survival check. A setting saved as
-  **When survivable** loads as **Never**, and the log says so once.
+- Danger routing has three levels: **Never** (the default), **When
+  survivable**, and **Always**. The middle level stays selectable and stored
+  as `allow_danger_zones=false` and `survivable_routing=true`. Reading that
+  saved pair does not rewrite it. While `NET_AVAILABLE` is false, it behaves
+  exactly like Never for every script, walk and crossing combination. It
+  uses the runtime safety net only when that net is available. **Always**
+  takes precedence if both stored bits are true.
 
 ### Combat
 

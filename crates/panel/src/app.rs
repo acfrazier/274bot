@@ -3626,11 +3626,10 @@ fn labelled<'a>(scratch: &'a mut String, label: &str, text: &str) -> &'a str {
     scratch
 }
 
-/// Routing group of the Nav config window: the global routing permissions and
-/// the Danger routing drop-down. The drop-down spans the full width so its
-/// level names never clip at the docked 330 px panel width; the held middle
-/// level explains itself in a wrapped note under the control. Returns whether
-/// a setting changed.
+/// Routing group of the Nav config window: global routing permissions and the
+/// Danger routing drop-down. The drop-down spans the full width so its level
+/// names never clip at the docked 330 px panel width. Its tooltip explains the
+/// held middle level. Returns whether a setting changed.
 fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     let mut changed = false;
     ui.text_colored(ACCENT, "Routing");
@@ -3963,6 +3962,7 @@ fn commit_nav_settings(
     }
     if before.danger_level() != after.danger_level() {
         session.remember_nav_preference("allow_danger_zones", after.allow_danger_zones);
+        session.remember_nav_preference("survivable_routing", after.survivable_routing);
         submit(
             session,
             OperatorCommand::SetDangerLevel(after.danger_level()),
