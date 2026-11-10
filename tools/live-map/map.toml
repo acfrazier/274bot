@@ -899,7 +899,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs", "crates/host-play/src/poison_hold.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/walk_plan.rs"]
+globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs", "crates/host-play/src/poison_hold.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/walk_plan.rs", "crates/nav-planner/src/contract/zones.rs"]
 cells = [
   "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact admission::probability_live_tests::probability_admission_engine_l --nocapture --test-threads=1",
 ]

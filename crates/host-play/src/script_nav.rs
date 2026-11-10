@@ -5622,8 +5622,6 @@ impl ScriptWalkArm {
             session_permissions,
             None,
         );
-        let policy = decision.policy;
-        let enforce = decision.enforce;
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
