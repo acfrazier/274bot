@@ -290,7 +290,9 @@ pub struct Provisioner {
     unmet_logged: Vec<UnmetNeed>,
 }
 
-const _: () = assert!(std::mem::size_of::<Provisioner>() <= 912);
+// Capacity deposits retain a 28-row protected snapshot inline, not a copied
+// Path keep list or a per-request heap allocation.
+const _: () = assert!(std::mem::size_of::<Provisioner>() <= 1120);
 
 impl Default for Provisioner {
     fn default() -> Self {
@@ -386,13 +388,6 @@ impl Provisioner {
         }
         if self.acquire_run.is_some() {
             return self.poll_acquire(cx);
-        }
-        if plan.owns_inventory {
-            if let Some(ended) = self.end_session(cx) {
-                return ended;
-            }
-            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
-            return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
         let prepared = self.poll_prepare(cx, plan, active_loadout, current_stage);
@@ -590,6 +585,20 @@ impl Provisioner {
         active_loadout: Option<&str>,
         current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        let current = stage_index(plan, current_stage);
+        if plan.owns_inventory
+            && !plan
+                .survival
+                .as_ref()
+                .zip(current)
+                .is_some_and(|(survival, stage)| survival.stage_has_risk(stage))
+        {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
+            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
+            return Poll::Ready(Ok(ProvisionEvent::Ready));
+        }
         let snapshot = cx.tick.cx.snapshot();
         let stock = snapshot.stock();
         let known = stock.banked_origin() != Origin::Unknown;
@@ -604,7 +613,11 @@ impl Provisioner {
         let inventory = inventory.value;
         let capacity = i32::from(capacity.value);
         let mut needs = Planner::new(&stock, WorldFacts::default());
-        let current = stage_index(plan, current_stage);
+        let spillover_keep = if plan.owns_inventory {
+            &plan.managed_items
+        } else {
+            &plan.base_spillover_keep
+        };
         let survival = if let (Some(survival), Some(stage)) = (&plan.survival, current) {
             if self.survival_stage != stage && survival.stage_has_risk(stage) {
                 let Some(frame) = crate::combat::frame::Frame::borrow(snapshot) else {
@@ -621,11 +634,13 @@ impl Provisioner {
                     poison,
                     false,
                 );
-                let target = survival.plan(stage, stock, input).map_err(|why| {
-                    ActionError::Unavailable(Arc::from(format!(
-                        "stage survival bound refused: {why:?}"
-                    )))
-                })?;
+                let target = survival
+                    .plan(stage, stock, input, plan.owns_inventory.then_some(plan))
+                    .map_err(|why| {
+                        ActionError::Unavailable(Arc::from(format!(
+                            "stage survival bound refused: {why:?}"
+                        )))
+                    })?;
                 if self.gear_stage != stage {
                     if target.gear.iter().any(|item| {
                         stock.carried(item.id).unwrap_or(0) == 0 && stock.banked(item.id).is_none()
@@ -655,13 +670,14 @@ impl Provisioner {
                             || gear.iter().any(|item| stock.held(item.id).unwrap_or(0) > 0)
                             || inventory
                                 .iter()
-                                .any(|row| !plan.base_spillover_keep.contains(&row.def.id)))
+                                .any(|row| !spillover_keep.contains(&row.def.id)))
                     {
                         self.gear_run = Some(super::families::begin_survival_loadout(
                             &gear,
                             plan.bank,
                             plan.bank_required,
-                            Arc::clone(&plan.base_spillover_keep),
+                            Arc::clone(spillover_keep),
+                            plan.owns_inventory,
                             cx,
                         )?);
                         self.in_session = true;
@@ -694,7 +710,7 @@ impl Provisioner {
             None
         };
 
-        for item in plan.items.iter() {
+        for item in plan.items.iter().filter(|_| !plan.owns_inventory) {
             if !item_due(item, current) {
                 // The quest has not reached this item's stage yet: no need,
                 // and no Unknown-bank scan, until it is due.
@@ -720,7 +736,11 @@ impl Provisioner {
             }
             needs.require(&need)?;
         }
-        for need in plan.gather_tool_needs.iter() {
+        for need in plan
+            .gather_tool_needs
+            .iter()
+            .filter(|_| !plan.owns_inventory)
+        {
             let Some(stats) = snapshot.stats() else {
                 continue;
             };
@@ -806,7 +826,7 @@ impl Provisioner {
             .iter()
             .filter(|row| {
                 row.count > 0
-                    && !plan.base_spillover_keep.contains(&row.def.id)
+                    && !spillover_keep.contains(&row.def.id)
                     && !survival.as_ref().is_some_and(|need| {
                         need.gear.iter().any(|item| item.id == row.def.id)
                             || need
@@ -821,7 +841,7 @@ impl Provisioner {
         // before admitting them to the withdrawal plan. The fit is exact once
         // the bank is known; an `Unknown` bank admits the need so the scan
         // learns it (design-bank-snapshot §4 F2).
-        if plan.coin_float <= 0 {
+        if plan.owns_inventory || plan.coin_float <= 0 {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
             if !self.coin_drawn {
@@ -867,7 +887,10 @@ impl Provisioner {
             }
         }
 
-        if let Some(carry) = active_loadout.and_then(|name| plan.loadout_carry.get(name)) {
+        if let Some(carry) = active_loadout
+            .filter(|_| !plan.owns_inventory)
+            .and_then(|name| plan.loadout_carry.get(name))
+        {
             for row in carry.iter() {
                 let bit = 1u64 << row.latch_index;
                 if self.carry_drawn & bit != 0 {
@@ -920,12 +943,30 @@ impl Provisioner {
         // refuses movement. Route admission owns that decision.
         if let Some(target) = &survival {
             if let Some((item, count)) = &target.food {
-                let reserved =
-                    planned_required_slots(plan, &needs, inventory, active_need, active_recipe);
+                let reserved = planned_survival_slots(
+                    plan,
+                    &needs,
+                    inventory,
+                    current,
+                    active_need,
+                    active_recipe,
+                );
                 let held = stock.held(item.id).unwrap_or(0);
+                let quest_food = if plan.owns_inventory {
+                    plan.survival
+                        .as_ref()
+                        .and_then(|survival| {
+                            current.and_then(|stage| survival.stage_inventory(stage))
+                        })
+                        .and_then(|stage| stage.items.iter().find(|row| row.item.id == item.id))
+                        .map_or(held, |row| held.max(row.qty))
+                } else {
+                    held
+                };
                 let room = capacity
+                    .saturating_add(if plan.owns_inventory { safe_slots } else { 0 })
                     .saturating_sub(reserved)
-                    .saturating_add(held)
+                    .saturating_add(quest_food)
                     .max(held);
                 let fits = (*count).min(room);
                 if fits > 0 || stock.banked(item.id).is_none() {
@@ -982,6 +1023,7 @@ impl Provisioner {
             .items
             .iter()
             .filter(|item| item.kind == CompiledItemKind::Acquirable && item.acquire.is_none())
+            .filter(|_| !plan.owns_inventory)
             .filter(|item| item_due(item, current))
         {
             let target = i32::try_from(item.qty).map_err(|_| {
@@ -1054,8 +1096,11 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
         }
 
-        let mut required_slots =
-            planned_required_slots(plan, &needs, inventory, active_need, active_recipe);
+        let mut required_slots = if plan.owns_inventory && needs.withdrawal_count() > 0 {
+            planned_survival_slots(plan, &needs, inventory, current, active_need, active_recipe)
+        } else {
+            planned_required_slots(plan, &needs, inventory, active_need, active_recipe)
+        };
         if required_slots.saturating_sub(capacity) > safe_slots {
             // Keep an impossible speculative peak out of the fallback, but
             // preserve immediate withdrawals and the active need's final slot.
@@ -1090,8 +1135,16 @@ impl Provisioner {
             let status = needs
                 .first_withdrawal()
                 .or_else(|| active_need.map(|need| &need.need));
-            let keep = if let Some(survival) = &survival {
-                let mut keep = plan.base_spillover_keep.to_vec();
+            let (keep, extra_keep) = if plan.owns_inventory {
+                (
+                    Arc::clone(spillover_keep),
+                    survival
+                        .as_ref()
+                        .and_then(|survival| survival.food.as_ref())
+                        .map(|(item, _)| item.id),
+                )
+            } else if let Some(survival) = &survival {
+                let mut keep = spillover_keep.to_vec();
                 for item in &survival.gear {
                     if !keep.contains(&item.id) {
                         keep.push(item.id);
@@ -1102,14 +1155,18 @@ impl Provisioner {
                         keep.push(item.id);
                     }
                 }
-                Arc::from(keep)
+                (Arc::from(keep), None)
             } else {
-                Arc::clone(&plan.base_spillover_keep)
+                (Arc::clone(spillover_keep), None)
             };
             self.start_bank(
                 cx,
                 plan,
-                BankAction::DepositCapacity { keep, slots },
+                BankAction::DepositCapacity {
+                    keep,
+                    extra_keep,
+                    slots,
+                },
                 ProvisionPhase::Spillover,
                 status.map(|need| Arc::clone(&need.item)),
                 status.map_or(deficit, |need| need.need),
@@ -1675,6 +1732,43 @@ fn planned_required_slots(
     }
 }
 
+fn planned_survival_slots(
+    plan: &CompiledProvisioning,
+    needs: &Planner<'_>,
+    inventory: &[ItemView],
+    current: Option<usize>,
+    active_need: Option<&RecipeNeed>,
+    recipe: Option<&CompiledAcquireRecipe>,
+) -> i32 {
+    let mut slots = planned_required_slots(plan, needs, inventory, active_need, recipe);
+    if !plan.owns_inventory {
+        return slots;
+    }
+    let Some(stage) = plan
+        .survival
+        .as_ref()
+        .and_then(|survival| current.and_then(|stage| survival.stage_inventory(stage)))
+    else {
+        return slots;
+    };
+    for row in stage.items.iter() {
+        let held = ops::count_id(inventory, row.item.id);
+        let planned = needs
+            .withdrawals()
+            .find(|withdrawal| withdrawal.id == row.item.id)
+            .map_or(held, |withdrawal| held.max(withdrawal.target));
+        slots = slots.saturating_add(
+            Stock::slots_for(planned.max(row.qty), row.stackable)
+                .saturating_sub(Stock::slots_for(planned, row.stackable)),
+        );
+    }
+    slots
+}
+
+#[cfg(test)]
+#[path = "provision_ownership_tests.rs"]
+mod ownership_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1698,7 +1792,7 @@ mod tests {
         QuestCatalog::from_identity(data.quest_identity()).unwrap()
     }
 
-    fn item_view(id: i32, name: &str, count: i32, container: ItemContainer) -> ItemView {
+    pub(super) fn item_view(id: i32, name: &str, count: i32, container: ItemContainer) -> ItemView {
         ItemView {
             def: def(id, name),
             container,
@@ -1817,6 +1911,8 @@ mod tests {
             coin_float: 0,
             coin: None,
             loadout_carry: HashMap::new(),
+            managed_items: Arc::from(keep.clone()),
+            carried_items: Arc::from([]),
             base_spillover_keep: Arc::from(keep),
             recipes: HashMap::new(),
             survival: None,
@@ -1850,7 +1946,7 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
-    fn poll_once_at(
+    pub(super) fn poll_once_at(
         provisioner: &mut Provisioner,
         snapshot: &GameSnapshot,
         ledger: &mut Option<Box<ledger::Ledger>>,
@@ -1876,7 +1972,10 @@ mod tests {
         })
     }
 
-    fn snapshot_view(snapshot: &GameSnapshot, tick: u64) -> api::snapshot::SnapshotView<'_> {
+    pub(super) fn snapshot_view(
+        snapshot: &GameSnapshot,
+        tick: u64,
+    ) -> api::snapshot::SnapshotView<'_> {
         api::snapshot::SnapshotView::new(
             Some(snapshot),
             api::quest_progress::EvidenceStamp {
@@ -1905,6 +2004,14 @@ mod tests {
     fn survival_fixture_with_gear(
         crossing: bool,
         gear: bool,
+    ) -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot) {
+        survival_fixture_document(crossing, gear, |_| {})
+    }
+
+    pub(super) fn survival_fixture_document(
+        crossing: bool,
+        gear: bool,
+        customize: impl FnOnce(&mut super::super::path::PathDocument),
     ) -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot) {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = quest_catalog();
@@ -1955,6 +2062,7 @@ mod tests {
                 reason: "Exercise food-aware preparation before crossing.".into(),
             }];
         }
+        customize(&mut document);
         let mut path = compile::compile_uncached_for_test_with_zones(
             &document,
             &selected,
@@ -2002,7 +2110,7 @@ mod tests {
         (path, quests, snapshot)
     }
 
-    fn survival_input(
+    pub(super) fn survival_input(
         snapshot: &GameSnapshot,
         survival: &super::super::survival::CompiledSurvival,
     ) -> crate::combat::risk::RiskInput {
@@ -2042,6 +2150,7 @@ mod tests {
                     ..snapshot_view(&snapshot, 1).stock()
                 },
                 input,
+                None,
             )
             .unwrap()
             .food
@@ -2140,6 +2249,7 @@ mod tests {
                     ..snapshot_view(&snapshot, 80).stock()
                 },
                 observed,
+                None,
             )
             .unwrap();
         assert!(target
@@ -2202,6 +2312,7 @@ mod tests {
                     ..snapshot_view(&snapshot, 1).stock()
                 },
                 survival_input(&snapshot, survival),
+                None,
             )
             .unwrap();
         assert_eq!(target.gear.len(), equipment.len());
@@ -3352,7 +3463,7 @@ mod tests {
     }
 
     #[test]
-    fn owns_inventory_skips_prepare() {
+    fn owns_inventory_without_survival_leaves_quest_preparation_to_the_path() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -3499,7 +3610,7 @@ mod tests {
 
     /// A fixture bank the provisioner can open offline: the player stands on
     /// the booth tile and the booth loc is posted, so a trip needs no walk.
-    fn openable_bank_fixture() -> (GameSnapshot, NamedBank, Arc<NamedBankFacts>) {
+    pub(super) fn openable_bank_fixture() -> (GameSnapshot, NamedBank, Arc<NamedBankFacts>) {
         let stand = tile(3210, 3210);
         let bank = NamedBank::new("Test bank", stand);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
@@ -3532,7 +3643,7 @@ mod tests {
         (snapshot, bank, banks)
     }
 
-    fn bank_row(id: i32, name: &str, count: i32) -> ItemView {
+    pub(super) fn bank_row(id: i32, name: &str, count: i32) -> ItemView {
         ItemView {
             def: def(id, name),
             container: ItemContainer::Bank,
@@ -3544,7 +3655,7 @@ mod tests {
         }
     }
 
-    fn complete_bank_pick(
+    pub(super) fn complete_bank_pick(
         ledger: &mut Option<Box<ledger::Ledger>>,
         bank: NamedBank,
         stand: WorldTile,
@@ -3579,7 +3690,7 @@ mod tests {
         );
     }
 
-    fn complete_open_stand(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    pub(super) fn complete_open_stand(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
         let ledger = ledger.as_mut().expect("bank trip queued an OpenStand");
         let action = ledger.outbox.remove(0);
         let authority = action.authority();

@@ -1,5 +1,5 @@
 //! Shared Path-stage obligations and risk-selected bank targets.
-use super::compile::{CompileContext, CompileError, CompiledSequence};
+use super::compile::{CompileContext, CompileError, CompiledProvisioning, CompiledSequence};
 use crate::combat::risk::{self, Food, RiskInput, RiskTables, SupplyExposure, UnknownWhy};
 use crate::combat::tables::CombatTables;
 use crate::combat::{CompiledKit, Target};
@@ -12,12 +12,15 @@ pub struct StageSurvival {
     exposures: Arc<[SupplyExposure]>,
     /// Every combat machine may put on its opening kit during this stage.
     kits: Arc<[Arc<CompiledKit>]>,
+    inventory: super::compile::StageInventory,
 }
 
 pub struct CompiledSurvival {
     tables: Arc<CombatTables>,
     stages: Box<[StageSurvival]>,
     choices: Box<[Arc<CompiledKit>]>,
+    /// Automatic gear never takes a slot claimed anywhere in the Path.
+    equipment_slots: u16,
 }
 
 pub struct SurvivalNeed {
@@ -28,19 +31,18 @@ pub struct SurvivalNeed {
     pub unknown: Option<UnknownWhy>,
 }
 
-const _: () = assert!(std::mem::size_of::<StageSurvival>() == 32);
-const _: () = assert!(std::mem::size_of::<CompiledSurvival>() <= 40);
+const _: () = assert!(std::mem::size_of::<StageSurvival>() == 56);
+const _: () = assert!(std::mem::size_of::<CompiledSurvival>() <= 48);
 const _: () = assert!(std::mem::size_of::<SurvivalNeed>() <= 88);
 
 impl CompiledSurvival {
     pub(super) fn compile(
         sequences: &[CompiledSequence],
-        authored: &[super::path::SequenceDocument],
-        loadouts: impl Iterator<Item = impl AsRef<str>>,
+        role: &super::path::PathRoleDocument,
+        header: &super::path::QuestHeaderDocument,
         cx: &CompileContext<'_>,
         zones: Option<ZoneTableView<'_>>,
         prelude: &[super::compile::CompiledStep],
-        authored_prelude: &[super::path::StepDocument],
     ) -> Result<Option<Arc<Self>>, CompileError> {
         if !sequences.iter().any(|sequence| {
             !sequence.cross.is_empty()
@@ -51,10 +53,11 @@ impl CompiledSurvival {
         }) && !prelude
             .iter()
             .any(|step| step.plan.combat_request().is_some())
-            && !authored
+            && !role
+                .sequences
                 .iter()
                 .flat_map(|sequence| &sequence.steps)
-                .chain(authored_prelude)
+                .chain(&role.prelude)
                 .any(|step| {
                     let mut present = false;
                     walk_crossings(&step.args, &mut |_| present = true);
@@ -75,8 +78,8 @@ impl CompiledSurvival {
             .map_err(|_| CompileError::code("combat-tables-unavailable"))?;
         let risks = RiskTables::build(&tables);
         let mut choices = Vec::new();
-        for name in loadouts {
-            let name = name.as_ref();
+        for name in header.loadouts.keys() {
+            let name = name.as_str();
             let qualified = format!("{}/{}", cx.path.0, name);
             let row = cx
                 .loadouts
@@ -90,11 +93,11 @@ impl CompiledSurvival {
         }
         let choices = choices.into_boxed_slice();
         let mut stages = Vec::with_capacity(sequences.len());
-        for (sequence, authored) in sequences.iter().zip(authored) {
+        for (sequence, authored) in sequences.iter().zip(&role.sequences) {
             let mut exposures = Vec::new();
             let mut kits = Vec::new();
             let mut crossings = sequence.cross.to_vec();
-            for step in authored.steps.iter().chain(authored_prelude) {
+            for step in authored.steps.iter().chain(&role.prelude) {
                 walk_crossings(&step.args, &mut |name| {
                     if !crossings.iter().any(|known| known.as_ref() == name) {
                         crossings.push(Arc::from(name));
@@ -177,12 +180,21 @@ impl CompiledSurvival {
             stages.push(StageSurvival {
                 exposures: exposures.into(),
                 kits: kits.into(),
+                inventory: super::compile::stage_inventory(
+                    authored.steps.iter().chain(&role.prelude),
+                    header,
+                    cx,
+                )?,
             });
         }
+        let equipment_slots = stages
+            .iter()
+            .fold(0, |mask, stage| mask | stage.inventory.equipment_slots);
         Ok(Some(Arc::new(Self {
             tables,
             stages: stages.into_boxed_slice(),
             choices,
+            equipment_slots,
         })))
     }
 
@@ -196,31 +208,41 @@ impl CompiledSurvival {
             .is_some_and(|stage| !stage.exposures.is_empty())
     }
 
+    pub(crate) fn stage_inventory(&self, stage: usize) -> Option<&super::compile::StageInventory> {
+        self.stages.get(stage).map(|stage| &stage.inventory)
+    }
+
     pub fn plan(
         &self,
         stage: usize,
         stock: Stock<'_>,
         input: RiskInput,
+        owner: Option<&CompiledProvisioning>,
     ) -> Result<SurvivalNeed, UnknownWhy> {
         let stage = self.stages.get(stage).ok_or(UnknownWhy::MissingFacts)?;
         let mut required = Vec::new();
         for kit in stage.kits.iter() {
-            self.add_gear(kit, &mut required)?;
+            self.add_gear(kit, &mut required, stock, owner)?;
         }
         let mut best: Option<SurvivalNeed> = None;
         // Prefer an already worn kit when it is as safe as a banked guide kit.
         for choice in std::iter::once(None).chain(self.choices.iter().map(Some)) {
             if choice.is_some_and(|kit| {
-                kit.worn
-                    .iter()
-                    .any(|&(_, id)| stock.total(id).is_some_and(|count| count <= 0))
+                kit.worn.iter().any(|&(_, id)| {
+                    self.gear_allowed(id, stock, owner)
+                        && stock.total(id).is_some_and(|count| count <= 0)
+                })
             }) {
                 continue;
             }
             let mut candidate = input;
             candidate.style_def = 0;
             if let Some(kit) = choice {
-                candidate.worn_defence = self.defence(kit)?;
+                candidate.worn_defence = if let Some(owner) = owner {
+                    self.owned_defence(kit, stock, owner)?
+                } else {
+                    self.defence(kit)?
+                };
             }
             for kit in stage.kits.iter() {
                 let defence = self.defence(kit)?;
@@ -246,6 +268,11 @@ impl CompiledSurvival {
                         fact.eat_delay_arg != Some(2)
                             || fact.message_delay.is_some_and(|delay| delay > 0)
                     })
+                || owner.is_some_and(|owner| {
+                    input.food_ids[..usize::from(input.food_len)]
+                        .iter()
+                        .any(|id| owner.carried_items.contains(id))
+                })
             {
                 unknown = Some(UnknownWhy::MissingFacts);
                 bound = 1.0;
@@ -253,7 +280,7 @@ impl CompiledSurvival {
             let food = if bound <= risk::consts::DEATH_BOUND {
                 None
             } else {
-                self.food_need(stage, stock, &candidate, unknown.is_some())?
+                self.food_need(stage, stock, &candidate, unknown.is_some(), owner)?
             };
             if let Some((item, target)) = &food {
                 let fact = self.tables.food(item.id).ok_or(UnknownWhy::MissingFacts)?;
@@ -272,7 +299,7 @@ impl CompiledSurvival {
             }
             let mut gear = required.clone();
             if let Some(kit) = choice {
-                self.add_gear(kit, &mut gear)?;
+                self.add_gear(kit, &mut gear, stock, owner)?;
             }
             let need = SurvivalNeed {
                 food,
@@ -302,6 +329,7 @@ impl CompiledSurvival {
         stock: Stock<'_>,
         input: &RiskInput,
         unknown: bool,
+        owner: Option<&CompiledProvisioning>,
     ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
         // The guard's homogeneous picker is exact. A different carried food
         // would change its decisions, so do not credit a hypothetical mixture.
@@ -310,11 +338,15 @@ impl CompiledSurvival {
             .into_iter()
             .flatten()
             .filter(|row| row.count > 0 && self.tables.food(row.def.id).is_some())
+            .filter(|row| owner.is_none_or(|owner| !owner.carried_items.contains(&row.def.id)))
             .map(|row| row.def.id)
             .next();
         let mut fallback = None;
         let mut best: Option<(BankItem, i32, f64)> = None;
         for item in self.tables.selected().items() {
+            if owner.is_some_and(|owner| owner.carried_items.contains(&item.id)) {
+                continue;
+            }
             if !unknown && held_food.is_some_and(|id| id != item.id) {
                 continue;
             }
@@ -430,8 +462,12 @@ impl CompiledSurvival {
     }
 
     fn defence(&self, kit: &CompiledKit) -> Result<[i16; 4], UnknownWhy> {
+        self.defence_ids(kit.worn.iter().map(|&(_, id)| id))
+    }
+
+    fn defence_ids(&self, ids: impl Iterator<Item = i32>) -> Result<[i16; 4], UnknownWhy> {
         let mut defence = [0i16; 4];
-        for &(_, id) in kit.worn.iter() {
+        for id in ids {
             let bonus = self
                 .tables
                 .selected()
@@ -449,8 +485,101 @@ impl CompiledSurvival {
         Ok(defence)
     }
 
-    fn add_gear(&self, kit: &CompiledKit, gear: &mut Vec<BankItem>) -> Result<(), UnknownWhy> {
+    fn wear_mask(&self, id: i32) -> Option<u16> {
+        let item = self.tables.selected().item_by_id(id)?;
+        let mut mask = 0u16;
+        for slot in [
+            item.wear_position,
+            item.wear_position_2,
+            item.wear_position_3,
+        ] {
+            if slot >= 0 {
+                mask |= 1u16.checked_shl(u32::try_from(slot).ok()?)?;
+            }
+        }
+        (mask != 0).then_some(mask)
+    }
+
+    fn gear_allowed(
+        &self,
+        id: i32,
+        stock: Stock<'_>,
+        owner: Option<&CompiledProvisioning>,
+    ) -> bool {
+        let Some(owner) = owner else {
+            return true;
+        };
+        if owner.carried_items.contains(&id) {
+            return false;
+        }
+        let Some(mask) = self.wear_mask(id) else {
+            return false;
+        };
+        mask & self.equipment_slots == 0
+            && !stock.worn.into_iter().flatten().any(|row| {
+                row.count > 0
+                    && row.def.id != id
+                    && owner.managed_items.contains(&row.def.id)
+                    && self
+                        .wear_mask(row.def.id)
+                        .is_none_or(|worn| mask & worn != 0)
+            })
+    }
+
+    fn owned_defence(
+        &self,
+        kit: &CompiledKit,
+        stock: Stock<'_>,
+        owner: &CompiledProvisioning,
+    ) -> Result<[i16; 4], UnknownWhy> {
+        let selected = self.tables.selected();
+        let mut worn = [-1; u16::BITS as usize];
+        for row in stock.worn.ok_or(UnknownWhy::MissingFacts)? {
+            if row.count <= 0 {
+                continue;
+            }
+            let slot = selected
+                .item_by_id(row.def.id)
+                .and_then(|item| usize::try_from(item.wear_position).ok())
+                .filter(|&slot| slot < worn.len())
+                .ok_or(UnknownWhy::MissingFacts)?;
+            worn[slot] = row.def.id;
+        }
         for &(_, id) in kit.worn.iter() {
+            if !self.gear_allowed(id, stock, Some(owner)) {
+                continue;
+            }
+            let mask = self.wear_mask(id).ok_or(UnknownWhy::MissingFacts)?;
+            for existing in &mut worn {
+                if *existing >= 0
+                    && self
+                        .wear_mask(*existing)
+                        .is_none_or(|existing| existing & mask != 0)
+                {
+                    *existing = -1;
+                }
+            }
+            let slot = selected
+                .item_by_id(id)
+                .and_then(|item| usize::try_from(item.wear_position).ok())
+                .filter(|&slot| slot < worn.len())
+                .ok_or(UnknownWhy::MissingFacts)?;
+            worn[slot] = id;
+        }
+        self.defence_ids(worn.into_iter().filter(|&id| id >= 0))
+    }
+
+    fn add_gear(
+        &self,
+        kit: &CompiledKit,
+        gear: &mut Vec<BankItem>,
+        stock: Stock<'_>,
+        owner: Option<&CompiledProvisioning>,
+    ) -> Result<(), UnknownWhy> {
+        for &(_, id) in kit.worn.iter() {
+            if !self.gear_allowed(id, stock, owner) {
+                continue;
+            }
             if let Some(index) = gear.iter().position(|known| known.id == id) {
                 let item = gear.remove(index);
                 gear.push(item);

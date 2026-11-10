@@ -6504,10 +6504,55 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
         .unwrap()
         .value = 1;
     rig.snapshot.seed_varps(varps);
+    // Bank stock is incidental to this prayer lifecycle test. Unknown-bank
+    // preparation is covered by the Quester's pre-combat scan regression.
+    let mut observed_bank = GameSnapshot::new();
+    observed_bank.seed_bank_observation(1, 0, Some(Vec::new()), Vec::new());
+    let mut bank_memory = api::bank_memory::BankMemory::default();
+    bank_memory.track(&observed_bank, 0);
+    let bank_memory = parking_lot::RwLock::new(bank_memory);
+    let observe = |rig: &mut Rig, tick: u64| {
+        script_observe_cached_with_channels(
+            &mut rig.driver,
+            "alice",
+            true,
+            true,
+            false,
+            tick,
+            Some((here.x, here.z, here.level)),
+            None,
+            None,
+            Some(&rig.snapshot),
+            Some(&bank_memory),
+            #[cfg(feature = "js")]
+            None,
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "js")]
+            None,
+            #[cfg(feature = "js")]
+            crate::script_channels::BrokerWorld::Unavailable,
+            None,
+            None,
+            None,
+            None,
+        );
+        crate::script_runtime::pump_route_work(&rig.navs, "alice");
+    };
     let raised_tick = (1..=20)
         .find(|tick| {
             rig.snapshot.seed_tick(*tick);
-            rig.observe_with_here(u64::from(*tick), here);
+            observe(&mut rig, u64::from(*tick));
             rig.driver
                 .if_button_components
                 .contains(&protect.button_com)
@@ -6525,13 +6570,13 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     rig.snapshot.seed_varps(varps);
     rig.slot().lock().unwrap().stop();
     rig.snapshot.seed_tick(raised_tick + 1);
-    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    observe(&mut rig, u64::from(raised_tick + 1));
     assert_eq!(
         &rig.driver.if_button_components[before_stop..],
         &[protect.button_com],
         "Stop owes only Combat's accepted protect, never the user's Thick Skin"
     );
-    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    observe(&mut rig, u64::from(raised_tick + 1));
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
     assert_eq!(
         rig.snapshot
@@ -6550,7 +6595,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
         .value = 0;
     rig.snapshot.seed_varps(varps);
     rig.snapshot.seed_tick(raised_tick + 2);
-    rig.observe_with_here(u64::from(raised_tick + 2), here);
+    observe(&mut rig, u64::from(raised_tick + 2));
     assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
 }

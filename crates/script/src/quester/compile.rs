@@ -6,6 +6,8 @@ use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
+#[path = "inventory.rs"]
+mod inventory;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
@@ -21,6 +23,7 @@ use api::selected::{
     FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
     Truth,
 };
+pub(crate) use inventory::{stage_inventory, StageInventory};
 use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
 use std::{
@@ -166,6 +169,13 @@ pub struct CompiledPath {
     pub warnings: Vec<Arc<str>>,
 }
 
+impl CompiledPath {
+    /// Return the deterministic narrow set of items owned by this compiled Path.
+    pub fn managed_item_ids(&self) -> &[i32] {
+        &self.provisioning.managed_items
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompiledItemKind {
     MustHave,
@@ -237,6 +247,11 @@ pub struct CompiledProvisioning {
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
+    /// Managed items owned by this compiled Path, excluding unrelated global
+    /// tool families and unrelated operator loadout rows.
+    pub managed_items: Arc<[i32]>,
+    /// Managed items that a Path step or predicate requires in the pack.
+    pub carried_items: Arc<[i32]>,
     /// Stage keys in compiled sequence order; item gates resolve against this.
     pub stages: Arc<[FactKey]>,
     pub tools: Arc<[BankItem]>,
@@ -250,7 +265,7 @@ pub struct CompiledProvisioning {
     pub survival: Option<Arc<super::survival::CompiledSurvival>>,
 }
 
-const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 384);
+const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 416);
 
 pub struct CompiledSequence {
     pub stage: FactKey,
@@ -1474,14 +1489,16 @@ pub(super) fn compile_uncached(
             }
         }
     }
+    let (managed_items, carried_items) =
+        inventory::compile_managed_items(header, role, &recipe_ctx)
+            .map_err(|error| error.with_path(document.id.clone()))?;
     let survival = super::survival::CompiledSurvival::compile(
         &sequences,
-        &role.sequences,
-        header.loadouts.keys(),
+        role,
+        header,
         &recipe_ctx,
         zones,
         &prelude,
-        &role.prelude,
     )?;
     let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
         .into_iter()
@@ -1511,6 +1528,8 @@ pub(super) fn compile_uncached(
             .collect(),
         tools: Arc::from(tools),
         gather_tool_needs: Arc::from(gather_tool_needs),
+        managed_items,
+        carried_items,
         keep_ids,
         coin_float,
         coin,

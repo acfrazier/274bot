@@ -63,9 +63,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
-- The Quester chooses survival gear and food from its bank before risky stages.
-  It equips gear first, leaves room for quest items, and reports any supply
-  shortfall. Crossing admission still makes the final survival decision.
+- The Quester chooses survival gear and food from its bank before risky stages,
+  including stages whose Path manages its inventory. It protects quest-managed
+  items and authored equipment slots, equips permitted gear first, reserves
+  space for the stage's items, and reports supply or capacity shortfalls.
+  Quest item protection also works for Paths with more than 64 managed items.
+  Crossing admission still makes the final survival decision.
 - A Quester step can declare the content message that shows one of its failed
   attempts (`failure_signal`). Such an attempt no longer counts toward the
   no-progress park, so a chance step, such as Dwarf Cannon's railing repair,

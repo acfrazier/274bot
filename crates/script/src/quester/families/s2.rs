@@ -1407,6 +1407,7 @@ enum LoadoutStartPlan {
         bank_required: bool,
         items: Arc<[BankItem]>,
         keep_ids: Arc<[i32]>,
+        protect_worn: bool,
     },
 }
 
@@ -1419,6 +1420,7 @@ impl LoadoutStartPlan {
                 bank_required,
                 items,
                 keep_ids,
+                protect_worn,
             } => Ok(LoadoutRun {
                 bank: None,
                 worn: Arc::from(Vec::<Arc<[BankItem]>>::new()),
@@ -1434,6 +1436,7 @@ impl LoadoutStartPlan {
                     bank: *bank,
                     bank_required: *bank_required,
                     items: Arc::clone(items),
+                    protect_worn: *protect_worn,
                 }),
                 survival_attempted: None,
             }),
@@ -1446,6 +1449,7 @@ struct SurvivalLoadout {
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
     items: Arc<[BankItem]>,
+    protect_worn: bool,
 }
 
 pub(crate) fn begin_survival_loadout(
@@ -1453,6 +1457,7 @@ pub(crate) fn begin_survival_loadout(
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
     keep_ids: Arc<[i32]>,
+    protect_worn: bool,
     cx: &mut StepContext<'_, '_>,
 ) -> Result<Box<dyn StepRun>, ActionError> {
     let plan = LoadoutStartPlan::Survival {
@@ -1460,6 +1465,7 @@ pub(crate) fn begin_survival_loadout(
         bank_required,
         items: Arc::from(items),
         keep_ids,
+        protect_worn,
     };
     let snapshot = cx.tick.cx.snapshot();
     if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
@@ -1603,6 +1609,36 @@ impl LoadoutRun {
             {
                 self.worn_index += 1;
                 continue;
+            }
+            if survival.protect_worn {
+                let selected =
+                    api::game_data::for_revision(cx.tick.cx.revision()).map_err(|_| {
+                        ActionError::Unavailable(Arc::from("selected equipment facts unavailable"))
+                    })?;
+                let conflict = selected.item_by_id(item.id).is_none_or(|wanted| {
+                    let slots = [
+                        wanted.wear_position,
+                        wanted.wear_position_2,
+                        wanted.wear_position_3,
+                    ];
+                    equipment.value.iter().any(|row| {
+                        row.count > 0
+                            && self.keep_ids.contains(&row.def.id)
+                            && selected.item_by_id(row.def.id).is_none_or(|worn| {
+                                [
+                                    worn.wear_position,
+                                    worn.wear_position_2,
+                                    worn.wear_position_3,
+                                ]
+                                .into_iter()
+                                .any(|slot| slot >= 0 && slots.contains(&slot))
+                            })
+                    })
+                });
+                if conflict {
+                    self.worn_index += 1;
+                    continue;
+                }
             }
             if inventory
                 .value

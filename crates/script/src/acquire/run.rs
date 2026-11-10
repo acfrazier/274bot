@@ -351,6 +351,7 @@ impl AcquireRun {
                                     bank: self.bank,
                                     action: BankAction::DepositCapacity {
                                         keep: Arc::clone(keep),
+                                        extra_keep: None,
                                         slots: *slots,
                                     },
                                     partial_ok: false,

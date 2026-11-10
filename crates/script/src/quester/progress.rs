@@ -717,6 +717,8 @@ mod tests {
                 coin_float: 0,
                 coin: None,
                 loadout_carry: Default::default(),
+                managed_items: Arc::from([]),
+                carried_items: Arc::from([]),
                 base_spillover_keep: Arc::from(Vec::new()),
                 recipes: Default::default(),
                 survival: None,

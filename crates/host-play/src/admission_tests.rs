@@ -2468,7 +2468,7 @@ mod survival_provisioning {
         snapshot
     }
 
-    fn shortfall_reaches_admission(global_override: bool) {
+    fn shortfall_reaches_admission(global_override: bool, owns_inventory: bool) {
         let world = known_corridor(&[12]);
         let combat = selected_combat();
         let selected = combat.selected();
@@ -2482,7 +2482,7 @@ mod survival_provisioning {
         header.tools.clear();
         header.coin_float = 0;
         header.loadouts.clear();
-        header.owns_inventory = false;
+        header.owns_inventory = owns_inventory;
         document.roles[0].sequences[0].cross = vec![script::quester::path::RequiredZoneDocument {
             id: zones.name(zone_key).unwrap(),
             name: "Ice warrior crossing".into(),
@@ -2631,12 +2631,16 @@ mod survival_provisioning {
     #[test]
     fn global_override_proceeds_after_provisioning_reports_missing_survival_food() {
         script::require_local_game_data_for_test!(ClientRevision::R289);
-        shortfall_reaches_admission(true);
+        for owns_inventory in [false, true] {
+            shortfall_reaches_admission(true, owns_inventory);
+        }
     }
 
     #[test]
     fn request_only_crossing_refuses_after_provisioning_reports_missing_survival_food() {
         script::require_local_game_data_for_test!(ClientRevision::R289);
-        shortfall_reaches_admission(false);
+        for owns_inventory in [false, true] {
+            shortfall_reaches_admission(false, owns_inventory);
+        }
     }
 }

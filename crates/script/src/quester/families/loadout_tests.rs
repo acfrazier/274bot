@@ -1206,7 +1206,7 @@ fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
         1,
         &banks,
         |cx| {
-            begin_survival_loadout(&items, Some(bank), false, Arc::from([2000]), cx)
+            begin_survival_loadout(&items, Some(bank), false, Arc::from([2000]), false, cx)
                 .expect("survival loadout begins")
         },
     );
@@ -1414,6 +1414,7 @@ fn survival_loadout_skips_a_session_known_absent_item() {
                 Some(bank),
                 false,
                 Arc::from([]),
+                false,
                 cx,
             )
             .expect("survival loadout begins")
@@ -1440,11 +1441,75 @@ fn survival_loadout_skips_a_session_known_absent_item() {
 }
 
 #[test]
-fn loadout_acquisition_owner_stays_within_one_kibibyte() {
+fn survival_loadout_rechecks_managed_worn_items_before_equipping() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    for (wanted, protected, slot) in [
+        ("bronze_full_helm", "iron_full_helm", 0),
+        ("bronze_2h_sword", "bronze_kiteshield", 5),
+    ] {
+        for protect_worn in [false, true] {
+            let wanted = selected.item_by_alias(wanted).unwrap();
+            let protected = selected.item_by_alias(protected).unwrap();
+            let item = BankItem {
+                id: wanted.id,
+                name: Arc::from(wanted.name.as_deref().unwrap()),
+            };
+            let (bank, banks) = bank_facts();
+            let mut snapshot = snapshot(
+                vec![held_item(item.id, &item.name, 1, ItemContainer::Inventory)],
+                Vec::new(),
+                None,
+                Vec::new(),
+            );
+            let mut ledger = None;
+            let mut run = with_step(&snapshot, &mut ledger, 1, &banks, |cx| {
+                begin_survival_loadout(
+                    std::slice::from_ref(&item),
+                    Some(bank),
+                    false,
+                    Arc::from([protected.id]),
+                    protect_worn,
+                    cx,
+                )
+                .unwrap()
+            });
+            let mut worn = held_item(
+                protected.id,
+                protected.name.as_deref().unwrap(),
+                1,
+                ItemContainer::Equipment,
+            );
+            worn.slot = slot;
+            snapshot.seed_equipment(vec![worn]);
+            let result = with_step(&snapshot, &mut ledger, 2, &banks, |cx| run.poll(cx));
+            if protect_worn {
+                assert!(matches!(result, Poll::Ready(Ok(_))));
+                assert!(ledger
+                    .as_ref()
+                    .is_none_or(|ledger| ledger.outbox.is_empty()));
+            } else {
+                assert!(result.is_pending());
+                let _ = with_step(&snapshot, &mut ledger, 3, &banks, |cx| run.poll(cx));
+                assert!(matches!(
+                    ledger.as_ref().unwrap().outbox[0].effect,
+                    HostEffect::Interaction(crate::interact::InteractReq::Wear { .. })
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn loadout_acquisition_owner_stays_within_its_bounded_inline_bank_budget() {
     let run = std::mem::size_of::<LoadoutRun>();
     let wait = std::mem::size_of::<LoadoutObservationWait>();
     let survival = std::mem::size_of::<SurvivalLoadout>();
     eprintln!("LoadoutRun={run} LoadoutObservationWait={wait} SurvivalLoadout={survival}");
-    assert!(run <= 1024, "LoadoutRun is {run} bytes");
+    // The inline 28-row capacity snapshot removes a per-check allocation:
+    // +208 B, with LoadoutRun at 1136 B on macOS and Linux.
+    assert!(run <= 1152, "LoadoutRun is {run} bytes");
     assert!(survival <= 128, "SurvivalLoadout is {survival} bytes");
 }

@@ -1878,13 +1878,13 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<crate::quester::runner::Quester>(),
         size_of::<crate::survival::SurvivalStep>(),
     );
-    assert!(size_of::<crate::native_bank::BankMachine>() <= 768);
-    assert!(size_of::<AcquireRun>() <= 768);
+    assert!(size_of::<crate::native_bank::BankMachine>() <= 456);
+    assert!(size_of::<AcquireRun>() <= 920);
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
-    // Measured 912 B / 224 B on 64-bit targets, with an 8 B margin.
-    // Survival preparation adds a child run and two stage latches (32 B).
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 920);
+    // Capacity deposits replace the 24-byte Vec with a bounded, allocation-free
+    // 28-row snapshot. That adds 208 bytes through the inline bank child.
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1120);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 

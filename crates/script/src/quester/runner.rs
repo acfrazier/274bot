@@ -5711,9 +5711,9 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        // The provisioner now holds its survival loadout child and two stage
-        // latches: 32 B above the previous 3656 B measured Quester.
-        assert_eq!(bytes, 3688, "Quester changed its measured per-bot layout");
+        // The inline 28-row capacity snapshot removes a per-check allocation.
+        // Its bank child adds 208 B: 3896 B on macOS and Linux.
+        assert_eq!(bytes, 3896, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
