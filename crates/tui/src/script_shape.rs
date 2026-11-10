@@ -664,9 +664,9 @@ impl<'a> ScriptPane<'a> {
             lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
             match self.start_zones {
                 Some(zones) => {
-                    if let Some(warning) = &zones.unqualified_warning {
+                    if let Some(warning) = zones.unqualified_warning() {
                         lines.push(Line::styled(
-                            warning.as_str(),
+                            warning,
                             Style::default().add_modifier(ratatui::style::Modifier::BOLD),
                         ));
                     }

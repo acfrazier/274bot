@@ -43,12 +43,17 @@ pub struct QuesterStartZones {
     pub scopes: Vec<QuesterStartZoneScope>,
     /// The one warning shown when the queue includes guides that live
     /// testing has not qualified. Set only when the user allowed them.
-    pub unqualified_warning: Option<String>,
+    unqualified_warning: Option<String>,
 }
 
 impl QuesterStartZones {
     pub fn is_empty(&self) -> bool {
         self.scopes.is_empty()
+    }
+
+    /// The shared warning for unqualified guides, when the user allowed them.
+    pub fn unqualified_warning(&self) -> Option<&str> {
+        self.unqualified_warning.as_deref()
     }
 
     /// The shared operator-facing explanation for this frozen disclosure.
@@ -823,11 +828,11 @@ mod tests {
         let registry = PathRegistry::default();
         let mut picks = bag(&["priest", "arthur"]);
         let off = super::resolve_selected_zones(&registry, &picks).unwrap();
-        assert_eq!(off.unqualified_warning, None, "no warning while off");
+        assert_eq!(off.unqualified_warning(), None, "no warning while off");
 
         picks.insert("include_draft_guides".into(), json!(true));
         let on = super::resolve_selected_zones(&registry, &picks).unwrap();
-        let warning = on.unqualified_warning.as_deref().expect("warning while on");
+        let warning = on.unqualified_warning().expect("warning while on");
         assert!(warning.contains("unqualified"), "{warning}");
         assert!(warning.contains("arthur"), "{warning}");
         assert!(
@@ -848,7 +853,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            qualified_only.unqualified_warning, None,
+            qualified_only.unqualified_warning(), None,
             "nothing unqualified runs, so nothing to warn about"
         );
     }

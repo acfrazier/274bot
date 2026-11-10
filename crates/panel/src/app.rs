@@ -2877,9 +2877,9 @@ fn quester_start_zone_disclosure(ui: &Ui, session: &mut Session, active: bool) {
     ui.text_colored(ACCENT, frontend_core::scripts::START_ZONE_SCOPE_TITLE);
     match session.scripts.quester_start_zone_view() {
         Some(Ok(zones)) => {
-            if let Some(warning) = &zones.unqualified_warning {
+            if let Some(warning) = zones.unqualified_warning() {
                 let _color = ui.push_style_color(StyleColor::Text, WARN);
-                ui.text_wrapped(warning.as_str());
+                ui.text_wrapped(warning);
             }
             ui.text_wrapped(zones.notice());
             if !zones.is_empty() {
