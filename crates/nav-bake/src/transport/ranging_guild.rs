@@ -7,15 +7,6 @@ use super::*;
 /// the teleport dest; `dir` and `open_loc_id` stay `None` (the 3-tick
 /// `loc_1532` add is visual, not a swing leaf).
 pub(super) const RANGINGGUILD_DOOR_NAME: &str = "ranging_guild_door";
-pub(super) const RANGINGGUILD_DOOR_ID: i32 = 2514;
-pub(super) const RANGINGGUILD_DOOR_SHAPE: i32 = 9; // LocShape::WALL_DIAGONAL
-pub(super) const RANGINGGUILD_EXIT_HALFPLANE: &str =
-    "coordx(coord)>coordx(loc_coord)|coordz(coord)<coordz(loc_coord)";
-pub(super) const RANGINGGUILD_EXIT_FORCE: (i32, i32, i32) = (1, 0, -1);
-pub(super) const RANGINGGUILD_EXIT_TELE: (i32, i32, i32) = (-2, 0, 2);
-pub(super) const RANGINGGUILD_ENTER_FORCE: (i32, i32, i32) = (-1, 0, 1);
-pub(super) const RANGINGGUILD_ENTER_TELE: (i32, i32, i32) = (2, 0, -2);
-
 pub(super) enum RangingLocResolve {
     Resolved(i32),
     NotApplicable,
@@ -37,7 +28,7 @@ pub(super) fn rangingguild_door_edges(
             return;
         }
     };
-    let Some((exit_force, exit_tele, enter_force, enter_tele)) =
+    let Some((exit_force, exit_tele, enter_force, enter_tele, enter_level)) =
         rangingguild_parse_opener(content_root)
     else {
         bump(
@@ -65,7 +56,7 @@ pub(super) fn rangingguild_door_edges(
     let exit_at = rangingguild_apply(loc, exit_force);
     let exit_to = rangingguild_apply(exit_at, exit_tele);
     for (at, to, skill_req) in [
-        (enter_at, enter_to, vec![(SKILL_RANGED, 40)]),
+        (enter_at, enter_to, vec![(SKILL_RANGED, enter_level)]),
         (exit_at, exit_to, vec![]),
     ] {
         graph.edges.push(TransportEdge {
@@ -103,9 +94,6 @@ pub(super) fn rangingguild_resolve_loc_id(
     let Some(&id) = ids.get(RANGINGGUILD_DOOR_NAME) else {
         return RangingLocResolve::NotApplicable;
     };
-    if id != RANGINGGUILD_DOOR_ID {
-        return RangingLocResolve::Skip(SKIP_RANGINGGUILD_PACK);
-    }
     let path = content_root
         .join("scripts")
         .join("minigames")
@@ -130,8 +118,7 @@ pub(super) fn rangingguild_unique_placement(
     let [placement] = ps.as_slice() else {
         return None;
     };
-    (placement.level == 0 && placement.shape == RANGINGGUILD_DOOR_SHAPE && placement.angle == 0)
-        .then_some(placement)
+    Some(placement)
 }
 
 pub(super) fn rangingguild_apply(tile: WorldTile, (dx, d_level, dz): (i32, i32, i32)) -> WorldTile {
@@ -142,11 +129,14 @@ pub(super) fn rangingguild_apply(tile: WorldTile, (dx, d_level, dz): (i32, i32, 
     }
 }
 
+/// Exit force-move and teleport deltas, entry force-move and teleport
+/// deltas, and the entry's Ranged level gate.
 pub(super) type RangingGuildOpener = (
     (i32, i32, i32),
     (i32, i32, i32),
     (i32, i32, i32),
     (i32, i32, i32),
+    i32,
 );
 
 pub(super) fn rangingguild_parse_opener(content_root: &Path) -> Option<RangingGuildOpener> {
@@ -167,10 +157,9 @@ pub(super) fn rangingguild_parse_opener(content_root: &Path) -> Option<RangingGu
         return None;
     }
     let body = rangingguild_strip_line_comments(&body);
-    let (cond, exit_arm, enter_arm) = rangingguild_split_leading_if(&body)?;
-    if rangingguild_flatten(&cond) != RANGINGGUILD_EXIT_HALFPLANE {
-        return None;
-    }
+    // The leading `if` arm is the exit, modelled by name; the half-plane
+    // condition itself is not read.
+    let (_, exit_arm, enter_arm) = rangingguild_split_leading_if(&body)?;
     let exit_flat = rangingguild_flatten(&exit_arm);
     let enter_flat = rangingguild_flatten(&enter_arm);
     if exit_flat.contains("stat(ranged)") {
@@ -183,20 +172,13 @@ pub(super) fn rangingguild_parse_opener(content_root: &Path) -> Option<RangingGu
     }
     let exit_force = rangingguild_unique_delta(&exit_arm, "forcemove", "loc_coord")?;
     let exit_tele = rangingguild_unique_delta(&exit_arm, "p_teleport", "coord")?;
-    if exit_force != RANGINGGUILD_EXIT_FORCE || exit_tele != RANGINGGUILD_EXIT_TELE {
-        return None;
-    }
-    if rangingguild_stat_ranged_lt(&enter_arm) != Some(40)
-        || !rangingguild_enter_gate_before_crossing(&enter_flat)
-    {
+    let enter_level = rangingguild_stat_ranged_lt(&enter_arm)?;
+    if !rangingguild_enter_gate_before_crossing(&enter_flat, enter_level) {
         return None;
     }
     let enter_force = rangingguild_unique_delta(&enter_arm, "forcemove", "loc_coord")?;
     let enter_tele = rangingguild_unique_delta(&enter_arm, "p_teleport", "coord")?;
-    if enter_force != RANGINGGUILD_ENTER_FORCE || enter_tele != RANGINGGUILD_ENTER_TELE {
-        return None;
-    }
-    Some((exit_force, exit_tele, enter_force, enter_tele))
+    Some((exit_force, exit_tele, enter_force, enter_tele, enter_level))
 }
 
 /// Unique deltas do not encode call order. The 289 crossing is forcemove
@@ -223,11 +205,12 @@ pub(super) fn rangingguild_first_return_after_teleport(flat: &str) -> bool {
     ret > tele
 }
 
-/// Enter must refuse below 40 before the crossing: `if (stat(ranged) < 40)
-/// { … return; }` then forcemove then teleport. A bare `stat(ranged)<40`
-/// or a return between the two calls is unsupported.
-pub(super) fn rangingguild_enter_gate_before_crossing(flat: &str) -> bool {
-    let Some(gate) = flat.find("if(stat(ranged)<40){") else {
+/// Enter must refuse below `level` before the crossing:
+/// `if (stat(ranged) < level) { … return; }` then forcemove then teleport. A
+/// bare `stat(ranged)<level` or a return between the two calls is
+/// unsupported.
+pub(super) fn rangingguild_enter_gate_before_crossing(flat: &str, level: i32) -> bool {
+    let Some(gate) = flat.find(&format!("if(stat(ranged)<{level}){{")) else {
         return false;
     };
     let Some(force) = flat.find("forcemove(") else {

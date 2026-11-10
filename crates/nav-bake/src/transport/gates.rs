@@ -121,28 +121,17 @@ pub(super) fn oploc1_names(text: &str, into: &mut HashSet<String>) {
     }
 }
 
-/// The closed-gate categories this content actually supports, as the
-/// verified generic open behavior: the `[oploc1,_gate_*_closed]` body must
-/// be exactly the forwarding call (whitespace/comments ignored) and the
-/// forwarded `[proc,…]` must be defined somewhere under `scripts`. A
-/// category with no such block, a differently shaped body (any extra
-/// statement proves nothing), a disagreeing duplicate, or a missing proc
-/// is not supported — nothing inherits from it.
+/// The closed-gate categories this content supports: a
+/// `[oploc1,_gate_*_closed]` category handler exists and the `[proc,…]` it
+/// forwards to (`open_gate` / `open_outer_gate`, modelled by name) is defined
+/// somewhere under `scripts`. A category with no such block or a missing
+/// proc is not supported — nothing inherits from it.
 pub(super) fn generic_gate_handlers(content_root: &Path) -> HashSet<bool> {
-    let mut bodies: HashMap<bool, bool> = HashMap::new();
+    let mut handlers: HashSet<bool> = HashSet::new();
     let mut procs: HashSet<&'static str> = HashSet::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
-        for (outer, body) in gate_category_handlers(text) {
-            let expected = if outer {
-                GATE_OUTER_HANDLER
-            } else {
-                GATE_MAIN_HANDLER
-            };
-            let ok = normalized_body(&body) == expected;
-            bodies
-                .entry(outer)
-                .and_modify(|prev| *prev &= ok)
-                .or_insert(ok);
+        for (outer, _) in gate_category_handlers(text) {
+            handlers.insert(outer);
         }
         for proc in [GATE_MAIN_PROC, GATE_OUTER_PROC] {
             if !proc_bodies(text, proc).is_empty() {
@@ -158,7 +147,7 @@ pub(super) fn generic_gate_handlers(content_root: &Path) -> HashSet<bool> {
             } else {
                 GATE_MAIN_PROC
             };
-            bodies.get(&outer).copied().unwrap_or(false) && procs.contains(proc)
+            handlers.contains(&outer) && procs.contains(proc)
         })
         .collect()
 }
