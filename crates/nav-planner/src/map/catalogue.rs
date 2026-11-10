@@ -704,12 +704,7 @@ impl CatalogueCursor {
     /// Pure upper bound for the cursor charge. It does not inspect the
     /// process-global OnceLock: every job reserves the cold initializer peak.
     pub fn work_charge(input: ClientMapInput<'_>) -> Result<WorkCharge, MapError> {
-        let input = ClientMapInput::new(
-            input.revision,
-            input.content,
-            input.jag_dir,
-            input.snapshot_dir,
-        )?;
+        let input = ClientMapInput::new(input.revision, input.jag_dir, input.snapshot_dir)?;
         let source = game_data_source_bounds(input.revision)?;
         let max_definitions = u16::MAX as usize;
         let game_data_owner = game_data_retained_owner_bound(source)?;

@@ -27,17 +27,17 @@ use super::{
     ShippedMap,
 };
 
-/// A 289 descriptor with a fixed content identity and fixed policies,
+/// A 289 descriptor with fixed policies,
 /// without a prepared client cache (the fixture producer needs none).
 pub fn fixture_descriptor() -> MapProfileDescriptor {
-    MapProfileDescriptor::new(289, Digest([7; 32]), Digest([8; 32]), Digest([9; 32]))
+    MapProfileDescriptor::new(289, Digest([8; 32]), Digest([9; 32]))
         .expect("fixture identities are valid")
 }
 
 /// [`fixture_descriptor`] with the other supported map revision, for a
 /// distinct cache root.
 pub fn other_revision_descriptor() -> MapProfileDescriptor {
-    MapProfileDescriptor::new(274, Digest([7; 32]), Digest([8; 32]), Digest([9; 32]))
+    MapProfileDescriptor::new(274, Digest([8; 32]), Digest([9; 32]))
         .expect("fixture identities are valid")
 }
 

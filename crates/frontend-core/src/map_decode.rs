@@ -568,7 +568,6 @@ mod tests {
     fn image() -> ImageIdentity {
         ImageIdentity {
             revision: 289,
-            content: Digest([0x31; 32]),
             policy: Digest([0x42; 32]),
         }
     }

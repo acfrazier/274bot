@@ -219,7 +219,6 @@ pub fn bake_policy() -> BakePolicy {
 pub fn image_identity(input: ClientMapInput<'_>) -> Result<ImageIdentity, MapError> {
     Ok(ImageIdentity {
         revision: input.revision,
-        content: input.content,
         policy: bake_policy().identity()?,
     })
 }

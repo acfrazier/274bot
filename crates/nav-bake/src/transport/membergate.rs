@@ -174,28 +174,25 @@ pub(super) enum MembergateHandler {
     Conflict,
 }
 
-/// Loc-specific `[oploc1,membergatel|membergater]` bodies under `scripts`.
+/// Loc-specific `[oploc1,membergatel|membergater]` blocks under `scripts`.
 /// Same-line and next-line forms. The handler's members refusal and
-/// double-door open are modelled by name: one distinct body is `Ok`, and a
-/// second different body is a conflict.
+/// double-door open are modelled by name: exactly one declaration is `Ok`,
+/// and a second declaration, equal or different, is a conflict.
 pub(super) fn membergate_handlers(content_root: &Path) -> HashMap<bool, MembergateHandler> {
-    let mut bodies: HashMap<bool, Vec<String>> = HashMap::new();
+    let mut declared: HashMap<bool, usize> = HashMap::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
-        for (left, body) in membergate_oploc_handlers(text) {
-            bodies.entry(left).or_default().push(normalized_body(&body));
+        for (left, _) in membergate_oploc_handlers(text) {
+            *declared.entry(left).or_default() += 1;
         }
     });
     let mut out = HashMap::new();
     for left in [true, false] {
-        let Some(found) = bodies.get(&left) else {
+        let Some(&count) = declared.get(&left) else {
             continue;
         };
-        let mut distinct = found.clone();
-        distinct.sort();
-        distinct.dedup();
         out.insert(
             left,
-            if distinct.len() > 1 {
+            if count > 1 {
                 MembergateHandler::Conflict
             } else {
                 MembergateHandler::Ok

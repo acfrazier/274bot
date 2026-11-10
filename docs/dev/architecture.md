@@ -548,12 +548,13 @@ The conservative classifier preserves one-based operation slots and distinguishe
 bank candidates/map symbols from service evidence. It does not change the frozen
 catalog-facing bank roster or execute an operation.
 
-Image/catalogue identities use domain-separated SHA-256 binary preimages
-(documented in `map/identity.rs`). They describe output and release assets;
-they are not cache admission keys. Non-release map caches are keyed by
-revision and the cache's own format version, and opening one does not compare
-an expected input identity. Image policy includes exact
-encoder/compression-library versions but no producer-source digest.
+Image/catalogue identities hold the revision and the producer policy and use
+domain-separated SHA-256 binary preimages (documented in `map/identity.rs`).
+They carry no digest of the game inputs and are not cache admission keys.
+Non-release map caches are keyed by revision and the cache's own format
+version, and opening one does not compare an expected input identity. Image
+policy includes exact encoder/compression-library versions but no
+producer-source digest.
 `274bot.navpois` carries bounded typed feature records generated from jm2 NPC
 rows, rs2 bank-service handlers and `maps/labels.txt`. Its producer and
 decoder enforce the sidecar format and record structure; it has no file digest

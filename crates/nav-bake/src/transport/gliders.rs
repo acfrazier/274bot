@@ -66,10 +66,11 @@ pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
     else {
         return;
     };
-    if !script_blocks(&script)
+    let pilots = script_blocks(&script)
         .into_iter()
-        .any(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
-    {
+        .filter(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
+        .count();
+    if !declared_once("[opnpc1,gnomepilot]", pilots) {
         return;
     }
     // The pilot's members-only Grand Tree arm opening the glider menu is

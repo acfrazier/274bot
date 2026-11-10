@@ -69,19 +69,16 @@ pub struct CatalogueKey(pub Digest);
 #[serde(deny_unknown_fields)]
 pub struct ImageIdentity {
     pub revision: u16,
-    /// Verified decoded client identity (274DCI01), not cache-transfer identity.
-    pub content: Digest,
     pub policy: Digest,
 }
 impl ImageIdentity {
-    /// SHA256(IMAGE_KEY_DOMAIN || revision:u16 || schema:u16 || content || policy).
+    /// SHA256(IMAGE_KEY_DOMAIN || revision:u16 || schema:u16 || policy).
     pub fn key(self) -> Result<ImageKey, MapError> {
         super::revision(self.revision)?;
         Ok(ImageKey(key(
             IMAGE_KEY_DOMAIN,
             self.revision,
             IMAGE_SCHEMA,
-            self.content,
             self.policy,
         )))
     }
@@ -91,29 +88,26 @@ impl ImageIdentity {
 #[serde(deny_unknown_fields)]
 pub struct CatalogueIdentity {
     pub revision: u16,
-    pub content: Digest,
     pub policy: Digest,
 }
 impl CatalogueIdentity {
-    /// SHA256(CATALOGUE_KEY_DOMAIN || revision:u16 || schema:u16 || content || policy).
+    /// SHA256(CATALOGUE_KEY_DOMAIN || revision:u16 || schema:u16 || policy).
     pub fn key(self) -> Result<CatalogueKey, MapError> {
         super::revision(self.revision)?;
         Ok(CatalogueKey(key(
             CATALOGUE_KEY_DOMAIN,
             self.revision,
             CATALOGUE_SCHEMA,
-            self.content,
             self.policy,
         )))
     }
 }
 
-fn key(domain: &[u8], revision: u16, schema: u16, content: Digest, policy: Digest) -> Digest {
+fn key(domain: &[u8], revision: u16, schema: u16, policy: Digest) -> Digest {
     let mut h = Sha256::new();
     h.update(domain);
     h.update(revision.to_be_bytes());
     h.update(schema.to_be_bytes());
-    h.update(content.0);
     h.update(policy.0);
     Digest(h.finalize().into())
 }

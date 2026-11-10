@@ -56,6 +56,23 @@ pub(super) fn parse_script_header(
     Some(ScriptHeader { kind, name, tail })
 }
 
+/// Whether `count` parsed declarations of the named script is exactly one.
+/// A hand-modelled behaviour keyed by `what` applies only to a single
+/// declaration: none or several give no edge, and the reason is logged.
+pub(super) fn declared_once(what: &str, count: usize) -> bool {
+    match count {
+        1 => true,
+        0 => {
+            eprintln!("derive_transports: {what} is not declared; no edge");
+            false
+        }
+        n => {
+            eprintln!("derive_transports: {what} is declared {n} times; no edge");
+            false
+        }
+    }
+}
+
 pub(super) enum ScriptBlockLine<'a, T> {
     Header {
         value: T,

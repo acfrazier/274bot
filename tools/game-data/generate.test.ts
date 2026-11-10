@@ -34,7 +34,7 @@ import {
 
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
-import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
+import { parseDbRows, parseSections, stripComments } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
@@ -3790,6 +3790,20 @@ if (process.env.GAME_DATA_377_CONTENT) {
         assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
         assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
     }
+}
+
+// The shared comment lexer keeps physical line positions and quoted comment markers, and drops real comments.
+{
+    const commented = [
+        'def_string $page = "/* literal */ // literal"; // removed',
+        '/* removed',
+        '   removed */',
+        '~quest_journal("Title", $page);',
+    ].join('\n');
+    const uncommented = stripComments(commented);
+    assert.equal(uncommented.split('\n').length, commented.split('\n').length);
+    assert.ok(uncommented.includes('"/* literal */ // literal"'));
+    assert.ok(!uncommented.includes('removed'));
 }
 
 console.log('generate fixture passed');

@@ -583,7 +583,7 @@ fn parse_keyed_control_name(name: &std::ffi::OsStr, suffix: &str) -> Option<Dige
 }
 
 fn root_metadata_matches(identity: ArtifactIdentity, root: ArtifactRootId) -> bool {
-    let (revision, kind, legacy_key) = match identity {
+    let (revision, kind, identity_key) = match identity {
         ArtifactIdentity::Catalogue(identity) => (
             identity.revision,
             ArtifactKind::Catalogue,
@@ -598,9 +598,9 @@ fn root_metadata_matches(identity: ArtifactIdentity, root: ArtifactRootId) -> bo
     if revision != root.revision || kind != root.kind {
         return false;
     }
-    // Current roots are keyed only by revision and cache format. Legacy
-    // content-keyed roots remain recognizable solely for safe pruning.
-    root.key == cache_root_key(root.revision, root.kind) || legacy_key == Some(root.key)
+    // A root is named by the revision and cache format key; one named by its
+    // own artifact identity key is recognized too.
+    root.key == cache_root_key(root.revision, root.kind) || identity_key == Some(root.key)
 }
 
 fn read_regular_bounded(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, MapCacheError> {
@@ -1682,7 +1682,6 @@ fn cache_root_key(revision: u16, kind: ArtifactKind) -> Digest {
 #[derive(Clone)]
 pub struct PreparedMapInput {
     revision: u16,
-    content: Digest,
     source: MapInputSource,
 }
 
@@ -1701,7 +1700,6 @@ impl fmt::Debug for PreparedMapInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreparedMapInput")
             .field("revision", &self.revision)
-            .field("content", &self.content)
             .field(
                 "source",
                 &match &self.source {
@@ -1726,14 +1724,12 @@ impl PreparedMapInput {
         }
         Ok(Self {
             revision,
-            content: Digest(prepared.identity.content_id),
             source: MapInputSource::Prepared(prepared),
         })
     }
 
     /// Select the decoded snapshot by the existing versionlist directory key.
-    /// The decoded-content identity is recorded in artifact metadata only;
-    /// map-cache roots are keyed by revision and cache format.
+    /// Map-cache roots are keyed by revision and cache format.
     pub fn offline(
         revision: u16,
         jag_dir: &Path,
@@ -1741,31 +1737,17 @@ impl PreparedMapInput {
     ) -> Result<Self, MapCacheError> {
         let versionlist = fs::read(jag_dir.join("versionlist"))?;
         let snapshot_dir = snapshot_root.join(client::unpack::version_hash(&versionlist));
-        // Snapshot contents are decoded normally; no source-file equality gate.
-        let identity = client::content_identity::compute_decoded_content_identity(
-            revision,
-            jag_dir,
-            &snapshot_dir,
-        )
-        .map_err(|error| MapCacheError::Message(format!("decoded content identity: {error}")))?;
         Ok(Self::with_snapshot(
             revision,
-            Digest(identity.content_id),
             jag_dir.to_path_buf(),
             snapshot_dir,
         ))
     }
 
     /// An offline snapshot with its map-cache resource key, or a synthetic fixture.
-    pub(crate) fn with_snapshot(
-        revision: u16,
-        content: Digest,
-        jag_dir: PathBuf,
-        snapshot_dir: PathBuf,
-    ) -> Self {
+    pub(crate) fn with_snapshot(revision: u16, jag_dir: PathBuf, snapshot_dir: PathBuf) -> Self {
         Self {
             revision,
-            content,
             source: MapInputSource::Offline(Arc::new(OfflineSnapshot {
                 jag_dir,
                 snapshot_dir,
@@ -1775,9 +1757,6 @@ impl PreparedMapInput {
 
     pub fn revision(&self) -> u16 {
         self.revision
-    }
-    pub fn content(&self) -> Digest {
-        self.content
     }
     pub fn jag_dir(&self) -> &Path {
         match &self.source {
@@ -1798,7 +1777,6 @@ impl PreparedMapInput {
 #[derive(Clone)]
 pub struct MapProfileDescriptor {
     revision: u16,
-    content: Digest,
     image: ImageIdentity,
     catalogue: CatalogueIdentity,
     input: Option<PreparedMapInput>,
@@ -1808,7 +1786,6 @@ impl fmt::Debug for MapProfileDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MapProfileDescriptor")
             .field("revision", &self.revision)
-            .field("content", &self.content)
             .field("image", &self.image)
             .field("catalogue", &self.catalogue)
             .field("has_input_lease", &self.input.is_some())
@@ -1819,25 +1796,21 @@ impl fmt::Debug for MapProfileDescriptor {
 impl MapProfileDescriptor {
     pub fn new(
         revision: u16,
-        content: Digest,
         image_policy: Digest,
         catalogue_policy: Digest,
     ) -> Result<Self, MapCacheError> {
         let image = ImageIdentity {
             revision,
-            content,
             policy: image_policy,
         };
         let catalogue = CatalogueIdentity {
             revision,
-            content,
             policy: catalogue_policy,
         };
         image.key()?;
         catalogue.key()?;
         Ok(Self {
             revision,
-            content,
             image,
             catalogue,
             input: None,
@@ -1868,14 +1841,11 @@ impl MapProfileDescriptor {
             .prepared_cache()
             .ok_or(MapCacheError::NoPreparedCache)?;
         let input = PreparedMapInput::from_prepared(revision, Arc::clone(prepared))?;
-        Self::new(revision, input.content(), image_policy, catalogue_policy)?.with_input(input)
+        Self::new(revision, image_policy, catalogue_policy)?.with_input(input)
     }
 
     pub fn revision(&self) -> u16 {
         self.revision
-    }
-    pub fn content(&self) -> Digest {
-        self.content
     }
     pub fn image_identity(&self) -> ImageIdentity {
         self.image
@@ -2022,7 +1992,6 @@ impl BakeRequest {
             .ok_or(MapCacheError::NoPreparedCache)?;
         nav_planner::map::producer::ClientMapInput::new(
             input.revision(),
-            input.content(),
             input.jag_dir(),
             input.snapshot_dir(),
         )
@@ -5870,7 +5839,7 @@ mod tests {
 
     fn descriptor(root: &MapCacheRoot) -> MapProfileDescriptor {
         let _ = root;
-        MapProfileDescriptor::new(274, Digest([1; 32]), Digest([2; 32]), Digest([3; 32])).unwrap()
+        MapProfileDescriptor::new(274, Digest([2; 32]), Digest([3; 32])).unwrap()
     }
 
     struct FixtureProducer {
@@ -6620,8 +6589,7 @@ mod tests {
         let mut first = active_fixture_job(&root, descriptor(&root));
         let previous_bytes = first.writer.as_ref().unwrap().cache_bytes;
         let second_descriptor =
-            MapProfileDescriptor::new(289, Digest([41; 32]), Digest([42; 32]), Digest([43; 32]))
-                .unwrap();
+            MapProfileDescriptor::new(289, Digest([42; 32]), Digest([43; 32])).unwrap();
         let second = active_fixture_job(&root, second_descriptor);
         first.start_census();
         let census = complete_census(&root);
@@ -7076,16 +7044,10 @@ mod tests {
     }
 
     fn native_descriptor(jag: &Path, snapshot: &Path) -> MapProfileDescriptor {
-        let content = Digest([9; 32]);
-        let input = PreparedMapInput::with_snapshot(
-            289,
-            content,
-            jag.to_path_buf(),
-            snapshot.to_path_buf(),
-        );
+        let input = PreparedMapInput::with_snapshot(289, jag.to_path_buf(), snapshot.to_path_buf());
         let (image_policy, catalogue_policy) =
             crate::map_producer::map_artifact_policies().unwrap();
-        MapProfileDescriptor::new(289, content, image_policy, catalogue_policy)
+        MapProfileDescriptor::new(289, image_policy, catalogue_policy)
             .unwrap()
             .with_input(input)
             .unwrap()
@@ -7393,8 +7355,7 @@ mod tests {
         drop(first);
 
         let second_descriptor =
-            MapProfileDescriptor::new(274, Digest([4; 32]), Digest([5; 32]), Digest([6; 32]))
-                .unwrap();
+            MapProfileDescriptor::new(274, Digest([5; 32]), Digest([6; 32])).unwrap();
         let second = manager
             .request(second_descriptor.clone(), MapDemand::CatalogueOnly)
             .unwrap();
@@ -7527,9 +7488,7 @@ mod tests {
             wait_ready(&handle);
             handle.ready().unwrap().images.unwrap()
         };
-        let second =
-            MapProfileDescriptor::new(289, Digest([4; 32]), Digest([2; 32]), Digest([3; 32]))
-                .unwrap();
+        let second = MapProfileDescriptor::new(289, Digest([2; 32]), Digest([3; 32])).unwrap();
         {
             let installer = MapDemandManager::new(root.clone(), FixtureProducer::new(false));
             let handle = installer
@@ -7712,8 +7671,7 @@ mod tests {
             .unwrap();
         let marker_path = root.prune_marker_path(root_id);
         let foreign_descriptor =
-            MapProfileDescriptor::new(289, Digest([91; 32]), Digest([92; 32]), Digest([93; 32]))
-                .unwrap();
+            MapProfileDescriptor::new(289, Digest([92; 32]), Digest([93; 32])).unwrap();
         let foreign_marker = serde_json::to_vec(&PruneMarker {
             schema: PRUNE_MARKER_SCHEMA,
             identity: ArtifactIdentity::Image(foreign_descriptor.image_identity()),
@@ -7768,7 +7726,6 @@ mod tests {
             let seed = index * 40 + iteration;
             let descriptor = MapProfileDescriptor::new(
                 if index == 0 { 274 } else { 289 },
-                Digest([seed.wrapping_add(1); 32]),
                 Digest([seed.wrapping_add(41); 32]),
                 Digest([seed.wrapping_add(81); 32]),
             )
@@ -8271,15 +8228,12 @@ mod tests {
         const ROOTS: usize = MAX_CACHE_ARTIFACT_ROOTS;
         const FULL_ROOT_ENTRIES: usize = MAX_ARTIFACT_ROOT_ENTRIES;
         const REDUCED_ROOTS: usize = 4;
-        let policy = Digest([0x51; 32]);
         for index in 0..ROOTS {
-            let content = Digest::of(&(index as u64).to_be_bytes());
             let identity = CatalogueIdentity {
                 revision: 289,
-                content,
-                policy,
+                policy: Digest::of(&(index as u64).to_be_bytes()),
             };
-            let artifact_root = root.catalogue_dir(identity.revision);
+            let artifact_root = kind_dir.join(identity.key().unwrap().0.to_string());
             fs::create_dir(&artifact_root).unwrap();
 
             let payload = ClientPois {

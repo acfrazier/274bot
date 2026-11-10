@@ -12,14 +12,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn image_identity() -> ImageIdentity {
     ImageIdentity {
         revision: 289,
-        content: Digest([0x11; 32]),
         policy: Digest([0x22; 32]),
     }
 }
 fn catalogue_identity() -> CatalogueIdentity {
     CatalogueIdentity {
         revision: 289,
-        content: Digest([0x11; 32]),
         policy: Digest([0x22; 32]),
     }
 }
@@ -210,11 +208,11 @@ fn canonical_keys_match_independent_binary_preimages_and_encoder_invalidation() 
     // not serialized Rust/JSON or an invocation of the implementation under test.
     assert_eq!(
         image_identity().key().unwrap().0.to_string(),
-        "bb1a5823644de7575fa7e27ec6087de85704e4c44c0eb502ab9ccb42135d72c4"
+        "d0cafce1132e49f913df66a0d8cd9e746d6f6df2a1639e121db03ea1ec5ef063"
     );
     assert_eq!(
         catalogue_identity().key().unwrap().0.to_string(),
-        "99a66ffec090f7df1de64f784dcaa4b8c70d3a920db5666d73e7eaa6a7a19c94"
+        "9caaf0baaca40b904d4859fff3ab1f64936d2ad6abb68fb34468d830644422ff"
     );
     let mut encoder = policy();
     let before = encoder.identity().unwrap();

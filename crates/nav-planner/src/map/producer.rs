@@ -5,7 +5,7 @@ pub use super::catalogue::{
     CatalogueCursor, CatalogueProgress, CatalogueResult, CatalogueStage, CatalogueStats,
 };
 use super::formats::ClientPois;
-use super::identity::{CatalogueIdentity, CataloguePolicy, Digest};
+use super::identity::{CatalogueIdentity, CataloguePolicy};
 use super::{MapError, Text};
 use api::identity::Deadline;
 use api::work::{
@@ -25,25 +25,18 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy)]
 pub struct ClientMapInput<'a> {
     pub revision: u16,
-    pub content: Digest,
     pub jag_dir: &'a Path,
     pub snapshot_dir: &'a Path,
 }
 
 impl<'a> ClientMapInput<'a> {
-    pub fn new(
-        revision: u16,
-        content: Digest,
-        jag_dir: &'a Path,
-        snapshot_dir: &'a Path,
-    ) -> Result<Self, MapError> {
+    pub fn new(revision: u16, jag_dir: &'a Path, snapshot_dir: &'a Path) -> Result<Self, MapError> {
         super::revision(revision)?;
         if jag_dir.as_os_str().is_empty() || snapshot_dir.as_os_str().is_empty() {
             return Err(MapError::Path);
         }
         Ok(Self {
             revision,
-            content,
             jag_dir,
             snapshot_dir,
         })
@@ -55,22 +48,15 @@ impl<'a> ClientMapInput<'a> {
 #[derive(Debug)]
 pub(crate) struct OwnedClientMapInput {
     revision: u16,
-    content: Digest,
     jag_dir: PathBuf,
     snapshot_dir: PathBuf,
 }
 
 impl OwnedClientMapInput {
     pub(crate) fn copy(input: ClientMapInput<'_>) -> Result<Self, MapError> {
-        ClientMapInput::new(
-            input.revision,
-            input.content,
-            input.jag_dir,
-            input.snapshot_dir,
-        )?;
+        ClientMapInput::new(input.revision, input.jag_dir, input.snapshot_dir)?;
         Ok(Self {
             revision: input.revision,
-            content: input.content,
             jag_dir: input.jag_dir.to_owned(),
             snapshot_dir: input.snapshot_dir.to_owned(),
         })
@@ -79,7 +65,6 @@ impl OwnedClientMapInput {
     pub(crate) fn view(&self) -> ClientMapInput<'_> {
         ClientMapInput {
             revision: self.revision,
-            content: self.content,
             jag_dir: &self.jag_dir,
             snapshot_dir: &self.snapshot_dir,
         }
@@ -172,7 +157,6 @@ pub fn catalogue_policy() -> CataloguePolicy {
 pub fn catalogue_identity(input: ClientMapInput<'_>) -> CatalogueIdentity {
     CatalogueIdentity {
         revision: input.revision,
-        content: input.content,
         policy: catalogue_policy().identity(),
     }
 }

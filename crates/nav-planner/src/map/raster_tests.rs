@@ -229,7 +229,6 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     std::fs::create_dir_all(&root).unwrap();
     let identity = ImageIdentity {
         revision: 289,
-        content: Digest([0x11; 32]),
         policy: Digest([0x22; 32]),
     };
     write_checkpoint(&root, identity, BakeStage::BaseTerrain, 1, &[]).unwrap();
@@ -437,7 +436,7 @@ impl RasterSnapshot {
     }
 
     fn input(&self) -> ClientMapInput<'_> {
-        ClientMapInput::new(289, Digest([0x31; 32]), &self.0, &self.0).unwrap()
+        ClientMapInput::new(289, &self.0, &self.0).unwrap()
     }
 
     fn output(&self, name: &str) -> PathBuf {
@@ -1133,13 +1132,7 @@ mod native_map_unit_qualification {
         }
 
         fn input(&self) -> ClientMapInput<'_> {
-            ClientMapInput::new(
-                self.revision,
-                Digest([self.revision as u8; 32]),
-                &self.jag_dir,
-                &self.snapshot_dir,
-            )
-            .unwrap()
+            ClientMapInput::new(self.revision, &self.jag_dir, &self.snapshot_dir).unwrap()
         }
     }
 
@@ -2258,7 +2251,7 @@ mod native_map_unit_qualification {
         maps.extend_from_slice(bytes);
         fs::write(snapshot_dir.join("maps.bin"), maps).unwrap();
 
-        let input = ClientMapInput::new(274, Digest([0; 32]), &jag_dir, &snapshot_dir).unwrap();
+        let input = ClientMapInput::new(274, &jag_dir, &snapshot_dir).unwrap();
         let reader = cache_reader_from_input(input);
         assert_eq!(reader.entries.len(), 1);
         assert_eq!(reader.entries[0].land_file, 0);

@@ -42,29 +42,43 @@ pub(super) const DOOR_CATEGORY_HANDLERS: [(&str, &str); 9] = [
 pub(super) const DOOR_CLOSED: &str = "door_closed";
 
 /// The door categories whose generic handler is present in this content:
-/// a `[oploc1,_<category>]` block exists and the forwarded `[proc,…]` exists.
-/// A category with a missing handler or proc supports nothing.
+/// exactly one `[oploc1,_<category>]` block and exactly one forwarded
+/// `[proc,…]` are declared. A category with a missing or duplicate handler or
+/// proc supports nothing.
 pub(super) fn generic_door_handlers(content_root: &Path) -> HashSet<&'static str> {
-    let mut handlers: HashSet<&'static str> = HashSet::new();
-    let mut procs: HashSet<&'static str> = HashSet::new();
+    let mut handlers: HashMap<&'static str, usize> = HashMap::new();
+    let mut procs: HashMap<&'static str, usize> = HashMap::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
         for (category, _) in oploc1_category_bodies(text) {
             if let Some(&(name, _)) = DOOR_CATEGORY_HANDLERS
                 .iter()
                 .find(|(name, _)| *name == category)
             {
-                handlers.insert(name);
+                *handlers.entry(name).or_default() += 1;
             }
         }
-        for (_, proc) in DOOR_CATEGORY_HANDLERS {
-            if !proc_bodies(text, proc).is_empty() {
-                procs.insert(proc);
-            }
+        // Two categories can forward to one proc: count each proc once.
+        let distinct: HashSet<&'static str> = DOOR_CATEGORY_HANDLERS
+            .iter()
+            .map(|&(_, proc)| proc)
+            .collect();
+        for proc in distinct {
+            *procs.entry(proc).or_default() += proc_bodies(text, proc).len();
         }
     });
     DOOR_CATEGORY_HANDLERS
         .iter()
-        .filter(|(name, proc)| handlers.contains(name) && procs.contains(proc))
+        .filter(|(name, proc)| {
+            let handler = declared_once(
+                &format!("[oploc1,_{name}]"),
+                handlers.get(name).copied().unwrap_or(0),
+            );
+            let proc = declared_once(
+                &format!("[proc,{proc}]"),
+                procs.get(proc).copied().unwrap_or(0),
+            );
+            handler && proc
+        })
         .map(|(name, _)| *name)
         .collect()
 }

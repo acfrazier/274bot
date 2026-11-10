@@ -156,7 +156,6 @@ fn ready_images_with_tiles(
     .expect("manifest file");
     let descriptor = MapProfileDescriptor::new(
         identity.revision,
-        identity.content,
         identity.policy,
         fixture::fixture_descriptor().catalogue_identity().policy,
     )
@@ -183,7 +182,7 @@ fn ready_images_with_tiles(
 
 fn image_identity_with(byte: u8) -> ImageIdentity {
     let mut identity = super::fixtures::image_identity();
-    identity.content = Digest([byte; 32]);
+    identity.policy = Digest([byte; 32]);
     identity
 }
 
@@ -599,11 +598,10 @@ fn serialize_decode_outcome(
     rgba: &[u8],
 ) -> Vec<u8> {
     let length = u32::try_from(rgba.len()).expect("tile result fits the wire length");
-    let mut serialized = Vec::with_capacity(93 + rgba.len());
+    let mut serialized = Vec::with_capacity(61 + rgba.len());
     serialized.extend_from_slice(b"WMD1");
     serialized.extend_from_slice(&generation.to_be_bytes());
     serialized.extend_from_slice(&image.revision.to_be_bytes());
-    serialized.extend_from_slice(&image.content.0);
     serialized.extend_from_slice(&image.policy.0);
     serialized.push(key.plane);
     serialized.push(key.lod);
@@ -623,7 +621,6 @@ fn walk_map_decode_supersedes_old_generation_identity_and_key() {
     let old_identity = super::fixtures::image_identity();
     let new_identity = ImageIdentity {
         revision: old_identity.revision,
-        content: Digest([0xe1; 32]),
         policy: Digest([0xe2; 32]),
     };
     let old_png = Arc::<[u8]>::from(encode_tile(old_key).expect("old tile"));

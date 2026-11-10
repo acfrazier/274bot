@@ -142,10 +142,9 @@ fn shipped_tile(shipped: &ShippedMap, key: TileKey) -> PathBuf {
 fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking() {
     let scratch = Scratch::new("identical");
     let (jag, snapshot) = synthetic_client_snapshot(&scratch.0.join("client"));
-    let content = Digest([9; 32]);
-    let input = || PreparedMapInput::with_snapshot(289, content, jag.clone(), snapshot.clone());
+    let input = || PreparedMapInput::with_snapshot(289, jag.clone(), snapshot.clone());
     let (image_policy, catalogue_policy) = map_artifact_policies().unwrap();
-    let descriptor = MapProfileDescriptor::new(289, content, image_policy, catalogue_policy)
+    let descriptor = MapProfileDescriptor::new(289, image_policy, catalogue_policy)
         .unwrap()
         .with_input(input())
         .unwrap();
@@ -733,11 +732,10 @@ fn real_content_map_demand_capture() {
     let input = PreparedMapInput::offline(revision, &jag_dir, &snapshot_root).unwrap();
 
     let (image_policy, catalogue_policy) = map_artifact_policies().unwrap();
-    let descriptor =
-        MapProfileDescriptor::new(revision, input.content(), image_policy, catalogue_policy)
-            .unwrap()
-            .with_input(input)
-            .unwrap();
+    let descriptor = MapProfileDescriptor::new(revision, image_policy, catalogue_policy)
+        .unwrap()
+        .with_input(input)
+        .unwrap();
     if std::env::var("BOT_MAP_BAKE_CATALOGUE_ONLY").as_deref() == Ok("1") {
         catalogue_only_capture(&capture, &cache_root, &descriptor, revision);
         return;

@@ -121,33 +121,37 @@ pub(super) fn oploc1_names(text: &str, into: &mut HashSet<String>) {
     }
 }
 
-/// The closed-gate categories this content supports: a
-/// `[oploc1,_gate_*_closed]` category handler exists and the `[proc,…]` it
-/// forwards to (`open_gate` / `open_outer_gate`, modelled by name) is defined
-/// somewhere under `scripts`. A category with no such block or a missing
-/// proc is not supported — nothing inherits from it.
+/// The closed-gate categories this content supports: exactly one
+/// `[oploc1,_gate_*_closed]` category handler is declared and exactly one
+/// `[proc,…]` it forwards to (`open_gate` / `open_outer_gate`, modelled by
+/// name) is declared under `scripts`. A category with no such block, a
+/// missing proc, or a duplicate of either is not supported — nothing
+/// inherits from it.
 pub(super) fn generic_gate_handlers(content_root: &Path) -> HashSet<bool> {
-    let mut handlers: HashSet<bool> = HashSet::new();
-    let mut procs: HashSet<&'static str> = HashSet::new();
+    let mut handlers = [0usize; 2];
+    let mut procs = [0usize; 2];
     visit_rs2(&content_root.join("scripts"), &mut |text| {
         for (outer, _) in gate_category_handlers(text) {
-            handlers.insert(outer);
+            handlers[usize::from(outer)] += 1;
         }
-        for proc in [GATE_MAIN_PROC, GATE_OUTER_PROC] {
-            if !proc_bodies(text, proc).is_empty() {
-                procs.insert(proc);
-            }
+        for (outer, proc) in [(false, GATE_MAIN_PROC), (true, GATE_OUTER_PROC)] {
+            procs[usize::from(outer)] += proc_bodies(text, proc).len();
         }
     });
     [false, true]
         .into_iter()
         .filter(|&outer| {
-            let proc = if outer {
-                GATE_OUTER_PROC
+            let (category, proc) = if outer {
+                (GATE_OUTER_CLOSED, GATE_OUTER_PROC)
             } else {
-                GATE_MAIN_PROC
+                (GATE_MAIN_CLOSED, GATE_MAIN_PROC)
             };
-            handlers.contains(&outer) && procs.contains(proc)
+            let handler = declared_once(
+                &format!("[oploc1,_{category}]"),
+                handlers[usize::from(outer)],
+            );
+            let proc = declared_once(&format!("[proc,{proc}]"), procs[usize::from(outer)]);
+            handler && proc
         })
         .collect()
 }

@@ -5349,6 +5349,150 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
     }
 }
 
+/// Hand-modelled behaviour keyed by a script name needs exactly one parsed
+/// declaration of that name. A missing name, a duplicate (even with an equal
+/// body) and a header that appears only in a comment give no edge.
+#[test]
+fn name_keyed_behaviour_needs_exactly_one_declaration() {
+    const PILOT: &str = "[opnpc1,gnomepilot]\nreturn;\n";
+    const COLOUR_CALL: &str =
+        "~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n";
+    let gliders = |pilot: &str, journal_helper: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/areas/area_gnome/scripts/gnome_glider.rs2", pilot);
+        fx.write(
+            "scripts/general/scripts/quests.rs2",
+            &format!("{journal_helper}{COLOUR_CALL}"),
+        );
+        fx.write(
+            "scripts/general/configs/quest.constant",
+            "^grandtree_complete=160\n",
+        );
+        fx.write(
+            "scripts/player/interfaces/questlist.if",
+            "[grandtree]\ntext=The Grand Tree\n",
+        );
+        let defs = loc_defs(&[]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        derive_transports(fx.path(), &defs, &wc)
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Glider)
+            .count()
+    };
+    let commented_pilot = "// [opnpc1,gnomepilot]\nreturn;\n";
+    let commented_helper = JOURNAL_GREEN_SOURCE
+        .lines()
+        .map(|line| format!("// {line}\n"))
+        .collect::<String>();
+    let twice = |text: &str| format!("{text}\n{text}");
+    assert_eq!(gliders(PILOT, JOURNAL_GREEN_SOURCE), 7, "control");
+    for (case, pilot, helper) in [
+        ("missing pilot", String::new(), JOURNAL_GREEN_SOURCE.into()),
+        ("duplicate pilot", twice(PILOT), JOURNAL_GREEN_SOURCE.into()),
+        (
+            "commented pilot",
+            commented_pilot.to_owned(),
+            JOURNAL_GREEN_SOURCE.into(),
+        ),
+        ("missing helper", PILOT.to_owned(), String::new()),
+        (
+            "duplicate helper",
+            PILOT.to_owned(),
+            twice(JOURNAL_GREEN_SOURCE),
+        ),
+        ("commented helper", PILOT.to_owned(), commented_helper),
+    ] {
+        assert_eq!(gliders(&pilot, &helper), 0, "{case}");
+    }
+
+    let door = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doors.rs2", text);
+        generic_door_handlers(fx.path()).contains("door_closed")
+    };
+    let gate = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/general_use/scripts/gates.rs2", text);
+        generic_gate_handlers(fx.path()).contains(&false)
+    };
+    let gate_source = "[oploc1,_gate_main_closed] ~open_gate;\n\n[proc,open_gate]\nreturn;\n";
+    let gate_handler = "[oploc1,_gate_main_closed] ~open_gate;\n";
+    let gate_proc = "[proc,open_gate]\nreturn;\n";
+    assert!(door(GENERIC_DOOR_RS2), "door control");
+    let shared_proc = {
+        let fx = Fixture::new();
+        fx.write(
+            "scripts/doors/scripts/open_and_close_double_doors.rs2",
+            "[oploc1,_double_door_open_and_close_left] ~open_and_close_double_door(true, 0);\n\n[oploc1,_double_door_open_and_close_right] ~open_and_close_double_door(true, 1);\n\n[proc,open_and_close_double_door](boolean $entering, int $side)\nreturn;\n",
+        );
+        generic_door_handlers(fx.path())
+    };
+    assert!(
+        shared_proc.contains("double_door_open_and_close_left")
+            && shared_proc.contains("double_door_open_and_close_right"),
+        "two categories forwarding to one declared proc both stand"
+    );
+    assert!(gate(gate_source), "gate control");
+    let door_handler = "[oploc1,_door_closed] ~open_door(500);\n";
+    let door_proc = "[proc,open_door](int $duration)\nloc_del($duration);\n";
+    for (case, text) in [
+        ("missing door handler", door_proc.to_owned()),
+        ("missing door proc", door_handler.to_owned()),
+        (
+            "duplicate door handler",
+            format!("{door_handler}{GENERIC_DOOR_RS2}"),
+        ),
+        (
+            "duplicate door proc",
+            format!("{door_proc}{GENERIC_DOOR_RS2}"),
+        ),
+        (
+            "commented door handler",
+            format!("// {door_handler}{door_proc}"),
+        ),
+    ] {
+        assert!(!door(&text), "{case}");
+    }
+    for (case, text) in [
+        ("missing gate handler", gate_proc.to_owned()),
+        ("missing gate proc", gate_handler.to_owned()),
+        (
+            "duplicate gate handler",
+            format!("{gate_handler}{gate_source}"),
+        ),
+        ("duplicate gate proc", format!("{gate_proc}{gate_source}")),
+        (
+            "commented gate proc",
+            format!("{gate_handler}// {gate_proc}"),
+        ),
+    ] {
+        assert!(!gate(&text), "{case}");
+    }
+
+    let membergate = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doubledoors.rs2", text);
+        membergate_handlers(fx.path())
+    };
+    let handlers = membergate_handlers_text();
+    assert_eq!(
+        membergate(handlers).get(&true),
+        Some(&MembergateHandler::Ok),
+        "membergate control"
+    );
+    assert_eq!(
+        membergate(&format!("{handlers}\n{handlers}")).get(&true),
+        Some(&MembergateHandler::Conflict),
+        "two equal membergate declarations are two"
+    );
+    assert!(
+        !membergate(&handlers.replace("[oploc1,membergatel]", "// [oploc1,membergatel]"))
+            .contains_key(&true),
+        "a commented membergate header is not a declaration"
+    );
+}
+
 /// Gandius pad → Grand Tree hub admits the visible quest journal row,
 /// not the untransmitted `%grandtree` varp.
 #[test]

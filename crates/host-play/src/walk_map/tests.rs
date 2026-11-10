@@ -55,7 +55,6 @@ fn digest(n: u8) -> Digest {
 fn identity() -> CatalogueIdentity {
     CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     }
 }
@@ -1056,13 +1055,8 @@ fn ready_catalogue_retains_searchable_normalized_access() {
         serde_json::to_vec(&receipt).unwrap(),
     )
     .unwrap();
-    let descriptor = MapProfileDescriptor::new(
-        identity.revision,
-        identity.content,
-        digest(4),
-        identity.policy,
-    )
-    .unwrap();
+    let descriptor =
+        MapProfileDescriptor::new(identity.revision, digest(4), identity.policy).unwrap();
     let manager = MapDemandManager::new(cache_root, Arc::new(CountingMapProducer::default()));
     let handle = manager
         .request(descriptor, MapDemand::CatalogueOnly)

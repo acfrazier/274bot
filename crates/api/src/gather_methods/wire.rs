@@ -1266,6 +1266,21 @@ mod tests {
             .find(|row| row.as_str() == Some("loc 1281 oaktree 3 3"))
             .unwrap();
         *oak = json!("loc 1281 oaktree 3 1");
+        let angles: HashMap<(String, u32), u8> = family["facts"]["placements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|file| {
+                let name = file["file"].as_str().unwrap().to_owned();
+                file["rows"].as_array().unwrap().iter().map(move |row| {
+                    let parts: Vec<&str> = row.as_str().unwrap().split(' ').collect();
+                    (
+                        (name.clone(), parts[0].parse().unwrap()),
+                        parts[5].parse().unwrap(),
+                    )
+                })
+            })
+            .collect();
         let catalog = decode(&serde_json::to_vec(&family).unwrap()).unwrap();
         let oaks = known_rows(&catalog.method("woodcutting.oak").unwrap().spots);
         let (mut upright, mut turned) = (0, 0);
@@ -1273,7 +1288,9 @@ mod tests {
             .iter()
             .filter(|spot| spot.entity == EntityId::Loc(1281))
         {
-            if (spot.width, spot.length) == (1, 3) {
+            let angle = angles[&(spot.source.file.to_string(), spot.source.first)];
+            if angle % 2 == 1 {
+                assert_eq!((spot.width, spot.length), (1, 3), "turned a quarter");
                 turned += 1;
             } else {
                 assert_eq!((spot.width, spot.length), (3, 1));

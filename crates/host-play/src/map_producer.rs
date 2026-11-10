@@ -290,7 +290,6 @@ mod tests {
     fn catalogue_input_work_does_not_request_a_cache_writer() {
         let input = producer::ClientMapInput::new(
             289,
-            Digest([7; 32]),
             std::path::Path::new("/verified/jag"),
             std::path::Path::new("/verified/snapshot"),
         )
