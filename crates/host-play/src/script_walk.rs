@@ -1594,17 +1594,8 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 authority: bot.native_walk.clone(),
                 quest_evidence: bot.route_quest_evidence.clone(),
                 compat_tile_intent: bot.route_compat_tile_intent,
-                // A walk with no retained admission is refreshed without
-                // danger permission (fail closed).
-                danger: bot.admission.as_deref().map_or_else(
-                    || {
-                        super::walk_permissions::DangerLevel::Never.decide(
-                            Default::default(),
-                            Default::default(),
-                            false,
-                        )
-                    },
-                    crate::admission::Admission::decision,
+                danger: super::walk_permissions::DangerDecision::for_refresh(
+                    bot.admission.as_deref(),
                 ),
             };
             // Keep the live owner and request correlation; only the old

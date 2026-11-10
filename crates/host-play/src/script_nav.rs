@@ -302,7 +302,7 @@ struct RoutePreflights {
 }
 
 fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
-    if request.admission.policy == crate::admission::RiskPolicy::Proceed {
+    if request.admission.decision.policy == crate::admission::RiskPolicy::Proceed {
         FindOptions {
             zones: ZoneExempt::all(),
             ..request.opts

@@ -4938,7 +4938,7 @@ fn a_queued_compat_walk_is_admitted_from_its_one_danger_decision() {
                 let bot = &all["alice"];
                 let context = format!("{level:?}, compat_v1={compat_v1}, crossing={crossing}");
                 let admission = bot.admission.as_deref().expect("queued admission");
-                assert_eq!(admission.decision(), danger, "{context}");
+                assert_eq!(admission.decision, danger, "{context}");
                 assert_eq!(admission.compat_v1, compat_v1, "{context}");
                 assert_eq!(
                     bot.requested_route.expect("queued route").5,
@@ -17093,13 +17093,16 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         .expect("real router final route"),
     );
     let admission = crate::admission::Admission {
-        policy: RiskPolicy::Proceed,
+        decision: crate::DangerDecision {
+            permitted: options.zones.is_all(),
+            policy: RiskPolicy::Proceed,
+            enforce: true,
+        },
         grants: options.zones,
         allow: Default::default(),
         input: crate::admission::capture(&snapshot, false, None, false, None),
         generation: 7,
         compat_v1: false,
-        enforce: true,
         escape: None,
     };
     let assessment = crate::admission::assess(&route, &world, &admission);
@@ -23997,7 +24000,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     let danger = rig.navs.lock().unwrap()["alice"]
         .admission
         .as_deref()
-        .map(crate::admission::Admission::decision)
+        .map(|admission| admission.decision)
         .expect("the walk's retained admission");
     assert!(arm.refresh_route_in_snapshot(
         &rig.snap,

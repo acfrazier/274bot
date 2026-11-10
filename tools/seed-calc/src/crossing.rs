@@ -6,7 +6,7 @@ use std::sync::Arc;
 use api::condition::PoisonState;
 use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
-use host_play::admission::{self, Admission, RiskInput, RiskPolicy, WalkAllow};
+use host_play::admission::{self, Admission, RiskInput, RiskPolicy};
 use nav_planner::producer;
 use nav_planner::router::{self, FindOptions};
 use nav_planner::world::NavWorld;
@@ -600,16 +600,15 @@ fn product_route_zones(
 }
 
 fn product_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
-    Admission {
-        policy: RiskPolicy::Avoid,
-        enforce: true,
-        grants,
-        allow: WalkAllow::default(),
+    let mut admission = Admission::manual(
+        host_play::WalkGlobals::default().manual_decision(grants.is_all()),
         input,
-        generation: 1,
-        compat_v1: false,
-        escape: None,
-    }
+        1,
+    );
+    admission.decision.policy = RiskPolicy::Avoid;
+    admission.decision.enforce = true;
+    admission.grants = grants;
+    admission
 }
 
 fn player_state(

@@ -1049,11 +1049,7 @@ fn manual_walk_admission_is_the_manual_danger_decision() {
             ));
             let arms = arms.lock().unwrap();
             let arm = arms["alice"].lock().unwrap();
-            let decision = arm
-                .admission
-                .as_deref()
-                .expect("armed admission")
-                .decision();
+            let decision = arm.admission.as_deref().expect("armed admission").decision;
             let overridden = global || this_walk;
             assert_eq!(
                 decision.permitted, overridden,

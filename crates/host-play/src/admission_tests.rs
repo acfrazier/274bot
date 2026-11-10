@@ -271,8 +271,11 @@ fn input(hp: u8) -> RiskInput {
 
 fn make_admission(policy: RiskPolicy, input: RiskInput) -> Admission {
     Admission {
-        policy,
-        enforce: true,
+        decision: DangerDecision {
+            permitted: false,
+            policy,
+            enforce: true,
+        },
         grants: ZoneExempt::NONE,
         allow: WalkAllow::default(),
         input,
@@ -603,7 +606,7 @@ fn decided_admission(
         crossing_requested,
     );
     let mut admission = make_admission(decision.policy, input);
-    admission.enforce = decision.enforce;
+    admission.decision = decision;
     admission.compat_v1 = compat_v1;
     admission.grants = if decision.permitted {
         ZoneExempt::all()
@@ -611,6 +614,55 @@ fn decided_admission(
         ZoneExempt::NONE
     };
     (admission, decision)
+}
+
+/// The admission keeps the decision it was built from. A refresh re-finds the
+/// route under that decision, not one rebuilt from the zone grant: the grant
+/// is a projection that a later search may narrow, so `grants.is_all()` is not
+/// the decision's `permitted`.
+#[test]
+fn refreshed_admission_returns_the_original_danger_decision() {
+    for permitted in [false, true] {
+        for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
+            for enforce in [false, true] {
+                let decision = DangerDecision {
+                    permitted,
+                    policy,
+                    enforce,
+                };
+                let built = Admission::from_decision(
+                    decision,
+                    WalkAllow::default(),
+                    unknown_poison(99),
+                    3,
+                    false,
+                );
+                assert_eq!(built.decision, decision);
+                assert_eq!(built.grants, decision.zones());
+                assert_eq!(
+                    DangerDecision::for_refresh(Some(&built)),
+                    decision,
+                    "{decision:?}"
+                );
+                // The retained admission after a refresh: a new generation and
+                // a grant the search narrowed or widened. The decision stays.
+                for grants in [ZoneExempt::NONE, ZoneExempt::all()] {
+                    let refreshed = Admission {
+                        grants,
+                        generation: 4,
+                        ..built
+                    };
+                    assert_eq!(
+                        DangerDecision::for_refresh(Some(&refreshed)),
+                        decision,
+                        "{decision:?} with grants {grants:?}"
+                    );
+                }
+            }
+        }
+    }
+    let unattended = DangerDecision::for_refresh(None);
+    assert!(!unattended.permitted && unattended.zones() == ZoneExempt::NONE);
 }
 
 /// The decision point, both directions, on one route through a known zone:
@@ -1631,7 +1683,7 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
         risk_input,
         1,
     );
-    assert!(!held.enforce);
+    assert!(!held.decision.enforce);
     for name in ["alice", "bob"] {
         let refused = crate::arm_walk_on(
             &world,
@@ -1655,7 +1707,10 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
         assert!(alice.refusal.is_none());
     }
     let enforcing = Admission {
-        enforce: true,
+        decision: DangerDecision {
+            enforce: true,
+            ..held.decision
+        },
         ..held
     };
     let refused = crate::arm_walk_on(

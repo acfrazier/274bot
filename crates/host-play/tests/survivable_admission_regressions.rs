@@ -4,7 +4,7 @@ use api::selected::ClientRevision;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use host_play::admission::{self, Admission, RiskInput};
-use host_play::{DangerLevel, WalkGlobals, NET_AVAILABLE};
+use host_play::{DangerDecision, DangerLevel, WalkGlobals, NET_AVAILABLE};
 use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::router::{find_with_avoid, FindOptions, Route};
 use nav_planner::transport::TransportGraph;
@@ -176,10 +176,10 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             "{name}: native inherit"
         );
         let manual = Admission::manual(globals.manual_decision(false), RiskInput::default(), 0);
-        assert_eq!(manual.policy, RiskPolicy::Avoid, "{name}: manual");
+        assert_eq!(manual.decision.policy, RiskPolicy::Avoid, "{name}: manual");
         assert_eq!(manual.grants, ZoneExempt::NONE, "{name}: manual grants");
         assert!(
-            !manual.enforce,
+            !manual.decision.enforce,
             "{name}: held inherited verdict is advisory"
         );
         if let Some(world) = world.as_ref() {
@@ -261,10 +261,10 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
     let world = corridor(40, &[20]);
     let route = find(&world, tile(0, 1), tile(20, 1));
     let request = default_admission(input(99, PoisonState::default()));
-    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.decision.policy, RiskPolicy::Avoid);
     assert_eq!(request.grants, ZoneExempt::NONE);
     assert!(
-        !request.enforce,
+        !request.decision.enforce,
         "the held default keeps its existing routing mode"
     );
     let assessment = admission::assess(&route, &world, &request);
@@ -284,10 +284,13 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
     ));
     assert!(admission::permits(&route, &world, &request, &assessment));
     let opt_in = Admission {
-        policy: RiskPolicy::Proceed,
+        decision: DangerDecision {
+            policy: RiskPolicy::Proceed,
+            ..request.decision
+        },
         ..request
     };
-    assert_eq!(opt_in.policy, RiskPolicy::Proceed);
+    assert_eq!(opt_in.decision.policy, RiskPolicy::Proceed);
     assert_eq!(opt_in.grants, ZoneExempt::NONE);
     assert!(admission::permits(&route, &world, &opt_in, &assessment));
 }
@@ -320,8 +323,11 @@ fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
     assert!(assessment.plan.intervals.iter().any(|row| row.escaping()));
     for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
         let enforcing = Admission {
-            policy,
-            enforce: true,
+            decision: DangerDecision {
+                policy,
+                enforce: true,
+                ..request.decision
+            },
             ..request
         };
         assert!(
@@ -419,8 +425,11 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
     ] {
         for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
             let request = Admission {
-                policy,
-                enforce: true,
+                decision: DangerDecision {
+                    policy,
+                    enforce: true,
+                    ..default_admission(problem).decision
+                },
                 ..default_admission(problem)
             };
             let assessment = admission::assess(&safe_route, &world, &request);
@@ -458,13 +467,16 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
     let mut risk_input = input(99, PoisonState::default());
     risk_input.pos = tile(2, 1);
     let request = Admission {
-        enforce: true,
+        decision: DangerDecision {
+            enforce: true,
+            ..default_admission(risk_input).decision
+        },
         ..default_admission(risk_input)
     };
     let assessment = admission::assess(&route, &world, &request);
-    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.decision.policy, RiskPolicy::Avoid);
     assert_eq!(request.grants, ZoneExempt::NONE);
-    assert!(request.enforce);
+    assert!(request.decision.enforce);
     assert!(assessment.plan.complete);
     assert_eq!(assessment.plan.intervals.len(), 2);
     assert!(assessment.plan.intervals[0].escaping());
@@ -524,8 +536,10 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
         let mut risk_input = input(hp, PoisonState::Clear);
         risk_input.pos = from;
         Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                enforce: true,
+                ..default_admission(risk_input).decision
+            },
             grants: ZoneExempt::NONE,
             ..default_admission(risk_input)
         }
@@ -586,13 +600,16 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
     assert!(assessment.plan.complete);
-    assert!(!held.enforce);
+    assert!(!held.decision.enforce);
     assert!(admission::permits(&route, &world, &held, &assessment));
     for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
         for grants in [ZoneExempt::NONE, ZoneExempt::all()] {
             let enforcing = Admission {
-                policy,
-                enforce: true,
+                decision: DangerDecision {
+                    policy,
+                    enforce: true,
+                    ..held.decision
+                },
                 grants,
                 ..held
             };
@@ -616,8 +633,7 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
             assert_eq!(decision.policy, RiskPolicy::Proceed);
             assert!(!decision.enforce);
             let compat = Admission {
-                policy: decision.policy,
-                enforce: decision.enforce,
+                decision,
                 ..marker_only
             };
             assert!(admission::permits(&route, &world, &compat, &assessment));
@@ -664,8 +680,10 @@ fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
         let mut risk_input = input(60, PoisonState::Clear);
         risk_input.pos = from;
         let request = Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                enforce: true,
+                ..default_admission(risk_input).decision
+            },
             ..default_admission(risk_input)
         };
         let assessment = admission::assess(&route, &world, &request);

@@ -37,10 +37,14 @@ pub struct RouteBasis {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Admission {
-    pub policy: RiskPolicy,
-    /// False for a walk with no danger request while the runtime net is held:
+    /// The walk's danger decision, kept as built by
+    /// [`crate::walk_permissions::DangerLevel::decide`] and never rebuilt.
+    /// Its `policy` is how admission judges the walk. Its `enforce` is false
+    /// for a walk with no danger request while the runtime net is held:
     /// retain the assessment, but preserve the router's admit/refuse decision.
-    pub enforce: bool,
+    pub decision: DangerDecision,
+    /// The zone grant, a projection of [`Self::decision`] when the walk is
+    /// admitted. A later route search may narrow it; the decision stays.
     pub grants: ZoneExempt,
     pub allow: WalkAllow,
     pub input: RiskInput,
@@ -52,8 +56,8 @@ pub struct Admission {
 }
 
 impl Admission {
-    /// The admission of one walk from its [`DangerDecision`]: the decision's
-    /// policy, enforcement and zone grant, unchanged.
+    /// The admission of one walk from its [`DangerDecision`]: the decision is
+    /// kept whole and the zone grant is its projection.
     pub fn from_decision(
         decision: DangerDecision,
         allow: WalkAllow,
@@ -62,8 +66,7 @@ impl Admission {
         compat_v1: bool,
     ) -> Self {
         Self {
-            policy: decision.policy,
-            enforce: decision.enforce,
+            decision,
             grants: decision.zones(),
             allow,
             input,
@@ -76,16 +79,6 @@ impl Admission {
     /// A manual WalkTo's admission from [`crate::WalkGlobals::manual_decision`].
     pub fn manual(decision: DangerDecision, input: RiskInput, generation: u64) -> Self {
         Self::from_decision(decision, WalkAllow::default(), input, generation, false)
-    }
-
-    /// The decision this admission carries (the inverse of
-    /// [`Self::from_decision`]), for a route re-found under the same walk.
-    pub fn decision(&self) -> DangerDecision {
-        DangerDecision {
-            permitted: self.grants.is_all(),
-            policy: self.policy,
-            enforce: self.enforce,
-        }
     }
 }
 
@@ -139,7 +132,7 @@ pub(crate) fn route(
         };
     }
     let options = FindOptions {
-        zones: if admission.policy == RiskPolicy::Proceed {
+        zones: if admission.decision.policy == RiskPolicy::Proceed {
             ZoneExempt::all()
         } else {
             options.zones
@@ -150,7 +143,7 @@ pub(crate) fn route(
     let blocked = if matches!(
         &outcome,
         crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
-    ) && admission.policy != RiskPolicy::Proceed
+    ) && admission.decision.policy != RiskPolicy::Proceed
     {
         witness().unwrap_or_default()
     } else {
@@ -450,7 +443,7 @@ fn informational_assessment(
 ) -> Arc<RouteAssessment> {
     let mode = if admission.compat_v1 {
         Some("rs2b0t compatibility")
-    } else if admission.policy == RiskPolicy::Proceed {
+    } else if admission.decision.policy == RiskPolicy::Proceed {
         Some("Always")
     } else {
         None
@@ -484,7 +477,7 @@ fn permits_view(
     admission: &Admission,
     assessment: &RouteAssessment,
 ) -> bool {
-    if !admission.enforce || admission.policy == RiskPolicy::Proceed {
+    if !admission.decision.enforce || admission.decision.policy == RiskPolicy::Proceed {
         return true;
     }
     // A failed or unavailable assessment (for example `Unknown(Overflow)`)
@@ -677,7 +670,8 @@ pub(crate) fn publish(
         .requested_route
         .map_or(route.destination(), |request| request.0);
     if permits_view(route, world, &admission, assessment) {
-        let enforced = admission.enforce && admission.policy != RiskPolicy::Proceed;
+        let enforced =
+            admission.decision.enforce && admission.decision.policy != RiskPolicy::Proceed;
         if let risk::PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test {
             if enforced
                 && bot

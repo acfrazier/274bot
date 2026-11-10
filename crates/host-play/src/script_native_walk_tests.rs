@@ -6298,7 +6298,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
     let danger = rig.navs.lock().unwrap()["alice"]
         .admission
         .as_deref()
-        .map(crate::admission::Admission::decision)
+        .map(|admission| admission.decision)
         .expect("the walk's retained admission");
     assert!(arm.refresh_route_in_snapshot(
         &rig.snapshot,
@@ -6377,14 +6377,14 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     assert!(world.collision.standable(shore));
     let request = |arrival, radius| ScriptRouteRequest {
         candidate_goals: None,
-        admission: crate::admission::Admission {
-            enforce: true,
-            ..crate::admission::Admission::manual(
-                crate::WalkGlobals::default().manual_decision(false),
-                Default::default(),
-                0,
-            )
-        },
+        admission: crate::admission::Admission::manual(
+            crate::DangerDecision {
+                enforce: true,
+                ..crate::WalkGlobals::default().manual_decision(false)
+            },
+            Default::default(),
+            0,
+        ),
         generation: 1,
         request_id: 1,
         world: Arc::clone(&world),
@@ -6945,7 +6945,7 @@ mod s2b_admission_contract {
             PoisonState::Unknown { .. }
         ));
         assert_eq!(
-            bots["alice"].admission.as_ref().unwrap().policy,
+            bots["alice"].admission.as_ref().unwrap().decision.policy,
             script::native::RiskPolicy::Avoid
         );
     }
@@ -7034,7 +7034,10 @@ mod s2b_admission_contract {
                 let bot = &navs["alice"];
                 let admission = bot.admission.as_ref().unwrap();
                 assert!(admission.compat_v1);
-                assert_eq!(admission.policy, script::native::RiskPolicy::Proceed);
+                assert_eq!(
+                    admission.decision.policy,
+                    script::native::RiskPolicy::Proceed
+                );
                 assert!(
                     !admission.allow.food && !admission.allow.prayer && !admission.allow.escape
                 );
@@ -7104,7 +7107,7 @@ mod s2b_admission_contract {
         // Compat v1 counts as the global override: the machine-owned native
         // walk is admitted from that one decision.
         assert_eq!(
-            admission.decision(),
+            admission.decision,
             crate::DangerLevel::Always.decide(Default::default(), Default::default(), false)
         );
         assert!(bot.has_route(), "the stand walk crosses the ice zone");
@@ -7619,10 +7622,12 @@ mod s2b_admission_contract {
         let (mut rig, shared) = advising_rig(1, false);
         let manual = Arc::new(Mutex::new(WalkArm {
             admission: Some(Box::new(crate::admission::Admission {
-                enforce: true,
                 escape: Some(unresolved_escape()),
                 ..crate::admission::Admission::manual(
-                    WalkGlobals::default().manual_decision(false),
+                    crate::DangerDecision {
+                        enforce: true,
+                        ..WalkGlobals::default().manual_decision(false)
+                    },
                     Default::default(),
                     1,
                 )

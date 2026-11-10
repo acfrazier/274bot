@@ -1923,8 +1923,8 @@ fn make_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
         input,
         0,
     );
-    admission.policy = RiskPolicy::Avoid;
-    admission.enforce = true;
+    admission.decision.policy = RiskPolicy::Avoid;
+    admission.decision.enforce = true;
     admission.grants = grants;
     admission
 }

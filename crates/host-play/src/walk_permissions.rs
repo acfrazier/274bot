@@ -91,6 +91,16 @@ impl DangerDecision {
             ZoneExempt::NONE
         }
     }
+
+    /// The decision a route refresh runs under: the retained admission's own
+    /// decision, never one rebuilt from its zone grant. A walk with no
+    /// retained admission is refreshed without danger permission (fail closed).
+    pub(crate) fn for_refresh(admission: Option<&crate::admission::Admission>) -> Self {
+        admission.map_or_else(
+            || DangerLevel::Never.decide(Default::default(), Default::default(), false),
+            |admission| admission.decision,
+        )
+    }
 }
 
 /// Durable global grants published by either frontend.
