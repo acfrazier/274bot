@@ -36,7 +36,10 @@ This release supports **The Restless Ghost**. The other authored guides are
 drafts. Release builds offer only guides that passed live qualification.
 See the [known issues](../known-issues.toml) for the unsupported draft quests.
 
-A saved draft choice shows why it cannot start. It does not enable the draft.
+A saved draft choice shows why it cannot start and names the guide. To run draft
+guides anyway, tick **Allow unqualified guides** in **Script prefs** with the
+Quester picked. The setting is off by default. When it is on, the Quester panel
+shows one warning that names the draft guides before you click **Start**.
 The list also holds Haunted Mine. You cannot tick it because this server's
 game content has no Haunted Mine quest.
 
@@ -57,7 +60,8 @@ The Quester reads its settings at each start.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | **Quests** | none ticked | The quests to run. None ticked means all qualified quests. |
-| **Order override** | none | Qualified quests that run first. A draft priority is refused. |
+| **Allow unqualified guides** | off | Lets the Quester run draft guides: the quests you tick, the Order override, and every draft guide when no quest is ticked. Start shows one warning that names them. |
+| **Order override** | none | Qualified quests that run first. A draft priority is refused unless **Allow unqualified guides** is on. |
 | **Skip** | none | Qualified quests that do not run. |
 | **Maximum deaths** | 2 | The Quester stops with a reason when the bot dies more often than this. The count covers all quests of one run. |
 | **Partner account**, **Gang**, **Family Crest gauntlets** | empty, empty, `chaos` | Choices for two-account quests and for one enchantment. No qualified guide uses them. |

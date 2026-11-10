@@ -72,7 +72,7 @@ pub(crate) fn requires_pairs(
     } else {
         api::selected::ClientRevision::R289
     };
-    let allow_unqualified = cfg!(feature = "test-hooks");
+    let allow_unqualified = super::queue::policy_admits_unqualified(settings.include_draft_guides);
     Ok(registry::bundled_index_for(revision)
         .paths
         .iter()
@@ -110,13 +110,21 @@ fn settings_schema() -> &'static [SettingDef] {
                 "quests",
                 "[]",
                 "Quests",
-                "Empty selects all live-qualified quests.",
+                "Empty selects all live-qualified quests. With Allow unqualified guides on, it also selects every draft guide.",
+            ),
+            setting(
+                "include_draft_guides",
+                "boolean",
+                "false",
+                super::queue::ALLOW_UNQUALIFIED_LABEL,
+                "Run guides that live testing has not qualified: the quests you pick, the Order override, and every draft guide when no quest is picked. Off by default. Start shows one warning that names them.",
+                &[],
             ),
             path_setting(
                 "order_override",
                 "[]",
                 "Order override",
-                "Prioritize selected quest ids; only qualified Paths run in release builds.",
+                "Prioritize selected quest ids. A guide that live testing has not qualified runs only with Allow unqualified guides on.",
             ),
             path_setting("skip", "[]", "Skip", "Do not run these released quest ids."),
             setting(
@@ -502,6 +510,7 @@ fn prepare_from(
             )))
         }
     };
+    let allow_unqualified = settings.include_draft_guides;
     let queue_settings = QueueSettings {
         quests: settings.quests,
         include_draft_guides: settings.include_draft_guides,
@@ -530,6 +539,15 @@ fn prepare_from(
         };
         StartError::Config(ConfigError::new(error.field, code, error.message))
     })?;
+    if allow_unqualified {
+        if let Some(warning) = super::queue::unqualified_warning(&queue.unqualified_guides()) {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Warn,
+                "{warning}"
+            );
+        }
+    }
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests,
@@ -694,6 +712,7 @@ mod tests {
             ids,
             [
                 "quests",
+                "include_draft_guides",
                 "order_override",
                 "skip",
                 "partner_account",
@@ -779,13 +798,17 @@ mod tests {
         );
     }
     #[test]
-    fn saved_draft_opt_in_is_preserved_but_not_exposed() {
-        assert!(
-            !settings_schema()
-                .iter()
-                .any(|setting| setting.id == "include_draft_guides"),
-            "release settings must not advertise draft opt-in"
-        );
+    fn allow_unqualified_guides_is_the_saved_draft_opt_in_and_defaults_off() {
+        // A 0.2.8 file that lists a guide but has no such key reads as off.
+        let saved_028: SettingsBag = serde_json::from_value(serde_json::json!({
+            "quests": ["priest", "druid"],
+            "skip": [],
+            "max_deaths": 2
+        }))
+        .unwrap();
+        let decoded = decode_settings(&saved_028).unwrap();
+        assert!(!decoded.include_draft_guides);
+        assert_eq!(decoded.quests, ["priest", "druid"]);
 
         let defaults = decode_settings(&SettingsBag::new()).unwrap();
         assert!(!defaults.include_draft_guides);

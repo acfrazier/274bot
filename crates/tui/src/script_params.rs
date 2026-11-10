@@ -2635,6 +2635,110 @@ mod tests {
     }
 
     #[test]
+    fn allow_unqualified_guides_row_toggles_in_the_real_tui_and_unlocks_draft_picks() {
+        let evidence_root =
+            std::env::var_os("UNQUALIFIED_OPTIN_TUI_EVIDENCE").map(std::path::PathBuf::from);
+        let loadouts = Loadouts::default();
+        let schema = TestSchema::quester_card();
+        let draft = "druid";
+        let position = |id: &str| {
+            schema
+                .schema_ref()
+                .iter()
+                .position(|field| field.id() == id)
+                .unwrap()
+        };
+        let allow_row = position("include_draft_guides");
+        let quests_def = schema.schema_ref().field(position("quests")).unwrap();
+        let compact = |text: &str| {
+            text.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+        };
+        for (width, height) in [(120u16, 40u16), (80, 24)] {
+            let dir = temp_dir(&format!("allow-unqualified-{width}x{height}"));
+            let mut store = TestStore::at(dir.join("script-settings.json"));
+            let mut bag = store.merged_bag(CardSource::Catalog, "Quester", &schema, None);
+            let allowed = |bag: &serde_json::Map<String, serde_json::Value>| {
+                bag.get("include_draft_guides")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            };
+            assert!(!allowed(&bag), "off by default");
+            let offered = |bag: &serde_json::Map<String, serde_json::Value>| {
+                frontend_core::scripts::resolve_parameter_options(quests_def, bag, &loadouts, None)
+                    .unwrap()
+                    .selectable()
+                    .contains(&draft.to_owned())
+            };
+            assert!(!offered(&bag), "a draft cannot be picked while off");
+
+            let mut state = ParamsState {
+                open: true,
+                cursor: allow_row,
+                ..Default::default()
+            };
+            let render = |bag: &mut serde_json::Map<String, serde_json::Value>,
+                          store: &mut TestStore,
+                          state: &mut ParamsState| {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        let pane = ParamsPane {
+                            schema: schema.schema_ref(),
+                            bag,
+                            commit: &mut store_commit(store, "Quester"),
+                            loadouts: &loadouts,
+                            game_data: None,
+                            state,
+                        };
+                        frame.render_widget(pane, frame.area());
+                    })
+                    .unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .chunks(usize::from(width))
+                    .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let before = render(&mut bag, &mut store, &mut state);
+            assert!(
+                compact(&before).contains("Allowunqualifiedguides"),
+                "{width}x{height}: the row is listed: {before}"
+            );
+
+            {
+                let mut pane = ParamsPane {
+                    schema: schema.schema_ref(),
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+            }
+            assert!(allowed(&bag), "{width}x{height}: the toggle turns it on");
+            assert!(offered(&bag), "a draft can be picked once it is on");
+            let after = render(&mut bag, &mut store, &mut state);
+            if let Some(root) = &evidence_root {
+                let directory = root.join("UNQUALIFIED-OPTIN");
+                std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+                for (name, shown) in [("off", &before), ("on", &after)] {
+                    std::fs::write(
+                        directory.join(format!("tui-params-{width}x{height}-allow-{name}.txt")),
+                        shown,
+                    )
+                    .expect("write TUI capture");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
         let dir = temp_dir("quest-unavailable-reason");
         let mut store = TestStore::at(dir.join("script-settings.json"));

@@ -20,7 +20,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   drafts and no longer start: Prince Ali Rescue, Pirate's Treasure, The
   Knight's Sword, Death Plateau, The Tourist Trap, Clock Tower and Plague City.
   The quest picker does not offer drafts, and a saved choice of one shows why
-  it cannot start. Known issues lists the draft guides.
+  it cannot start and names the guide. To run draft guides anyway, turn on
+  **Allow unqualified guides** in Script prefs with the Quester picked. It is off by default.
+  Known issues lists the draft guides.
 
 ### Panel and terminal app
 
@@ -268,8 +270,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - The Quester supports **The Restless Ghost**. Each of its fourteen release
   guides now passes a full run on a live server. The quest picker offers only
-  those guides. A saved choice of a draft guide still loads, shows why it
-  cannot start, and does not enable the draft.
+  those guides. A saved choice of a draft guide still loads. Start refuses it,
+  names the guide, and says how to allow it.
+- The Quester setting that 0.2.8 called "Include draft guides when no quests are
+  picked" is back as **Allow unqualified guides**, in Script prefs of the panel
+  and of the terminal app. It is off by default. When you turn it on, Start runs
+  guides that have not passed a full live run: the quests you picked, the Order
+  override, and, when you picked no quest, every draft guide. This lets a quest
+  list that you saved in 0.2.8 start again. Before Start, the Quester panel
+  shows one warning that names those guides, and the log records it. A 0.2.8
+  setting file that had this setting on keeps it on. Live testing has not shown
+  that a draft guide works.
 - The Quester's blocked message now ends "then start the Quester again": the
   Stop button is unavailable once the run has ended, so the message names the
   action you can take.

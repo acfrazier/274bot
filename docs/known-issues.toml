@@ -143,7 +143,9 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """These Quester guides are drafts, and release builds do not start them: Prince
+text = """These Quester guides are drafts, and live testing has not shown that they
+  work. Release builds do not start them unless you turn on Allow unqualified
+  guides in Script prefs with the Quester picked. The guides are: Prince
   Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The Tourist
   Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle Potion,
   Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the Chicken,
