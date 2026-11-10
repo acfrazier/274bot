@@ -2279,9 +2279,12 @@ fn relog_step_seen(steps: &[String], step: &str) -> bool {
 /// the new session (other steps may lie between).
 fn relog_steps_in_order(steps: &[String], fired_step: &str) -> bool {
     // A cut at Deposit leaves the character at the bank: the restart reopens
-    // the bank and deposits without walking to the access tile again.
+    // the bank without walking to the access tile again. When the server
+    // processed the deposit before the cut, the pack is already empty and the
+    // core skips the Deposit step, so only the reopen is required here; the
+    // receipt proves the deposit by the bank contents.
     let order: &[&str] = if fired_step == "Deposit" {
-        &["Open", "Deposit"]
+        &["Open"]
     } else {
         &["Access", "Open", "Deposit"]
     };
@@ -9109,17 +9112,18 @@ fn relog_steps_must_restart_at_access_then_open_then_deposit() {
         "Access"
     ));
     assert!(!relog_steps_in_order(&[], "Access"));
-    // A cut at Deposit restarts at the open bank: no Access step is required.
+    // A cut at Deposit restarts at the open bank: no Access step is required,
+    // and an already-emptied pack skips the Deposit step.
     assert!(relog_steps_in_order(
         &steps(&["Deposit", "Open", "Deposit"]),
         "Deposit"
     ));
-    assert!(!relog_steps_in_order(
-        &steps(&["Deposit", "Withdraw", "Close"]),
+    assert!(relog_steps_in_order(
+        &steps(&["Deposit", "Open", "Close", "Return"]),
         "Deposit"
     ));
     assert!(!relog_steps_in_order(
-        &steps(&["Deposit", "Open"]),
+        &steps(&["Deposit", "Withdraw", "Close"]),
         "Deposit"
     ));
     assert!(!relog_steps_in_order(&[], "Deposit"));
