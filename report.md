@@ -1,30 +1,17 @@
-# Parity 3B quantity report
+# Parity 3B quantity — checkpoint (operator stop)
 
-Branch: `fr377/parity-3b-quantity`. Bases: content `rs2-r377` (`240cba8f6`), engine `rs2-r377` (`28ddc28f`), vault `vault-reorg/main` (`248728e8`).
+Branch: `fr377/parity-3b-quantity`; base: content `rs2-r377` 240cba8f6, engine `rs2-r377` 28ddc28f, vault `vault-reorg/main` 248728e8. Checkpoint commit: `9196048a4` (`WIP checkpoint: add quantity proof parity`). No push, merge, rebase, or new live run.
 
-## Checks
+## Done
+- Implementation, changelog, tests and report are committed.
+- `cargo fmt --all -- --check` passed (`fmt-final.log`).
+- `cargo test -p scenario`: 478 passed, 0 failed (`scenario-full-final.log`).
+- Full host-play test-support suite with `BOT_NAV_BUILD=skip`: 1,613 passed, 9 failed, 115 ignored. Failures require unavailable local navigation/content assets or environment; details in `host-play-full-final.log`.
+- No live receipt is available for any changed path. Every changed path is **NOT MERGEABLE until live proof**.
 
-- `cargo fmt --all -- --check`: passed (inherited receipt `fmt-final.log`).
-- `cargo test -p scenario`: 478 passed, 0 failed (inherited `scenario-full-final.log`).
-- Full `host-play` suite with `test-support` and `BOT_NAV_BUILD=skip`: 1,613 passed, 9 failed, 115 ignored. Failures require absent R289/R377 and v16 navigation assets, local content/catalog, or allocation-profile environment; see `host-play-full-final.log`. A prior full run also failed while required local navigation staging was absent.
-- `cargo clippy -p host-play -p scenario --features host-play/test-support --all-targets -- -D warnings`: pending.
+## Not done
+- Clippy did not finish: interrupted at operator stop while checking `script-js`; no final verdict (`clippy-final.log`).
 
-## Live receipts and merge status
-
-No live receipt was found for any changed path. Do not merge these changes until live proof exists (`NOT MERGEABLE until live proof`):
-
-- `CHANGELOG.md`
-- `crates/api/data/`
-- `crates/host-play/tests/receipt_alloc.rs`
-- `crates/host-play/tests/revision_377_live.rs`
-- `crates/host-play/tests/revision_377_live/quantity.rs`
-- `crates/scenario/src/catalog.rs`
-- `crates/scenario/src/lib.rs`
-- `crates/scenario/src/proof.rs`
-- `crates/scenario/src/runner.rs`
-- `crates/scenario/src/runner_tests.rs`
-- `crates/scenario/src/scenarios/mod.rs`
-- `crates/scenario/src/scenarios/quantity.rs`
-- `crates/scenario/src/ui_actions.rs`
-
-No additional live attempt was made.
+## Last receipt and exact next step
+- Last check output: `clippy-final.log`, still checking `script-js`; no clippy diagnostics/final status were produced.
+- Next: rerun `cargo clippy -p host-play -p scenario --features host-play/test-support --all-targets -- -D warnings` with `CARGO_BUILD_JOBS=8` and `BOT_NAV_BUILD=skip`, then record the result and resume only with operator authorization. Do not push or run live.
