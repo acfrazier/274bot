@@ -122,6 +122,7 @@ jobs:
     name: architecture
     runs-on: ubuntu-24.04
     env:
+      ARCH_REF: release-0.2.9
       ARCH_RUST_ANALYZER_URL: ${{ vars.ARCH_RUST_ANALYZER_URL }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
