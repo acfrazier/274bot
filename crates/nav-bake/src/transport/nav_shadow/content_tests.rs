@@ -77,6 +77,7 @@ fn local_pack_shadow_paths_match_content_and_leave_bake_outputs_unchanged() {
         assert!(report["stage_elapsed_ns"].as_u64().unwrap_or_default() > 0);
         assert_report_limits(&report);
         assert_no_removed_edges(&report, revision);
+        assert_changed_fields_exact(&report, revision);
         assert_transfer_audit(&report, revision);
         assert_content_cases(&report, &content_root, revision);
     }
@@ -116,20 +117,104 @@ fn assert_no_removed_edges(report: &Value, revision: u16) {
     );
 }
 
+fn assert_changed_fields_exact(report: &Value, revision: u16) {
+    let diffs = report["diffs"].as_array().expect("edge diff list");
+    for diff in diffs.iter().filter(|diff| diff["status"] == "changed") {
+        let baseline = diff["baseline"]
+            .as_object()
+            .expect("changed edge baseline");
+        let candidate = diff["candidate"]
+            .as_object()
+            .expect("changed edge candidate");
+        let baseline_fields: BTreeSet<_> = baseline.keys().map(String::as_str).collect();
+        let candidate_fields: BTreeSet<_> = candidate.keys().map(String::as_str).collect();
+        assert_eq!(
+            baseline_fields, candidate_fields,
+            "revision {revision} changed edge field inventory"
+        );
+        let expected: BTreeSet<_> = baseline
+            .iter()
+            .filter_map(|(field, value)| {
+                (candidate.get(field) != Some(value)).then_some(field.as_str())
+            })
+            .collect();
+        let actual: Vec<_> = diff["changed_fields"]
+            .as_array()
+            .expect("changed edge field list")
+            .iter()
+            .map(|field| field.as_str().expect("changed field name"))
+            .collect();
+        let actual_fields: BTreeSet<_> = actual.iter().copied().collect();
+        assert_eq!(
+            actual.len(),
+            actual_fields.len(),
+            "revision {revision} changed edge lists a field more than once"
+        );
+        assert!(
+            !expected.is_empty(),
+            "revision {revision} labels an unchanged edge as changed"
+        );
+        assert_eq!(
+            actual_fields, expected,
+            "revision {revision} changed edge field list is incomplete or inaccurate"
+        );
+    }
+}
+
 fn assert_transfer_audit(report: &Value, revision: u16) {
     for entry in entries(report) {
-        let candidates = entry["execution"]["candidates"]
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if candidates
-            .iter()
-            .any(|candidate| candidate["covered"] == true)
-        {
+        let path_results = paths(entry);
+        if path_results.is_empty() {
+            continue;
+        }
+        assert_eq!(
+            entry["execution"]["transfer_assertions"]["all_hold"],
+            true,
+            "revision {revision}, entry {:?} has invalid transfer assertions",
+            entry["handler_name"]
+        );
+        for path in path_results {
+            let audit = &path["transfer_audit"];
+            let cancellations = audit["cancellations"].as_u64().expect("path cancellations");
+            let automatic_closes = audit["automatic_closes"]
+                .as_u64()
+                .expect("path automatic closes");
+            let suspensions = audit["suspensions"].as_u64().expect("path suspensions");
+            let loop_summaries = audit["loop_summaries"]
+                .as_u64()
+                .expect("path loop summaries");
+            let loop_allowance = audit["loop_allowance_before_exit"]
+                .as_u64()
+                .expect("path loop allowance");
+            let unsupported_prefixes = audit["unsupported_prefixes"]
+                .as_u64()
+                .expect("path unsupported prefixes");
+            let end = path["end"].as_str().expect("path end");
             assert_eq!(
-                entry["execution"]["transfer_assertions"]["all_hold"], true,
-                "revision {revision}, entry {:?} has covered candidates",
-                entry["handler_name"]
+                unsupported_prefixes > 0,
+                end.starts_with("Unsupported"),
+                "revision {revision}, entry {:?}, path {} unsupported prefix audit",
+                entry["handler_name"],
+                path["index"]
+            );
+            assert_eq!(
+                cancellations > 0,
+                end == "AwaitingInput",
+                "revision {revision}, entry {:?}, path {} cancellation audit",
+                entry["handler_name"],
+                path["index"]
+            );
+            assert!(
+                automatic_closes <= suspensions,
+                "revision {revision}, entry {:?}, path {} closes exceed suspensions",
+                entry["handler_name"],
+                path["index"]
+            );
+            assert!(
+                loop_allowance >= loop_summaries,
+                "revision {revision}, entry {:?}, path {} loop summary lacks allowance",
+                entry["handler_name"],
+                path["index"]
             );
         }
     }
@@ -181,6 +266,13 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
         revision,
     );
     assert_double_door(report, revision);
+    if revision == 289 {
+        assert_ikov_open_type(
+            report,
+            loc_id(&names, "ikov_mendedleverdoorl").expect("289 Ikov door loc id"),
+            revision,
+        );
+    }
     assert_watch_ladder(
         report,
         loc_id(&names, "watchladderup").expect("watch ladder loc id"),
@@ -198,6 +290,7 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
         );
     }
     assert_climb_ladder(report, revision);
+    assert_mcannon_stage_window(report, revision);
 }
 
 fn loc_id(names: &std::collections::HashMap<String, i32>, wanted: &str) -> Option<i32> {
@@ -349,7 +442,7 @@ fn assert_chefdoor(report: &Value, loc_type: i32, revision: u16) {
                 continue;
             }
             assert_eq!(crossing_paths.len(), 1, "far-side chefdoor crossing count");
-            let (crossing, stat, worn) = crossing_paths[0];
+            let (crossing, stat, worn) = &crossing_paths[0];
             let has_stat_refusal = paths(entry)
                 .iter()
                 .any(|path| !path_has_move(path) && has_condition_truth(path, &stat.0, !stat.1));
@@ -423,11 +516,11 @@ fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
                 "input pause path ends with chat still open"
             );
             assert!(
-                entry["execution"]["transfer_audit"]["cancellations"]
+                path["transfer_audit"]["cancellations"]
                     .as_u64()
                     .unwrap_or_default()
                     > 0,
-                "crafting guild pause has no cancellation transfer"
+                "crafting guild pause has no path cancellation transfer"
             );
             tested = true;
         }
@@ -489,20 +582,17 @@ fn assert_bkfortress_door(report: &Value, loc_type: i32, revision: u16) {
     for group in groups {
         for entry in group {
             assert!(
-                entry["execution"]["transfer_audit"]["loop_summaries"]
-                    .as_u64()
-                    .unwrap_or_default()
-                    > 0,
-                "black-knight aggro loop was not summarized"
-            );
-            assert!(
                 paths(entry).iter().any(|path| {
-                    path_has_move(path)
+                    path["transfer_audit"]["loop_summaries"]
+                        .as_u64()
+                        .unwrap_or_default()
+                        > 0
+                        && path_has_move(path)
                         && candidates_for_path(entry, path)
                             .iter()
                             .any(|candidate| candidate["covered"] == true)
                 }),
-                "black-knight stand has no covered crossing"
+                "black-knight crossing path has no summarized aggro loop"
             );
         }
     }
@@ -521,7 +611,7 @@ fn path_has_script(path: &Value, needle: &str) -> bool {
             .is_some_and(|sites| sites.iter().any(|site| site_has_script(site, needle)))
 }
 
-fn entries_with_script(report: &Value, wanted: &str) -> Vec<&Value> {
+fn entries_with_script<'a>(report: &'a Value, wanted: &str) -> Vec<&'a Value> {
     let needle = wanted.to_ascii_lowercase();
     entries(report)
         .iter()
@@ -574,6 +664,39 @@ fn assert_double_door(report: &Value, revision: u16) {
             "double-door path does not restore the deleted placed loc and use the other placed leaf"
         );
     }
+}
+
+fn assert_ikov_open_type(report: &Value, loc_type: i32, revision: u16) {
+    assert!(
+        entries_for_loc(report, loc_type).iter().any(|entry| {
+            entry["handler_name"]
+                .as_str()
+                .is_some_and(|name| name.contains("ikov_mendedleverdoorl"))
+                && paths(entry).iter().any(|path| {
+                    let covered_open_type = candidates_for_path(entry, path)
+                        .iter()
+                        .any(|candidate| {
+                            candidate["covered"] == true
+                                && candidate["edge"]["open_loc_id"].as_i64() == Some(1_562)
+                        });
+                    let sourced_open_leaf = path["effects"]
+                        .as_array()
+                        .is_some_and(|effects| {
+                            effects.iter().any(|effect| {
+                                effect["effect"].as_str().is_some_and(|description| {
+                                    description.starts_with(
+                                        "Loc { kind: Add, obj: Created(",
+                                    ) && description.contains("ty: LocTypeId(1562)")
+                                }) && effect["site"]["source"].as_str().is_some_and(|source| {
+                                    source.contains("scripts/doors/scripts/doubledoors.rs2:135")
+                                }) && effect["site"]["pc"].as_u64() == Some(34)
+                            })
+                        });
+                    covered_open_type && sourced_open_leaf
+                })
+        }),
+        "revision {revision} Ikov opened door lacks the sourced leaf type 1562"
+    );
 }
 
 fn loc_type_for(effects: &[Value], kind: &str, placed_id: u64) -> Option<String> {
@@ -695,22 +818,66 @@ fn assert_misc_ulby(report: &Value, loc_type: i32) {
 }
 
 fn assert_climb_ladder(report: &Value, revision: u16) {
+    let entry = entries(report)
+        .iter()
+        .find(|entry| {
+            entry["handler_name"] == "[proc,climb_ladder]" && entry["role"] == "procedure"
+        })
+        .unwrap_or_else(|| panic!("revision {revision} did not resolve the climb_ladder procedure"));
+    let source = entry["handler_source"]
+        .as_str()
+        .filter(|source| !source.is_empty())
+        .unwrap_or_else(|| panic!("revision {revision} climb_ladder has no program source"));
+    assert_ne!(
+        entry["execution"]["status"],
+        "script not found",
+        "revision {revision} silently skipped the climb_ladder procedure"
+    );
     assert!(
-        entries(report).iter().any(|entry| {
-            entry["handler_name"] == "climb_ladder"
-                && entry["role"] == "procedure"
-                && paths(entry).iter().any(|path| {
-                    path["end"] == "Finished"
-                        && path["effects"].as_array().is_some_and(|effects| {
-                            effects.iter().any(|effect| {
-                                effect["effect"]
-                                    .as_str()
-                                    .is_some_and(|text| text.starts_with("Delay {"))
-                                    && effect["ticks"] == serde_json::json!([1, 1])
-                            })
-                        })
+        paths(entry).iter().any(|path| {
+            path["end"] == "Finished"
+                && path["at"]["source"]
+                    .as_str()
+                    .is_some_and(|site| site.starts_with(source))
+                && path["effects"].as_array().is_some_and(|effects| {
+                    effects.iter().any(|effect| {
+                        effect["effect"]
+                            .as_str()
+                            .is_some_and(|text| text.starts_with("Delay {"))
+                            && effect["ticks"] == serde_json::json!([1, 1])
+                    })
                 })
         }),
-        "revision {revision} climb_ladder lacks a finished one-tick path"
+        "revision {revision} climb_ladder lacks a sourced finished one-tick path"
+    );
+}
+
+fn assert_mcannon_stage_window(report: &Value, revision: u16) {
+    let candidate = entries(report).iter().find_map(|entry| {
+        paths(entry).iter().find_map(|path| {
+            let has_mcannon_condition = path["conditions"]
+                .as_array()
+                .is_some_and(|conditions| {
+                    conditions.iter().any(|condition| {
+                        condition["site"]["source"]
+                            .as_str()
+                            .is_some_and(|source| source.contains("mcannon_ladders.rs2"))
+                    })
+                });
+            if !has_mcannon_condition {
+                return None;
+            }
+            candidates_for_path(entry, path).into_iter().find(|candidate| {
+                candidate["covered"] == true
+                    && candidate["edge"]["quest_gates"].as_str().is_some_and(|gates| {
+                        gates.contains("FactKey(\"mcannon\")")
+                            && gates.contains("InclusiveRange { min: Some(2), max: Some(11) }")
+                    })
+            })
+        })
+    });
+    assert!(
+        candidate.is_some(),
+        "revision {revision} McCannon ladder path lacks the narrowed stage window 2..11"
     );
 }

@@ -3,12 +3,12 @@ use std::path::Path;
 use std::time::Instant;
 
 use api::snapshot::WorldTile;
-use client::dash3d::{CollisionFlag, LocShape};
+use client::dash3d::LocShape;
 use nav_planner::collision::WorldCollision;
 use nav_planner::transport::{DoorDir, TransportEdge, TransportKind};
 use rs2vm::machine::{
     Cond, CondClass, DeferKind, Effect, End, Entry, Expr, LocKind, Machine, PathResult, PlayerPos,
-    Pred, Run, Stored, Value, View,
+    Pred, Run, Value, View,
 };
 use rs2vm::profile::EngineProfile;
 use rs2vm::program::Program;
@@ -49,7 +49,7 @@ struct LimitSummary {
     bytes: BoundSummary,
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 struct BoundSummary {
     maximum: u64,
     percentile_99: u64,
@@ -131,11 +131,12 @@ struct PathSummary {
     ops: [u32; 2],
     world_reads_after_suspend: u32,
     modal: String,
+    transfer_audit: TransferSummary,
     ints: Vec<String>,
     strings: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct SiteSummary {
     script: u32,
     script_name: Option<String>,
@@ -180,7 +181,7 @@ struct RivalSummary {
     site: SiteSummary,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 struct TileSummary {
     x: i32,
     z: i32,
@@ -239,7 +240,7 @@ struct RunPeaks {
 }
 
 /// Real program, ordered base-world adapter, and non-mutating stage comparison.
-pub(super) struct NavShadow {
+pub(crate) struct NavShadow {
     program: Program,
     world: NavWorld,
     profile: EngineProfile,
@@ -401,7 +402,7 @@ impl NavShadow {
             .program
             .scripts
             .values()
-            .find(|script| script.name.eq_ignore_ascii_case("climb_ladder"))
+            .find(|script| script.name.eq_ignore_ascii_case("[proc,climb_ladder]"))
             .map(|script| script.id);
         let Some(script_id) = script_id else {
             self.report.entries.push(EntryReport {
@@ -613,7 +614,7 @@ impl NavShadow {
             self.report.entries.push(entry_report);
             return;
         };
-        let Some(script) = self.program.script(script_id) else {
+        let Some(script_source) = entry_report.handler_source.as_deref() else {
             entry_report.execution.status = "lookup returned a missing script".to_owned();
             self.report.entries.push(entry_report);
             return;
@@ -719,7 +720,7 @@ impl NavShadow {
                     baseline,
                     collision,
                     observable,
-                    script.source.as_ref(),
+                    script_source,
                 );
                 entry_report.execution = ExecutionReport {
                     status: if assertions.all_hold {
@@ -892,7 +893,7 @@ impl NavShadow {
             let mut edge = gated_edge(kind, loc_type, at, landing, needs.clone());
             if let Some(direction) = direction {
                 edge.dir = Some(direction);
-                edge.open_loc_id = opened_type(path, loc_type);
+                edge.open_loc_id = opened_type(path, LocObj::Placed(placed_id), loc_type);
             } else {
                 let relative_safe =
                     delta.is_some() && needs == Needs::default() && relative_effects_safe(path);
@@ -1099,22 +1100,19 @@ fn transfer_summary(audit: rs2vm::machine::TransferAudit) -> TransferSummary {
 }
 
 fn transfer_assertions(run: &Run) -> TransferAssertions {
-    let unsupported = run
-        .paths
-        .iter()
-        .filter(|path| matches!(path.end, End::Unsupported(_)))
-        .count() as u64;
-    let awaiting = run
-        .paths
-        .iter()
-        .filter(|path| matches!(path.end, End::AwaitingInput))
-        .count() as u64;
-    let unsupported_prefix_count_matches = run.transfers.unsupported_prefixes == unsupported;
-    let each_input_pause_was_cancelled = run.transfers.cancellations == awaiting;
-    let each_loop_summary_has_pre_exit_allowance =
-        run.transfers.loop_allowance_before_exit >= run.transfers.loop_summaries;
-    let automatic_closes_do_not_exceed_suspensions =
-        run.transfers.automatic_closes <= run.transfers.suspensions;
+    let unsupported_prefix_count_matches = run.paths.iter().all(|path| {
+        (path.transfers.unsupported_prefixes > 0)
+            == matches!(path.end, End::Unsupported(_))
+    });
+    let each_input_pause_was_cancelled = run.paths.iter().all(|path| {
+        (path.transfers.cancellations > 0) == matches!(path.end, End::AwaitingInput)
+    });
+    let each_loop_summary_has_pre_exit_allowance = run.paths.iter().all(|path| {
+        path.transfers.loop_allowance_before_exit >= path.transfers.loop_summaries
+    });
+    let automatic_closes_do_not_exceed_suspensions = run.paths.iter().all(|path| {
+        path.transfers.automatic_closes <= path.transfers.suspensions
+    });
     TransferAssertions {
         unsupported_prefix_count_matches,
         each_input_pause_was_cancelled,
@@ -1167,6 +1165,7 @@ fn path_summary(index: usize, path: &PathResult, run: &Run, program: &Program) -
         ops: [path.ops.min, path.ops.max],
         world_reads_after_suspend: path.world_reads_after_suspend,
         modal: format!("{:?}", path.modal),
+        transfer_audit: transfer_summary(path.transfers),
         ints: path.ints.iter().map(|value| format!("{value:?}")).collect(),
         strings: path
             .strings
@@ -1449,9 +1448,8 @@ fn condition_needs(
     match atom.kind {
         rs2vm::machine::AtomKind::Varp(id) => {
             if let Some(window) = observable.stage_window(i32::from(id.0)) {
-                needs
-                    .quests
-                    .push(api::selected::QuestGate::Window(window.clone()));
+                let window = stage_window_requirement(window, effective, constant)?;
+                needs.quests.push(api::selected::QuestGate::Window(window));
                 return Some(needs);
             }
             let varp = program.packs.varps.get(&id)?;
@@ -1572,6 +1570,33 @@ fn members_sources(run: &Run, conditions: &[Cond], program: &Program) -> Vec<Str
     sources
 }
 
+fn stage_window_requirement(
+    window: &api::selected::StageWindow,
+    operator: rs2vm::machine::CmpOp,
+    value: i32,
+) -> Option<api::selected::StageWindow> {
+    let mut selected = window.clone();
+    let minimum = selected.values.min?;
+    let maximum = selected.values.max?;
+    if operator == rs2vm::machine::CmpOp::Eq {
+        if !(minimum..=maximum).contains(&value) {
+            return None;
+        }
+        selected.values.min = Some(value);
+        selected.values.max = Some(value);
+        return Some(selected);
+    }
+    if operator == rs2vm::machine::CmpOp::Ne && (value < minimum || value > maximum) {
+        return Some(selected);
+    }
+    let minimum = lower_bound(operator, value)?.max(minimum);
+    if minimum > maximum {
+        return None;
+    }
+    selected.values.min = Some(minimum);
+    Some(selected)
+}
+
 fn lower_bound(operator: rs2vm::machine::CmpOp, value: i32) -> Option<i32> {
     use rs2vm::machine::CmpOp::{Ge, Gt, Ne};
     match operator {
@@ -1579,6 +1604,7 @@ fn lower_bound(operator: rs2vm::machine::CmpOp, value: i32) -> Option<i32> {
         Gt => value.checked_add(1),
         Ne if value < 0 => Some(0),
         Ne if value == 0 => Some(1),
+        Ne => value.checked_add(1),
         _ => None,
     }
 }
@@ -1590,7 +1616,7 @@ fn inventory_requirement(operator: rs2vm::machine::CmpOp, value: i32) -> Option<
         Gt => value.checked_add(1).map(|minimum| (minimum.max(0), false)),
         Ne if value < 0 => Some((0, false)),
         Ne if value == 0 => Some((1, false)),
-        Ne => None,
+        Ne => value.checked_add(1).map(|minimum| (minimum, false)),
         Eq if value == 0 => Some((0, true)),
         Eq => None,
         Le if value == 0 => Some((0, true)),
@@ -1630,6 +1656,7 @@ fn selection_truth(
             CmpOp::Le | CmpOp::Lt | CmpOp::Eq => Some(false),
         },
         AtomKind::Members if operator == CmpOp::Eq && constant == 1 => Some(true),
+        AtomKind::Members if operator == CmpOp::Eq && constant == 0 => Some(false),
         AtomKind::InvSlot { inv, slot }
             if inventory_is_worn(program, inv)
                 && operator == CmpOp::Eq
@@ -1660,15 +1687,90 @@ fn is_selected(
         )
 }
 
-fn opened_type(path: &PathResult, closed_id: i32) -> Option<i32> {
-    path.effects.iter().find_map(|record| match record.effect {
+fn opened_type(
+    effects: &[rs2vm::machine::EffectRecord],
+    target: LocObj,
+    closed_id: i32,
+) -> Option<i32> {
+    let closed = effects.iter().enumerate().rev().find_map(|(index, record)| {
+        match &record.effect {
+            Effect::Loc {
+                kind: LocKind::Del,
+                obj,
+                ty,
+                tile,
+                shape,
+                angle,
+                ..
+            } if *obj == target && ty.0 == closed_id => Some((index, *tile, *shape, *angle)),
+            _ => None,
+        }
+    });
+    if let Some((delete_index, target_coord, shape, angle)) = closed {
+        if let Some(open_coord) = open_leaf_coord(target_coord, shape, angle) {
+            let mut opened_type = None;
+            for record in &effects[delete_index + 1..] {
+                if let Effect::Loc {
+                    kind: LocKind::Add,
+                    obj: LocObj::Created(_),
+                    ty,
+                    tile,
+                    ..
+                } = &record.effect
+                {
+                    if *tile != open_coord || ty.0 == closed_id {
+                        continue;
+                    }
+                    match opened_type {
+                        Some(previous) if previous != ty.0 => return None,
+                        None => opened_type = Some(ty.0),
+                        Some(_) => {}
+                    }
+                }
+            }
+            if opened_type.is_some() {
+                return opened_type;
+            }
+        }
+        return effects[delete_index + 1..]
+            .iter()
+            .rev()
+            .find_map(|record| match &record.effect {
+                Effect::Loc {
+                    kind: LocKind::Change,
+                    obj,
+                    ty,
+                    tile,
+                    ..
+                } if *obj == target && *tile == target_coord && ty.0 != closed_id => {
+                    Some(ty.0)
+                }
+                _ => None,
+            });
+    }
+    effects.iter().rev().find_map(|record| match &record.effect {
         Effect::Loc {
-            kind: LocKind::Add,
+            kind: LocKind::Add | LocKind::Change,
+            obj,
             ty,
             ..
-        } if ty.0 != closed_id => Some(ty.0),
+        } if *obj == target && ty.0 != closed_id => Some(ty.0),
         _ => None,
     })
+}
+
+// `doubledoors.rs2:133-141` adds the inviswall at `loc_coord`, then the
+// open leaf at `door_open(loc_angle, loc_shape)`; `door_procs.rs2:1-19`
+// defines that offset. Each emitted loc effect retains its source site.
+fn open_leaf_coord(tile: Coord, shape: u8, angle: u8) -> Option<Coord> {
+    let angle = i32::from(angle);
+    let direction = match i32::from(shape) {
+        LocShape::WALL_STRAIGHT => door_dir(angle)?,
+        LocShape::WALL_DIAGONAL => door_dir((angle + 1) & 3)?,
+        _ => return None,
+    };
+    let (dx, dz) = dir_delta(direction);
+    Some(tile.offset(dx, 0, dz))
 }
 
 fn edge_identity_eq(left: &TransportEdge, right: &TransportEdge) -> bool {
@@ -1797,11 +1899,35 @@ mod tests {
     use api::game_data::{QuestIdentityRow, QuestRequirements, Transmission};
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
     use nav_planner::quest_gates::QuestGates;
-    use rs2vm::machine::{Arena, Atom, AtomId, AtomKind, CmpOp, ExprId, RunStats, TransferAudit};
-    use rs2vm::{ScriptId, VarpId};
+    use rs2vm::machine::{
+        Arena, Atom, AtomId, AtomKind, CmpOp, EffectRecord, ExprId, RunStats, TransferAudit,
+    };
+    use rs2vm::{ScriptId, Ticks, VarpId};
 
     fn test_tile(x: i32, z: i32, level: i32) -> WorldTile {
         WorldTile { x, z, level }
+    }
+    fn loc_effect(
+        kind: LocKind,
+        obj: LocObj,
+        ty: i32,
+        tile: Coord,
+        shape: u8,
+        angle: u8,
+    ) -> EffectRecord {
+        EffectRecord {
+            effect: Effect::Loc {
+                kind,
+                obj,
+                ty: LocTypeId(ty),
+                tile,
+                shape,
+                angle,
+                duration: 3,
+            },
+            site: Site::default(),
+            ticks: Ticks::default(),
+        }
     }
 
     #[test]
@@ -1932,6 +2058,66 @@ mod tests {
             ]
         );
     }
+    #[test]
+    fn open_type_is_bound_to_the_entry_loc_and_its_geometry() {
+        let left = LocObj::Placed(PlacedId(23_367));
+        let right = LocObj::Placed(PlacedId(23_368));
+        let left_coord = Coord::new(2_570, 0, 3_441);
+        let right_coord = Coord::new(2_571, 0, 3_441);
+        let unrelated_coord = Coord::new(2_600, 0, 3_441);
+        let straight = LocShape::WALL_STRAIGHT as u8;
+        let diagonal = LocShape::WALL_DIAGONAL as u8;
+        let left_open = open_leaf_coord(left_coord, straight, 0).expect("straight door offset");
+        let right_open = open_leaf_coord(right_coord, straight, 2).expect("straight door offset");
+        assert_eq!(left_open, left_coord.offset(-1, 0, 0));
+        assert_eq!(
+            open_leaf_coord(left_coord, diagonal, 0),
+            Some(left_coord.offset(0, 0, 1))
+        );
+        assert_eq!(open_leaf_coord(left_coord, u8::MAX, 0), None);
+
+        let effects = vec![
+            loc_effect(LocKind::Del, left, 89, left_coord, straight, 0),
+            loc_effect(LocKind::Add, left, 83, left_coord, straight, 0),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_563,
+                unrelated_coord,
+                straight,
+                3,
+            ),
+            loc_effect(LocKind::Del, right, 90, right_coord, straight, 2),
+            loc_effect(LocKind::Add, right, 83, right_coord, straight, 2),
+            loc_effect(LocKind::Add, LocObj::Created(1), 1_562, left_open, straight, 3),
+            loc_effect(LocKind::Add, LocObj::Created(2), 1_563, right_open, straight, 1),
+        ];
+
+        assert_eq!(opened_type(&effects, left, 89), Some(1_562));
+        assert_eq!(opened_type(&effects, right, 90), Some(1_563));
+
+        let direct_change = vec![
+            loc_effect(LocKind::Del, left, 89, left_coord, straight, 0),
+            loc_effect(LocKind::Change, left, 1_562, left_coord, straight, 0),
+        ];
+        assert_eq!(opened_type(&direct_change, left, 89), Some(1_562));
+
+        let ambiguous = vec![
+            loc_effect(LocKind::Del, left, 89, left_coord, straight, 0),
+            loc_effect(LocKind::Add, left, 83, left_coord, straight, 0),
+            loc_effect(LocKind::Add, LocObj::Created(0), 1_562, left_open, straight, 3),
+            loc_effect(LocKind::Add, LocObj::Created(1), 1_563, left_open, straight, 3),
+        ];
+        assert_eq!(opened_type(&ambiguous, left, 89), None);
+
+        let unsupported = vec![
+            loc_effect(LocKind::Del, left, 89, left_coord, u8::MAX, 0),
+            loc_effect(LocKind::Add, left, 83, left_coord, u8::MAX, 0),
+            loc_effect(LocKind::Add, LocObj::Created(0), 1_562, left_open, straight, 3),
+        ];
+        assert_eq!(opened_type(&unsupported, left, 89), None);
+    }
+
 
     #[test]
     fn typed_unknown_and_near_positions_are_rejected_as_landings() {
@@ -2016,7 +2202,7 @@ mod tests {
         let condition = Cond {
             pred: Pred::Cmp {
                 lhs: Value::Sym(ExprId(0)),
-                op: CmpOp::Eq,
+                op: CmpOp::Ge,
                 rhs: Value::Known(10),
             },
             truth: true,
@@ -2024,14 +2210,16 @@ mod tests {
             site,
             choice: 1,
         };
-        let needs = condition_needs(
-            &run,
-            &condition,
-            &Program::default(),
-            &HashMap::new(),
-            &observable,
-        )
-        .expect("stage window is a representable gate");
+        let needs_for = |condition: &Cond| {
+            condition_needs(
+                &run,
+                condition,
+                &Program::default(),
+                &HashMap::new(),
+                &observable,
+            )
+        };
+        let needs = needs_for(&condition).expect("stage threshold is a representable gate");
 
         assert_eq!(
             needs.quests,
@@ -2039,23 +2227,110 @@ mod tests {
                 quest: FactKey::new("test_quest"),
                 signal: FactKey::new("test_progress"),
                 values: InclusiveRange {
-                    min: Some(0),
+                    min: Some(10),
                     max: Some(20),
                 },
             })]
         );
-        let unselected = Cond {
-            truth: false,
-            ..condition
+        let condition_for = |operator, constant, truth| Cond {
+            pred: Pred::Cmp {
+                lhs: Value::Sym(ExprId(0)),
+                op: operator,
+                rhs: Value::Known(constant),
+            },
+            truth,
+            ..condition.clone()
         };
-        assert!(condition_needs(
-            &run,
-            &unselected,
-            &Program::default(),
-            &HashMap::new(),
-            &observable,
-        )
-        .is_none());
+        let exact = needs_for(&condition_for(CmpOp::Eq, 10, true))
+            .expect("selected exact stage is representable");
+        assert_eq!(
+            exact.quests,
+            vec![QuestGate::Window(StageWindow {
+                quest: FactKey::new("test_quest"),
+                signal: FactKey::new("test_progress"),
+                values: InclusiveRange {
+                    min: Some(10),
+                    max: Some(10),
+                },
+            })]
+        );
+        let after_zero = needs_for(&condition_for(CmpOp::Eq, 0, false))
+            .expect("selected nonzero stage is representable");
+        assert_eq!(
+            after_zero.quests,
+            vec![QuestGate::Window(StageWindow {
+                quest: FactKey::new("test_quest"),
+                signal: FactKey::new("test_progress"),
+                values: InclusiveRange {
+                    min: Some(1),
+                    max: Some(20),
+                },
+            })]
+        );
+        assert!(needs_for(&condition_for(CmpOp::Eq, 0, true)).is_none());
+        assert!(needs_for(&condition_for(CmpOp::Ge, 10, false)).is_none());
+    }
+
+    #[test]
+    fn members_eq_zero_false_arm_requires_the_members_world() {
+        let site = Site {
+            script: ScriptId(1),
+            pc: 2,
+        };
+        let run = Run {
+            paths: Vec::new(),
+            arena: Arena {
+                atoms: vec![Atom {
+                    kind: AtomKind::Members,
+                    epoch: 0,
+                    nth: 0,
+                    site,
+                    class: CondClass::Requirement,
+                    bounds: (0, 1),
+                }],
+                exprs: vec![Expr::Atom(AtomId(0))],
+                near: Vec::new(),
+            },
+            stats: RunStats::default(),
+            transfers: TransferAudit::default(),
+        };
+        let program = Program::default();
+        let worn_slots = HashMap::new();
+        let observable = super::super::ObservableGates::from_content(
+            Path::new("missing-nav-shadow-test-content"),
+            None,
+        );
+        let condition_for = |constant, truth| Cond {
+            pred: Pred::Cmp {
+                lhs: Value::Sym(ExprId(0)),
+                op: CmpOp::Eq,
+                rhs: Value::Known(constant),
+            },
+            truth,
+            class: CondClass::Requirement,
+            site,
+            choice: 1,
+        };
+        let needs_for = |condition: &Cond| {
+            condition_needs(&run, condition, &program, &worn_slots, &observable)
+        };
+
+        assert!(needs_for(&condition_for(0, false))
+            .expect("members account takes the false arm of members == 0")
+            .members);
+        assert!(needs_for(&condition_for(1, true))
+            .expect("members account takes the true arm of members == 1")
+            .members);
+        assert!(needs_for(&condition_for(0, true)).is_none());
+        assert!(needs_for(&condition_for(1, false)).is_none());
+    }
+
+    #[test]
+    fn positive_not_equal_thresholds_use_the_next_value() {
+        assert_eq!(lower_bound(CmpOp::Ne, 5), Some(6));
+        assert_eq!(inventory_requirement(CmpOp::Ne, 5), Some((6, false)));
+        assert_eq!(lower_bound(CmpOp::Ne, i32::MAX), None);
+        assert_eq!(inventory_requirement(CmpOp::Ne, i32::MAX), None);
     }
 }
 #[cfg(test)]
