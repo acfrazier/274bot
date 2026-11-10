@@ -90,10 +90,10 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
         .find(|destination| destination.name.eq_ignore_ascii_case(key))
 }
 
-/// Eligible time a native walk may stay unsettled without a host terminal
-/// receipt before it ends `Failed` and revokes its host follow. The backstop
-/// uses the active clock, so pause, hold, not-ready and Blocked intervals do
-/// not spend it.
+/// Last-resort host-receipt guard, not a movement or content wait. The
+/// Traveller bounds sent and unsent hops in observed game ticks and reports
+/// their failures first. This active-clock guard only revokes a host follow
+/// that never returns a terminal receipt; pause, hold and not-ready do not count.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 /// Login's `initalltabs` opens the quest tab and calls `update_questlist`.
 /// Give unresolved gates one later tick for quest-list colour updates to

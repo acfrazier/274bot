@@ -1138,6 +1138,9 @@ impl FollowRun {
                     if hop.sent && (at.level != hop.aim.level || cheb(at, hop.aim) > radius) {
                         hop.sent = false;
                     }
+                    if !hop.sent {
+                        hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+                    }
                 }
                 if let Some(approach) = self.transport.as_mut().and_then(|h| h.approach.as_mut()) {
                     approach.retry_pending = true;
@@ -1200,7 +1203,7 @@ impl FollowRun {
                     aim_index: 0,
                     sent: false,
                     send_refusal: None,
-                    ticks_waited: TickCount::default(),
+                    ticks_waited: TickCount::sent_at(snapshot.tick()),
                     budget_ticks: self.budget,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
@@ -1710,7 +1713,7 @@ struct WalkHop {
     leg: FollowLeg,
     /// First route-path index represented by this walk leg.
     route_index_start: usize,
-    /// Index into the leg tiles of the last cleared tile.
+    /// First leg tile still to aim at after the preceding hop.
     cursor: usize,
     aim: WorldTile,
     aim_index: usize,
