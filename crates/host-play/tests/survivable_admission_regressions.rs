@@ -751,8 +751,11 @@ fn real_pack_fortress_and_mortton_walks_of_a_base_40_account_are_admitted() {
         risk_input.defence = 40;
         risk_input.combat = Some(40);
         let request = Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                policy: RiskPolicy::Avoid,
+                enforce: true,
+                ..default_admission(risk_input).decision
+            },
             grants: ZoneExempt::all(),
             ..default_admission(risk_input)
         };
