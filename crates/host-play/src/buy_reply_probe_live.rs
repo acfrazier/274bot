@@ -2093,6 +2093,13 @@ fn run_live_probe() {
     let preparation_deadline = Instant::now() + PREPARATION_DEADLINE;
     let mut terminal_error = None;
     loop {
+        // The quester-stage preparation relogs a scriptless bot: the host
+        // keeps it logged out after the logout until the operator Login.
+        if let Some(arm) = play.arm(&account) {
+            if frame_state.lock().runner.take_relog_login() {
+                arm.arm_explicit_login();
+            }
+        }
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
         }
