@@ -401,6 +401,8 @@ declaration that cannot deal positive damage at any Hitpoints from 1 to 99.
 It also refuses a scaled formula without a multiplier and an invalid constant.
 Do not put a hazard on a `walk` or `combat` step. Their own guards handle food.
 
+### Upkeep and recovery
+
 The Quester prices the hazard from step selection until selection chooses
 another step. A new hazard step waits one tick before it begins, so survival
 can decide first. Known incoming damage and the hazard add together.
