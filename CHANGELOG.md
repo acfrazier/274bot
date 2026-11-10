@@ -101,6 +101,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   If no bank is reachable for automatic supplies, it reports the shortfall
   instead of repeating the scan and parking the Path. Required quest supplies
   and route admission keep their existing checks.
+- The Quester checks the next step's local damage hazard before preparing
+  supplies. A needed bite takes priority over a stage-supply bank search.
+  Step selection still checks current evidence after preparation.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.

@@ -407,6 +407,11 @@ can decide first. Known incoming damage and the hazard add together.
 A bite cancels the current step and closes a game page before eating.
 The restarted step keeps its hazard and the family's original quantity target.
 
+Before preparing supplies, the runner arms a proven next step's hazard.
+Upkeep then runs before a bank action, not beside it. Preparation can change
+item predicates, so this hazard check does not commit skipped steps. The runner
+selects again after preparation. An unknown predicate still blocks lower steps.
+
 Without food, the Quester holds until its current Hitpoints clear the dynamic
 eat line. It closes pages while it holds. A page still open on the 25th parked
 tick causes a typed stop. The recovery log records the bound at the park,

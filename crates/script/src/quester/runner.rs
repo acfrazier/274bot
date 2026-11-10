@@ -13,7 +13,7 @@ use super::provision::{
 };
 use super::queue::QueueStatus;
 use super::registry::PathSource;
-use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
+use super::select::{select, select_with_skips, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
@@ -2272,6 +2272,98 @@ impl Quester {
         self.dirty = true;
     }
 
+    /// Price a proven next hazard before a bank trip can delay its upkeep.
+    /// Preparation may change predicates, so leave the ordered cursor and
+    /// skip traces untouched and select again once provisioning is ready.
+    fn arm_provision_hazard(&mut self, tick: &mut NativeTick<'_>) -> Option<ScriptFlow> {
+        let pred = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &self.quests,
+            progress: self
+                .progress
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or(&[]),
+            required_after: tick.cx.evidence(),
+            chat_since: super::families::reach::last_chat_seq(&tick.cx),
+            outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
+        };
+        let SelectionDecision::Selected(selected) =
+            select(&self.path, self.seq_index, self.cursor, &pred)
+        else {
+            return None;
+        };
+        selected.step.hazard?;
+        let slot = StepSlot {
+            in_prelude: selected.prelude,
+            seq_index: self.seq_index,
+            step_index: selected.index,
+        };
+        self.step_index = slot.step_index;
+        self.in_prelude = slot.in_prelude;
+        self.admit_step_hazard(slot, tick)
+    }
+
+    fn admit_step_hazard(
+        &mut self,
+        slot: StepSlot,
+        tick: &mut NativeTick<'_>,
+    ) -> Option<ScriptFlow> {
+        let step = if slot.in_prelude {
+            &self.path.prelude[slot.step_index]
+        } else {
+            &self.path.sequences[slot.seq_index].steps[slot.step_index]
+        };
+        self.selected_hazard.select(slot, step.hazard);
+        let hazard = step.hazard.filter(|_| !self.selected_hazard.handled)?;
+        let Some(hp_max) = tick
+            .cx
+            .snapshot()
+            .stats()
+            .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
+            .map(|stat| stat.base)
+        else {
+            self.publish(tick.output);
+            return Some(ScriptFlow::Continue);
+        };
+        let max = hazard.max_damage(hp_max, hp_max);
+        let line = crate::combat::select::lines(Some(max), hp_max).eat;
+        tick.output.log(
+            api::hostlog::Level::Info,
+            &format!(
+                "quester hazard step={} max={max} source={} line={line}",
+                step.id.0,
+                step.hazard_source.as_deref().unwrap_or("")
+            ),
+        );
+        self.selected_hazard.handled = true;
+        if line >= hp_max {
+            let id = Arc::clone(&step.id.0);
+            self.parked_step = Some(ParkedStep {
+                sequence_index: slot.seq_index,
+                step_index: slot.step_index,
+                in_prelude: slot.in_prelude,
+                id: Arc::clone(&id),
+            });
+            self.set_last_error(
+                QuesterFailureKind::HazardUnsurvivable,
+                Arc::from(format!(
+                    "step {id}: its damage {max} needs more than {hp_max} Hitpoints to clear the eat line {line}"
+                )),
+            );
+            self.parked = true;
+            self.dirty = true;
+            self.trace_parked(tick.output);
+            self.publish(tick.output);
+            return Some(ScriptFlow::Blocked(self.blocked_failure()));
+        }
+        self.survival_deferred = true;
+        self.dirty = true;
+        self.publish(tick.output);
+        Some(ScriptFlow::Continue)
+    }
+
     fn current_step(&self) -> Option<&CompiledStep> {
         if self.in_prelude {
             self.path.prelude.get(self.step_index)
@@ -3450,6 +3542,9 @@ impl Quester {
             }
         }
         if self.step.is_none() {
+            if let Some(flow) = self.arm_provision_hazard(tick) {
+                return Ok(flow);
+            }
             if !self.poll_provision(tick) {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
@@ -3642,66 +3737,21 @@ impl Quester {
                 self.path.sequences[self.seq_index].steps[index].id.clone()
             };
             self.reset_attempt_scope_if_needed(&step_id);
-            let step = if prelude {
-                &self.path.prelude[index]
-            } else {
-                &self.path.sequences[self.seq_index].steps[index]
-            };
-            self.selected_hazard.select(
+            if let Some(flow) = self.admit_step_hazard(
                 StepSlot {
                     in_prelude: prelude,
                     seq_index: self.seq_index,
                     step_index: index,
                 },
-                step.hazard,
-            );
-            if let Some(hazard) = step.hazard.filter(|_| !self.selected_hazard.handled) {
-                let Some(hp_max) = tick
-                    .cx
-                    .snapshot()
-                    .stats()
-                    .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
-                    .map(|stat| stat.base)
-                else {
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Continue);
-                };
-                let max = hazard.max_damage(hp_max, hp_max);
-                let line = crate::combat::select::lines(Some(max), hp_max).eat;
-                tick.output.log(
-                    api::hostlog::Level::Info,
-                    &format!(
-                        "quester hazard step={} max={max} source={} line={line}",
-                        step.id.0,
-                        step.hazard_source.as_deref().unwrap_or("")
-                    ),
-                );
-                self.selected_hazard.handled = true;
-                if line >= hp_max {
-                    let id = Arc::clone(&step.id.0);
-                    self.parked_step = Some(ParkedStep {
-                        sequence_index: self.seq_index,
-                        step_index: index,
-                        in_prelude: prelude,
-                        id: Arc::clone(&id),
-                    });
-                    self.set_last_error(
-                        QuesterFailureKind::HazardUnsurvivable,
-                        Arc::from(format!(
-                            "step {id}: its damage {max} needs more than {hp_max} Hitpoints to clear the eat line {line}"
-                        )),
-                    );
-                    self.parked = true;
-                    self.dirty = true;
-                    self.trace_parked(tick.output);
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
-                }
-                self.survival_deferred = true;
-                self.dirty = true;
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
+                tick,
+            ) {
+                return Ok(flow);
             }
+            let step = if prelude {
+                &self.path.prelude[index]
+            } else {
+                &self.path.sequences[self.seq_index].steps[index]
+            };
             let pair_step = step.kind.as_ref() == "partner";
             self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
