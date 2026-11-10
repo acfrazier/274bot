@@ -3303,13 +3303,8 @@ impl TuiSession {
     /// the projection (`app.walk_permissions`).
     fn persist_walk_globals(&mut self, app: &mut TuiApp, dirty: &[frontend_core::NavPreference]) {
         use frontend_core::NavPreference;
-        let after = frontend_core::WalkGlobalsView::new(
-            app.nav,
-            app.script_scope_notice_ack,
-            app.survivable_routing_notice_ack,
-        );
+        let after = frontend_core::WalkGlobalsView::new(app.nav, app.script_scope_notice_ack);
         let now = after.globals();
-        let mut danger_sent = false;
         let mut failure = None;
         for preference in dirty {
             let command = match preference {
@@ -3328,20 +3323,12 @@ impl TuiSession {
                 NavPreference::AllowQuestStart => {
                     OperatorCommand::SetNavPreference(*preference, now.allow_quest_start())
                 }
-                NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
-                    if danger_sent {
-                        continue;
-                    }
-                    danger_sent = true;
+                NavPreference::AllowDangerZones => {
                     OperatorCommand::SetDangerLevel(now.danger_level())
                 }
                 NavPreference::ScriptScopeNoticeAck => {
                     OperatorCommand::SetNavPreference(*preference, after.script_scope_notice_ack())
                 }
-                NavPreference::SurvivableRoutingNoticeAck => OperatorCommand::SetNavPreference(
-                    *preference,
-                    after.survivable_routing_notice_ack(),
-                ),
                 NavPreference::PauseScriptOnManualWalkAbort => OperatorCommand::SetNavPreference(
                     *preference,
                     app.pause_script_on_manual_walk_abort,
@@ -3631,7 +3618,7 @@ impl TuiSession {
     /// which drafts are still the operator's own change.
     fn project_setting_feedback(&mut self, app: &mut TuiApp) {
         use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
-        const SHOWN: [frontend_core::Setting; 14] = [
+        const SHOWN: [frontend_core::Setting; 13] = [
             S::Nav(N::AllowTeleports),
             S::Nav(N::AllowWilderness),
             S::Nav(N::AllowBankFetch),
@@ -3640,7 +3627,6 @@ impl TuiSession {
             S::DangerRouting,
             S::Nav(N::PauseScriptOnManualWalkAbort),
             S::Nav(N::ScriptScopeNoticeAck),
-            S::Nav(N::SurvivableRoutingNoticeAck),
             S::Nav(N::ShowSpecialAreas),
             S::MapBake,
             S::QuesterPaths,
@@ -3673,7 +3659,6 @@ impl TuiSession {
             quest_start: pending(S::Nav(N::AllowQuestStart)),
             danger: pending(S::DangerRouting),
             scope_ack: pending(S::Nav(N::ScriptScopeNoticeAck)),
-            survivable_ack: pending(S::Nav(N::SurvivableRoutingNoticeAck)),
             pause: pending(S::Nav(N::PauseScriptOnManualWalkAbort)),
             special_areas: pending(S::Nav(N::ShowSpecialAreas)),
             map_bake: pending(S::MapBake),

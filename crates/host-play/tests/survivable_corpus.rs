@@ -256,7 +256,7 @@ fn export() -> Result<(), String> {
             "operating_system": std::env::consts::OS,
             "pointer_width_bits": usize::BITS,
         },
-        "risk_policy": { "policy": "Inherit", "enforce": true, "runtime_settings_written": false },
+        "risk_policy": { "policy": "Avoid", "enforce": true, "runtime_settings_written": false },
         "loadouts": loadouts.iter().map(loadout_json).collect::<Vec<_>>(),
         "corpus": {
             "input_count": inputs.len(),
@@ -1903,7 +1903,7 @@ fn export_record(
             "targets": input.targets.iter().map(|target| tile_json(*target)).collect::<Vec<_>>(),
             "route_options": route_options_json(input.route_options, &input.grant_names),
             "assessment_grants": input.grant_names,
-            "policy": "Inherit",
+            "policy": "Avoid",
             "enforce": true,
             "frozen_routes": frozen_rows,
             "end_to_end": end_to_end,
@@ -1918,8 +1918,12 @@ fn make_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
         zones: grants,
         ..FindOptions::default()
     };
-    let mut admission = Admission::manual(options, input, 0, WalkGlobals::default());
-    admission.policy = RiskPolicy::Inherit;
+    let mut admission = Admission::manual(
+        WalkGlobals::default().manual_decision(options.zones.is_all()),
+        input,
+        0,
+    );
+    admission.policy = RiskPolicy::Avoid;
     admission.enforce = true;
     admission.grants = grants;
     admission
@@ -2175,7 +2179,7 @@ fn assessment_json(
         "poison_test":debug_field(&debug,"poison_test"),
         "assessment_debug_sha256":sha256(debug.as_bytes()),
         "assessment_debug":debug,
-        "risk_policy":"Inherit",
+        "risk_policy":"Avoid",
         "enforce":true,
         "assessment_grants": debug_field(&debug,"grants"),
     }))

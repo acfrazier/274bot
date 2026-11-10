@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 
+use crate::walk_permissions::DangerDecision;
 use crate::walk_plan::RoutePath;
 use api::condition::PoisonState;
 use api::quest_progress::EvidenceStamp;
@@ -37,8 +38,8 @@ pub struct RouteBasis {
 #[derive(Clone, Copy, Debug)]
 pub struct Admission {
     pub policy: RiskPolicy,
-    /// False only for inherited admission while activation is held: retain the
-    /// assessment, but preserve the pre-S2b router's admit/refuse decision.
+    /// False for a walk with no danger request while the runtime net is held:
+    /// retain the assessment, but preserve the router's admit/refuse decision.
     pub enforce: bool,
     pub grants: ZoneExempt,
     pub allow: WalkAllow,
@@ -51,25 +52,39 @@ pub struct Admission {
 }
 
 impl Admission {
-    pub fn manual(
-        options: FindOptions,
+    /// The admission of one walk from its [`DangerDecision`]: the decision's
+    /// policy, enforcement and zone grant, unchanged.
+    pub fn from_decision(
+        decision: DangerDecision,
+        allow: WalkAllow,
         input: RiskInput,
         generation: u64,
-        globals: crate::WalkGlobals,
+        compat_v1: bool,
     ) -> Self {
         Self {
-            policy: if options.zones.is_all() {
-                RiskPolicy::Proceed
-            } else {
-                globals.risk_policy(Default::default(), Default::default())
-            },
-            enforce: crate::NET_AVAILABLE || options.zones != ZoneExempt::NONE,
-            grants: options.zones,
-            allow: WalkAllow::default(),
+            policy: decision.policy,
+            enforce: decision.enforce,
+            grants: decision.zones(),
+            allow,
             input,
             generation,
-            compat_v1: false,
+            compat_v1,
             escape: None,
+        }
+    }
+
+    /// A manual WalkTo's admission from [`crate::WalkGlobals::manual_decision`].
+    pub fn manual(decision: DangerDecision, input: RiskInput, generation: u64) -> Self {
+        Self::from_decision(decision, WalkAllow::default(), input, generation, false)
+    }
+
+    /// The decision this admission carries (the inverse of
+    /// [`Self::from_decision`]), for a route re-found under the same walk.
+    pub fn decision(&self) -> DangerDecision {
+        DangerDecision {
+            permitted: self.grants.is_all(),
+            policy: self.policy,
+            enforce: self.enforce,
         }
     }
 }
@@ -160,12 +175,10 @@ pub(crate) fn route(
             Some((route, assessment)) if !permits(route, world, admission, assessment) => {
                 Some(verdict_refusal(assessment.verdict))
             }
-            None if !blocked.is_empty() || admission.policy == RiskPolicy::Inherit => {
-                Some(WalkRefusal::NoRouteWithinBounds {
-                    tried: 0,
-                    last: None,
-                })
-            }
+            None if !blocked.is_empty() => Some(WalkRefusal::NoRouteWithinBounds {
+                tried: 0,
+                last: None,
+            }),
             _ => None,
         },
     };

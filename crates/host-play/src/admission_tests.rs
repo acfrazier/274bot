@@ -365,7 +365,7 @@ fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
     let to = tile(10, 1);
     let state = WorldState::default();
     let options = FindOptions::default();
-    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let admission = make_admission(RiskPolicy::Avoid, input(99));
     let ((result, search_calls), kernels) = count_kernels(|| {
         let mut calls = 0;
         let result = route(
@@ -411,7 +411,7 @@ fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear
     let mut uncertain = input(99);
     uncertain.tick = 31;
     uncertain.poison = PoisonState::Unknown { since: 0 };
-    let admission = make_admission(RiskPolicy::Inherit, uncertain);
+    let admission = make_admission(RiskPolicy::Avoid, uncertain);
     let (crossing, kernels) = count_kernels(|| {
         route(
             &world,
@@ -455,7 +455,7 @@ fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear
 
     let safe_world = empty_corridor();
     let safe_to = tile(10, 1);
-    let safe_admission = make_admission(RiskPolicy::Inherit, uncertain);
+    let safe_admission = make_admission(RiskPolicy::Avoid, uncertain);
     let (safe, safe_kernels) = count_kernels(|| {
         route(
             &safe_world,
@@ -830,7 +830,7 @@ fn u11_fresh_ignores_only_clock_age() {
         rate: 4,
         due_tick: 15,
     };
-    let admission = make_admission(RiskPolicy::Inherit, input);
+    let admission = make_admission(RiskPolicy::Avoid, input);
     let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
@@ -908,7 +908,7 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
         &[],
     )
     .unwrap();
-    let mut admission = make_admission(RiskPolicy::Inherit, input(80));
+    let mut admission = make_admission(RiskPolicy::Avoid, input(80));
     admission.input.pos = from;
     let worker_assessment = assess(&route, &world, &admission);
     assert_eq!(worker_assessment.verdict, Verdict::Survivable);
@@ -961,7 +961,7 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
         &[],
     )
     .unwrap();
-    let mut admission = make_admission(RiskPolicy::Inherit, input(80));
+    let mut admission = make_admission(RiskPolicy::Avoid, input(80));
     admission.input.pos = from;
     let worker_assessment = assess(&route, &world, &admission);
     let mut arm = crate::WalkArm {
@@ -1021,7 +1021,7 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
         &[],
     )
     .unwrap();
-    let mut admission = make_admission(RiskPolicy::Inherit, input(80));
+    let mut admission = make_admission(RiskPolicy::Avoid, input(80));
     admission.escape = Some(escape(EscapeState::Unresolved));
     let worker_assessment = assess(&route, &world, &admission);
     let mut bot = crate::script_runtime::NavBot {
@@ -1083,7 +1083,7 @@ fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowe
         EscapeState::Suspended,
         EscapeState::Unresolved,
     ] {
-        let mut request = make_admission(RiskPolicy::Inherit, input(80));
+        let mut request = make_admission(RiskPolicy::Avoid, input(80));
         request.escape = Some(escape(state));
         let (result, kernels) = count_kernels(|| {
             super::route(
@@ -1245,7 +1245,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     let state = WorldState::default();
     let options = FindOptions::default();
     let safe_world = empty_corridor();
-    let safe_admission = make_admission(RiskPolicy::Inherit, input(80));
+    let safe_admission = make_admission(RiskPolicy::Avoid, input(80));
     let safe_from = tile(0, 1);
     let safe_to = tile(12, 1);
     let _ = assess(
@@ -1273,7 +1273,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     });
 
     let refused_world = unknown_corridor(5);
-    let refused_admission = make_admission(RiskPolicy::Inherit, input(80));
+    let refused_admission = make_admission(RiskPolicy::Avoid, input(80));
     let refused_from = tile(0, 1);
     let refused_to = tile(10, 1);
     sample_route("refused_route", 3, || {
@@ -1310,7 +1310,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
         &[],
     )
     .unwrap();
-    let mut publish_admission = make_admission(RiskPolicy::Inherit, input(80));
+    let mut publish_admission = make_admission(RiskPolicy::Avoid, input(80));
     publish_admission.input.pos = publish_from;
     let worker_assessment = assess(&publish_route, &publish_world, &publish_admission);
     let mut samples = Vec::with_capacity(SAMPLES);
@@ -1459,7 +1459,7 @@ fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
         .unwrap(),
     );
     let snapshot = api::snapshot::GameSnapshot::new();
-    for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
+    for policy in [RiskPolicy::Avoid, RiskPolicy::Proceed] {
         let admission = make_admission(policy, input(80));
         let assessment = assess(&route, &world, &admission);
         let mut bot = crate::script_runtime::NavBot {
@@ -1503,11 +1503,7 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
-    for level in [
-        crate::DangerLevel::Never,
-        crate::DangerLevel::WhenSurvivable,
-        crate::DangerLevel::Always,
-    ] {
+    for level in [crate::DangerLevel::Never, crate::DangerLevel::Always] {
         let mut globals = crate::WalkGlobals::default();
         globals.set_danger_level(level);
         let options = globals.manual_options(false);
@@ -1522,11 +1518,7 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
             risk_input.pos = from;
             risk_input.poison = PoisonState::default();
             risk_input.set_unattributed(true);
-            let request = Admission {
-                policy: globals.risk_policy(Default::default(), Default::default()),
-                enforce: globals.enforces_risk(Default::default(), Default::default()),
-                ..Admission::manual(options, risk_input, 1, globals)
-            };
+            let request = Admission::manual(globals.manual_decision(false), risk_input, 1);
             let actual = route(
                 &world,
                 &request,
@@ -1574,8 +1566,9 @@ fn global_override_beats_a_walk_forbid_on_an_undeclared_zone() {
             allow_danger_zones: bit,
             ..Default::default()
         };
-        assert!(!globals.enforces_risk(script, walk));
-        assert_eq!(globals.risk_policy(script, walk), RiskPolicy::Proceed);
+        let decision = globals.danger_decision(script, walk, false);
+        assert!(!decision.enforce);
+        assert_eq!(decision.policy, RiskPolicy::Proceed);
         let options = globals.manual_options(false);
         assert!(options.zones.is_all());
         assert!(matches!(
@@ -1635,10 +1628,9 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
     let mut risk_input = input(99);
     risk_input.pos = tile(0, 1);
     let held = Admission::manual(
-        FindOptions::default(),
+        crate::WalkGlobals::default().manual_decision(false),
         risk_input,
         1,
-        crate::WalkGlobals::default(),
     );
     assert!(!held.enforce);
     for name in ["alice", "bob"] {
@@ -1770,8 +1762,7 @@ fn real_squire_walk(
         combat_level: Some(40),
         ..WorldState::default()
     };
-    let (opts, _) = crate::resolve_route_exclusions(
-        FindOptions::default(),
+    let exclusions = crate::resolve_route_exclusions(
         world,
         from,
         to,
@@ -1782,22 +1773,22 @@ fn real_squire_walk(
         },
     )
     .unwrap();
-    let globals = crate::WalkGlobals::default();
+    // The step's `cross` is the script's request; the override is off.
+    let decision = crate::WalkGlobals::default().danger_decision(
+        Default::default(),
+        Default::default(),
+        !exclusions.cross.is_empty(),
+    );
+    assert!(decision.permitted && decision.enforce);
+    let opts = FindOptions {
+        zones: decision.zones(),
+        ..FindOptions::default()
+    };
     let mut risk_input = unknown_poison(40);
     risk_input.pos = from;
     risk_input.combat = Some(40);
     risk_input.hp_max = 40;
-    let admission = Admission {
-        policy: globals.risk_policy(Default::default(), Default::default()),
-        // A nonempty `cross` arms enforcement while the default is held.
-        enforce: true,
-        grants: opts.zones,
-        allow: WalkAllow::default(),
-        input: risk_input,
-        generation: 1,
-        compat_v1: false,
-        escape: None,
-    };
+    let admission = Admission::from_decision(decision, WalkAllow::default(), risk_input, 1, false);
     let request = crate::ScriptRouteRequest {
         candidate_goals: None,
         admission,
@@ -2292,7 +2283,7 @@ mod compact_final_route_tests {
         let from = tile(0, 1);
         let dest = tile(10, 1);
         let final_route = compact_route_path(&world, from, dest);
-        let admission = make_admission(RiskPolicy::Inherit, input(80));
+        let admission = make_admission(RiskPolicy::Avoid, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
         assert!(!before.input.missing_facts());
         let snapshot = post_wear_snapshot(from);
@@ -2338,7 +2329,7 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
         &WorldState::default(),
     )
     .unwrap();
-    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let admission = make_admission(RiskPolicy::Avoid, input(99));
     let assessment = assess(&route, &world, &admission);
     let mut bot = crate::script_runtime::NavBot {
         route: Some(Arc::new(route)),

@@ -1040,15 +1040,15 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
         false,
         None,
     );
+    // An enforced check with no zone grant, as before the middle level's
+    // `Inherit` mode was removed (it judged exactly like enforced `Avoid`).
     let admission = Admission {
-        input,
-        policy: RiskPolicy::Inherit,
+        policy: RiskPolicy::Avoid,
         enforce: true,
         ..Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             input,
             1,
-            crate::WalkGlobals::default(),
         )
     };
     let assessment = assess(&route, &rig.world, &admission);

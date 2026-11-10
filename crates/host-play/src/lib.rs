@@ -113,7 +113,7 @@ pub use walk_arm::{
     step_walk_arm_bank_fetch, step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow,
     ManualWalkPrereqContext, NoPath, WalkArm, WalkArms, WalkRoute,
 };
-pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
+pub use walk_permissions::{DangerDecision, DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
 

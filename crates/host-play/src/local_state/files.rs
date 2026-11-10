@@ -267,6 +267,7 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
     let Some(nav) = value.as_object() else {
         return Err("nav preferences must be an object");
     };
+    note_removed_middle_level(nav);
     let defaults = WalkGlobals::default();
     Ok(WalkGlobals {
         allow_teleports: walk_boolean(
@@ -293,12 +294,6 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
             defaults.allow_danger_zones,
             "nav.allow_danger_zones must be a boolean",
         )?,
-        survivable_routing: walk_boolean(
-            nav,
-            "survivable_routing",
-            defaults.survivable_routing,
-            "nav.survivable_routing must be a boolean",
-        )?,
         allow_prereq_dialogue: walk_boolean(
             nav,
             "allow_prereq_dialogue",
@@ -312,6 +307,22 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
             "nav.allow_quest_start must be a boolean",
         )?,
     })
+}
+
+/// The previous release's format may hold the removed "When survivable" danger
+/// level. It loads as the default, Never; the file is not rewritten. One info
+/// line per process says so.
+fn note_removed_middle_level(nav: &Map<String, Value>) {
+    static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if crate::walk_permissions::holds_removed_middle_level(nav)
+        && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Info,
+            "preferences: saved Danger routing 'When survivable' was removed; it loads as Never (the default)"
+        );
+    }
 }
 
 fn walk_boolean(

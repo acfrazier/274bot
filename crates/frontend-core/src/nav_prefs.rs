@@ -24,12 +24,8 @@ pub enum NavPreference {
     AllowPrereqDialogue,
     /// Global permission for every walk to start quests.
     AllowQuestStart,
-    /// Whether the host admits survivable crossings after its runtime net is available.
-    SurvivableRouting,
     /// Whether the user dismissed the one-time script-scope notice.
     ScriptScopeNoticeAck,
-    /// Whether the user dismissed the danger-routing migration notice.
-    SurvivableRoutingNoticeAck,
 }
 
 impl NavPreference {
@@ -43,9 +39,7 @@ impl NavPreference {
             Self::AllowDangerZones => ("allow_danger_zones", false),
             Self::AllowPrereqDialogue => ("allow_prereq_dialogue", true),
             Self::AllowQuestStart => ("allow_quest_start", true),
-            Self::SurvivableRouting => ("survivable_routing", true),
             Self::ScriptScopeNoticeAck => ("script_scope_notice_ack", false),
-            Self::SurvivableRoutingNoticeAck => ("survivable_routing_notice_ack", false),
         }
     }
 
@@ -60,9 +54,7 @@ impl NavPreference {
             Self::AllowDangerZones => "nav.allow_danger_zones",
             Self::AllowPrereqDialogue => "nav.allow_prereq_dialogue",
             Self::AllowQuestStart => "nav.allow_quest_start",
-            Self::SurvivableRouting => "nav.survivable_routing",
             Self::ScriptScopeNoticeAck => "nav.script_scope_notice_ack",
-            Self::SurvivableRoutingNoticeAck => "nav.survivable_routing_notice_ack",
         }
     }
 }
@@ -74,9 +66,6 @@ pub fn nav_preference(
     preference: NavPreference,
 ) -> Result<bool, PreferenceError> {
     let (key, default) = preference.key_and_default();
-    if preference == NavPreference::SurvivableRouting {
-        return Ok(preferences.inner().walk_globals()?.survivable_routing);
-    }
     Ok(preferences
         .document()?
         .get("nav")
@@ -146,7 +135,6 @@ mod tests {
         assert!(!nav_preference(&prefs, NavPreference::ShowSpecialAreas).unwrap());
         assert!(nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         for preference in [
-            NavPreference::SurvivableRouting,
             NavPreference::AllowPrereqDialogue,
             NavPreference::AllowQuestStart,
         ] {
@@ -163,7 +151,6 @@ mod tests {
             NavPreference::AllowBankFetch,
             NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
-            NavPreference::SurvivableRoutingNoticeAck,
         ] {
             assert!(
                 !nav_preference(&prefs, preference).unwrap(),
@@ -172,18 +159,6 @@ mod tests {
             settled_for_test(write_nav_preference(&prefs, preference, true)).unwrap();
         }
 
-        settled_for_test(write_nav_preference(
-            &prefs,
-            NavPreference::SurvivableRouting,
-            false,
-        ))
-        .unwrap();
-        settled_for_test(write_nav_preference(
-            &prefs,
-            NavPreference::SurvivableRouting,
-            true,
-        ))
-        .unwrap();
         settled_for_test(write_nav_preference(
             &prefs,
             NavPreference::ShowSpecialAreas,
@@ -210,16 +185,13 @@ mod tests {
         assert_eq!(saved["nav"]["allow_danger_zones"], true);
         assert_eq!(saved["nav"]["allow_prereq_dialogue"], true);
         assert_eq!(saved["nav"]["allow_quest_start"], true);
-        assert_eq!(saved["nav"]["survivable_routing"], true);
         assert_eq!(saved["nav"]["script_scope_notice_ack"], true);
-        assert_eq!(saved["nav"]["survivable_routing_notice_ack"], true);
 
         let (missing_dir, missing) = scratch("legacy");
         vault::write_private_file(&missing.path(), br#"{"last_focus":"bob","nav":{}}"#).unwrap();
         missing.reload().unwrap();
         assert!(nav_preference(&missing, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         for preference in [
-            NavPreference::SurvivableRouting,
             NavPreference::AllowPrereqDialogue,
             NavPreference::AllowQuestStart,
         ] {
@@ -234,7 +206,6 @@ mod tests {
             NavPreference::AllowBankFetch,
             NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
-            NavPreference::SurvivableRoutingNoticeAck,
         ] {
             assert!(!nav_preference(&missing, preference).unwrap());
         }
@@ -263,11 +234,11 @@ mod tests {
     }
 
     #[test]
-    fn survivable_preference_fails_closed_for_malformed_files() {
-        let (dir, prefs) = scratch("malformed-survivable");
+    fn danger_preference_fails_closed_for_malformed_files() {
+        let (dir, prefs) = scratch("malformed-danger");
         vault::write_private_file(&prefs.path(), b"{malformed").unwrap();
         assert!(prefs.reload().is_err());
-        assert!(nav_preference(&prefs, NavPreference::SurvivableRouting).is_err());
+        assert!(nav_preference(&prefs, NavPreference::AllowDangerZones).is_err());
         assert_eq!(std::fs::read(prefs.path()).unwrap(), b"{malformed");
         std::fs::remove_dir_all(dir).unwrap();
     }

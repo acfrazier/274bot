@@ -10,11 +10,11 @@ use script::native::{PrereqAllow, RiskPolicy, WalkBit, WalkOptions, WalkPermissi
 /// Runtime net activation is held until the integrated S2c gate passes.
 pub const NET_AVAILABLE: bool = false;
 
-/// Stored global danger-routing level.
+/// Stored global danger-routing level: the safe default, or the user's
+/// global override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DangerLevel {
     Never,
-    WhenSurvivable,
     Always,
 }
 
@@ -22,15 +22,13 @@ impl DangerLevel {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Never => "Never",
-            Self::WhenSurvivable => "When survivable",
             Self::Always => "Always",
         }
     }
 
     pub const fn next(self) -> Self {
         match self {
-            Self::Never => Self::WhenSurvivable,
-            Self::WhenSurvivable => Self::Always,
+            Self::Never => Self::Always,
             Self::Always => Self::Never,
         }
     }
@@ -48,9 +46,8 @@ impl DangerLevel {
     /// A permitted walk may cross any zone. The override runs in admission mode
     /// `Proceed`: the walk goes and the survival model's bound is informational.
     /// A request without the override runs in enforced `Avoid` mode: the route is
-    /// judged by the 1% death bound, and an unsurvivable route is refused. The
-    /// held middle level reads `Inherit` when there is no permission; otherwise
-    /// no permission reads `Avoid`. A walk option `Forbid` never narrows danger
+    /// judged by the 1% death bound, and an unsurvivable route is refused. No
+    /// permission reads `Avoid`. A walk option `Forbid` never narrows danger
     /// permission.
     pub fn decide(
         self,
@@ -62,16 +59,13 @@ impl DangerLevel {
             || walk.allow_danger_zones == WalkBit::Allow
             || crossing_requested;
         let overridden = self == Self::Always;
-        let policy = if overridden {
-            RiskPolicy::Proceed
-        } else if !requested && self == Self::WhenSurvivable {
-            RiskPolicy::Inherit
-        } else {
-            RiskPolicy::Avoid
-        };
         DangerDecision {
             permitted: overridden || requested,
-            policy,
+            policy: if overridden {
+                RiskPolicy::Proceed
+            } else {
+                RiskPolicy::Avoid
+            },
             enforce: !overridden && (NET_AVAILABLE || requested),
         }
     }
@@ -88,6 +82,17 @@ pub struct DangerDecision {
     pub enforce: bool,
 }
 
+impl DangerDecision {
+    /// The zone grant the router uses: every zone when permitted, else none.
+    pub const fn zones(self) -> ZoneExempt {
+        if self.permitted {
+            ZoneExempt::all()
+        } else {
+            ZoneExempt::NONE
+        }
+    }
+}
+
 /// Durable global grants published by either frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -96,7 +101,6 @@ pub struct WalkGlobals {
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
     pub allow_danger_zones: bool,
-    pub survivable_routing: bool,
     pub allow_prereq_dialogue: bool,
     pub allow_quest_start: bool,
 }
@@ -108,7 +112,6 @@ impl Default for WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
-            survivable_routing: true,
             allow_prereq_dialogue: true,
             allow_quest_start: true,
         }
@@ -123,7 +126,6 @@ impl WalkGlobals {
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_danger_zones: false,
-            survivable_routing: false,
             allow_prereq_dialogue: false,
             allow_quest_start: false,
         }
@@ -139,32 +141,18 @@ impl WalkGlobals {
         preferences.walk_globals()
     }
 
-    /// Project the stored pair of booleans to the three-level setting.
+    /// Project the stored danger boolean to the two-level setting.
     pub const fn danger_level(self) -> DangerLevel {
         if self.allow_danger_zones {
             DangerLevel::Always
-        } else if self.survivable_routing {
-            DangerLevel::WhenSurvivable
         } else {
             DangerLevel::Never
         }
     }
 
-    /// Gate the middle level until the runtime net is available.
-    pub const fn effective_danger_level(self) -> DangerLevel {
-        match self.danger_level() {
-            DangerLevel::WhenSurvivable if !NET_AVAILABLE => DangerLevel::Never,
-            level => level,
-        }
-    }
-
-    /// Set the canonical boolean representation of a danger-routing level.
+    /// Set the stored boolean of a danger-routing level.
     pub fn set_danger_level(&mut self, level: DangerLevel) {
-        (self.allow_danger_zones, self.survivable_routing) = match level {
-            DangerLevel::Never => (false, false),
-            DangerLevel::WhenSurvivable => (false, true),
-            DangerLevel::Always => (true, false),
-        };
+        self.allow_danger_zones = level == DangerLevel::Always;
     }
 
     /// A compat v1 (rs2b0t-compatible) script counts as the global danger
@@ -173,7 +161,6 @@ impl WalkGlobals {
         if compat_v1 {
             Self {
                 allow_danger_zones: true,
-                survivable_routing: false,
                 ..self
             }
         } else {
@@ -181,20 +168,26 @@ impl WalkGlobals {
         }
     }
 
-    /// The one danger decision for a walk, at the effective global level.
+    /// The one danger decision for a walk, at the stored global level.
     pub fn danger_decision(
         self,
         script: WalkPermissions,
         walk: WalkOptions,
         crossing_requested: bool,
     ) -> DangerDecision {
-        self.effective_danger_level()
-            .decide(script, walk, crossing_requested)
+        self.danger_level().decide(script, walk, crossing_requested)
     }
 
-    /// The admission mode of a walk with no named crossing.
-    pub fn risk_policy(self, script: WalkPermissions, walk: WalkOptions) -> RiskPolicy {
-        self.danger_decision(script, walk, false).policy
+    /// The danger decision of a manual WalkTo. It has no script; the operator's
+    /// own one-walk choice ("Route through danger zones") is their override for
+    /// that walk, like the global level.
+    pub fn manual_decision(self, danger_this_walk: bool) -> DangerDecision {
+        let level = if danger_this_walk {
+            DangerLevel::Always
+        } else {
+            self.danger_level()
+        };
+        level.decide(WalkPermissions::default(), WalkOptions::default(), false)
     }
 
     /// Resolve additive global, script and request grants; only a
@@ -221,12 +214,6 @@ impl WalkGlobals {
             quest_start: self.allow_quest_start,
         }
     }
-    /// Whether the verdict has authority. While held, a walk with no danger
-    /// request retains precisely the router's pre-S2b outcome; a card or walk
-    /// request and a named crossing use the admission seam.
-    pub fn enforces_risk(self, script: WalkPermissions, walk: WalkOptions) -> bool {
-        self.danger_decision(script, walk, false).enforce
-    }
 
     /// Manual WalkTo has no script grant. Its danger control is one admission only.
     pub fn manual_options(self, danger_this_walk: bool) -> FindOptions {
@@ -234,15 +221,12 @@ impl WalkGlobals {
             allow_teleports: self.allow_teleports,
             allow_wilderness: self.allow_wilderness,
             allow_bank_fetch: self.allow_bank_fetch,
-            zones: if self.allow_danger_zones || danger_this_walk {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            },
+            zones: self.manual_decision(danger_this_walk).zones(),
             ..FindOptions::default()
         }
     }
 
+    #[cfg(test)]
     fn native_options(self, script: WalkPermissions, walk: WalkOptions) -> FindOptions {
         let decision = self.danger_decision(script, walk, false);
         self.native_options_with_decision(script, walk, decision)
@@ -263,11 +247,7 @@ impl WalkGlobals {
                 .resolve(self.allow_wilderness, script.allow_wilderness),
             // Native supply preparation belongs to the card's Provisioner, not BankBudget.
             allow_bank_fetch: false,
-            zones: if decision.permitted {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            },
+            zones: decision.zones(),
             ..FindOptions::default()
         }
     }
@@ -295,44 +275,33 @@ pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
     globals.for_script_family(bot.is_some_and(|bot| bot.compat_v1))
 }
 
-/// Record the held-off middle level once per session, never from a tick path.
-pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mut bool) {
-    if globals.danger_level() == DangerLevel::WhenSurvivable
-        && globals.effective_danger_level() == DangerLevel::Never
-        && !*logged
-    {
-        *logged = true;
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            slot = slot,
-            "When survivable is not available yet: acts as Never; inherited routing is unchanged"
-        );
-    }
+/// Whether a saved `nav` object still holds the removed middle danger level
+/// ("When survivable": `survivable_routing` true, `allow_danger_zones` not
+/// true). That level loads as the default, Never.
+pub(crate) fn holds_removed_middle_level(nav: &serde_json::Map<String, serde_json::Value>) -> bool {
+    nav.get("survivable_routing") == Some(&serde_json::Value::Bool(true))
+        && nav.get("allow_danger_zones") != Some(&serde_json::Value::Bool(true))
 }
 
-/// Resolve native search options and risk policy from the cached durable view.
-/// Callback-scoped permissions override the per-bot mirror. Otherwise, the
-/// mirror is the fallback. Load API Gather values come from the slot lock.
-/// `crossing_requested` is true when the request names zones to cross (a
-/// Quester stage or step `cross`).
+/// Resolve native search options and the danger decision from the cached
+/// durable view. Callback-scoped permissions override the per-bot mirror.
+/// Otherwise, the mirror is the fallback. Load API Gather values come from the
+/// slot lock. `crossing_requested` is true when the request names zones to
+/// cross (a Quester stage or step `cross`, or a compat walk's `crossZones`).
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
     session_permissions: Option<script::native::WalkPermissions>,
     crossing_requested: bool,
-) -> (FindOptions, RiskPolicy, bool) {
-    let mut all = navs.lock().unwrap();
-    let mut bot = all.get_mut(name);
-    let globals = globals_for(bot.as_deref());
-    if let Some(bot) = bot.as_deref_mut() {
-        log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
-    }
+) -> (FindOptions, DangerDecision) {
+    let all = navs.lock().unwrap();
+    let bot = all.get(name);
+    let globals = globals_for(bot);
     // The slot-locked value describes this callback. The bot copy is updated
     // afterward, so it may belong to the preceding card revision.
     let script = session_permissions
-        .or_else(|| bot.as_deref().and_then(|bot| bot.native_permissions))
+        .or_else(|| bot.and_then(|bot| bot.native_permissions))
         .unwrap_or_default();
     resolve_native_admission(globals, script, walk, crossing_requested)
 }
@@ -389,12 +358,11 @@ fn resolve_native_admission(
     script: WalkPermissions,
     walk: WalkOptions,
     crossing_requested: bool,
-) -> (FindOptions, RiskPolicy, bool) {
+) -> (FindOptions, DangerDecision) {
     let decision = globals.danger_decision(script, walk, crossing_requested);
     (
         globals.native_options_with_decision(script, walk, decision),
-        decision.policy,
-        decision.enforce,
+        decision,
     )
 }
 
@@ -435,7 +403,7 @@ impl<'a> SelectionDangerQuery<'a> {
 
     fn resolved(&self) -> &SelectionDanger {
         self.resolved.get_or_init(|| {
-            let (options, _, _) = native_admission(
+            let (options, _) = native_admission(
                 self.navs,
                 self.name,
                 WalkOptions::default(),
@@ -898,39 +866,25 @@ pub(crate) fn selection_access_tiles<'a>(
     })
 }
 
-/// Compiled callers using the existing bool wire (Sherlock's clue machine and
-/// watchdog walks) treat false as Inherit. Isolate v1/v2 remain unchanged.
+/// Compiled and compatibility callers on the existing bool wire (Sherlock's
+/// clue machine, watchdog walks, compat Walk/WalkNear and route inspection).
+/// Their danger request is a non-empty `opts.zones` (the wire's `true`) or a
+/// named crossing (`crossing_requested`: a compat `crossZones`); the decision
+/// is the same [`DangerLevel::decide`] as a native walk's, and the returned
+/// zones are that decision's.
 pub(crate) fn compiled_options(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     opts: FindOptions,
-) -> FindOptions {
-    let mut all = navs.lock().unwrap();
-    let Some(bot) = all.get_mut(name) else {
-        return opts;
-    };
-    let globals = globals_for(Some(bot));
-    log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
+    crossing_requested: bool,
+) -> (FindOptions, DangerDecision) {
+    let all = navs.lock().unwrap();
+    let bot = all.get(name);
+    let globals = globals_for(bot);
     // A compat v1 card has no native permissions of its own: its teleport,
     // wilderness and bank authority stay as the call gave it, and its danger
     // permission is the global override (`globals_for`).
-    let Some(script) = bot.native_permissions.filter(|_| !bot.compat_v1) else {
-        // Legacy bool calls keep teleport/wilderness/bank authority unchanged.
-        // Only the host's danger preference is inherited.
-        let zones =
-            if globals.risk_policy(Default::default(), Default::default()) == RiskPolicy::Proceed {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            };
-        return FindOptions {
-            zones: opts
-                .zones
-                .union(zones)
-                .expect("all or empty fits named capacity"),
-            ..opts
-        };
-    };
+    let script = bot.and_then(|bot| bot.native_permissions.filter(|_| !bot.compat_v1));
     let bit = |allow| {
         if allow {
             WalkBit::Allow
@@ -938,26 +892,35 @@ pub(crate) fn compiled_options(
             WalkBit::Inherit
         }
     };
-    let resolved = globals.native_options(
-        script,
-        WalkOptions {
-            allow_teleports: bit(opts.allow_teleports),
-            allow_wilderness: bit(opts.allow_wilderness),
-            allow_danger_zones: WalkBit::Inherit,
-            allow_prereq_dialogue: WalkBit::Inherit,
-            allow_quest_start: WalkBit::Inherit,
+    let walk = WalkOptions {
+        allow_teleports: bit(opts.allow_teleports),
+        allow_wilderness: bit(opts.allow_wilderness),
+        allow_danger_zones: bit(opts.zones != ZoneExempt::NONE),
+        allow_prereq_dialogue: WalkBit::Inherit,
+        allow_quest_start: WalkBit::Inherit,
+    };
+    let decision = globals.danger_decision(script.unwrap_or_default(), walk, crossing_requested);
+    let Some(script) = script else {
+        // Legacy bool calls keep teleport/wilderness/bank authority unchanged.
+        return (
+            FindOptions {
+                zones: decision.zones(),
+                ..opts
+            },
+            decision,
+        );
+    };
+    let resolved = globals.native_options_with_decision(script, walk, decision);
+    (
+        FindOptions {
+            zones: resolved.zones,
+            allow_teleports: resolved.allow_teleports,
+            allow_wilderness: resolved.allow_wilderness,
+            allow_bank_fetch: false,
+            ..opts
         },
-    );
-    FindOptions {
-        zones: opts
-            .zones
-            .union(resolved.zones)
-            .expect("all or empty does not exceed named capacity"),
-        allow_teleports: resolved.allow_teleports,
-        allow_wilderness: resolved.allow_wilderness,
-        allow_bank_fetch: false,
-        ..opts
-    }
+        decision,
+    )
 }
 
 #[cfg(test)]
@@ -1026,20 +989,21 @@ mod tests {
                 ..Default::default()
             },
         )])));
-        let (current_options, current_policy, _) = native_admission(
+        let (current_options, current) = native_admission(
             &navs,
             "alice",
             WalkOptions::default(),
             Some(WalkPermissions::default()),
             false,
         );
-        assert_eq!(current_policy, RiskPolicy::Avoid);
+        assert_eq!(current.policy, RiskPolicy::Avoid);
         assert!(!current_options.zones.is_all());
 
-        let (fallback_options, fallback_policy, _) =
+        let (fallback_options, fallback) =
             native_admission(&navs, "alice", WalkOptions::default(), None, false);
         // The previous card request: permitted, judged by the enforced bound.
-        assert_eq!(fallback_policy, RiskPolicy::Avoid);
+        assert_eq!(fallback.policy, RiskPolicy::Avoid);
+        assert!(fallback.enforce);
         assert!(fallback_options.zones.is_all());
     }
 
@@ -1056,7 +1020,6 @@ mod tests {
                 allow_wilderness: global,
                 allow_bank_fetch: true,
                 allow_danger_zones: global,
-                survivable_routing: true,
                 allow_prereq_dialogue: global,
                 allow_quest_start: !global,
             };
@@ -1301,7 +1264,6 @@ mod tests {
             "allow_wilderness": true,
             "allow_bank_fetch": true,
             "allow_danger_zones": true,
-            "survivable_routing": false,
             "allow_prereq_dialogue": false,
             "allow_quest_start": true,
         });
@@ -1321,7 +1283,6 @@ mod tests {
             allow_wilderness: true,
             allow_bank_fetch: true,
             allow_danger_zones: true,
-            survivable_routing: false,
             allow_prereq_dialogue: false,
             allow_quest_start: true,
         };
@@ -1374,7 +1335,7 @@ mod tests {
         let compiled_navs = Arc::clone(&navs);
         let compiled = completes_before_release(&mut held, move || {
             measured_walk_call("compiled_options-stale-write", || {
-                compiled_options(&compiled_navs, "alice", FindOptions::default())
+                compiled_options(&compiled_navs, "alice", FindOptions::default(), false).0
             })
         });
         assert!(compiled.allow_teleports);
@@ -1473,12 +1434,12 @@ mod tests {
             },
         )])));
         let native_navs = Arc::clone(&navs);
-        let (native, policy, _) = completes_before_release(&mut held, move || {
+        let (native, decision) = completes_before_release(&mut held, move || {
             measured_walk_call("native_admission", || {
                 native_admission(&native_navs, "alice", WalkOptions::default(), None, false)
             })
         });
-        assert_eq!(policy, RiskPolicy::Avoid);
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
         assert!(!native.allow_teleports);
         assert!(!native.allow_wilderness);
         assert!(!native.allow_bank_fetch);
@@ -1502,7 +1463,7 @@ mod tests {
         let compiled_navs = Arc::clone(&navs);
         let compiled = completes_before_release(&mut held, move || {
             measured_walk_call("compiled_options", || {
-                compiled_options(&compiled_navs, "alice", FindOptions::default())
+                compiled_options(&compiled_navs, "alice", FindOptions::default(), false).0
             })
         });
         assert!(!compiled.allow_teleports);
@@ -1557,17 +1518,19 @@ mod tests {
                     "allow_danger_zones": enabled,
                 }),
             );
-            let (native, policy, _) =
+            let (native, decision) =
                 native_admission(&navs, "alice", WalkOptions::default(), None, false);
             assert_eq!(
-                policy,
+                decision.policy,
                 if enabled {
                     RiskPolicy::Proceed
                 } else {
                     RiskPolicy::Avoid
                 }
             );
-            let compiled = compiled_options(&navs, "alice", FindOptions::default());
+            let (compiled, compiled_decision) =
+                compiled_options(&navs, "alice", FindOptions::default(), false);
+            assert_eq!(compiled_decision, decision);
             let manual = WalkGlobals::read(&preferences)
                 .unwrap()
                 .manual_options(false);
@@ -1591,7 +1554,6 @@ mod tests {
                     allow_wilderness: true,
                     allow_bank_fetch: true,
                     allow_danger_zones: true,
-                    survivable_routing: true,
                     allow_prereq_dialogue: true,
                     allow_quest_start: true,
                 }))),
@@ -1603,7 +1565,7 @@ mod tests {
                 allow_bank_fetch,
                 ..Default::default()
             };
-            let compiled = compiled_options(&navs, "isolate", explicit);
+            let (compiled, _) = compiled_options(&navs, "isolate", explicit, false);
             assert_eq!(compiled.allow_teleports, explicit.allow_teleports);
             assert_eq!(compiled.allow_wilderness, explicit.allow_wilderness);
             assert_eq!(compiled.allow_bank_fetch, explicit.allow_bank_fetch);
@@ -1625,11 +1587,9 @@ mod tests {
         assert!(!defaults.allow_wilderness);
         assert!(!defaults.allow_bank_fetch);
         assert!(!defaults.allow_danger_zones);
-        assert!(defaults.survivable_routing);
         assert!(defaults.allow_prereq_dialogue);
         assert!(defaults.allow_quest_start);
-        assert_eq!(defaults.danger_level(), DangerLevel::WhenSurvivable);
-        assert_eq!(defaults.effective_danger_level(), DangerLevel::Never);
+        assert_eq!(defaults.danger_level(), DangerLevel::Never);
         assert_eq!(
             serde_json::from_value::<WalkGlobals>(serde_json::to_value(defaults).unwrap()).unwrap(),
             defaults
@@ -1639,10 +1599,28 @@ mod tests {
         // A file an older build (or the other frontend's process) wrote.
         vault::write_private_file(&path, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
         preferences.reload().unwrap();
+        assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
+
+        // The previous release's removed middle level ("When survivable")
+        // loads as the default, Never; the file is not rewritten.
+        let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#;
+        vault::write_private_file(&path, middle).unwrap();
+        preferences.reload().unwrap();
         let migrated = WalkGlobals::read(&preferences).unwrap();
-        assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(migrated.survivable_routing);
-        assert_eq!(migrated.effective_danger_level(), DangerLevel::Never);
+        assert_eq!(migrated, defaults);
+        assert_eq!(migrated.danger_level(), DangerLevel::Never);
+        assert_eq!(std::fs::read(&path).unwrap(), middle);
+        // Always with the old pair still reads Always.
+        vault::write_private_file(
+            &path,
+            br#"{"nav":{"allow_danger_zones":true,"survivable_routing":false}}"#,
+        )
+        .unwrap();
+        preferences.reload().unwrap();
+        assert_eq!(
+            WalkGlobals::read(&preferences).unwrap().danger_level(),
+            DangerLevel::Always
+        );
 
         vault::write_private_file(&path, b"{malformed").unwrap();
         assert!(preferences.reload().is_err());
@@ -1654,7 +1632,6 @@ mod tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 allow_danger_zones: false,
-                survivable_routing: false,
                 allow_prereq_dialogue: false,
                 allow_quest_start: false,
             }
@@ -1666,10 +1643,8 @@ mod tests {
         let overridden = level == DangerLevel::Always;
         let policy = if overridden {
             RiskPolicy::Proceed
-        } else if requested || level == DangerLevel::Never {
-            RiskPolicy::Avoid
         } else {
-            RiskPolicy::Inherit
+            RiskPolicy::Avoid
         };
         (
             overridden || requested,
@@ -1679,54 +1654,22 @@ mod tests {
     }
 
     #[test]
-    fn danger_policy_exhaustively_resolves_levels_script_bits_and_walk_bits() {
-        for stored_level in [
-            DangerLevel::Never,
-            DangerLevel::WhenSurvivable,
-            DangerLevel::Always,
-        ] {
+    fn danger_level_round_trips_through_the_stored_boolean() {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
             let mut globals = WalkGlobals::fail_closed();
-            globals.set_danger_level(stored_level);
-            assert_eq!(globals.danger_level(), stored_level);
-            let effective_level = if stored_level == DangerLevel::WhenSurvivable && !NET_AVAILABLE {
-                DangerLevel::Never
-            } else {
-                stored_level
-            };
-            assert_eq!(
-                globals.effective_danger_level(),
-                effective_level,
-                "gate for {stored_level:?}"
-            );
-            for script_grant in [false, true] {
-                let script = WalkPermissions {
-                    allow_danger_zones: script_grant,
-                    ..WalkPermissions::default()
-                };
-                for walk_bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
-                    let walk = WalkOptions {
-                        allow_danger_zones: walk_bit,
-                        ..WalkOptions::default()
-                    };
-                    let requested = script_grant || walk_bit == WalkBit::Allow;
-                    let (_, policy, _) = expected_decision(effective_level, requested);
-                    assert_eq!(
-                        globals.risk_policy(script, walk),
-                        policy,
-                        "stored={stored_level:?}, effective={effective_level:?}, script={script_grant}, walk={walk_bit:?}"
-                    );
-                }
-            }
+            globals.set_danger_level(level);
+            assert_eq!(globals.danger_level(), level);
+            assert_eq!(globals.allow_danger_zones, level == DangerLevel::Always);
+            assert_eq!(level.next().next(), level);
+            assert_ne!(level.next(), level);
         }
     }
 
     #[test]
     fn complete_danger_precedence_table_is_tested_independently_of_net_activation() {
-        for level in [
-            DangerLevel::Never,
-            DangerLevel::WhenSurvivable,
-            DangerLevel::Always,
-        ] {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
+            let mut globals = WalkGlobals::fail_closed();
+            globals.set_danger_level(level);
             for script_grant in [false, true] {
                 let script = WalkPermissions {
                     allow_danger_zones: script_grant,
@@ -1747,6 +1690,12 @@ mod tests {
                         assert_eq!(decision.policy, policy, "{context}");
                         assert_eq!(decision.permitted, permitted, "{context}");
                         assert_eq!(decision.enforce, enforce, "{context}");
+                        assert_eq!(decision.zones().is_all(), permitted, "{context}");
+                        assert_eq!(
+                            globals.danger_decision(script, walk, crossing),
+                            decision,
+                            "{context}"
+                        );
                     }
                 }
             }
@@ -1778,10 +1727,12 @@ mod tests {
                     assert_eq!(decision.policy, RiskPolicy::Proceed);
                     assert!(!decision.enforce, "the override is informational");
                 }
-                let (options, policy, enforce) =
-                    resolve_native_admission(globals, script, walk, false);
+                let (options, native) = resolve_native_admission(globals, script, walk, false);
                 assert!(options.zones.is_all());
-                assert_eq!((policy, enforce), (RiskPolicy::Proceed, false));
+                assert_eq!(
+                    (native.policy, native.enforce),
+                    (RiskPolicy::Proceed, false)
+                );
                 assert!(walk_arms_danger_food_guard(options.zones, false));
             }
         }
@@ -1798,14 +1749,14 @@ mod tests {
         // The request does not proceed: admission enforces the 1% bound.
         assert_eq!(crossing.policy, RiskPolicy::Avoid);
         assert!(crossing.enforce);
-        let (options, policy, enforce) = resolve_native_admission(
+        let (options, native) = resolve_native_admission(
             globals,
             WalkPermissions::default(),
             WalkOptions::default(),
             true,
         );
         assert!(options.zones.is_all());
-        assert_eq!((policy, enforce), (RiskPolicy::Avoid, true));
+        assert_eq!(native, crossing);
         assert!(walk_arms_danger_food_guard(options.zones, false));
         // A native script's card setting and its walk option.
         let card = WalkPermissions {
@@ -1827,22 +1778,20 @@ mod tests {
 
     #[test]
     fn no_override_and_no_request_refuses_danger_zones() {
-        for level in [DangerLevel::Never, DangerLevel::WhenSurvivable] {
-            let mut globals = WalkGlobals::fail_closed();
-            globals.set_danger_level(level);
-            for bit in [WalkBit::Inherit, WalkBit::Forbid] {
-                let walk = WalkOptions {
-                    allow_danger_zones: bit,
-                    ..WalkOptions::default()
-                };
-                let decision = globals.danger_decision(WalkPermissions::default(), walk, false);
-                assert!(!decision.permitted, "level={level:?}, walk={bit:?}");
-                assert_eq!(decision.policy, RiskPolicy::Avoid);
-                let options =
-                    resolve_native_admission(globals, WalkPermissions::default(), walk, false).0;
-                assert!(options.zones == ZoneExempt::NONE);
-                assert!(!walk_arms_danger_food_guard(options.zones, false));
-            }
+        let mut globals = WalkGlobals::fail_closed();
+        globals.set_danger_level(DangerLevel::Never);
+        for bit in [WalkBit::Inherit, WalkBit::Forbid] {
+            let walk = WalkOptions {
+                allow_danger_zones: bit,
+                ..WalkOptions::default()
+            };
+            let decision = globals.danger_decision(WalkPermissions::default(), walk, false);
+            assert!(!decision.permitted, "walk={bit:?}");
+            assert_eq!(decision.policy, RiskPolicy::Avoid);
+            let options =
+                resolve_native_admission(globals, WalkPermissions::default(), walk, false).0;
+            assert!(options.zones == ZoneExempt::NONE);
+            assert!(!walk_arms_danger_food_guard(options.zones, false));
         }
     }
 
@@ -1851,15 +1800,11 @@ mod tests {
     /// gets no food guard. Its frozen behavior does not change.
     #[test]
     fn compat_v1_counts_as_the_global_override() {
-        for level in [
-            DangerLevel::Never,
-            DangerLevel::WhenSurvivable,
-            DangerLevel::Always,
-        ] {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
             let seen = globals.for_script_family(true);
-            assert_eq!(seen.effective_danger_level(), DangerLevel::Always);
+            assert_eq!(seen.danger_level(), DangerLevel::Always);
             let decision =
                 seen.danger_decision(WalkPermissions::default(), WalkOptions::default(), false);
             assert!(decision.permitted, "level={level:?}");
@@ -1874,35 +1819,93 @@ mod tests {
 
     /// The compat (compiled, bool-wire) path reads the same decision: the
     /// global override permits its walks, a compat v1 slot counts as the
-    /// override, and any other compat slot is refused without it.
+    /// override, and any other compat slot is refused without it. Its own
+    /// request (the wire's danger bit, or `crossZones`) is permitted and
+    /// enforced, exactly as [`DangerLevel::decide`] says.
     #[test]
-    fn compat_walks_follow_the_global_override_and_refuse_without_it() {
-        for (level, compat_v1, permitted) in [
-            (DangerLevel::Never, false, false),
-            (DangerLevel::WhenSurvivable, false, false),
-            (DangerLevel::Always, false, true),
-            (DangerLevel::Never, true, true),
-            (DangerLevel::WhenSurvivable, true, true),
-            (DangerLevel::Always, true, true),
-        ] {
+    fn compat_walks_consume_the_one_danger_decision() {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
+            for compat_v1 in [false, true] {
+                let mut globals = WalkGlobals::fail_closed();
+                globals.set_danger_level(level);
+                for card in [None, Some(WalkPermissions::default())] {
+                    let navs = Arc::new(Mutex::new(HashMap::from([(
+                        "alice".into(),
+                        super::super::NavBot {
+                            native_permissions: card,
+                            compat_v1,
+                            walk_globals: Some(Arc::new(Mutex::new(globals))),
+                            ..Default::default()
+                        },
+                    )])));
+                    let effective = if compat_v1 {
+                        DangerLevel::Always
+                    } else {
+                        level
+                    };
+                    for wire in [false, true] {
+                        for crossing in [false, true] {
+                            let opts = FindOptions {
+                                zones: if wire {
+                                    ZoneExempt::all()
+                                } else {
+                                    ZoneExempt::NONE
+                                },
+                                ..FindOptions::default()
+                            };
+                            let (resolved, decision) =
+                                compiled_options(&navs, "alice", opts, crossing);
+                            let walk = WalkOptions {
+                                allow_danger_zones: if wire {
+                                    WalkBit::Allow
+                                } else {
+                                    WalkBit::Inherit
+                                },
+                                ..WalkOptions::default()
+                            };
+                            let context = format!(
+                                "level={level:?}, compat_v1={compat_v1}, card={card:?}, wire={wire}, crossing={crossing}"
+                            );
+                            assert_eq!(
+                                decision,
+                                effective.decide(WalkPermissions::default(), walk, crossing),
+                                "{context}"
+                            );
+                            assert_eq!(resolved.zones, decision.zones(), "{context}");
+                            let (permitted, policy, enforce) =
+                                expected_decision(effective, wire || crossing);
+                            assert_eq!(
+                                (decision.permitted, decision.policy, decision.enforce),
+                                (permitted, policy, enforce),
+                                "{context}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Manual WalkTo: the global level or the operator's one-walk control is
+    /// the override (the operator's own choice); otherwise no permission.
+    #[test]
+    fn manual_walks_consume_the_one_danger_decision() {
+        for level in [DangerLevel::Never, DangerLevel::Always] {
             let mut globals = WalkGlobals::fail_closed();
             globals.set_danger_level(level);
-            for card in [None, Some(WalkPermissions::default())] {
-                let navs = Arc::new(Mutex::new(HashMap::from([(
-                    "alice".into(),
-                    super::super::NavBot {
-                        native_permissions: card,
-                        compat_v1,
-                        walk_globals: Some(Arc::new(Mutex::new(globals))),
-                        ..Default::default()
-                    },
-                )])));
-                let resolved = compiled_options(&navs, "alice", FindOptions::default());
+            for this_walk in [false, true] {
+                let decision = globals.manual_decision(this_walk);
+                let effective = if this_walk {
+                    DangerLevel::Always
+                } else {
+                    level
+                };
                 assert_eq!(
-                    resolved.zones.is_all(),
-                    permitted,
-                    "level={level:?}, compat_v1={compat_v1}, card={card:?}"
+                    decision,
+                    effective.decide(WalkPermissions::default(), WalkOptions::default(), false),
+                    "level={level:?}, this_walk={this_walk}"
                 );
+                assert_eq!(globals.manual_options(this_walk).zones, decision.zones());
             }
         }
     }
@@ -1913,7 +1916,7 @@ mod held_gate_tests {
     use super::*;
 
     #[test]
-    fn inherited_and_explicit_enforcement_are_distinct_while_held() {
+    fn requests_enforce_and_no_request_does_not_while_the_net_is_held() {
         const { assert!(!NET_AVAILABLE) };
         let allow = WalkOptions {
             allow_danger_zones: WalkBit::Allow,
@@ -1927,54 +1930,24 @@ mod held_gate_tests {
             allow_danger_zones: true,
             ..Default::default()
         };
-        for level in [DangerLevel::Never, DangerLevel::WhenSurvivable] {
-            let mut globals = WalkGlobals::default();
-            globals.set_danger_level(level);
-            assert!(!globals.enforces_risk(WalkPermissions::default(), WalkOptions::default()));
-            // A request (a walk option, a card setting or a named crossing)
-            // enforces the bound while the net is held.
-            assert!(globals.enforces_risk(WalkPermissions::default(), allow));
-            assert!(globals.enforces_risk(card, WalkOptions::default()));
-            assert!(
-                globals
-                    .danger_decision(WalkPermissions::default(), WalkOptions::default(), true)
-                    .enforce
-            );
-            // A Forbid has no danger effect: the walk stays inherited.
-            assert!(!globals.enforces_risk(WalkPermissions::default(), forbid));
-        }
+        let none = WalkPermissions::default();
+        let enforce = |globals: WalkGlobals, script, walk, crossing| {
+            globals.danger_decision(script, walk, crossing).enforce
+        };
+        let globals = WalkGlobals::default();
+        assert!(!enforce(globals, none, WalkOptions::default(), false));
+        // A request (a walk option, a card setting or a named crossing)
+        // enforces the bound while the net is held.
+        assert!(enforce(globals, none, allow, false));
+        assert!(enforce(globals, card, WalkOptions::default(), false));
+        assert!(enforce(globals, none, WalkOptions::default(), true));
+        // A Forbid has no danger effect.
+        assert!(!enforce(globals, none, forbid, false));
         // The global override is informational: it never enforces.
         let mut globals = WalkGlobals::default();
         globals.set_danger_level(DangerLevel::Always);
-        assert!(!globals.enforces_risk(WalkPermissions::default(), WalkOptions::default()));
-        assert!(!globals.enforces_risk(card, allow));
-        assert!(
-            !globals
-                .danger_decision(WalkPermissions::default(), WalkOptions::default(), true)
-                .enforce
-        );
-    }
-
-    #[test]
-    fn repeated_native_compiled_and_manual_admissions_share_one_session_note() {
-        let navs = Arc::new(Mutex::new(HashMap::from([
-            ("alice".to_owned(), super::super::NavBot::default()),
-            ("bob".to_owned(), super::super::NavBot::default()),
-        ])));
-        assert!(!navs.lock().unwrap()["alice"].runtime_gate_logged);
-        native_admission(&navs, "alice", WalkOptions::default(), None, false);
-        assert!(navs.lock().unwrap()["alice"].runtime_gate_logged);
-        assert!(!navs.lock().unwrap()["bob"].runtime_gate_logged);
-        for _ in 0..3 {
-            compiled_options(&navs, "alice", FindOptions::default());
-            native_admission(&navs, "alice", WalkOptions::default(), None, false);
-            let mut all = navs.lock().unwrap();
-            log_runtime_net_gate(
-                "alice",
-                WalkGlobals::default(),
-                &mut all.get_mut("alice").unwrap().runtime_gate_logged,
-            );
-            assert!(all["alice"].runtime_gate_logged);
-        }
+        assert!(!enforce(globals, none, WalkOptions::default(), false));
+        assert!(!enforce(globals, card, allow, false));
+        assert!(!enforce(globals, none, WalkOptions::default(), true));
     }
 }

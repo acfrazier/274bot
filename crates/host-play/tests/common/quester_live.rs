@@ -2175,7 +2175,6 @@ fn run_cells(
         // The user's global Danger routing setting, as the panel publishes it.
         play.set_walk_globals(host_play::WalkGlobals {
             allow_danger_zones: true,
-            survivable_routing: false,
             ..host_play::WalkGlobals::default()
         });
     }

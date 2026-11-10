@@ -192,7 +192,11 @@ fn compat_corridor_fixture(
     let assessment = admission::assess(
         &route,
         world,
-        &Admission::manual(options, risk_input, 0, WalkGlobals::default()),
+        &Admission::manual(
+            WalkGlobals::default().manual_decision(options.zones.is_all()),
+            risk_input,
+            0,
+        ),
     );
     assert!(
         !assessment.plan.intervals.is_empty(),

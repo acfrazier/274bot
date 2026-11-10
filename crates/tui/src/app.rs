@@ -494,7 +494,6 @@ pub(crate) struct PendingSettings {
     pub(crate) quest_start: bool,
     pub(crate) danger: bool,
     pub(crate) scope_ack: bool,
-    pub(crate) survivable_ack: bool,
     pub(crate) pause: bool,
     pub(crate) special_areas: bool,
     pub(crate) map_bake: bool,
@@ -583,8 +582,6 @@ pub struct TuiApp {
     pub map_route_through_zones: bool,
     /// The shared one-time script-scope notice was dismissed.
     pub script_scope_notice_ack: bool,
-    /// The shared one-time danger-routing migration notice was dismissed.
-    pub survivable_routing_notice_ack: bool,
     /// Shared settings writes queued one nested nav preference at a time.
     pub nav_preferences_dirty: Vec<NavPreference>,
     pub settings_state: SettingsState,
@@ -759,7 +756,6 @@ impl TuiApp {
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
             script_scope_notice_ack: false,
-            survivable_routing_notice_ack: false,
             nav_preferences_dirty: Vec::new(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
@@ -870,27 +866,14 @@ impl TuiApp {
             NavPreference::AllowBankFetch => self.pending.bank_fetch,
             NavPreference::AllowPrereqDialogue => self.pending.prereq_dialogue,
             NavPreference::AllowQuestStart => self.pending.quest_start,
-            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
-                self.pending.danger
-            }
+            NavPreference::AllowDangerZones => self.pending.danger,
             NavPreference::ScriptScopeNoticeAck => self.pending.scope_ack,
-            NavPreference::SurvivableRoutingNoticeAck => self.pending.survivable_ack,
             NavPreference::PauseScriptOnManualWalkAbort => {
                 self.pending.pause || self.pause_script_on_manual_walk_abort_dirty
             }
             NavPreference::ShowSpecialAreas => self.pending.special_areas,
         };
-        let dirty = match preference {
-            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
-                self.nav_preferences_dirty.iter().any(|p| {
-                    matches!(
-                        p,
-                        NavPreference::AllowDangerZones | NavPreference::SurvivableRouting
-                    )
-                })
-            }
-            other => self.nav_preferences_dirty.contains(&other),
-        };
+        let dirty = self.nav_preferences_dirty.contains(&preference);
         self.pending.all || pending || dirty
     }
 
@@ -941,11 +924,7 @@ impl TuiApp {
             }
         }
         let view = self.shared_preferences.as_ref().map_or(
-            WalkGlobalsView::new(
-                self.nav,
-                self.script_scope_notice_ack,
-                self.survivable_routing_notice_ack,
-            ),
+            WalkGlobalsView::new(self.nav, self.script_scope_notice_ack),
             WalkGlobalsView::read,
         );
         if let Some(preferences) = self.shared_preferences.as_ref() {
@@ -997,11 +976,6 @@ impl TuiApp {
                 next.allow_danger_zones(),
             ),
             keep(
-                self.holds(NavPreference::SurvivableRouting),
-                self.nav.survivable_routing(),
-                next.survivable_routing(),
-            ),
-            keep(
                 self.holds(NavPreference::AllowPrereqDialogue),
                 self.nav.allow_prereq_dialogue(),
                 next.allow_prereq_dialogue(),
@@ -1016,11 +990,6 @@ impl TuiApp {
             self.holds(NavPreference::ScriptScopeNoticeAck),
             self.script_scope_notice_ack,
             view.script_scope_notice_ack(),
-        );
-        self.survivable_routing_notice_ack = keep(
-            self.holds(NavPreference::SurvivableRoutingNoticeAck),
-            self.survivable_routing_notice_ack,
-            view.survivable_routing_notice_ack(),
         );
         self.walk_permissions = view;
         if !view.danger_this_walk(true) {

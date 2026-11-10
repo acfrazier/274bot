@@ -1799,18 +1799,16 @@ grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
-walks. Danger has three levels: **Never**, **When survivable** (the stored
-default), and **Always**. The middle level stores `allow_danger_zones=false`
-and `survivable_routing=true`; Always stores the danger grant, and Never
-clears both. **The survivable-routing change keeps `host_play::NET_AVAILABLE=false`**: every middle-level
-source resolves to Never, displayed as “When survivable (not available yet:
-acts as Never)”. Default/inherited walks preserve the pre-survivable-routing router result,
-including origin-inside escapes and endpoint completion, with assessments
-informational only. A held-state informational note is logged once per session.
-Explicit script/per-walk overrides retain their survivable-routing admission semantics.
-Only the integrated acceptance gate can enable the middle level.
-The map danger control remains an explicit grant for this walk, independent
-of the middle-level gate. Native scripts cannot use BankBudget, even when
+walks. Danger routing has two levels: **Never** (the default) and **Always**
+(the user's global override; it stores `allow_danger_zones=true`). A saved
+setting from the previous release that holds the removed middle level
+(“When survivable”, `survivable_routing=true`) loads as Never, with one info
+log line; the next level change clears that key. With Never, a script walk
+crosses danger zones only when the script requests it, and the 1% death bound
+is enforced on that walk. While `host_play::NET_AVAILABLE` is false, walks with
+no request keep the router's result, including origin-inside escapes and
+endpoint completion, with assessments informational only.
+The map danger control remains an explicit grant for this walk only. Native scripts cannot use BankBudget, even when
 global bank fetch is enabled. Native bank selection ranks walking routes
 without teleports; the walk to the chosen bank may still use granted teleports.
 Compat v1 uses Proceed through derived danger zones, with assessment logged

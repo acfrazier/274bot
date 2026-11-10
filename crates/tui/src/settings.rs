@@ -18,9 +18,8 @@ use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PA
 use frontend_core::{CurePoison, GuardianPolicy, Setting, SettingsDraft, GUARDIAN_EVENTS};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, PREREQ_PERMISSION_LABELS,
-    PREREQ_SCOPE_NOTE, QUESTER_HEADING, QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE,
-    SCRIPT_SCOPE_NOTICE,
+    GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE,
+    QUESTER_HEADING, QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
 
 use crate::app::SettingFeedback;
@@ -137,8 +136,6 @@ pub enum SettingsKey {
     WalkGlobal(NavPreference),
     /// The one-time script-scope notice was dismissed.
     ScriptScopeNoticeAck,
-    /// The one-time danger-routing migration notice was dismissed.
-    SurvivableRoutingNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
     /// The global PvP setting changed; the value is what the row now shows.
@@ -170,7 +167,6 @@ pub struct SettingsPane<'a> {
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
     pub pvp_start_fights: Option<&'a mut frontend_core::PvpSettingView>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
-    pub survivable_routing_notice_ack: Option<&'a mut bool>,
     pub quester_paths: Option<&'a mut QuesterPathsView>,
     pub quester_paths_notice: Option<&'a str>,
     pub quester_paths_notice_error: bool,
@@ -202,7 +198,6 @@ impl<'a> SettingsPane<'a> {
             pause_script_on_manual_walk_abort: None,
             pvp_start_fights: None,
             script_scope_notice_ack: None,
-            survivable_routing_notice_ack: None,
             quester_paths: None,
             quester_paths_notice: None,
             quester_paths_notice_error: false,
@@ -212,12 +207,6 @@ impl<'a> SettingsPane<'a> {
     /// Bind the shared script-scope acknowledgement.
     pub fn script_scope_notice_ack(mut self, value: &'a mut bool) -> Self {
         self.script_scope_notice_ack = Some(value);
-        self
-    }
-
-    /// Bind the independent survivable-routing notice acknowledgement.
-    pub fn survivable_routing_notice_ack(mut self, value: &'a mut bool) -> Self {
-        self.survivable_routing_notice_ack = Some(value);
         self
     }
 
@@ -243,8 +232,7 @@ impl<'a> SettingsPane<'a> {
     /// selected setting (with its saved state or failure) is taller than the
     /// viewport they scroll its own lines first. PageUp/PageDown scroll the
     /// notices under the rows when they do not all fit. Enter/Space toggles
-    /// settings, `d` dismisses the script-scope notice, and `n` dismisses the
-    /// independent survivable-routing notice; `r` relogs the bound member
+    /// settings, and `d` dismisses the script-scope notice; `r` relogs the bound member
     /// only while its login mode differs and no relog is queued. Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         if self.state.folder_editing {
@@ -262,14 +250,6 @@ impl<'a> SettingsPane<'a> {
                     .is_some_and(|ack| !*ack) =>
             {
                 SettingsKey::ScriptScopeNoticeAck
-            }
-            KeyCode::Char('n')
-                if self
-                    .survivable_routing_notice_ack
-                    .as_deref()
-                    .is_some_and(|ack| !*ack) =>
-            {
-                SettingsKey::SurvivableRoutingNoticeAck
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.state.detail_row == self.state.row && self.state.detail_scroll > 0 {
@@ -392,7 +372,7 @@ impl<'a> SettingsPane<'a> {
             }
             8 => {
                 self.activate_value();
-                SettingsKey::WalkGlobal(NavPreference::SurvivableRouting)
+                SettingsKey::WalkGlobal(NavPreference::AllowDangerZones)
             }
             9 => {
                 self.activate_value();
@@ -468,7 +448,6 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_wilderness(),
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
-                    nav.survivable_routing(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
                 );
@@ -480,7 +459,6 @@ impl<'a> SettingsPane<'a> {
                     !nav.allow_wilderness(),
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
-                    nav.survivable_routing(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
                 );
@@ -492,7 +470,6 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_wilderness(),
                     !nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
-                    nav.survivable_routing(),
                     nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
                 );
@@ -508,7 +485,6 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_wilderness(),
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
-                    nav.survivable_routing(),
                     !nav.allow_prereq_dialogue(),
                     nav.allow_quest_start(),
                 );
@@ -520,7 +496,6 @@ impl<'a> SettingsPane<'a> {
                     nav.allow_wilderness(),
                     nav.allow_bank_fetch(),
                     nav.allow_danger_zones(),
-                    nav.survivable_routing(),
                     nav.allow_prereq_dialogue(),
                     !nav.allow_quest_start(),
                 );
@@ -552,15 +527,8 @@ impl Widget for SettingsPane<'_> {
             .script_scope_notice_ack
             .as_deref()
             .is_some_and(|ack| !*ack);
-        let show_survivable_routing_notice = self
-            .survivable_routing_notice_ack
-            .as_deref()
-            .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
         let selected_row = self.state.row.min(18);
-        let danger_help = (selected_row == 8
-            && danger_level == frontend_core::DangerLevel::WhenSurvivable)
-            .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
         let path_folder = self
             .quester_paths
             .as_deref()
@@ -618,22 +586,13 @@ impl Widget for SettingsPane<'_> {
                 self.nav.allow_bank_fetch(),
                 BANK_FETCH_PERMISSION_SCOPE
             ),
-            if danger_level == frontend_core::DangerLevel::Always {
-                format!(
-                    "{}{}: {} — {}",
-                    marker(8),
-                    GLOBAL_PERMISSION_LABELS[3].1,
-                    frontend_core::walk_permissions::danger_routing_label(danger_level),
-                    GLOBAL_DANGER_WARNING
-                )
-            } else {
-                format!(
-                    "{}{}: {}",
-                    marker(8),
-                    GLOBAL_PERMISSION_LABELS[3].1,
-                    frontend_core::walk_permissions::danger_routing_label(danger_level)
-                )
-            },
+            format!(
+                "{}{}: {} — {}",
+                marker(8),
+                GLOBAL_PERMISSION_LABELS[3].1,
+                danger_level.label(),
+                frontend_core::danger_routing_tooltip(danger_level)
+            ),
             format!(
                 "{}{}: {}",
                 marker(9),
@@ -739,27 +698,11 @@ impl Widget for SettingsPane<'_> {
             self.feedback,
             Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
         );
-        let migration_dismiss = dismiss_parts(
-            "[n] dismiss this notice",
-            self.feedback,
-            Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
-        );
         let scope_height = if show_scope_notice {
             wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + wrapped_rows_parts(scope_dismiss, columns)
         } else {
             0
         };
-        // The dismiss line sits under its notice and carries the notice's
-        // saving state or failure.
-        let migration_notice_height = if show_survivable_routing_notice {
-            wrapped_rows(
-                frontend_core::walk_permissions::survivable_routing_notice(),
-                columns,
-            ) + wrapped_rows_parts(migration_dismiss, columns)
-        } else {
-            0
-        };
-        let help_height = danger_help.map_or(0, |help| wrapped_rows(help, columns));
         let notice_height = self.notice.map_or(0, |notice| {
             notice.error().map_or_else(
                 || wrapped_rows(notice.text(), columns),
@@ -771,8 +714,6 @@ impl Widget for SettingsPane<'_> {
             .map_or(0, |notice| wrapped_rows(notice, columns));
         let height = (block_heights.iter().sum::<u16>()
             + memory_height
-            + help_height
-            + migration_notice_height
             + scope_height
             + notice_height
             + path_notice_height
@@ -797,12 +738,7 @@ impl Widget for SettingsPane<'_> {
         // window of them (its newest lines, at the bottom, first) under a
         // sign that says which part is hidden and the key that shows it.
         // PageUp and PageDown scroll that window. Nothing is cut silently.
-        let footer_need = memory_height
-            + help_height
-            + migration_notice_height
-            + scope_height
-            + notice_height
-            + path_notice_height;
+        let footer_need = memory_height + scope_height + notice_height + path_notice_height;
         let footer_height = footer_need.min(inner.height.saturating_sub(2));
         let notices_cut = footer_need > footer_height;
         // The sign takes the area's first line when the area has a line for
@@ -954,17 +890,6 @@ impl Widget for SettingsPane<'_> {
             line: 0,
         };
         notices.text(buf, memory_note, yellow);
-        if let Some(help) = danger_help {
-            notices.text(buf, help, yellow);
-        }
-        if show_survivable_routing_notice {
-            notices.text(
-                buf,
-                frontend_core::walk_permissions::survivable_routing_notice(),
-                yellow,
-            );
-            notices.parts(buf, migration_dismiss, yellow);
-        }
         if show_scope_notice {
             notices.text(buf, SCRIPT_SCOPE_NOTICE, yellow);
             notices.parts(buf, scope_dismiss, yellow);
@@ -1266,7 +1191,7 @@ mod tests {
     use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft};
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
 
-    use frontend_core::WalkGlobals;
+    use frontend_core::{DangerLevel, WalkGlobals};
 
     use super::{
         SettingsEdit, SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE,
@@ -1584,7 +1509,7 @@ mod tests {
             (5, NavPreference::AllowTeleports),
             (6, NavPreference::AllowWilderness),
             (7, NavPreference::AllowBankFetch),
-            (8, NavPreference::SurvivableRouting),
+            (8, NavPreference::AllowDangerZones),
             (9, NavPreference::AllowPrereqDialogue),
             (10, NavPreference::AllowQuestStart),
         ] {
@@ -1652,111 +1577,71 @@ mod tests {
     }
 
     #[test]
-    fn survivable_routing_notice_uses_an_independent_acknowledgement() {
+    fn danger_routing_row_cycles_never_and_always() {
         let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState {
-            open: true,
-            row: 0,
-            ..Default::default()
-        };
-        let mut old_acknowledged = true;
-        let mut acknowledged = false;
-        let text = render(
-            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                .script_scope_notice_ack(&mut old_acknowledged)
-                .survivable_routing_notice_ack(&mut acknowledged),
-            100,
-            24,
-        );
-        assert!(
-            text.contains("Danger routing has three levels"),
-            "the migration notice remains visible after the old notice was dismissed: {text:?}"
-        );
-        let outcome = {
-            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                .script_scope_notice_ack(&mut old_acknowledged)
-                .survivable_routing_notice_ack(&mut acknowledged);
-            pane.on_key(key(KeyCode::Char('n')))
-        };
-        assert_eq!(outcome, SettingsKey::SurvivableRoutingNoticeAck);
-        acknowledged = true;
-        let text = render(
-            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                .script_scope_notice_ack(&mut old_acknowledged)
-                .survivable_routing_notice_ack(&mut acknowledged),
-            100,
-            24,
-        );
-        assert!(!text.contains("Danger routing has three levels"));
+        assert_eq!(nav.danger_level(), DangerLevel::Never, "the default level");
+        for expected in [DangerLevel::Always, DangerLevel::Never, DangerLevel::Always] {
+            let mut state = SettingsState {
+                open: true,
+                row: 8,
+                ..Default::default()
+            };
+            let outcome = {
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+                pane.on_key(key(KeyCode::Enter))
+            };
+            assert_eq!(
+                outcome,
+                SettingsKey::WalkGlobal(NavPreference::AllowDangerZones)
+            );
+            assert_eq!(nav.danger_level(), expected);
+        }
     }
 
     #[test]
-    fn held_survivable_setting_and_notice_are_truthful_in_the_popup() {
-        let settings = SettingsDraft::default();
-        let mut nav = WalkGlobals::default();
-        let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState {
-            open: true,
-            row: 8,
-            ..Default::default()
-        };
-        let mut acknowledged = false;
-        let text = render(
-            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                .survivable_routing_notice_ack(&mut acknowledged),
-            120,
-            40,
-        );
-        assert!(text.contains(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_LABEL));
-        assert!(text.contains("Effective level: Never"));
-        assert!(text.contains("not available yet"));
-        // The held level cannot change admission, but an explicit zone grant
-        // still checks the bound. Its text excludes food/prayer/escape rather
-        // than promising those actions.
-        let held = frontend_core::walk_permissions::survivable_routing_tooltip();
-        assert!(!held.contains("274V17"));
-        assert!(!held.contains("rebake"));
-        assert!(!held.contains("turn back"));
-        assert!(held.contains("This setting does not change route admission."));
-        assert!(held.contains("Explicit danger-zone grants still check"));
-        assert!(held.contains("without eating, prayer or escape"));
-        assert!(!held.contains("will eat"));
-        assert!(!held.contains("will pray"));
-    }
-
-    #[test]
-    fn survivable_routing_notice_renders_in_full_with_its_dismiss_row() {
-        let notice = frontend_core::walk_permissions::survivable_routing_notice();
+    fn danger_routing_line_shows_label_and_explanation_at_both_levels_and_sizes() {
         let squeeze = |text: &str| -> String {
             text.chars()
                 .filter(|ch| !ch.is_whitespace() && *ch != '│')
                 .collect()
         };
-        for (w, h) in [(120u16, 50u16), (80, 50), (60, 60)] {
-            let settings = SettingsDraft::default();
-            let mut nav = WalkGlobals::default();
-            let mut bake = MapBakeChoice::Ask;
-            let mut state = SettingsState {
-                open: true,
-                row: 0,
-                ..Default::default()
-            };
-            let mut acknowledged = false;
-            let text = render(
-                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                    .survivable_routing_notice_ack(&mut acknowledged),
-                w,
-                h,
-            );
-            // The pane wraps by character, so drop borders and whitespace
-            // and compare the whole notice, its last words included.
-            let painted = squeeze(&text);
-            assert!(
-                painted.contains(&format!("{}[n]dismissthisnotice", squeeze(notice))),
-                "{w}x{h}: the full notice and its dismiss row paint: {text:?}"
-            );
+        let capture_dir = std::env::var_os("TUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+        for level in frontend_core::DANGER_ROUTING_LEVELS {
+            for (w, h) in [(120u16, 40u16), (80, 24)] {
+                let settings = SettingsDraft::default();
+                let mut nav = WalkGlobals::default().with_danger_level(level);
+                let mut bake = MapBakeChoice::Ask;
+                let mut state = SettingsState {
+                    open: true,
+                    row: 8,
+                    ..Default::default()
+                };
+                let mut acknowledged = true;
+                let text = render_lines(
+                    SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                        .script_scope_notice_ack(&mut acknowledged),
+                    w,
+                    h,
+                );
+                assert!(
+                    text.contains(&format!("> Danger routing: {}", level.label())),
+                    "{w}x{h} {level:?}: the line shows the label:\n{text}"
+                );
+                assert!(
+                    squeeze(&text).contains(&squeeze(frontend_core::danger_routing_tooltip(level))),
+                    "{w}x{h} {level:?}: the whole explanation paints:\n{text}"
+                );
+                if let Some(dir) = &capture_dir {
+                    std::fs::create_dir_all(dir).unwrap();
+                    let name = format!(
+                        "settings-danger-{}-{w}x{h}.txt",
+                        level.label().to_lowercase()
+                    );
+                    std::fs::write(dir.join(name), &text).unwrap();
+                }
+            }
         }
     }
 
@@ -1975,7 +1860,7 @@ mod tests {
         assert_eq!(bake, MapBakeChoice::Ask);
     }
 
-    /// One drawn frame of the popup with the scope and routing notices up
+    /// One drawn frame of the popup with the script-scope notice up
     /// and `feedback` beside its settings, one string per terminal line.
     fn draw_with_notices(
         state: &mut SettingsState,
@@ -1987,10 +1872,8 @@ mod tests {
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut scope_ack = false;
-        let mut survivable_ack = false;
         let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, state)
-            .script_scope_notice_ack(&mut scope_ack)
-            .survivable_routing_notice_ack(&mut survivable_ack);
+            .script_scope_notice_ack(&mut scope_ack);
         pane.feedback = feedback;
         render_lines(pane, w, h)
             .lines()
@@ -2088,17 +1971,11 @@ mod tests {
     fn settings_feedback_notices_that_do_not_fit_say_so() {
         use crate::app::SettingFeedback;
         use frontend_core::Setting;
-        let long = format!("Not saved: {}", "the disk is full; free space ".repeat(12));
-        let failed = [
-            (
-                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
-                SettingFeedback::Failed(long.clone()),
-            ),
-            (
-                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
-                SettingFeedback::Failed(long),
-            ),
-        ];
+        let long = format!("Not saved: {}", "the disk is full; free space ".repeat(30));
+        let failed = [(
+            Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+            SettingFeedback::Failed(long),
+        )];
         let has = |screen: &[String], text: &str| screen.iter().any(|line| line.contains(text));
         let mut state = SettingsState {
             open: true,
@@ -2129,7 +2006,7 @@ mod tests {
     }
 
     /// Every line of a failed notice acknowledgement can be read at 80x24
-    /// and 120x40, to the end of its remedy. Both acknowledgements fail with
+    /// and 120x40, to the end of its remedy. The acknowledgement fails with
     /// a long path: the notices need more lines than the popup has, so
     /// their area shows the last ones under a sign, and PageUp and PageDown
     /// scroll through all of them without moving the row.
@@ -2147,30 +2024,16 @@ mod tests {
             )
         };
         let scope = failure("END-SCOPE");
-        let routing = failure("END-ROUTING");
-        let feedback = [
-            (
-                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
-                SettingFeedback::Failed(scope.clone()),
-            ),
-            (
-                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
-                SettingFeedback::Failed(routing.clone()),
-            ),
-        ];
+        let feedback = [(
+            Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+            SettingFeedback::Failed(scope.clone()),
+        )];
         for (w, h) in [(80u16, 24u16), (120, 40)] {
             let columns = usize::from(w.min(100) - 2);
-            let expected: Vec<String> = [
-                ("[d] dismiss this notice", scope.as_str()),
-                ("[n] dismiss this notice", routing.as_str()),
-            ]
-            .into_iter()
-            .flat_map(|(dismiss, failure)| {
-                super::wrapped_parts([dismiss, " — ", failure], columns)
+            let expected: Vec<String> =
+                super::wrapped_parts(["[d] dismiss this notice", " — ", scope.as_str()], columns)
                     .map(|[a, b, c]| format!("{a}{b}{c}").trim().to_string())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+                    .collect();
             let mut state = SettingsState {
                 open: true,
                 ..Default::default()
@@ -2234,10 +2097,6 @@ mod tests {
             (
                 Setting::Nav(NavPreference::ScriptScopeNoticeAck),
                 SettingFeedback::Failed(long("END-SCOPE")),
-            ),
-            (
-                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
-                SettingFeedback::Failed(long("END-ROUTING")),
             ),
         ];
         // Grok's case first (80x18: the notices leave the rows one line on

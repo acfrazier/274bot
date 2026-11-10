@@ -847,9 +847,8 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
 /// S2b's manual WalkTo admission as the routing tests use it (no zones).
 fn test_admission() -> crate::admission::Admission {
     crate::admission::Admission::manual(
-        FindOptions::default(),
+        crate::WalkGlobals::default().manual_decision(false),
         Default::default(),
         0,
-        crate::WalkGlobals::default(),
     )
 }

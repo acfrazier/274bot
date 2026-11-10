@@ -1628,9 +1628,8 @@ fn nav_member_setting(key: &str) -> frontend_core::Setting {
         "allow_bank_fetch" => Setting::Nav(N::AllowBankFetch),
         "allow_prereq_dialogue" => Setting::Nav(N::AllowPrereqDialogue),
         "allow_quest_start" => Setting::Nav(N::AllowQuestStart),
-        "allow_danger_zones" | "survivable_routing" => Setting::DangerRouting,
+        "allow_danger_zones" => Setting::DangerRouting,
         "script_scope_notice_ack" => Setting::Nav(N::ScriptScopeNoticeAck),
-        "survivable_routing_notice_ack" => Setting::Nav(N::SurvivableRoutingNoticeAck),
         "show_special_areas" => Setting::Nav(N::ShowSpecialAreas),
         "pause_script_on_manual_walk_abort" => Setting::Nav(N::PauseScriptOnManualWalkAbort),
         _ => unreachable!("only shared Nav members are retained"),
@@ -1666,20 +1665,8 @@ fn apply_walk_permissions_to_nav(
     );
     apply_walk_permission(
         nav,
-        "survivable_routing",
-        globals.survivable_routing(),
-        pending,
-    );
-    apply_walk_permission(
-        nav,
         "script_scope_notice_ack",
         view.script_scope_notice_ack(),
-        pending,
-    );
-    apply_walk_permission(
-        nav,
-        "survivable_routing_notice_ack",
-        view.survivable_routing_notice_ack(),
         pending,
     );
 }
@@ -1709,9 +1696,7 @@ fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bo
         "allow_prereq_dialogue" => &mut nav.allow_prereq_dialogue,
         "allow_quest_start" => &mut nav.allow_quest_start,
         "allow_danger_zones" => &mut nav.allow_danger_zones,
-        "survivable_routing" => &mut nav.survivable_routing,
         "script_scope_notice_ack" => &mut nav.script_scope_notice_ack,
-        "survivable_routing_notice_ack" => &mut nav.survivable_routing_notice_ack,
         _ => unreachable!("only shared Nav members are refreshed"),
     }
 }
@@ -1725,9 +1710,7 @@ fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static s
             "allow_prereq_dialogue" => nav.allow_prereq_dialogue = *value,
             "allow_quest_start" => nav.allow_quest_start = *value,
             "allow_danger_zones" => nav.allow_danger_zones = *value,
-            "survivable_routing" => nav.survivable_routing = *value,
             "script_scope_notice_ack" => nav.script_scope_notice_ack = *value,
-            "survivable_routing_notice_ack" => nav.survivable_routing_notice_ack = *value,
             "show_special_areas" => nav.show_special_areas = *value,
             "pause_script_on_manual_walk_abort" => {
                 nav.pause_script_on_manual_walk_abort = *value;
@@ -1747,6 +1730,19 @@ std::thread_local! {
 #[cfg(test)]
 pub(crate) fn reorders_submitted() -> u32 {
     REORDERS_SUBMITTED.get()
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Every command `Session::submit` was given on this test thread.
+    static SUBMITTED_COMMANDS: std::cell::RefCell<Vec<OperatorCommand>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take the commands submitted on this test thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_submitted_commands() -> Vec<OperatorCommand> {
+    SUBMITTED_COMMANDS.with_borrow_mut(std::mem::take)
 }
 
 enum VaultSavedData {
@@ -4672,6 +4668,8 @@ impl Session {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Option<frontend_core::Submitted> {
+        #[cfg(test)]
+        SUBMITTED_COMMANDS.with_borrow_mut(|commands| commands.push(command));
         let (core, mut surface) = self.core_and_surface();
         match core.submit(command, targets, &mut surface) {
             Ok(submitted) => Some(submitted),

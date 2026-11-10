@@ -4611,10 +4611,9 @@ fn open_world(w: usize, h: usize) -> NavWorld {
 
 fn routing_test_admission() -> crate::admission::Admission {
     crate::admission::Admission::manual(
-        FindOptions::default(),
+        crate::WalkGlobals::default().manual_decision(false),
         Default::default(),
         0,
-        crate::WalkGlobals::default(),
     )
 }
 
@@ -4887,6 +4886,75 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     assert_eq!(bot.walk_outcome_request_id, 8);
     assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (b.x, b.z));
     assert_eq!(bot.walk_outcome_radius, 1);
+}
+
+/// DANGER-SIMPLIFY R2-F2: a walk with no request-built admission (compat,
+/// compiled and watchdog walks) is admitted exactly from the danger decision
+/// its caller took from `compiled_options`, and its zone grant is that
+/// decision's. Nothing on the route path rebuilds permission or enforcement.
+#[test]
+fn a_queued_compat_walk_is_admitted_from_its_one_danger_decision() {
+    let mut seen = Vec::new();
+    for level in [crate::DangerLevel::Never, crate::DangerLevel::Always] {
+        for compat_v1 in [false, true] {
+            for crossing in [false, true] {
+                let mut globals = crate::WalkGlobals::default();
+                globals.set_danger_level(level);
+                let navs = Arc::new(Mutex::new(HashMap::from([(
+                    "alice".to_owned(),
+                    NavBot {
+                        compat_v1,
+                        walk_globals: Some(Arc::new(Mutex::new(globals))),
+                        ..Default::default()
+                    },
+                )])));
+                let (opts, danger) = crate::walk_permissions::compiled_options(
+                    &navs,
+                    "alice",
+                    FindOptions::default(),
+                    crossing,
+                );
+                let arm = ScriptWalkArm {
+                    here: Some((0, 0, 0)),
+                    world: Some(Arc::new(open_world(7, 7))),
+                    navs: Arc::clone(&navs),
+                    name: "alice".into(),
+                    state: None,
+                    bank: BankRows::default(),
+                };
+                assert!(arm.queue_route_in_snapshot_avoiding(
+                    &GameSnapshot::new(),
+                    5,
+                    5,
+                    0,
+                    opts,
+                    0,
+                    9,
+                    false,
+                    ScriptRouteExclusions::default(),
+                    danger,
+                ));
+                let all = navs.lock().unwrap();
+                let bot = &all["alice"];
+                let context = format!("{level:?}, compat_v1={compat_v1}, crossing={crossing}");
+                let admission = bot.admission.as_deref().expect("queued admission");
+                assert_eq!(admission.decision(), danger, "{context}");
+                assert_eq!(admission.compat_v1, compat_v1, "{context}");
+                assert_eq!(
+                    bot.requested_route.expect("queued route").5,
+                    danger.zones(),
+                    "{context}"
+                );
+                seen.push((danger.permitted, danger.policy, danger.enforce));
+            }
+        }
+    }
+    // The table covers every outcome: no permission, a request enforced by
+    // the bound, and the override (or compat v1) that proceeds.
+    use script::native::RiskPolicy;
+    assert!(seen.contains(&(false, RiskPolicy::Avoid, false)));
+    assert!(seen.contains(&(true, RiskPolicy::Avoid, true)));
+    assert!(seen.contains(&(true, RiskPolicy::Proceed, false)));
 }
 
 /// The failure side of R2-1: walk A's route stalling inside B's retarget
@@ -6305,10 +6373,9 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav_planner::router::AvoidRect>| ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6400,10 +6467,9 @@ fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6458,10 +6524,9 @@ fn radius_route_job_drops_wall_separated_candidate() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6521,10 +6586,9 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6577,10 +6641,9 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
     let make_request = |avoid| ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6678,10 +6741,9 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6739,10 +6801,9 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
         ScriptRouteRequest {
             candidate_goals: None,
             admission: crate::admission::Admission::manual(
-                FindOptions::default(),
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 0,
-                crate::WalkGlobals::default(),
             ),
             prereq_catalog: None,
             bank_origin: Default::default(),
@@ -6803,10 +6864,9 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6869,10 +6929,9 @@ fn radius_route_job_drops_detour_outside_radius() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -6933,10 +6992,9 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
@@ -23936,6 +23994,11 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         state: None,
         bank: BankRows::default(),
     };
+    let danger = rig.navs.lock().unwrap()["alice"]
+        .admission
+        .as_deref()
+        .map(crate::admission::Admission::decision)
+        .expect("the walk's retained admission");
     assert!(arm.refresh_route_in_snapshot(
         &rig.snap,
         to,
@@ -23947,6 +24010,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         None,
         nav_planner::arrival::ArrivalKind::Reach,
         true,
+        danger,
     ));
     assert!(
         rig.wait_for_route_work(60_000, || {
@@ -30336,10 +30400,9 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
-            FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             0,
-            crate::WalkGlobals::default(),
         ),
         generation: 1,
         request_id: 1,

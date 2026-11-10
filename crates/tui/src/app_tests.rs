@@ -740,7 +740,6 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
         .nav
         .with_danger_level(frontend_core::DangerLevel::Always);
     app.script_scope_notice_ack = true;
-    app.survivable_routing_notice_ack = true;
     app.settings_state.row = 8;
     let rows = draw(&mut app, 60, 14);
     let (col, row) = find(&rows, "Danger routing:")
@@ -758,15 +757,33 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
 }
 
 #[test]
-fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projection() {
+fn danger_routing_cycles_never_and_always_with_no_migration_notice() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_some());
-    assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
-    assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
-    assert!(app.walk_permissions.survivable_routing_notice_ack());
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_none());
+    app.settings_state.row = 8;
+    assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Never);
+    let first = draw(&mut app, 100, 24);
+    assert!(find(&first, "Danger routing: Never").is_some());
+    assert!(find(&first, "Danger routing has three levels").is_none());
+    assert!(find(&first, "dismiss this notice").is_none());
+    for expected in [
+        frontend_core::DangerLevel::Always,
+        frontend_core::DangerLevel::Never,
+    ] {
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        assert_eq!(app.nav.danger_level(), expected);
+        assert_eq!(
+            app.nav_preferences_dirty,
+            [frontend_core::NavPreference::AllowDangerZones],
+            "one queued write carries the level"
+        );
+        assert!(find(
+            &draw(&mut app, 100, 24),
+            &format!("Danger routing: {}", expected.label())
+        )
+        .is_some());
+    }
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out
@@ -824,7 +841,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(
@@ -863,9 +880,6 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;

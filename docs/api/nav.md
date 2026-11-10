@@ -1076,8 +1076,7 @@ teleport, wilderness, explicit avoid and quest authority across refreshes.
 No survivability retry relaxes a hard constraint, and no zone name is matched.
 Proceed uses the ordinary all-zone search and retains the honest assessment
 for information only. Avoid uses strict/endpoint routing and enforces the
-death bound. Effective Inherit (the held middle level) diagnoses one witness
-and retains the router's pre-S2b outcome; it never re-searches by zone name.
+death bound when the walk's decision says so. It never re-searches by zone name.
 Actual kernel searches include endpoint/area/bank diagnosis paths and are
 counted in tests. One top-level all-zone call can still run the router's safe
 and granted stages; it is not a claim of one Dijkstra kernel. Refusal
@@ -1089,7 +1088,9 @@ refused as `NoWayOut`. Router endpoint completion is not permission. Tests
 cover both cases on the same no-exit route and retain death-bound refusal when
 a permitted walk crosses a lethal zone.
 
-Danger permission for a script walk is one decision: `permitted = global override || script request`. The global override is the Danger routing level `Always` in Nav config; it has no exception and applies to every walk, Quester included. A compat v1 (rs2b0t-compatible) script counts as the global override: it walks as if the user set `Always`, with no guard and no check (its frozen behavior). A script requests through its Script prefs (**Allow danger zones** on a native card, granting that script's own walks), a walk option `Allow`, or a named crossing: a Quester stage or step `cross`, or a compat `crossZones`. A walk option `Forbid` has no danger effect. A permitted walk may cross any zone, with no limit on how many zones a script names. The two sources differ in how the walk is judged. With the global override (or compat v1) the walk uses `Proceed`: it goes, and the model's bound is logged for information. With a script request and the override off, the walk uses enforced `Avoid`: survival admission refuses the walk when the 1% death bound fails, using whatever food credit the assessment carries. Every permitted native crossing, from either source, arms the walk's food guard (eating refuses nothing); a compat v1 walk gets no guard. The WalkTo-only **Route through danger zones** checkbox is a separate user action: one admission for the current picker opening, never persisted. The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose differently: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
+Danger permission for a script walk is one decision: `permitted = global override || script request`. The global override is the Danger routing level `Always` in Nav config; it has no exception and applies to every walk, Quester included. A compat v1 (rs2b0t-compatible) script counts as the global override: it walks as if the user set `Always`, with no guard and no check (its frozen behavior). A script requests through its Script prefs (**Allow danger zones** on a native card, granting that script's own walks), a walk option `Allow`, or a named crossing: a Quester stage or step `cross`, or a compat `crossZones`. A walk option `Forbid` has no danger effect. A permitted walk may cross any zone, with no limit on how many zones a script names. The two sources differ in how the walk is judged. With the global override (or compat v1) the walk uses `Proceed`: it goes, and the model's bound is logged for information. With a script request and the override off, the walk uses enforced `Avoid`: survival admission refuses the walk when the 1% death bound fails, using whatever food credit the assessment carries. Every permitted native crossing, from either source, arms the walk's food guard (eating refuses nothing); a compat v1 walk gets no guard. The WalkTo-only **Route through danger zones** checkbox is a separate user action: one admission for the current picker opening, never persisted; it is the user's own override for that walk (`Proceed`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose differently: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
+
+One function owns the danger decision: `DangerLevel::decide` in `host_play::walk_permissions` returns a `DangerDecision` (permitted, policy, enforce). Native and Quester walks (`native_admission`), compat, compiled and watchdog walks (`compiled_options`) and manual WalkTo (`WalkGlobals::manual_decision`) consume it; each walk's zone grant (`DangerDecision::zones`) and its admission (`Admission::from_decision`) come from that value, and no route path rebuilds permission or enforcement. A compat walk's `crossZones` reaches the decision as a request, also when a machine-owned native walk (for example Banking.open's stand walk) runs inside it.
 
 The headless `panel.survivable-checkbox-default-escape` cell drives the actual
 ImGui checkbox and panel confirmation into a profile-bound host. It checks
@@ -1130,24 +1131,23 @@ freezes manual/scenario movement during script Starting/Running/Paused/
 Stopping, native movement or an existing escape obligation.
 Advisory `assess_walk` never acquires that movement ownership.
 
-The stored default is **When survivable**, but the survivable-routing change's single
-`NET_AVAILABLE=false` gate makes it effective Never for every preference
-source, including migration and explicit selection. While held, default and
-inherited walks keep exactly the pre-survivable-routing router outcome and route, including
-origin-inside walks and destination-zone completion. Their assessments are
-informational, not new admission refusals; a held manual NoPath neither
-creates a walk arm nor stops the one already walking. Explicit script/per-walk
-overrides keep their survivable-routing semantics. Panel and TUI display the
-held middle level as **When survivable (not available yet: acts as Never)**; the
-host emits one informational held-state note per slot session, not a warning on
-every walk.
-The hold lasts until the bot can track poison live: until then the middle level behaves like Never.
+Danger routing has two levels: **Never**, the default, and **Always**, the
+user's global override. A saved setting from the previous release that holds
+the removed middle level (**When survivable**: `nav.survivable_routing` true and
+`nav.allow_danger_zones` not true) loads as Never; the host logs one info line
+per process and does not rewrite the file. The next change of the level clears
+the old key in the same write.
 
+While `NET_AVAILABLE` is false (until the bot can track poison live), a walk
+with no danger request keeps exactly the router's outcome and route, including
+origin-inside walks and destination-zone completion. Its assessment is
+informational, not a new admission refusal; a manual NoPath neither creates a
+walk arm nor stops the one already walking. A script's request is enforced.
 The live observer, ordinary-walk safety behavior and escape execution belong
 to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and
-full FLOOR, may flip availability; a poison-observer merge by itself does not enable
-the middle level.
+full FLOOR, may flip `NET_AVAILABLE`; a poison-observer merge by itself does
+not enable it.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.

@@ -3552,16 +3552,9 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     hydrate_panel_preferences(&mut session);
     assert_eq!(
         session.ui.nav.danger_level(),
-        frontend_core::DangerLevel::WhenSurvivable
-    );
-    assert_eq!(
-        session.ui.nav.walk_globals().effective_danger_level(),
         frontend_core::DangerLevel::Never
     );
-    assert_eq!(
-        frontend_core::walk_permissions::danger_routing_label(session.ui.nav.danger_level()),
-        "When survivable (not available yet: acts as Never)"
-    );
+    assert_eq!(session.ui.nav.danger_level().label(), "Never");
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     session.route_through_zones = true;
     assert!(session.walk_find_options().zones.is_all());

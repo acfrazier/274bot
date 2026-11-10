@@ -81,6 +81,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   zones per route is gone: a guide can declare any number. Start still lists
   the zones a guide declares. A walk option that forbids danger zones no
   longer overrides the global setting.
+- Danger routing has two levels: **Never** (the default) and **Always**. The
+  **When survivable** level is gone: it never did more than **Never**, and a
+  script's own request now gets the survival check. A setting saved as
+  **When survivable** loads as **Never**, and the log says so once.
 
 ### Memory diagnostics
 
@@ -204,13 +208,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Known issues
 
-- **Navigation:** With the default Danger routing setting, **When survivable**,
-  bots can refuse walks and bank trips through dangerous monsters instead of
-  checking whether the account can survive the trip. For example, a bot at Rock
-  Crabs can report that no bank is reachable instead of walking to Seers'
-  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
-  zones). This permits dangerous routes. Use it only when the account can handle
-  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
+- **Navigation:** With the default Danger routing setting, **Never**, bots can
+  refuse walks and bank trips through dangerous monsters instead of checking
+  whether the account can survive the trip. For example, a bot at Rock Crabs can
+  report that no bank is reachable instead of walking to Seers' Village.
+  **Workaround:** set Nav → Danger routing to **Always** (allow danger zones).
+  This permits dangerous routes. Use it only when the account can handle the
+  monsters on the route. 0.2.0 to 0.2.8 have the same problem.
 - **Quester:** The following Quester guides are drafts. Release builds do not
   support them: - Cook's Assistant - Sheep Shearer - Rune Mysteries - Romeo &
   Juliet - Imp Catcher - Vampire Slayer - Doric's Quest - Goblin Diplomacy -

@@ -668,7 +668,7 @@ where
                 avoid,
                 cross,
             } => {
-                let opts = super::walk_permissions::compiled_options(
+                let (opts, danger) = super::walk_permissions::compiled_options(
                     navs,
                     name,
                     FindOptions {
@@ -677,6 +677,7 @@ where
                         allow_bank_fetch,
                         ..FindOptions::default()
                     },
+                    !cross.is_empty(),
                 );
                 let allow_teleports = opts.allow_teleports;
                 let allow_wilderness = opts.allow_wilderness;
@@ -723,7 +724,7 @@ where
                     bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_fixed_route_in_snapshot_avoiding(
-                    snapshot, x, z, level, opts, request_id, exclusions,
+                    snapshot, x, z, level, opts, request_id, exclusions, danger,
                 );
                 if queued {
                     if let Some(prereq_allow) = prereq_allow {
@@ -770,7 +771,7 @@ where
                 avoid,
                 cross,
             } => {
-                let opts = super::walk_permissions::compiled_options(
+                let (opts, danger) = super::walk_permissions::compiled_options(
                     navs,
                     name,
                     FindOptions {
@@ -779,6 +780,7 @@ where
                         allow_bank_fetch,
                         ..FindOptions::default()
                     },
+                    !cross.is_empty(),
                 );
                 let allow_teleports = opts.allow_teleports;
                 let allow_wilderness = opts.allow_wilderness;
@@ -834,6 +836,7 @@ where
                     request_id,
                     compat_tile_intent,
                     exclusions,
+                    danger,
                 );
                 if queued {
                     if let Some(prereq_allow) = prereq_allow {
@@ -931,7 +934,7 @@ where
                 let to = WorldTile { x, z, level };
                 let empty_state = WorldState::empty();
                 let route_state = state.map(Arc::as_ref).unwrap_or(&empty_state);
-                let opts = super::walk_permissions::compiled_options(
+                let (opts, _) = super::walk_permissions::compiled_options(
                     navs,
                     name,
                     FindOptions {
@@ -940,18 +943,18 @@ where
                         allow_bank_fetch,
                         ..FindOptions::default()
                     },
+                    !cross.is_empty(),
                 );
                 let (zones, rects, invalid_args) = match world.as_ref() {
                     Some(world) => {
                         match super::script_nav::resolve_route_exclusions(
-                            opts,
                             world,
                             from,
                             to,
                             route_state,
                             route_exclusions(avoid, cross),
                         ) {
-                            Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
+                            Ok(exclusions) => (opts.zones, exclusions.avoid, false),
                             Err(reason) => {
                                 host_log!(
                                     Category::NavTrace,

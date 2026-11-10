@@ -159,11 +159,9 @@ impl From<Option<bool>> for WalkBit {
     }
 }
 /// How the host judges a walk that may meet danger zones. `Proceed` walks
-/// without the survival check; `Avoid` keeps the check; `Inherit` is the held
-/// middle level of the global setting.
+/// without the survival check (the global override); `Avoid` keeps the check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RiskPolicy {
-    Inherit,
     Proceed,
     Avoid,
 }

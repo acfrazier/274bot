@@ -284,16 +284,23 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         state: None,
         bank: BankRows::default(),
     };
+    let (compat_options, compat_danger) = crate::walk_permissions::compiled_options(
+        &rig.navs,
+        "alice",
+        nav_planner::router::FindOptions::default(),
+        false,
+    );
     assert!(compat_arm.queue_route_in_snapshot_avoiding(
         &rig.snapshot,
         target.x,
         target.z,
         target.level,
-        nav_planner::router::FindOptions::default(),
+        compat_options,
         1,
         900,
         true,
         crate::script_runtime::ScriptRouteExclusions::default(),
+        compat_danger,
     ));
     assert!(
         rig.wait_for_route(5_000, || queued(&rig.navs) == Some(target)),
@@ -4337,11 +4344,13 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
             ..Default::default()
         })));
         drop(all);
-        let options = crate::walk_permissions::compiled_options(
+        let (options, decision) = crate::walk_permissions::compiled_options(
             &rig.navs,
             "alice",
             nav_planner::router::FindOptions::default(),
+            false,
         );
+        assert_eq!(decision.enforce, compiled && !global);
         assert_eq!(options.allow_teleports, compiled);
         assert_eq!(options.allow_wilderness, compiled);
         assert!(!options.allow_bank_fetch);
@@ -4452,33 +4461,25 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
         exclusions
             .avoid_wire
             .push(InspectAvoidWire::Catalog(id.to_string()));
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            to,
-            state,
-            exclusions,
-        )
+        crate::script_runtime::resolve_route_exclusions(&world, from, to, state, exclusions)
     };
 
     let state = WorldState::empty();
-    let (_, white_wolf) = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
+    let white_wolf = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
     assert_eq!(white_wolf.avoid, [white_wolf_rect]);
 
-    let (_, jail) = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
+    let jail = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(jail.avoid, jail_member_rects);
     assert!(
         !jail.avoid.iter().any(|rect| rect.contains(bbox_gap)),
         "a tile inside the bounding box but outside every actual rectangle is not avoided"
     );
-    let (_, gap_origin) = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
+    let gap_origin = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
         gap_origin.avoid, jail_member_rects,
         "an endpoint in the bounding-box gap does not exempt the jail"
     );
-    let (_, gap_destination) =
-        resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
+    let gap_destination = resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
         gap_destination.avoid, jail_member_rects,
         "a destination in the bounding-box gap does not exempt the jail"
@@ -4486,13 +4487,13 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
 
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
-    let (_, skipped_for_combat) =
+    let skipped_for_combat =
         resolve_avoid(outside, outside, &high_combat, "draynor-jail-guards").unwrap();
     assert!(skipped_for_combat.avoid.is_empty());
-    let (_, skipped_for_source_endpoint) =
+    let skipped_for_source_endpoint =
         resolve_avoid(inside_jail, outside, &state, "draynor-jail-guards").unwrap();
     assert!(skipped_for_source_endpoint.avoid.is_empty());
-    let (_, skipped_for_destination_endpoint) =
+    let skipped_for_destination_endpoint =
         resolve_avoid(outside, inside_jail, &state, "draynor-jail-guards").unwrap();
     assert!(skipped_for_destination_endpoint.avoid.is_empty());
 }
@@ -4513,15 +4514,8 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         .avoid_wire
         .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            unknown,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, unknown,)
+            .unwrap_err(),
         "avoidZones: unknown zone \"no-such-zone\""
     );
     let mut nonfrozen = crate::script_runtime::ScriptRouteExclusions::default();
@@ -4529,59 +4523,46 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         "death-plateau-throwers".to_string(),
     ));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            nonfrozen,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, nonfrozen,)
+            .unwrap_err(),
         "avoidZones: unknown zone \"death-plateau-throwers\""
     );
 
     let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
     unknown_cross.cross.push(Arc::from("no-such-zone"));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            unknown_cross,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, unknown_cross,)
+            .unwrap_err(),
         "crossZones: unknown zone \"no-such-zone\""
     );
 
-    // The list has no length limit; any non-empty list grants every zone.
+    // The list has no length limit. Validation grants nothing: the names
+    // reach the one danger decision as the walk's request.
     let many = crate::script_runtime::ScriptRouteExclusions {
         cross: (0..12).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
         ..Default::default()
     };
-    let (options, _) = crate::script_runtime::resolve_route_exclusions(
+    let many =
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, many).unwrap();
+    assert_eq!(many.cross.len(), 12);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let (options, decision) = crate::walk_permissions::compiled_options(
+        &navs,
+        "alice",
         nav_planner::router::FindOptions::default(),
-        &world,
-        from,
-        from,
-        &state,
-        many,
-    )
-    .unwrap();
-    assert!(options.zones.is_all());
+        !many.cross.is_empty(),
+    );
+    assert!(options.zones.is_all() && decision.enforce);
 
     let none = crate::script_runtime::ScriptRouteExclusions::default();
-    let (options, _) = crate::script_runtime::resolve_route_exclusions(
+    let none =
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, none).unwrap();
+    let (options, _) = crate::walk_permissions::compiled_options(
+        &navs,
+        "alice",
         nav_planner::router::FindOptions::default(),
-        &world,
-        from,
-        from,
-        &state,
-        none,
-    )
-    .unwrap();
+        !none.cross.is_empty(),
+    );
     assert_eq!(options.zones, nav_planner::zones::ZoneExempt::NONE);
 }
 
@@ -4601,7 +4582,6 @@ fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
         .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -6315,6 +6295,11 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         state: None,
         bank: BankRows::default(),
     };
+    let danger = rig.navs.lock().unwrap()["alice"]
+        .admission
+        .as_deref()
+        .map(crate::admission::Admission::decision)
+        .expect("the walk's retained admission");
     assert!(arm.refresh_route_in_snapshot(
         &rig.snapshot,
         WATER_CENTER,
@@ -6331,6 +6316,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         None,
         nav_planner::arrival::ArrivalKind::Area,
         false,
+        danger,
     ));
     assert!(
         rig.wait_for_route(5_000, || {
@@ -6394,10 +6380,9 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         admission: crate::admission::Admission {
             enforce: true,
             ..crate::admission::Admission::manual(
-                FindOptions::default(),
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 0,
-                crate::WalkGlobals::default(),
             )
         },
         generation: 1,
@@ -7116,6 +7101,12 @@ mod s2b_admission_contract {
         let bot = &navs["alice"];
         let admission = bot.admission.as_ref().unwrap();
         assert!(admission.compat_v1, "the stand walk keeps the v1 rule");
+        // Compat v1 counts as the global override: the machine-owned native
+        // walk is admitted from that one decision.
+        assert_eq!(
+            admission.decision(),
+            crate::DangerLevel::Always.decide(Default::default(), Default::default(), false)
+        );
         assert!(bot.has_route(), "the stand walk crosses the ice zone");
         assert!(bot.native_walk_failure.is_none());
         drop(navs);
@@ -7631,10 +7622,9 @@ mod s2b_admission_contract {
                 enforce: true,
                 escape: Some(unresolved_escape()),
                 ..crate::admission::Admission::manual(
-                    Default::default(),
+                    WalkGlobals::default().manual_decision(false),
                     Default::default(),
                     1,
-                    WalkGlobals::default(),
                 )
             })),
             ..Default::default()
