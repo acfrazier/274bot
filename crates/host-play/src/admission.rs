@@ -666,12 +666,13 @@ pub(crate) fn publish(
         }
         return;
     }
-    let input = capture(
+    let input = capture_excluding(
         snapshot,
         map_members,
         bot.condition.current(),
         bot.walk_guard_off.is_some(),
         Some(world),
+        bot.walk_protected_items.as_deref().unwrap_or(&[]),
     );
     if !fresh(assessment, input) {
         admission.input = input;

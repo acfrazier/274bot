@@ -63,6 +63,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- Route publication and reroutes exclude protected quest food from survival
+  credit. Survival preparation selects one available food kind before sizing,
+  so a bank with many food kinds does not repeat the sizing calculation.
 - The Quester chooses survival gear and food from its bank before risky stages,
   including stages whose Path manages its inventory. It protects quest-managed
   items and authored equipment slots, equips permitted gear first, reserves

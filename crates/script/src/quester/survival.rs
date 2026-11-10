@@ -256,6 +256,7 @@ impl CompiledSurvival {
         }
         let mut best: Option<SurvivalNeed> = None;
         let food_unknown = self.food_unknown(stock, owner);
+        let mut food_candidate = None;
         // Prefer an already worn kit when it is as safe as a banked guide kit.
         for choice in std::iter::once(None).chain(self.choices.iter().map(Some)) {
             if choice.is_some_and(|kit| {
@@ -299,7 +300,9 @@ impl CompiledSurvival {
             let food = if bound <= risk::consts::DEATH_BOUND {
                 None
             } else {
-                self.food_need(stage, stock, &candidate, unknown.is_some(), owner)?
+                let food = *food_candidate
+                    .get_or_insert_with(|| self.food_candidate(stock, unknown.is_some(), owner));
+                self.food_need(stage, &candidate, unknown.is_some(), food)?
             };
             if let Some((item, target)) = &food {
                 let fact = self.tables.food(item.id).ok_or(UnknownWhy::MissingFacts)?;
@@ -342,16 +345,14 @@ impl CompiledSurvival {
         best.ok_or(UnknownWhy::MissingFacts)
     }
 
-    fn food_need(
+    fn food_candidate(
         &self,
-        stage: &StageSurvival,
         stock: Stock<'_>,
-        input: &RiskInput,
         unknown: bool,
         owner: Option<&CompiledProvisioning>,
-    ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
-        // Retain the existing one-kind sizing until the shared fight solver
-        // replaces it. Protected Path food is not a survival food kind.
+    ) -> Option<(i32, &str, i32, i32)> {
+        // Retain one-kind sizing until the shared fight solver replaces it.
+        // Protected Path food is not a survival food kind.
         let held_food = stock
             .pack
             .into_iter()
@@ -361,7 +362,7 @@ impl CompiledSurvival {
             .map(|row| row.def.id)
             .next();
         let mut fallback = None;
-        let mut best: Option<(BankItem, i32, f64)> = None;
+        let mut available = None;
         for item in self.tables.selected().items() {
             if owner.is_some_and(|owner| owner.carried_items.contains(&item.id)) {
                 continue;
@@ -379,50 +380,32 @@ impl CompiledSurvival {
             let Some(name) = item.name.as_deref() else {
                 continue;
             };
-            if fallback.is_none_or(|(_, heal)| fact.heal > heal) {
-                fallback = Some((item.id, fact.heal));
+            let candidate = (
+                item.id,
+                name,
+                fact.heal,
+                Stock::slots_for(28, item.stackable),
+            );
+            if fallback.is_none_or(|previous| food_candidate_better(candidate, previous)) {
+                fallback = Some(candidate);
             }
-            let total = stock.total(item.id).unwrap_or(0).clamp(0, 28) as u8;
-            if total == 0 {
-                continue;
-            }
-            let target = if unknown {
-                28
-            } else {
-                self.food_count(stage, input, item.id, fact.heal, 28)?
-                    .unwrap_or(28)
-            };
-            let (bound, _) = supply_score(risk::supply_bound(
-                &stage.exposures,
-                input,
-                &self.tables,
-                Food {
-                    item: item.id,
-                    heal: fact.heal as u8,
-                    count: total.min(target),
-                },
-            ));
-            if best.as_ref().is_none_or(|(_, count, previous)| {
-                if bound <= risk::consts::DEATH_BOUND && *previous <= risk::consts::DEATH_BOUND {
-                    i32::from(target) < *count
-                } else {
-                    bound < *previous
-                }
-            }) {
-                best = Some((
-                    BankItem {
-                        id: item.id,
-                        name: Arc::from(name),
-                    },
-                    i32::from(target),
-                    bound,
-                ));
+            if stock.total(item.id).unwrap_or(0) > 0
+                && available.is_none_or(|previous| food_candidate_better(candidate, previous))
+            {
+                available = Some(candidate);
             }
         }
-        if let Some((item, count, _)) = best {
-            return Ok(Some((item, count)));
-        }
-        let Some((id, heal)) = fallback else {
+        available.or(fallback)
+    }
+
+    fn food_need(
+        &self,
+        stage: &StageSurvival,
+        input: &RiskInput,
+        unknown: bool,
+        food: Option<(i32, &str, i32, i32)>,
+    ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
+        let Some((id, name, heal, _)) = food else {
             return Ok(None);
         };
         let count = if unknown {
@@ -430,12 +413,6 @@ impl CompiledSurvival {
         } else {
             self.food_count(stage, input, id, heal, 28)?.unwrap_or(28)
         };
-        let name = self
-            .tables
-            .selected()
-            .item_by_id(id)
-            .and_then(|item| item.name.as_deref())
-            .ok_or(UnknownWhy::MissingFacts)?;
         Ok(Some((
             BankItem {
                 id,
@@ -660,6 +637,16 @@ fn walk_crossings(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
         }
         _ => {}
     }
+}
+
+pub(super) fn food_candidate_better(
+    candidate: (i32, &str, i32, i32),
+    previous: (i32, &str, i32, i32),
+) -> bool {
+    candidate.2 > previous.2
+        || (candidate.2 == previous.2
+            && (candidate.3 < previous.3
+                || (candidate.3 == previous.3 && candidate.0 < previous.0)))
 }
 
 fn supply_score(result: Result<risk::odds::DeathBound, UnknownWhy>) -> (f64, Option<UnknownWhy>) {

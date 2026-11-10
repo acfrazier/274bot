@@ -5105,6 +5105,8 @@ pub(crate) struct NavBot {
     /// The held runtime-net setting was reported during this session.
     pub(crate) runtime_gate_logged: bool,
     pub(crate) admission: Option<Box<crate::admission::Admission>>,
+    /// Shared Path food exclusions retained through publication and reroutes.
+    pub(crate) walk_protected_items: Option<Arc<[i32]>>,
     pub(crate) assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     pub(crate) poison_hold: Option<crate::poison_hold::PoisonHold>,
     pub(crate) last_assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -6507,7 +6509,7 @@ impl ScriptWalkArm {
             .map(|admission| admission.input)
             .or_else(|| {
                 snapshot.map(|snapshot| {
-                    crate::admission::capture(
+                    crate::admission::capture_excluding(
                         snapshot,
                         state.as_ref().is_some_and(|state| state.map_members),
                         self.navs
@@ -6518,6 +6520,10 @@ impl ScriptWalkArm {
                             .as_ref(),
                         false,
                         self.world.as_deref(),
+                        authority
+                            .as_ref()
+                            .and_then(|owner| owner.protected_items())
+                            .unwrap_or(&[]),
                     )
                 })
             });
@@ -6662,6 +6668,9 @@ impl ScriptWalkArm {
             bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority.clone();
+            bot.walk_protected_items = authority
+                .as_ref()
+                .and_then(|owner| owner.clone_protected_items());
             bot.native_walk_failure = None;
             bot.route_compat_tile_intent = compat_tile_intent;
             let request = ScriptRouteRequest {
@@ -8799,6 +8808,7 @@ fn end_route_follow(nav: &mut NavBot) {
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
     nav.admission_pending = false;
+    nav.walk_protected_items = None;
     // A finished advisory answer of a live owner still awaits delivery.
     if nav
         .assess_result

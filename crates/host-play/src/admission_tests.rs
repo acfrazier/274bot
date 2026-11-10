@@ -2208,6 +2208,55 @@ mod compact_final_route_tests {
         assert_eq!(excluded.missing_facts(), included.missing_facts());
     }
 
+    #[test]
+    fn publication_excludes_quest_food_and_reuses_the_worker_assessment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let world = Arc::new(empty_corridor());
+        let from = tile(0, 1);
+        let dest = tile(10, 1);
+        let route = compact_route_path(&world, from, dest);
+        let mut snapshot = post_wear_snapshot(from);
+        let mut lobster = wearable_item(379);
+        lobster.container = api::snapshot::ItemContainer::Inventory;
+        lobster.slot = 0;
+        lobster.count = 6;
+        let mut bread = wearable_item(2309);
+        bread.container = api::snapshot::ItemContainer::Inventory;
+        bread.slot = 6;
+        snapshot.seed_inventory(vec![lobster, bread], 28);
+        let protected: Arc<[i32]> = Arc::from([2309]);
+        let included = capture(&snapshot, false, None, false, Some(&world));
+        assert_eq!(
+            included.food_len, 2,
+            "control: the pack holds two food kinds"
+        );
+        let input = capture_excluding(&snapshot, false, None, false, Some(&world), &protected);
+        assert_eq!(input.food_iter().collect::<Vec<_>>(), [(379, 6)]);
+        let admission = make_admission(RiskPolicy::Inherit, input);
+        let worker = assess_route_path(&route, &world, &admission);
+        let mut bot = crate::script_runtime::NavBot {
+            compact_route: Some(route),
+            requested_route: Some((dest, 0, false, false, false, ZoneExempt::NONE)),
+            admission: Some(Box::new(admission)),
+            assessment: Some(Arc::clone(&worker)),
+            walk_protected_items: Some(Arc::clone(&protected)),
+            admission_pending: true,
+            ..Default::default()
+        };
+
+        publish(&mut bot, &world, &snapshot, false, None);
+
+        assert!(bot.compact_route.is_some(), "publication retains the route");
+        assert!(bot.risk_refusal.is_none());
+        let published = bot.assessment.as_ref().expect("published assessment");
+        assert_eq!(published.input.food_len, 1);
+        assert_eq!(published.input.food_iter().collect::<Vec<_>>(), [(379, 6)]);
+        assert!(Arc::ptr_eq(published, &worker), "no second assessment");
+        assert!(!bot.admission_pending);
+    }
+
     fn pending_wear(
         final_route: crate::walk_plan::RoutePath,
         dest: WorldTile,
@@ -2277,8 +2326,12 @@ mod compact_final_route_tests {
         food.container = api::snapshot::ItemContainer::Inventory;
         food.slot = 0;
         food.count = 2;
-        snapshot.seed_inventory(vec![food], 28);
+        let mut bread = wearable_item(2309);
+        bread.container = api::snapshot::ItemContainer::Inventory;
+        bread.slot = 2;
+        snapshot.seed_inventory(vec![food, bread], 28);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
+        bot.walk_protected_items = Some(Arc::from([2309]));
 
         finish_carried_wear(&mut bot, &snapshot, &world, from);
 
@@ -2291,10 +2344,18 @@ mod compact_final_route_tests {
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false, None)
+            capture_excluding(
+                &snapshot,
+                false,
+                bot.condition.current(),
+                false,
+                None,
+                &[2309]
+            )
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
+        assert_eq!(after.input.food_len, 1, "bank resume excludes quest bread");
         assert_eq!(after.input.food_counts.iter().copied().sum::<u8>(), 2);
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "the final route remains compact");

@@ -6818,12 +6818,12 @@ fn s2b_admission_per_bot_layouts() {
         std::mem::size_of_val(&bot.bank_fetch),
         std::mem::size_of_val(&bot.compact_route),
     );
-    // The macOS arm64 lib-test layouts are 4120/1576/560/280 B.
-    // Shared protected-food handles add 64 B to NavBot and 16 B to WalkGuard.
+    // The macOS arm64 lib-test layouts are 4136/1576/560/280 B.
+    // Shared protected-food handles add 80 B to NavBot and 16 B to WalkGuard.
     // Each ceiling leaves at least 64 B; memory-profile adds separate state.
     #[cfg(all(target_pointer_width = "64", not(feature = "memory-profile")))]
     {
-        assert!(std::mem::size_of::<NavBot>() <= 4184);
+        assert!(std::mem::size_of::<NavBot>() <= 4200);
         assert!(std::mem::size_of::<script::SlotScript>() <= 1640);
     }
     assert!(std::mem::size_of::<script::combat::Combat>() <= 624);

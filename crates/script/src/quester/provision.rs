@@ -2353,6 +2353,177 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release timing measurement; run explicitly in a release build"]
+    fn survival_empty_pack_all_food_kinds_release_timing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture_with_gear(true, true);
+        let plan = &path.provisioning;
+        let survival = plan.survival.as_ref().unwrap();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let mut bank_rows = Vec::new();
+        for item in selected.items() {
+            if survival.tables().food(item.id).is_some_and(|fact| {
+                fact.heal > 0
+                    && fact.eat_delay_arg == Some(2)
+                    && fact.message_delay.is_none_or(|delay| delay <= 0)
+            }) && item.name.is_some()
+            {
+                bank_rows.push((item.id, 28));
+            }
+        }
+        assert_eq!(bank_rows.len(), 54, "revision 289 usable food kinds");
+        snapshot.seed_inventory(Vec::new(), 28);
+        let memory = BankMemory::seeded(&bank_rows, Origin::Session);
+        let banks = Arc::new(NamedBankFacts::empty());
+        let mut plan_total = Duration::ZERO;
+        let mut plan_max = Duration::ZERO;
+        let mut planned = None;
+        for _ in 0..5 {
+            let view = snapshot_view(&snapshot, 1);
+            let start = std::time::Instant::now();
+            let need = survival
+                .plan(
+                    0,
+                    Stock {
+                        bank: Some(&memory),
+                        ..view.stock()
+                    },
+                    survival_input(&snapshot, survival),
+                    Some(plan),
+                )
+                .unwrap();
+            let elapsed = start.elapsed();
+            plan_total += elapsed;
+            plan_max = plan_max.max(elapsed);
+            planned = Some(need.food.map(|(item, count)| (item.id, count)));
+        }
+        let mut poll_total = Duration::ZERO;
+        let mut poll_max = Duration::ZERO;
+        for _ in 0..5 {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let start = std::time::Instant::now();
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            let elapsed = start.elapsed();
+            poll_total += elapsed;
+            poll_max = poll_max.max(elapsed);
+            let _ = std::hint::black_box(result);
+        }
+        eprintln!(
+            "SURVIVAL_RELEASE_TIMING food_kinds={} plan={planned:?} plan_mean_ns={} plan_max_ns={} first_prepare_poll_mean_ns={} first_prepare_poll_max_ns={}",
+            bank_rows.len(),
+            plan_total.as_nanos() / 5,
+            plan_max.as_nanos(),
+            poll_total.as_nanos() / 5,
+            poll_max.as_nanos()
+        );
+    }
+
+    #[test]
+    fn survival_food_ties_prefer_fewer_pack_slots() {
+        use super::super::survival::food_candidate_better;
+
+        assert!(food_candidate_better(
+            (2, "stack", 10, 1),
+            (3, "single", 10, 28)
+        ));
+        assert!(!food_candidate_better(
+            (3, "single", 10, 28),
+            (2, "stack", 10, 1)
+        ));
+        assert!(food_candidate_better(
+            (3, "single", 11, 28),
+            (2, "stack", 10, 1)
+        ));
+    }
+
+    #[test]
+    fn survival_food_choice_uses_best_available_usable_unprotected_kind() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let tables = crate::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
+        let mut usable = selected
+            .items()
+            .filter_map(|item| {
+                let fact = tables.food(item.id)?;
+                (fact.heal > 0
+                    && fact.eat_delay_arg == Some(2)
+                    && fact.message_delay.is_none_or(|delay| delay <= 0))
+                .then_some((
+                    item.id,
+                    item.name.as_deref()?,
+                    fact.heal,
+                    Stock::slots_for(28, item.stackable),
+                ))
+            })
+            .collect::<Vec<_>>();
+        usable.sort_by_key(|(id, _, heal, slots)| (std::cmp::Reverse(*heal), *slots, *id));
+        assert!(usable.len() >= 3, "the fixture has three usable food kinds");
+        let (protected_id, protected_name, _, _) = usable[0];
+        let (expected_id, _, _, _) = usable[1];
+        let unavailable = usable
+            .iter()
+            .find(|(id, _, _, _)| *id != protected_id && *id != expected_id)
+            .map(|(id, _, _, _)| *id)
+            .expect("the fixture has a third usable food kind");
+        let unusable = selected.items().find_map(|item| {
+            let fact = tables.food(item.id)?;
+            (fact.heal <= 0
+                || fact.eat_delay_arg != Some(2)
+                || fact.message_delay.is_some_and(|delay| delay > 0))
+            .then_some((item.id, item.name.as_deref()?))
+        });
+        let Some(unusable) = unusable else {
+            panic!("the revision data has an unusable food-kind fixture");
+        };
+        let (path, _, mut snapshot) = survival_fixture_document(true, true, |document| {
+            document.roles[0].sequences[0].steps[0].settle =
+                crate::quester::path::PredicateDocument::Fact {
+                    kind: "has_item".into(),
+                    version: 1,
+                    args: serde_json::json!({"obj": protected_name, "qty": 1}),
+                };
+        });
+        assert!(path.provisioning.carried_items.contains(&protected_id));
+        snapshot.seed_inventory(Vec::new(), 28);
+        let survival = path.provisioning.survival.as_ref().unwrap();
+        let mut bank_rows = vec![(protected_id, 28), (expected_id, 28), (unusable.0, 28)];
+        bank_rows.push((unavailable, 0));
+        let memory = BankMemory::seeded(&bank_rows, Origin::Session);
+        let need = survival
+            .plan(
+                0,
+                Stock {
+                    bank: Some(&memory),
+                    ..snapshot_view(&snapshot, 1).stock()
+                },
+                survival_input(&snapshot, survival),
+                Some(&path.provisioning),
+            )
+            .unwrap();
+        assert_eq!(
+            need.food.as_ref().map(|(item, _)| item.id),
+            Some(expected_id),
+            "exclude protected, unusable, and unavailable food kinds"
+        );
+    }
+
+    #[test]
     fn declared_crossing_withdraws_the_food_bound_needs_before_ready() {
         if !api::test_support::game_data_available() {
             return;
