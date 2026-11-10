@@ -1639,8 +1639,7 @@ fn path_food_reservation_never_eats_bread_and_uses_lobster_instead() {
     let bread_id = bread.def.id;
     let mut harness = fight(&mut reserved_only);
     harness.runtime.protected_items = Some(Arc::from([bread_id]));
-    reserved_only.face_us();
-    reserved_only.stat(3, 1, 40);
+    reserved_only.stat(3, 12, 40);
     reserved_only.inventory.push(bread);
     reserved_only.refresh();
     let plan = harness.pending_batch(&reserved_only, 3);

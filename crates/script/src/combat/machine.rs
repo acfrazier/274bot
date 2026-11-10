@@ -2356,7 +2356,6 @@ impl Combat {
         &self,
         plan: &mut TickPlan,
         kind: PotionKind,
-        lowers_danger: bool,
         frame: &Frame<'_>,
         tick: u16,
         gate: i32,
@@ -2389,7 +2388,7 @@ impl Combat {
             self.push(plan, PlanRow::new(RowKind::Drink, id, kind as u8));
             return;
         }
-        if !lowers_danger || eat.is_some() {
+        if !matches!(kind, PotionKind::Prayer | PotionKind::Antifire) || eat.is_some() {
             return;
         }
         if let Some(food) = self.plain_food(frame, tick, Some(gate), protected_items) {
@@ -2652,7 +2651,6 @@ impl Combat {
                 self.drink_or_recover(
                     &mut plan,
                     PotionKind::Prayer,
-                    true,
                     frame,
                     tick,
                     lines.drink_gate,
@@ -2778,7 +2776,6 @@ impl Combat {
                 self.drink_or_recover(
                     &mut plan,
                     PotionKind::Antifire,
-                    true,
                     frame,
                     tick,
                     lines.drink_gate,
@@ -2790,7 +2787,6 @@ impl Combat {
                     self.drink_or_recover(
                         &mut plan,
                         kind,
-                        false,
                         frame,
                         tick,
                         lines.drink_gate,
@@ -2861,7 +2857,6 @@ impl Combat {
             self.drink_or_recover(
                 &mut plan,
                 PotionKind::Prayer,
-                true,
                 frame,
                 tick,
                 lines.drink_gate,
@@ -2875,7 +2870,6 @@ impl Combat {
                 self.drink_or_recover(
                     &mut plan,
                     kind,
-                    false,
                     frame,
                     tick,
                     lines.drink_gate,
@@ -2890,7 +2884,6 @@ impl Combat {
             self.drink_or_recover(
                 &mut plan,
                 PotionKind::Antifire,
-                true,
                 frame,
                 tick,
                 lines.drink_gate,
