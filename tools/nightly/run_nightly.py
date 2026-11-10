@@ -3137,6 +3137,8 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
         for revision in ("274", "289"):
             for kind in ("ENGINE", "CONTENT"):
                 env[f"RS2VM_{kind}_{revision}"] = inputs[f"GAME_DATA_{revision}_{kind}"]
+        env["ISOLATED_289_ENGINE_DIR"] = inputs["GAME_DATA_289_ENGINE"]
+        env["ISOLATED_289_CONTENT_DIR"] = inputs["GAME_DATA_289_CONTENT"]
         bun = os.environ.get("BUN_EXECUTABLE") or shutil.which("bun")
         if not bun:
             raise RuntimeError("missing local-data input RS2VM_BUN: no Bun executable is configured")

@@ -137,6 +137,8 @@ Preparation runs before `lanes`, so post-ADR test lanes use their tree's
 `.navflags` for `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`. They also
 receive `RS2VM_ENGINE_274`, `RS2VM_CONTENT_274`, `RS2VM_ENGINE_289` and
 `RS2VM_CONTENT_289`, selected from the same exact-revision roots as generation.
+The existing `ISOLATED_289_ENGINE_DIR` and `ISOLATED_289_CONTENT_DIR` test inputs
+remain bound to that same revision-289 pair.
 `RS2VM_BUN` uses `BUN_EXECUTABLE` or the Bun executable on `PATH`. A missing
 root fails with the exact-root diagnostic. A missing generated output fails
 with the generator diagnostic. These lanes never fall back to the v18

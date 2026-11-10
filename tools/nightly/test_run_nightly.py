@@ -559,6 +559,14 @@ class RunBranchLocalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             events = []
+            local_inputs = {}
+            for revision in ("274", "289"):
+                for kind in ("ENGINE", "CONTENT"):
+                    path = root / f"{revision}-{kind.lower()}"
+                    path.mkdir()
+                    local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind}"] = str(path)
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
 
             def fake_update_tree(_branch, tree, _build_log):
                 generator = tree / "tools" / "local-data" / "build.py"
@@ -583,6 +591,7 @@ class RunBranchLocalDataTests(unittest.TestCase):
                 return []
 
             patches = [
+                mock.patch.dict(os.environ, {**local_inputs, "BUN_EXECUTABLE": str(bun)}),
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "STEPS", ["lanes"]),
                 mock.patch.object(rn, "REVISION", "289"),
@@ -934,7 +943,7 @@ class LaneEnvironmentTests(unittest.TestCase):
                 for kind in ("engine", "content"):
                     path = root / f"{kind}-{revision}"
                     path.mkdir()
-                    roots[(revision, kind)] = path.resolve()
+                    roots[(revision, kind.upper())] = path.resolve()
                     local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind.upper()}"] = str(path)
             bun = root / "bun"
             bun.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -951,6 +960,11 @@ class LaneEnvironmentTests(unittest.TestCase):
                             with self.subTest(revision=revision, lane=name):
                                 for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
                                     self.assertEqual(extra[key], str(pack))
+                                self.assertEqual(
+                                    extra["ISOLATED_289_ENGINE_DIR"], str(roots[("289", "ENGINE")]))
+                                self.assertEqual(
+                                    extra["ISOLATED_289_CONTENT_DIR"], str(roots[("289", "CONTENT")]))
+                                self.assertEqual(extra["RS2VM_BUN"], str(bun.resolve()))
                                 for source_revision in ("274", "289"):
                                     for kind in ("ENGINE", "CONTENT"):
                                         self.assertEqual(
