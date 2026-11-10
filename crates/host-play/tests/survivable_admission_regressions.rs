@@ -106,7 +106,7 @@ fn default_admission(input: RiskInput) -> Admission {
 }
 
 #[test]
-fn probe_gated_default_is_never_for_every_preference_source() {
+fn probe_held_middle_matches_never_for_every_preference_source() {
     const { assert!(!NET_AVAILABLE) };
     let dir = std::env::temp_dir().join(format!("review-s2b-probe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -152,7 +152,6 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             read("no-nav", Some(r#"{"unrelated":1}"#)).unwrap(),
         ),
         (
-            // The previous release's removed middle level loads as Never.
             "explicit-middle",
             read(
                 "explicit-middle",
@@ -165,18 +164,48 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             read("malformed", Some("{nav:")).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         ),
     ];
+    let never = WalkGlobals::default();
     let world = api::test_support::game_data_available().then(|| corridor(40, &[20]));
     for (name, globals) in sources {
-        assert_eq!(globals.danger_level(), DangerLevel::Never, "{name}");
+        let expected_level = if name == "explicit-middle" {
+            DangerLevel::WhenSurvivable
+        } else {
+            DangerLevel::Never
+        };
+        assert_eq!(globals.danger_level(), expected_level, "{name}");
+        for script_grant in [false, true] {
+            let script = WalkPermissions {
+                allow_danger_zones: script_grant,
+                ..WalkPermissions::default()
+            };
+            for walk_bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+                let walk = WalkOptions {
+                    allow_danger_zones: walk_bit,
+                    ..WalkOptions::default()
+                };
+                for crossing in [false, true] {
+                    assert_eq!(
+                        globals.danger_decision(script, walk, crossing),
+                        never.danger_decision(script, walk, crossing),
+                        "{name}: script={script_grant}, walk={walk_bit:?}, crossing={crossing}"
+                    );
+                }
+            }
+        }
+        let decision =
+            globals.danger_decision(WalkPermissions::default(), WalkOptions::default(), false);
         assert_eq!(
-            globals
-                .danger_decision(WalkPermissions::default(), WalkOptions::default(), false)
-                .policy,
-            RiskPolicy::Avoid,
+            decision,
+            never.danger_decision(WalkPermissions::default(), WalkOptions::default(), false),
             "{name}: native inherit"
         );
+        assert_eq!(decision.policy, RiskPolicy::Avoid, "{name}: native inherit");
         let manual = Admission::manual(globals.manual_decision(false), RiskInput::default(), 0);
-        assert_eq!(manual.decision.policy, RiskPolicy::Avoid, "{name}: manual");
+        assert_eq!(
+            manual.decision,
+            Admission::manual(never.manual_decision(false), RiskInput::default(), 0).decision,
+            "{name}: manual decision"
+        );
         assert_eq!(manual.grants, ZoneExempt::NONE, "{name}: manual grants");
         assert!(
             !manual.decision.enforce,
@@ -201,7 +230,8 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         );
     }
     // Requests permit danger routing, but keep the model's verdict enforced.
-    let globals = WalkGlobals::default();
+    let mut middle = WalkGlobals::default();
+    middle.set_danger_level(DangerLevel::WhenSurvivable);
     let script = WalkPermissions {
         allow_danger_zones: true,
         ..WalkPermissions::default()
@@ -219,12 +249,20 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         (WalkPermissions::default(), allow),
         (script, forbid),
     ] {
-        let decision = globals.danger_decision(permissions, options, false);
+        let decision = middle.danger_decision(permissions, options, false);
+        assert_eq!(
+            decision,
+            never.danger_decision(permissions, options, false)
+        );
         assert!(decision.permitted);
         assert_eq!(decision.policy, RiskPolicy::Avoid);
         assert!(decision.enforce);
     }
-    let unrequested = globals.danger_decision(WalkPermissions::default(), forbid, false);
+    let unrequested = middle.danger_decision(WalkPermissions::default(), forbid, false);
+    assert_eq!(
+        unrequested,
+        never.danger_decision(WalkPermissions::default(), forbid, false)
+    );
     assert!(!unrequested.permitted);
     assert_eq!(unrequested.policy, RiskPolicy::Avoid);
     assert!(!unrequested.enforce);
@@ -234,10 +272,11 @@ fn probe_gated_default_is_never_for_every_preference_source() {
     for overridden in [
         WalkGlobals {
             allow_danger_zones: true,
-            ..globals
+            ..never
         },
-        globals.for_script_family(true),
+        middle.for_script_family(true),
     ] {
+        assert_eq!(overridden.danger_level(), DangerLevel::Always);
         for (permissions, options) in [
             (script, WalkOptions::default()),
             (WalkPermissions::default(), allow),

@@ -4900,7 +4900,11 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
 #[test]
 fn a_queued_compat_walk_is_admitted_from_its_one_danger_decision() {
     let mut seen = Vec::new();
-    for level in [crate::DangerLevel::Never, crate::DangerLevel::Always] {
+    for level in [
+        crate::DangerLevel::Never,
+        crate::DangerLevel::WhenSurvivable,
+        crate::DangerLevel::Always,
+    ] {
         for compat_v1 in [false, true] {
             for crossing in [false, true] {
                 let mut globals = crate::WalkGlobals::default();
