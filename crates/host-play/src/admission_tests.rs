@@ -9,7 +9,6 @@ use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{Leg, RouteError};
 use nav_planner::transport::TransportGraph;
-#[cfg(feature = "test-support")]
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
 use nav_planner::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
