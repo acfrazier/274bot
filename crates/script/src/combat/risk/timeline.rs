@@ -24,7 +24,6 @@ pub(crate) struct TimelineSummary {
     /// all-summed schedule).
     pub single_way_rows: u16,
 }
-#[derive(Clone, Copy)]
 pub(crate) struct TimelineInputs<'a> {
     path: RoutePath<'a>,
     plan: &'a RoutePlan,
@@ -204,7 +203,14 @@ fn add_row_events(
 ) -> Result<(), UnknownWhy> {
     let mut tick = start;
     while tick < end {
-        add_event(events.out, &mut events.summary, tick, kind, row.max_hit, hit)?;
+        add_event(
+            events.out,
+            &mut events.summary,
+            tick,
+            kind,
+            row.max_hit,
+            hit,
+        )?;
         tick = tick
             .checked_add(i32::from(rate))
             .ok_or(UnknownWhy::Overflow)?;
@@ -321,13 +327,8 @@ fn emit_merged(
 ) -> Result<(), UnknownWhy> {
     if merged.rows < 2 {
         let row = &schedule.plan.intervals[merged.first];
-        let (kind, hit, rate) =
-            kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
-        let start = schedule
-            .path
-            .point(row.a)
-            .ok_or(UnknownWhy::Overflow)?
-            .tick;
+        let (kind, hit, rate) = kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
+        let start = schedule.path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
         let end = schedule.path.interval_end_tick(row)?;
         return add_row_events(events, row, kind, hit, rate, start, end);
     }
@@ -373,24 +374,14 @@ fn flush(
         if row.hazard() {
             continue;
         }
-        let (event, hit, rate) =
-            kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
+        let (event, hit, rate) = kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
         if !candidate(row, schedule.risks, event, rate) {
             continue;
         }
-        let start = schedule
-            .path
-            .point(row.a)
-            .ok_or(UnknownWhy::Overflow)?
-            .tick;
+        let start = schedule.path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
         let end = schedule.path.interval_end_tick(row)?;
         if cluster.rows >= 2
-            && !row_is_single_way(
-                schedule.path,
-                row,
-                schedule.risks,
-                schedule.multiway,
-            )?
+            && !row_is_single_way(schedule.path, row, schedule.risks, schedule.multiway)?
         {
             add_row_events(events, row, event, hit, rate, start, end)?;
             continue;
@@ -452,11 +443,7 @@ fn build(
 
     let mut open: Option<Cluster> = None;
     for (index, row) in schedule.plan.intervals.iter().enumerate() {
-        let start = schedule
-            .path
-            .point(row.a)
-            .ok_or(UnknownWhy::Overflow)?
-            .tick;
+        let start = schedule.path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
         let end = schedule.path.interval_end_tick(row)?;
         last_tick = last_tick.max(end);
         if row.hazard() {
@@ -470,12 +457,7 @@ fn build(
             )?;
             continue;
         }
-        let (kind, hit, rate) = kind_attack(
-            row,
-            schedule.input,
-            schedule.risks,
-            schedule.tables,
-        )?;
+        let (kind, hit, rate) = kind_attack(row, schedule.input, schedule.risks, schedule.tables)?;
         if !schedule.multiway.known() || !candidate(row, schedule.risks, kind, rate) {
             add_row_events(&mut events, row, kind, hit, rate, start, end)?;
             continue;
@@ -582,11 +564,7 @@ fn build(
         if kind.poison == 0 {
             continue;
         }
-        let first = schedule
-            .path
-            .point(row.a)
-            .ok_or(UnknownWhy::Overflow)?
-            .tick;
+        let first = schedule.path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
         extend_poison(
             events.out,
             &mut events.summary,

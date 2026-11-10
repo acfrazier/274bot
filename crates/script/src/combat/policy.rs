@@ -326,7 +326,6 @@ pub(crate) struct EatChoice {
     pub combo: Option<i32>,
 }
 /// The scalar state used to choose food for one observation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EatInputs {
     pub danger: Option<i32>,
     pub poison_fire: i32,
