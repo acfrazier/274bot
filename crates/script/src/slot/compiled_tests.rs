@@ -3700,10 +3700,10 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // The measured 656 B inline seat keeps the default 64 B headroom.
+        // The measured 696 B inline seat keeps 24 B of headroom.
         assert!(
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>() <= 720,
-            "ApiSeat inline layout grew to {} B (measured 656 B; limit 720 B)",
+            "ApiSeat inline layout grew to {} B (measured 696 B; limit 720 B)",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>()
         );
         // Six protected-food handles add 96 B without a new allocation.

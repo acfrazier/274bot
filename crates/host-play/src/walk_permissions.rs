@@ -1762,7 +1762,7 @@ mod tests {
         // A future NET_AVAILABLE-only route is enforced before it is granted.
         let future_enforced = DangerDecision {
             permitted: false,
-            policy: RiskPolicy::Inherit,
+            policy: RiskPolicy::Avoid,
             enforce: true,
         };
         assert!(walk_arms_danger_food_guard(future_enforced, true, false));

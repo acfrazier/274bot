@@ -2534,6 +2534,7 @@ pub(super) fn queue_native_service_pick_scoped(
             ..input.request.options
         },
         session_permissions,
+        false,
     )
     .0;
     options.allow_teleports = false;

@@ -6525,6 +6525,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
             None,
             None,
             None,
+            None,
             #[cfg(feature = "js")]
             None,
             #[cfg(feature = "js")]

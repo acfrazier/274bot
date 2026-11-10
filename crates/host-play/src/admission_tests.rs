@@ -2279,7 +2279,7 @@ mod compact_final_route_tests {
         );
         let input = capture_excluding(&snapshot, false, None, false, Some(&world), &protected);
         assert_eq!(input.food_iter().collect::<Vec<_>>(), [(379, 6)]);
-        let admission = make_admission(RiskPolicy::Inherit, input);
+        let admission = make_admission(RiskPolicy::Avoid, input);
         let worker = assess_route_path(&route, &world, &admission);
         let mut bot = crate::script_runtime::NavBot {
             compact_route: Some(route),
@@ -2716,17 +2716,18 @@ mod survival_provisioning {
             zones: grant,
             ..Default::default()
         };
-        let request = Admission {
-            policy: decision.policy,
-            enforce: decision.enforce,
-            grants: grant,
-            allow: WalkAllow {
+        let mut request = Admission::from_decision(
+            decision,
+            WalkAllow {
                 food: true,
                 ..Default::default()
             },
-            ..make_admission(RiskPolicy::Inherit, risk_input)
-        };
-        assert_eq!(request.enforce, !global_override);
+            risk_input,
+            0,
+            false,
+        );
+        request.grants = grant;
+        assert_eq!(request.decision.enforce, !global_override);
         let state = WorldState::default();
         let admitted = route(
             &world,
@@ -2741,7 +2742,7 @@ mod survival_provisioning {
             Verdict::Unsurvivable
         ));
         if global_override {
-            assert_eq!(request.policy, RiskPolicy::Proceed);
+            assert_eq!(request.decision.policy, RiskPolicy::Proceed);
             assert!(
                 admitted.refusal.is_none(),
                 "a global override proceeds despite {missing}"

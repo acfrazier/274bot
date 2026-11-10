@@ -2834,16 +2834,16 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<crate::quester::runner::Quester>(),
         size_of::<crate::survival::SurvivalStep>(),
     );
-    // BankMachine=456 B and AcquireRun=920 B are measured baselines.
-    // Shared capacity keep-set plumbing keeps 64 B of headroom.
+    // Composed measurements: BankMachine=456 B and AcquireRun=960 B.
+    // Shared capacity keeps and the dev shop state leave 64 B of headroom.
     assert!(size_of::<crate::native_bank::BankMachine>() <= 520);
-    assert!(size_of::<AcquireRun>() <= 984);
+    assert!(size_of::<AcquireRun>() <= 1024);
     assert!(size_of::<WearStep>() <= 8);
     assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
-    // Provisioner is 1120 B: +208 B capacity snapshot and +32 B stage state.
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1184);
+    // The composed Provisioner is 1160 B; the ceiling leaves 64 B.
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 1224);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 

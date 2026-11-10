@@ -37,7 +37,22 @@ Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user
 
 After a settle timeout, an advancing step rereads progress before it retries.
 
-Optional `failure_signal` (a predicate document, valid only with `max_attempts` and `stop`) names what the content shows when one attempt ran and failed without changing anything the watchdog tracks, for example a `message` fact on the content's failure text. It is checked on the chat since the step began, when a settle timeout closes an attempt whose step ran to its end (its operation was sent). A timeout with the signal counts as progress for the no-progress watchdog, so `max_attempts` is the only bound on those retries. A timeout without the signal, or from a step that never ran to its end, still counts toward the watchdog's eight-observation park. Cite the content line that prints the signal in the step `comment`. Example: Dwarf Cannon's railing repair uses `{"Fact":{"kind":"message","version":1,"args":{"any":["but fail and cut yourself trying."]}}}` (`railings.rs2:78-91`).
+Optional `failure_signal` is a predicate document. Use it only with `max_attempts`
+and `stop`. It names evidence that an attempt failed without changing anything
+the watchdog tracks, such as a `message` fact on the content's failure text.
+
+The runner checks chat since the step began. It checks when a settle timeout
+closes an attempt that ran to its end and sent its operation. A timeout with
+the signal counts as watchdog progress, so only `max_attempts` bounds those
+retries.
+
+A timeout without the signal still counts toward the watchdog's
+eight-observation park. So does a timeout from a step that never ran to its end.
+Cite the content line that prints the signal in the step `comment`.
+
+Example: Dwarf Cannon's railing repair uses
+`{"Fact":{"kind":"message","version":1,"args":{"any":["but fail and cut yourself trying."]}}}`
+(`railings.rs2:78-91`).
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
@@ -89,21 +104,21 @@ that field. Declare stage requests in the sequence's `cross` array. Use
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
 
-A walk may cross danger zones when the global Danger routing setting is `Always`,
-or when the guide requested it for that walk (a stage or step `cross` that covers
-it). Nothing else decides this. The global setting has no exception: with it on,
-every Quester walk may cross danger zones, declared or not. An old saved Quester
-card value does not change it. With the setting off, a walk that no declaration
-covers avoids danger zones, and a route whose only path crosses one is refused.
+A walk may cross danger zones if Danger routing is `Always`, or if a stage or
+step `cross` requests that crossing. These are the only permission sources.
 
-A walk that a declaration covers may cross any danger zone, not only the declared
-ones. The food guard is armed for the whole walk on every permitted danger
-crossing, whether the permission is the global setting or a declaration.
-Protection runs only where a step requests it. The two sources are judged
-differently. With the global setting on, the walk goes and the survival model's
-bound is informational. With the setting off and a declaration, survival
-admission checks the walk's route: it is refused when the chance of death is
-above 1%, whichever zones it crosses.
+With `Always`, every Quester walk may cross, declared or not. An old saved
+Quester card value does not change it. Without `Always`, a walk with no
+declaration avoids danger zones. If every route crosses one, the walk is refused.
+
+A declaration permits a walk to cross any danger zone, not just the named
+ones. Every permitted danger crossing arms the food guard for the whole walk.
+Protection runs only where a step requests it.
+
+With the global setting on, the walk goes and the survival model's bound is
+informational. With the setting off and a declaration, survival admission
+checks the route. It refuses a chance of death above 1%, whichever zones the
+route crosses.
 
 ## Steps
 
@@ -127,9 +142,9 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
-| `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. `source` cites the content. |
-| `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for. `source` cites the content. |
-| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board (`pieces`: the alias prefix of its 24 pieces, `reinitialisation`; `arrival`: the `tile` and `source` where the cutscene after the last piece leaves the player). Open the panel first with an `interact` step. The step reads the board the client holds, plans the slides with the shared sliding-puzzle solver and clicks one piece per observed move, then waits for the cutscene to reach `arrival`. It fails after three clicks that moved nothing, when the board closes unsolved, or when the cutscene does not arrive within 34 ticks. |
+| `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`; `source` cites the content. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. |
+| `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown; `source` cites the content. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. |
+| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board. See [Reinitialisation board](#reinitialisation-board) for inputs and failure conditions. |
 
 ### Count dialogs and interface buttons
 
@@ -142,6 +157,19 @@ Content can ask for a number (`p_countdialog`) or wait for a press on its own in
 `max_ticks` is observed game ticks from the step's start. Size it from the content delay before the prompt, and cite it in `source`. Use `talk` with `continue_only` for the chat pages that follow, and use `answer_once` only for menus.
 
 Death Plateau's dice game uses all three: Harold's stake (`death_guard_equiproom.rs2:227-228`), the roll button `death_dice:com_28` (`:46-47`, shown after three `p_delay(2)` at `:88-99`) and the continue button `death_dice:com_30` (`:123`, `p_pausebutton`).
+
+A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for.
+
+### Reinitialisation board
+
+Open the panel first with an `interact` step. `pieces` supplies the alias prefix
+of its 24 pieces, `reinitialisation`. `arrival` supplies the `tile` and `source`
+where the cutscene after the last piece leaves the player.
+
+The step uses the shared sliding-puzzle solver on the board the client holds.
+It clicks one piece per observed move, then waits for the cutscene to reach
+`arrival`. It fails after three clicks that moved nothing, when the board
+closes unsolved, or when the cutscene does not arrive within 34 ticks.
 
 ## Checks a guide can use
 

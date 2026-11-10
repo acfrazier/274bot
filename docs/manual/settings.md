@@ -55,9 +55,9 @@ next save. The grants are additive: the global switch or the script's own
 grant allows the step, and only a per-request Forbid narrows it.
 
 **Danger routing** decides if a walk may pass dangerous monsters. It has two
-levels. **Never** is the default: a walk avoids dangerous monsters unless its
-script asks to cross them, and then the bot crosses only when its chance of
-death is at most 1%. **Always** lets every walk cross, without that check; the
+levels. **Never** is the default. A walk avoids dangerous monsters unless its
+script asks to cross them. A requested crossing passes only when the chance
+of death is at most 1%. **Always** lets every walk cross, without that check; the
 window warns `Global danger-zone override is enabled.` A setting saved as
 **When survivable** by an earlier release loads as **Never**.
 
