@@ -106,6 +106,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Step selection still checks current evidence after preparation.
   Missing food can still be fetched before the step starts. Quester upkeep
   also excludes protected quest food from ordinary eating.
+- The unattackable-tree live fixture reads its own empty bank before its HP8
+  setup. Stage-supply preparation stays enabled without a bank detour that
+  would heal the fixture before the encounter.
 - The global Danger routing setting applies to every walk again, including
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not, and the walk goes: the survival check is shown for information only.
