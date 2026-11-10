@@ -21,9 +21,18 @@ pub struct EngineProfile {
 }
 impl EngineProfile {
     /// Historical engine semantics (LocOps.ts:26,63; util/Environment.ts:7).
-    pub const R274: Self = Self { loc_duration: LocDuration::Positive, npc_capacity: 16_383 };
+    pub const R274: Self = Self {
+        loc_duration: LocDuration::Positive,
+        npc_capacity: 16_383,
+    };
     /// Production engine semantics (LocOps.ts:26,63; util/Environment.ts:7).
-    pub const R289: Self = Self { loc_duration: LocDuration::Positive, npc_capacity: 16_383 };
+    pub const R289: Self = Self {
+        loc_duration: LocDuration::Positive,
+        npc_capacity: 16_383,
+    };
     /// Instance-aware semantics (LocOps.ts:27,65; CoordGrid.ts:24-27; World.ts:118).
-    pub const R377: Self = Self { loc_duration: LocDuration::ZeroInInstance { min_x: 6464 }, npc_capacity: 16_383 };
+    pub const R377: Self = Self {
+        loc_duration: LocDuration::ZeroInInstance { min_x: 6464 },
+        npc_capacity: 16_383,
+    };
 }

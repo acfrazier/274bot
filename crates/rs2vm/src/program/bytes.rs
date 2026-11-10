@@ -144,11 +144,6 @@ impl<'a> Cursor<'a> {
         Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
     }
 
-    pub(super) fn i16(&mut self) -> Result<i16, LoadError> {
-        let bytes = self.take(2)?;
-        Ok(i16::from_be_bytes([bytes[0], bytes[1]]))
-    }
-
     pub(super) fn u24(&mut self) -> Result<u32, LoadError> {
         let bytes = self.take(3)?;
         Ok((u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]))

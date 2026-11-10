@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use rs2vm::machine::{
-    AtomKind, CondClass, Effect, End, Modal, PathResult, PlayerPos, Pred, Run, Stored, Text,
-    Value, View,
+    AtomKind, CondClass, Effect, End, Modal, PathResult, PlayerPos, Pred, Run, Stored, Text, Value,
+    View,
 };
 use rs2vm::profile::EngineProfile;
 use rs2vm::program::{
@@ -133,7 +133,11 @@ impl TestWorld {
     fn with_locs(locs: impl IntoIterator<Item = PlacedLoc>) -> Self {
         let mut world = Self::allocated();
         for loc in locs {
-            world.zones.entry(ZoneKey::of(loc.tile)).or_default().push(loc);
+            world
+                .zones
+                .entry(ZoneKey::of(loc.tile))
+                .or_default()
+                .push(loc);
         }
         world
     }
@@ -295,10 +299,7 @@ fn row_07_string_params_and_varps_use_the_string_stack() {
     let loc_run = run(&loc_program, &world, loc_entry);
     assert_eq!(loc_run.paths.len(), 1);
     assert!(loc_run.paths[0].ints.is_empty());
-    assert_eq!(
-        loc_run.paths[0].strings,
-        vec![Text::Lit("loc text".into())]
-    );
+    assert_eq!(loc_run.paths[0].strings, vec![Text::Lit("loc text".into())]);
 
     let mut varp_program = program(vec![script(
         2,
@@ -387,10 +388,7 @@ fn row_15_and_a4_layout_counts_start_positive_and_bad_inputs_fail_closed() {
             int("RETURN", 0),
         ],
     );
-    let empty_pagecount = script(
-        2,
-        vec![int("split_pagecount", 0), int("RETURN", 0)],
-    );
+    let empty_pagecount = script(2, vec![int("split_pagecount", 0), int("RETURN", 0)]);
     let empty_linecount = script(
         3,
         vec![
@@ -435,7 +433,10 @@ fn row_15_and_a4_layout_counts_start_positive_and_bad_inputs_fail_closed() {
     let loop_run = run(&program, &world, entry(1));
     assert_eq!(loop_run.paths.len(), 1);
     assert_unsupported_at(&loop_run.paths[0], 8);
-    assert!(loop_run.paths.iter().all(|path| !matches!(&path.end, End::Finished)));
+    assert!(loop_run
+        .paths
+        .iter()
+        .all(|path| !matches!(&path.end, End::Finished)));
 
     let initial_count = run(&program, &world, entry(2));
     assert_eq!(initial_count.paths.len(), 1);
@@ -486,8 +487,7 @@ fn inventory_after_suspension(id: u32, suspension: &str) -> Script {
         .map(|(pc, _)| pc)
         .expect("second inventory condition has a branch");
     code[first_branch].operand = Operand::Int(return_pc as i32 - first_branch as i32 - 1);
-    code[second_branch].operand =
-        Operand::Int(return_pc as i32 - second_branch as i32 - 1);
+    code[second_branch].operand = Operand::Int(return_pc as i32 - second_branch as i32 - 1);
     script(id, code)
 }
 
@@ -579,8 +579,16 @@ fn row_25_protected_varps_survive_suspension_but_unprotected_reads_refresh() {
         },
     );
     // The second script reads the unprotected variable.
-    program.scripts.get_mut(&ScriptId(2)).expect("script exists").code[0] = int("PUSH_VARP", 10);
-    program.scripts.get_mut(&ScriptId(2)).expect("script exists").code[3] = int("PUSH_VARP", 10);
+    program
+        .scripts
+        .get_mut(&ScriptId(2))
+        .expect("script exists")
+        .code[0] = int("PUSH_VARP", 10);
+    program
+        .scripts
+        .get_mut(&ScriptId(2))
+        .expect("script exists")
+        .code[3] = int("PUSH_VARP", 10);
     let world = TestWorld::allocated();
 
     let mut protected_entry = entry(1);
@@ -590,7 +598,8 @@ fn row_25_protected_varps_survive_suspension_but_unprotected_reads_refresh() {
     assert_eq!(protected.paths[0].ints.len(), 2);
     assert_eq!(protected.paths[0].ints[0], protected.paths[0].ints[1]);
     assert_eq!(
-        protected.atom_of(protected.paths[0].ints[0])
+        protected
+            .atom_of(protected.paths[0].ints[0])
             .expect("protected varp observation")
             .class,
         CondClass::Hidden
@@ -603,7 +612,8 @@ fn row_25_protected_varps_survive_suspension_but_unprotected_reads_refresh() {
     assert_eq!(unprotected.paths[0].ints.len(), 2);
     assert_ne!(unprotected.paths[0].ints[0], unprotected.paths[0].ints[1]);
     assert_eq!(
-        unprotected.atom_of(unprotected.paths[0].ints[1])
+        unprotected
+            .atom_of(unprotected.paths[0].ints[1])
             .expect("post-suspension varp observation")
             .class,
         CondClass::Live
@@ -641,9 +651,10 @@ fn npc_iterator_script(id: u32) -> Script {
 }
 
 fn assert_has_finished_int(run: &Run, value: i32) {
-    assert!(run.paths.iter().any(|path| {
-        matches!(&path.end, End::Finished) && path.ints == [Value::Known(value)]
-    }));
+    assert!(run
+        .paths
+        .iter()
+        .any(|path| { matches!(&path.end, End::Finished) && path.ints == [Value::Known(value)] }));
 }
 
 #[test]
@@ -874,9 +885,10 @@ fn row_29_close_callback_blocks_a_cancelled_pause_candidate() {
             }
         )
     }));
-    assert!(!run.paths.iter().any(|path| {
-        matches!(&path.end, End::Finished | End::AwaitingInput)
-    }));
+    assert!(!run
+        .paths
+        .iter()
+        .any(|path| { matches!(&path.end, End::Finished | End::AwaitingInput) }));
 }
 
 #[test]
@@ -985,11 +997,7 @@ fn row_32_p_finduid_keeps_the_one_players_protected_state() {
     );
     let unprotected = script(
         3,
-        vec![
-            int("uid", 0),
-            int("p_finduid", 0),
-            int("RETURN", 0),
-        ],
+        vec![int("uid", 0), int("p_finduid", 0), int("RETURN", 0)],
     );
     let mut program = program(vec![matching, wrong_uid, unprotected]);
     program.packs.varps.insert(
@@ -1118,9 +1126,10 @@ fn row_45_unallocated_teleport_records_failure_and_keeps_running() {
     assert_eq!(run.paths.len(), 1);
     assert!(matches!(&run.paths[0].end, End::Finished));
     assert_eq!(run.paths[0].player, PlayerPos::Tile(stand));
-    assert!(run.paths[0].effects.iter().any(|record| {
-        matches!(&record.effect, Effect::NoMove { to } if *to == destination)
-    }));
+    assert!(run.paths[0]
+        .effects
+        .iter()
+        .any(|record| { matches!(&record.effect, Effect::NoMove { to } if *to == destination) }));
     assert!(run.paths[0].effects.iter().any(|record| {
         matches!(
             &record.effect,
@@ -1188,7 +1197,10 @@ fn row_46_membership_allocation_uses_the_stand_world_kind() {
     }));
     assert!(free.paths.iter().any(|path| {
         path.player == PlayerPos::Tile(free_stand)
-            && path.effects.iter().any(|record| matches!(&record.effect, Effect::NoMove { .. }))
+            && path
+                .effects
+                .iter()
+                .any(|record| matches!(&record.effect, Effect::NoMove { .. }))
     }));
 
     let mut members_input = entry(1);
@@ -1270,15 +1282,12 @@ fn decision_a3_npc_add_full_errors_before_teleport_and_unknown_keeps_rival() {
     assert_eq!(spare.paths.len(), 1);
     assert!(matches!(&spare.paths[0].end, End::Finished));
     assert!(has_move(&spare.paths[0], destination));
-    assert!(spare.paths[0]
-        .effects
-        .iter()
-        .any(|record| {
-            matches!(
-                &record.effect,
-                Effect::Npc { command } if command.as_ref() == "npc_add"
-            )
-        }));
+    assert!(spare.paths[0].effects.iter().any(|record| {
+        matches!(
+            &record.effect,
+            Effect::Npc { command } if *command == "npc_add"
+        )
+    }));
 
     let unknown_world = TestWorld::allocated();
     let unknown = run(&program, &unknown_world, entry(1));
@@ -1299,7 +1308,7 @@ fn decision_a3_npc_add_full_errors_before_teleport_and_unknown_keeps_rival() {
                             if unknown.atom_of(*lhs).is_some_and(|atom| {
                                 matches!(
                                     &atom.kind,
-                                    AtomKind::Live(name) if name.as_ref() == "npc_capacity"
+                                    AtomKind::Live(name) if *name == "npc_capacity"
                                 )
                             })
                     )
@@ -1317,4 +1326,88 @@ fn decision_a3_npc_add_full_errors_before_teleport_and_unknown_keeps_rival() {
         .iter()
         .any(|path| matches!(&path.end, End::EngineError(_))));
     assert!(rivals.iter().any(|path| has_move(path, destination)));
+}
+
+#[test]
+fn one_suspension_before_a_fork_proves_each_automatic_close() {
+    let mut program = program(vec![script(
+        1,
+        vec![
+            int("PUSH_CONSTANT_INT", 0),
+            int("p_delay", 0),
+            int("PUSH_VARP", 7),
+            int("PUSH_CONSTANT_INT", 0),
+            int("BRANCH_GREATER_THAN_OR_EQUALS", 3),
+            text("PUSH_CONSTANT_STRING", "left"),
+            int("mes", 0),
+            int("RETURN", 0),
+            text("PUSH_CONSTANT_STRING", "right"),
+            int("mes", 0),
+            int("RETURN", 0),
+        ],
+    )]);
+    program.packs.varps.insert(
+        VarpId(7),
+        Varp {
+            string: false,
+            protect: false,
+            transmit: true,
+            name: "fork".into(),
+        },
+    );
+    let world = TestWorld::allocated();
+    let mut input = entry(1);
+    input.protected = true;
+    let result = run(&program, &world, input);
+    assert_eq!(result.paths.len(), 2);
+    assert_eq!(result.transfers.suspensions, 1);
+    assert_eq!(result.transfers.automatic_closes, 2);
+    for path in &result.paths {
+        assert_eq!(path.end, End::Finished);
+        assert_eq!(path.transfers.suspensions, 1);
+        assert_eq!(path.transfers.automatic_closes, 1);
+    }
+
+    let mut input = entry(1);
+    input.protected = true;
+    let joined = rs2vm::machine::Machine::new(&program, EngineProfile::R289, &world)
+        .run(input, View::NAV, Default::default())
+        .expect("bounded NAV erasure");
+    assert_eq!(joined.paths.len(), 1);
+    assert_eq!(joined.paths[0].transfers.suspensions, 2);
+    assert_eq!(joined.paths[0].transfers.automatic_closes, 2);
+}
+
+#[test]
+fn terminal_erasure_keeps_both_input_cancellation_proofs() {
+    let mut program = program(vec![script(
+        1,
+        vec![
+            int("PUSH_CONSTANT_INT", 61),
+            int("if_openchat", 0),
+            int("PUSH_VARP", 7),
+            int("PUSH_CONSTANT_INT", 0),
+            int("BRANCH_GREATER_THAN_OR_EQUALS", 2),
+            int("p_pausebutton", 0),
+            int("RETURN", 0),
+            int("p_pausebutton", 0),
+            int("RETURN", 0),
+        ],
+    )]);
+    program.packs.varps.insert(
+        VarpId(7),
+        Varp {
+            string: false,
+            protect: false,
+            transmit: true,
+            name: "fork".into(),
+        },
+    );
+    let result = run(&program, &TestWorld::allocated(), entry(1));
+    assert_eq!(result.stats.paths, 2);
+    assert_eq!(result.paths.len(), 1);
+    assert_eq!(result.paths[0].end, End::AwaitingInput);
+    assert_eq!(result.transfers.cancellations, 2);
+    assert_eq!(result.paths[0].transfers.cancellations, 2);
+    assert_eq!(result.paths[0].modal, Modal::default());
 }

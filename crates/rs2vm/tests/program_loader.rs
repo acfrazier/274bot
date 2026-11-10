@@ -140,8 +140,8 @@ fn load_decodes_bytecode_triggers_signatures_and_all_server_packs() {
 #[test]
 fn lookup_prefers_type_then_category_then_global() {
     let trigger = 66;
-    let subject = 1234;
-    let category = 7;
+    let subject: i32 = 1234;
+    let category: i32 = 7;
     let type_key = i32::from(trigger) | (2 << 8) | subject.wrapping_shl(10);
     let category_key = i32::from(trigger) | (1 << 8) | category.wrapping_shl(10);
     let mut program = Program::default();
@@ -282,9 +282,9 @@ fn script_bytes() -> Vec<u8> {
 
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"entry\0/build/content/scripts/engine.rs2\0");
-    push_i32(&mut bytes, i32::from(66) | (2 << 8) | (1234 << 10));
+    push_i32(&mut bytes, 66 | (2 << 8) | (1234 << 10));
     bytes.push(2);
-    bytes.extend_from_slice(&[b'i', b's']);
+    bytes.extend_from_slice(b"is");
     push_u16(&mut bytes, 2);
     push_i32(&mut bytes, 0);
     push_i32(&mut bytes, 81);

@@ -63,8 +63,8 @@ fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
             .opcode(instruction.opcode)
             .ok_or_else(|| format!("opcode {} has no engine name", instruction.opcode))?;
         let operand = match &instruction.operand {
-            rs2vm::Operand::Int(value) => value.to_string(),
-            rs2vm::Operand::Text(value) => format!("{value:?}"),
+            Operand::Int(value) => value.to_string(),
+            Operand::Text(value) => format!("{value:?}"),
         };
         println!(
             "{}: {opcode} {operand}",

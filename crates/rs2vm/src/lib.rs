@@ -28,14 +28,24 @@ impl Coord {
         Self((z & 0x3fff) | ((x & 0x3fff) << 14) | ((level & 3) << 28))
     }
     /// East-west coordinate.
-    pub const fn x(self) -> i32 { (self.0 >> 14) & 0x3fff }
+    pub const fn x(self) -> i32 {
+        (self.0 >> 14) & 0x3fff
+    }
     /// Height plane.
-    pub const fn level(self) -> i32 { (self.0 >> 28) & 3 }
+    pub const fn level(self) -> i32 {
+        (self.0 >> 28) & 3
+    }
     /// North-south coordinate.
-    pub const fn z(self) -> i32 { self.0 & 0x3fff }
+    pub const fn z(self) -> i32 {
+        self.0 & 0x3fff
+    }
     /// Apply engine-masked offsets.
     pub const fn offset(self, dx: i32, dlevel: i32, dz: i32) -> Self {
-        Self::new(self.x().wrapping_add(dx), self.level().wrapping_add(dlevel), self.z().wrapping_add(dz))
+        Self::new(
+            self.x().wrapping_add(dx),
+            self.level().wrapping_add(dlevel),
+            self.z().wrapping_add(dz),
+        )
     }
 }
 impl std::fmt::Display for Coord {

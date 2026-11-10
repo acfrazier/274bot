@@ -270,19 +270,29 @@ pub(crate) struct ByteBudget {
 
 impl ByteBudget {
     pub(crate) fn unlimited() -> Self {
-        Self { limit: u64::MAX, used: 0 }
+        Self {
+            limit: u64::MAX,
+            used: 0,
+        }
     }
 
     pub(crate) fn charge(&mut self, bytes: usize) -> Result<(), WorldError> {
         let count = self.used.saturating_add(bytes as u64);
         if count > self.limit {
-            return Err(WorldError::ByteLimit { limit: self.limit, count });
+            return Err(WorldError::ByteLimit {
+                limit: self.limit,
+                count,
+            });
         }
         self.used = count;
         Ok(())
     }
 
-    pub(crate) fn reserve<T>(&mut self, values: &mut Vec<T>, additional: usize) -> Result<(), WorldError> {
+    pub(crate) fn reserve<T>(
+        &mut self,
+        values: &mut Vec<T>,
+        additional: usize,
+    ) -> Result<(), WorldError> {
         if let Some((additional, bytes)) = buffer_growth(values, additional) {
             self.charge(bytes)?;
             values.reserve_exact(additional);
@@ -299,7 +309,10 @@ pub(crate) fn buffer_growth<T>(values: &Vec<T>, additional: usize) -> Option<(us
         return None;
     }
     let capacity = wanted.max(values.capacity().saturating_mul(2)).max(4);
-    Some((capacity - values.len(), capacity.saturating_mul(std::mem::size_of::<T>())))
+    Some((
+        capacity - values.len(),
+        capacity.saturating_mul(std::mem::size_of::<T>()),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -503,7 +516,11 @@ impl WorldOverlay {
     }
 
     pub(crate) fn loc_del_bounded(
-        &mut self, w: &dyn World, obj: LocObj, duration: i32, budget: &mut ByteBudget,
+        &mut self,
+        w: &dyn World,
+        obj: LocObj,
+        duration: i32,
+        budget: &mut ByteBudget,
     ) -> Result<(), WorldError> {
         validate_positive_duration(duration)?;
         let record = self.record(w, obj)?;
@@ -573,7 +590,10 @@ impl WorldOverlay {
     }
 
     pub(crate) fn zone_iter_bounded(
-        &self, w: &dyn World, zone: ZoneKey, budget: &mut ByteBudget,
+        &self,
+        w: &dyn World,
+        zone: ZoneKey,
+        budget: &mut ByteBudget,
     ) -> Result<Vec<LocObj>, WorldError> {
         let order = self.zone_order(w, zone)?;
         self.ensure_zone_known(w, zone, order)?;
@@ -618,7 +638,10 @@ impl WorldOverlay {
     }
 
     pub(crate) fn age_bounded(
-        &mut self, w: &dyn World, elapsed: Ticks, budget: &mut ByteBudget,
+        &mut self,
+        w: &dyn World,
+        elapsed: Ticks,
+        budget: &mut ByteBudget,
     ) -> Result<(), WorldError> {
         if elapsed.min > elapsed.max {
             return Err(WorldError::InvalidTickRange {
@@ -881,7 +904,12 @@ impl WorldOverlay {
         }
     }
 
-    fn ensure_record_cached(&mut self, w: &dyn World, obj: LocObj, budget: &mut ByteBudget) -> Result<usize, WorldError> {
+    fn ensure_record_cached(
+        &mut self,
+        w: &dyn World,
+        obj: LocObj,
+        budget: &mut ByteBudget,
+    ) -> Result<usize, WorldError> {
         if let Some(index) = self.object_index(obj) {
             if self.objects[index].record.unknown {
                 return Err(WorldError::UnknownLifeState { obj });
@@ -903,7 +931,12 @@ impl WorldOverlay {
         self.insert_record(obj, record, budget)
     }
 
-    fn insert_record(&mut self, obj: LocObj, record: LocRecord, budget: &mut ByteBudget) -> Result<usize, WorldError> {
+    fn insert_record(
+        &mut self,
+        obj: LocObj,
+        record: LocRecord,
+        budget: &mut ByteBudget,
+    ) -> Result<usize, WorldError> {
         match self.objects.binary_search_by_key(&obj, |entry| entry.obj) {
             Ok(index) => {
                 self.objects[index].record = record;
@@ -931,14 +964,23 @@ impl WorldOverlay {
         Ok(ZoneOrder::Base(placements))
     }
 
-    fn ensure_zone_cached(&mut self, w: &dyn World, zone: ZoneKey, budget: &mut ByteBudget) -> Result<usize, WorldError> {
+    fn ensure_zone_cached(
+        &mut self,
+        w: &dyn World,
+        zone: ZoneKey,
+        budget: &mut ByteBudget,
+    ) -> Result<usize, WorldError> {
         if let Some(index) = self.zone_index(zone) {
             return Ok(index);
         }
         validate_zone_key(zone)?;
         let placements = w.zone_locs(zone);
         validate_world_zone(zone, placements)?;
-        budget.charge(placements.len().saturating_mul(std::mem::size_of::<LocObj>()))?;
+        budget.charge(
+            placements
+                .len()
+                .saturating_mul(std::mem::size_of::<LocObj>()),
+        )?;
         let mut order = Vec::with_capacity(placements.len());
         for placement in placements {
             order.push(LocObj::Placed(placement.id));

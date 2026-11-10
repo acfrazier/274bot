@@ -2,13 +2,11 @@ use std::collections::BTreeMap;
 
 use rs2vm::{
     machine::{
-        AtomKind, CondClass, Effect, End, Entry, Expr, Limits, Machine, PathResult, PlayerPos, Pred,
-        Run, Value, View,
+        AtomKind, CondClass, Effect, End, Entry, Expr, Limits, Machine, PathResult, PlayerPos,
+        Pred, Run, Value, View,
     },
     profile::EngineProfile,
-    program::{
-        Instruction, Operand, Packs, Program, Script, Signature, Varbit, Varp,
-    },
+    program::{Instruction, Operand, Packs, Program, Script, Signature, Varbit, Varp},
     world::{Alloc, PlacedId, PlacedLoc, Tri, World, ZoneKey},
     Coord, OpCount, ScriptId, Site, VarpId,
 };
@@ -121,7 +119,10 @@ fn script(id: u32, code: Vec<Instruction>, int_args: u16, int_locals: u16) -> Sc
 
 fn program(scripts: impl IntoIterator<Item = Script>) -> Program {
     let mut program = Program {
-        scripts: scripts.into_iter().map(|script| (script.id, script)).collect(),
+        scripts: scripts
+            .into_iter()
+            .map(|script| (script.id, script))
+            .collect(),
         opcodes: OPCODES
             .iter()
             .map(|(name, number)| (*number, (*name).into()))
@@ -220,15 +221,24 @@ fn varbit_reads_and_writes_share_the_backing_varp() {
     let result = run(&program, Entry::new(ScriptId(0)), View::NAV);
 
     assert_eq!(result.paths.len(), 1);
-    assert_eq!(
-        result.paths[0].ints,
-        [
-            Value::Known(20),
-            Value::Known(5),
-            Value::Known(0),
-            Value::Known(33),
-        ]
-    );
+    let [Value::Sym(updated), Value::Known(5), Value::Known(0), Value::Known(33)] =
+        result.paths[0].ints.as_slice()
+    else {
+        panic!("partial write retains unknown outside bits; later whole writes are exact");
+    };
+    let Some(Expr::WithBits {
+        of,
+        lo: 2,
+        hi: 4,
+        to: Value::Known(5),
+    }) = result.arena.expr(*updated)
+    else {
+        panic!("first read retains the masked update");
+    };
+    assert!(result
+        .arena
+        .atom_of(Value::Sym(*of))
+        .is_some_and(|atom| atom.kind == AtomKind::Varp(VarpId(7))));
 }
 
 #[test]
@@ -269,6 +279,8 @@ fn varbit_write_checks_protection_on_its_backing_varp() {
 
 #[test]
 fn repeated_two_argument_predicate_reuses_its_relation() {
+    // Equal terminal NAV results erase this fork. An unsupported opcode instead
+    // exposes its prefix, which is the state this predicate test needs to inspect.
     let code = vec![
         int("PUSH_INT_LOCAL", 0),
         int("PUSH_INT_LOCAL", 1),
@@ -276,7 +288,7 @@ fn repeated_two_argument_predicate_reuses_its_relation() {
         int("PUSH_INT_LOCAL", 0),
         int("PUSH_INT_LOCAL", 1),
         int("BRANCH_GREATER_THAN_OR_EQUALS", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
     ];
     let program = program([script(0, code, 2, 2)]);
 
@@ -294,8 +306,14 @@ fn repeated_two_argument_predicate_reuses_its_relation() {
         else {
             panic!("branch retains the full two-atom relation");
         };
-        let left = result.arena.atom_of(Value::Sym(*lhs)).expect("left argument atom");
-        let right = result.arena.atom_of(Value::Sym(*rhs)).expect("right argument atom");
+        let left = result
+            .arena
+            .atom_of(Value::Sym(*lhs))
+            .expect("left argument atom");
+        let right = result
+            .arena
+            .atom_of(Value::Sym(*rhs))
+            .expect("right argument atom");
         assert_eq!(left.kind, AtomKind::Arg(0));
         assert_eq!(right.kind, AtomKind::Arg(1));
         assert_ne!(lhs, rhs);
@@ -310,11 +328,11 @@ fn add_constant_does_not_refine_a_full_range_across_integer_wrap() {
         command("add"),
         int("PUSH_CONSTANT_INT", 0),
         int("BRANCH_GREATER_THAN", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
         int("PUSH_INT_LOCAL", 0),
         int("PUSH_CONSTANT_INT", -1),
         int("BRANCH_EQUALS", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
     ];
     branch_to(&mut code, 4, 6);
     let program = program([script(0, code, 1, 1)]);
@@ -340,7 +358,7 @@ fn add_constant_does_not_refine_a_full_range_across_integer_wrap() {
                     lhs: Value::Sym(value),
                     op: rs2vm::machine::CmpOp::Eq,
                     rhs: Value::Known(-1),
-                } if result.arena.atom_of(*value).is_some_and(|atom| atom.kind == AtomKind::Arg(0))
+                } if result.arena.atom_of(Value::Sym(*value)).is_some_and(|atom| atom.kind == AtomKind::Arg(0))
             )
     }));
 }
@@ -361,10 +379,10 @@ fn add_constant_refines_when_the_input_range_proves_no_wrap() {
         int("PUSH_INT_LOCAL", 1),
         int("PUSH_CONSTANT_INT", 0),
         int("BRANCH_GREATER_THAN", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
         int("PUSH_INT_LOCAL", 1),
-        command("RETURN"),
-        command("RETURN"),
+        command("outside_slice_command"),
+        command("outside_slice_command"),
     ];
     branch_to(&mut code, 2, 16);
     branch_to(&mut code, 5, 16);
@@ -385,7 +403,11 @@ fn add_constant_refines_when_the_input_range_proves_no_wrap() {
             if matches!(result.arena.expr(*expr), Some(Expr::AddConst { c: 1, .. }))
     ));
     assert_eq!(
-        result.paths.iter().filter(|path| path.ints.is_empty()).count(),
+        result
+            .paths
+            .iter()
+            .filter(|path| path.ints.is_empty())
+            .count(),
         2
     );
 }
@@ -411,7 +433,7 @@ fn bit_projections_keep_independent_domains_from_each_other_and_the_whole_varp()
                 int("PUSH_VARP", 0),
                 int("PUSH_CONSTANT_INT", 101),
                 int("BRANCH_EQUALS", 0),
-                command("RETURN"),
+                command("outside_slice_command"),
             ],
             0,
             0,
@@ -446,7 +468,7 @@ fn bit_projections_keep_independent_domains_from_each_other_and_the_whole_varp()
                 lhs: Value::Sym(value),
                 op: rs2vm::machine::CmpOp::Eq,
                 rhs: Value::Known(101),
-            } if result.arena.atom_of(*value).is_some_and(|atom| atom.kind == AtomKind::Varp(VarpId(0)))
+            } if result.arena.atom_of(Value::Sym(*value)).is_some_and(|atom| atom.kind == AtomKind::Varp(VarpId(0)))
         ));
     }
 }
@@ -472,13 +494,16 @@ fn domain_normal_form_decides_after_excluding_the_first_three_values() {
         int("PUSH_INT_LOCAL", 0),
         int("PUSH_CONSTANT_INT", 4),
         int("BRANCH_EQUALS", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
     ]);
     let final_equality = code.len() - 2;
     let matched = code.len();
-    code.extend([int("PUSH_CONSTANT_INT", 4), command("RETURN")]);
+    code.extend([
+        int("PUSH_CONSTANT_INT", 4),
+        command("outside_slice_command"),
+    ]);
     let out_of_range = code.len();
-    code.push(command("RETURN"));
+    code.push(command("outside_slice_command"));
     branch_to(&mut code, 2, out_of_range);
     branch_to(&mut code, 5, out_of_range);
     for pc in equality_branches {
@@ -512,17 +537,20 @@ fn switch_over_a_bounded_domain_has_only_its_four_case_successors() {
         int("PUSH_INT_LOCAL", 0),
         int("SWITCH", 0),
         int("PUSH_CONSTANT_INT", 0),
-        command("RETURN"),
+        command("outside_slice_command"),
     ];
     let mut case_offsets = BTreeMap::new();
     for key in 1..=4 {
         let target = code.len();
         code.push(int("PUSH_CONSTANT_INT", key));
-        code.push(command("RETURN"));
+        code.push(command("outside_slice_command"));
         case_offsets.insert(key, i32::try_from(target as i64 - 8).unwrap());
     }
     let out_of_range = code.len();
-    code.extend([int("PUSH_CONSTANT_INT", -1), command("RETURN")]);
+    code.extend([
+        int("PUSH_CONSTANT_INT", -1),
+        command("outside_slice_command"),
+    ]);
     branch_to(&mut code, 2, out_of_range);
     branch_to(&mut code, 5, out_of_range);
     let mut switch_script = script(0, code, 1, 1);
@@ -577,7 +605,7 @@ fn live_reads_are_fresh_and_a_branch_on_one_does_not_decide_the_next() {
         .arena
         .atoms
         .iter()
-        .filter(|atom| atom.kind == AtomKind::Live("map_clock".into()))
+        .filter(|atom| atom.kind == AtomKind::Live("map_clock"))
         .collect();
     assert_eq!(live_atoms.len(), 2);
     assert_ne!(live_atoms[0].site, live_atoms[1].site);
@@ -626,30 +654,30 @@ fn nav_join_erases_cosmetic_forks_but_var_and_all_view_keep_them() {
         all.paths
             .iter()
             .filter(|path| path.effects.iter().any(|effect| {
-                matches!(&effect.effect, Effect::Cosmetic { command: "cam_reset" })
+                matches!(
+                    &effect.effect,
+                    Effect::Cosmetic {
+                        command: "cam_reset"
+                    }
+                )
             }))
             .count(),
         1
     );
 
-    let var_write = join_program(
-        vec![int("PUSH_CONSTANT_INT", 1), int("POP_VARP", 0)],
-        true,
-    );
+    let var_write = join_program(vec![int("PUSH_CONSTANT_INT", 1), int("POP_VARP", 0)], true);
     let nav_with_var = run(&var_write, Entry::new(ScriptId(0)), View::NAV);
     assert_eq!(nav_with_var.stats.paths, 2);
     assert_eq!(nav_with_var.paths.len(), 2);
-    assert!(nav_with_var
-        .paths
-        .iter()
-        .all(|path| path.conds.len() == 1));
+    assert!(nav_with_var.paths.iter().all(|path| path.conds.len() == 1));
     assert_eq!(
         nav_with_var
             .paths
             .iter()
-            .filter(|path| path.effects.iter().any(|effect| {
-                matches!(&effect.effect, Effect::VarWrite { .. })
-            }))
+            .filter(|path| path
+                .effects
+                .iter()
+                .any(|effect| { matches!(&effect.effect, Effect::VarWrite { .. }) }))
             .count(),
         1
     );
@@ -691,9 +719,10 @@ fn switch_erasure_requires_all_three_successors_to_match() {
         result
             .paths
             .iter()
-            .filter(|path| path.effects.iter().any(|effect| {
-                matches!(&effect.effect, Effect::VarWrite { .. })
-            }))
+            .filter(|path| path
+                .effects
+                .iter()
+                .any(|effect| { matches!(&effect.effect, Effect::VarWrite { .. }) }))
             .count(),
         1
     );
@@ -860,10 +889,7 @@ fn joined_count_program() -> Program {
     }
     caller.extend(loop20());
     caller.push(command("RETURN"));
-    program([
-        script(0, caller, 1, 1),
-        script(1, helper, 0, 0),
-    ])
+    program([script(0, caller, 1, 1), script(1, helper, 0, 0)])
 }
 
 #[test]
@@ -878,15 +904,15 @@ fn joined_instruction_counts_continue_as_an_interval_at_the_engine_boundary() {
     assert_eq!(
         boundary.paths[0].ops,
         OpCount {
-            min: 499_995,
-            max: 500_005
+            min: 499_991,
+            max: 500_001
         }
     );
     assert!(matches!(
         &boundary.paths[0].end,
         End::Unsupported(fault)
             if fault.reason.as_ref() == "InstructionLimitUndecided"
-                && fault.at == Site { script: ScriptId(0), pc: 29 }
+                && fault.at == Site { script: ScriptId(0), pc: 25 }
     ));
     assert!(boundary.paths[0].conds.is_empty());
 
@@ -908,16 +934,30 @@ fn joined_instruction_counts_continue_as_an_interval_at_the_engine_boundary() {
     assert_eq!(
         longer.paths[0].ops,
         OpCount {
-            min: 500_015,
-            max: 500_025
+            min: 499_991,
+            max: 500_001
         }
     );
     assert!(matches!(
         &longer.paths[0].end,
-        End::EngineError(fault)
-            if fault.reason.as_ref() == "engine instruction limit"
-                && fault.at == Site { script: ScriptId(0), pc: 29 }
+        End::Unsupported(fault)
+            if fault.reason.as_ref() == "InstructionLimitUndecided"
+                && fault.at == Site { script: ScriptId(0), pc: 25 }
     ));
+    // More requested iterations cannot advance through the first undecided step.
+    // Without NAV erasure, both exact executions reach the real engine error.
+    let unjoined = execute(&program, count_entry_iterations(25_000), View::ALL, limits)
+        .expect("entry limits permit the exact engine boundaries");
+    assert_eq!(unjoined.paths.len(), 2);
+    assert!(unjoined.paths.iter().all(|path| {
+        path.ops
+            == OpCount {
+                min: 500_001,
+                max: 500_001,
+            }
+            && matches!(&path.end, End::EngineError(fault)
+                if fault.reason.as_ref() == "engine instruction limit")
+    }));
 }
 
 #[test]
@@ -1114,7 +1154,11 @@ fn generalisation_removes_a_hidden_or_term_when_both_terms_reach_the_same_tile()
     let same = |path: &PathResult| same_landing(path, destination);
     assert!(result.covered(index, same));
     let generalized = result.generalise(index, same, |cond| {
-        if cond.class == CondClass::Hidden { 0 } else { 1 }
+        if cond.class == CondClass::Hidden {
+            0
+        } else {
+            1
+        }
     });
     assert_eq!(generalized.len(), 1);
     assert_eq!(generalized[0].class, CondClass::Requirement);
@@ -1125,7 +1169,7 @@ fn generalisation_removes_a_hidden_or_term_when_both_terms_reach_the_same_tile()
             lhs: Value::Sym(value),
             op: rs2vm::machine::CmpOp::Gt,
             rhs: Value::Known(0),
-        } if result.arena.atom_of(*value).is_some_and(|atom| atom.kind == AtomKind::Varp(VarpId(1)))
+        } if result.arena.atom_of(Value::Sym(*value)).is_some_and(|atom| atom.kind == AtomKind::Varp(VarpId(1)))
     ));
     assert!(result
         .rivals(&generalized)
@@ -1155,13 +1199,21 @@ fn a_different_first_or_arm_keeps_the_unfielded_bit_condition() {
         .expect("the transmitted-varp operand reaches the tile");
     let same = |path: &PathResult| same_landing(path, destination);
     let generalized = result.generalise(index, same, |cond| {
-        if cond.class == CondClass::Hidden { 0 } else { 1 }
+        if cond.class == CondClass::Hidden {
+            0
+        } else {
+            1
+        }
     });
     assert_eq!(generalized.len(), 2);
     assert!(generalized.iter().any(|cond| {
         cond.class == CondClass::Hidden
             && !cond.truth
-            && cond.site == Site { script: ScriptId(0), pc: 4 }
+            && cond.site
+                == Site {
+                    script: ScriptId(0),
+                    pc: 4,
+                }
             && matches!(
                 &cond.pred,
                 Pred::Cmp {
@@ -1171,7 +1223,9 @@ fn a_different_first_or_arm_keeps_the_unfielded_bit_condition() {
                 }
             )
     }));
-    assert!(!result.covered(index, same));
+    // The full account condition is covered. Dropping its unfielded hidden term
+    // below admits the other OR arm, whose message is not the same landing.
+    assert!(result.covered(index, same));
     assert!(generalized
         .iter()
         .any(|cond| cond.class == CondClass::Requirement));
@@ -1183,10 +1237,10 @@ fn a_different_first_or_arm_keeps_the_unfielded_bit_condition() {
         .collect();
     let rivals = result.rivals(&requirement_only);
     assert!(rivals.iter().any(|path| {
-        path.effects.iter().any(|effect| matches!(
-            &effect.effect,
-            Effect::Message { .. }
-        )) && !same_landing(path, destination)
+        path.effects
+            .iter()
+            .any(|effect| matches!(&effect.effect, Effect::Message { .. }))
+            && !same_landing(path, destination)
     }));
     assert_eq!(candidate.conds.len(), 2);
 }
@@ -1269,7 +1323,13 @@ fn path_count_survives_a_three_way_join_and_limits_the_next_fork_at_its_site() {
     assert_eq!(error.bound, "paths");
     assert_eq!(error.limit, 3);
     assert_eq!(error.count, 4);
-    assert_eq!(error.at, Site { script: ScriptId(0), pc: 4 });
+    assert_eq!(
+        error.at,
+        Site {
+            script: ScriptId(0),
+            pc: 4
+        }
+    );
 }
 
 #[test]
@@ -1315,7 +1375,13 @@ fn entry_byte_and_instruction_limits_fail_without_returning_partial_results() {
     .expect_err("the third dispatch crosses the entry instruction limit");
     assert_eq!(instruction_error.bound, "instructions");
     assert_eq!(instruction_error.count, 3);
-    assert_eq!(instruction_error.at, Site { script: ScriptId(0), pc: 2 });
+    assert_eq!(
+        instruction_error.at,
+        Site {
+            script: ScriptId(0),
+            pc: 2
+        }
+    );
 }
 
 #[test]
@@ -1362,7 +1428,10 @@ fn engine_frame_limit_rejects_the_fifty_first_nested_call() {
             let code = if id == 51 {
                 vec![command("RETURN")]
             } else {
-                vec![int("GOSUB_WITH_PARAMS", i32::try_from(id + 1).unwrap()), command("RETURN")]
+                vec![
+                    int("GOSUB_WITH_PARAMS", i32::try_from(id + 1).unwrap()),
+                    command("RETURN"),
+                ]
             };
             script(id, code, 0, 0)
         })
@@ -1429,11 +1498,7 @@ fn fork_site_key_bounds_repeated_calls_from_one_loop_site() {
     ];
     branch_to(&mut caller, 7, 0);
     let program = program([script(0, caller, 1, 1), fork_helper()]);
-    let result = run(
-        &program,
-        count_entry_iterations(65),
-        View::NAV,
-    );
+    let result = run(&program, count_entry_iterations(65), View::NAV);
 
     assert!(result.paths.iter().any(|path| matches!(
         &path.end,
@@ -1470,19 +1535,11 @@ fn stack_target_calls_run_known_scripts_and_reject_symbolic_targets() {
 
     let unknown_program = program([script(
         0,
-        vec![
-            int("PUSH_INT_LOCAL", 0),
-            int("GOSUB", 0),
-            command("RETURN"),
-        ],
+        vec![int("PUSH_INT_LOCAL", 0), int("GOSUB", 0), command("RETURN")],
         1,
         1,
     )]);
-    let unknown = run(
-        &unknown_program,
-        Entry::new(ScriptId(0)),
-        View::NAV,
-    );
+    let unknown = run(&unknown_program, Entry::new(ScriptId(0)), View::NAV);
     assert_eq!(unknown.paths.len(), 1);
     assert!(matches!(
         &unknown.paths[0].end,
