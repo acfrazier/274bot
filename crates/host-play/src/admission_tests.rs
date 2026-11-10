@@ -664,8 +664,7 @@ fn global_override_on_lethal_crossing_proceeds_and_arms_the_food_guard() {
     );
     assert!(assessment.reason.contains("for information"));
     assert!(crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        false
+        decision, true, false
     ));
 }
 
@@ -693,8 +692,7 @@ fn request_only_lethal_crossing_is_refused_with_the_bound() {
         assessment.reason
     );
     assert!(crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        false
+        decision, true, false
     ));
 }
 
@@ -738,8 +736,7 @@ fn compat_v1_counts_as_the_global_override_at_the_decision_point() {
     assert!(result.assessment.as_ref().unwrap().bound > 0.01);
     // A compat v1 walk gets no food guard: its frozen behavior.
     assert!(!crate::walk_permissions::walk_arms_danger_food_guard(
-        admission.grants,
-        true
+        decision, true, true
     ));
 }
 
@@ -2188,6 +2185,27 @@ mod compact_final_route_tests {
             loop_cycle: 0,
         });
         snapshot
+    }
+
+    #[test]
+    fn route_capture_excludes_path_food_without_losing_other_risk_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let from = tile(0, 1);
+        let mut snapshot = post_wear_snapshot(from);
+        let mut food = wearable_item(379);
+        food.container = api::snapshot::ItemContainer::Inventory;
+        food.slot = 0;
+        food.count = 2;
+        snapshot.seed_inventory(vec![food], 28);
+
+        let included = capture(&snapshot, false, None, false, None);
+        assert_eq!(included.food_iter().collect::<Vec<_>>(), [(379, 2)]);
+        let excluded = capture_excluding(&snapshot, false, None, false, None, &[379]);
+        assert_eq!(excluded.food_len, 0);
+        assert_eq!(excluded.hp, included.hp);
+        assert_eq!(excluded.missing_facts(), included.missing_facts());
     }
 
     fn pending_wear(

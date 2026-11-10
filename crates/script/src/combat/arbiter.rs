@@ -103,6 +103,24 @@ pub(crate) fn food_by(
         eligible,
     )
 }
+pub(crate) fn food_by_excluding(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    gate: Option<i32>,
+    protected_items: &[i32],
+    eligible: impl Fn(&super::tables::FoodFact) -> bool,
+) -> Option<i32> {
+    let (hp, hp_max) = stat(frame, 3);
+    policy::food_by_excluding(
+        hp,
+        hp_max,
+        frame.inventory.iter().map(|row| (row.def.id, row.count)),
+        tables,
+        gate,
+        protected_items,
+        eligible,
+    )
+}
 pub(crate) fn stat(frame: &Frame<'_>, index: i32) -> (i32, i32) {
     frame
         .stats

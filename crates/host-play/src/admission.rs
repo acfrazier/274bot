@@ -330,6 +330,18 @@ pub fn capture(
     off_debt: bool,
     world: Option<&NavWorld>,
 ) -> RiskInput {
+    capture_excluding(snapshot, map_members, condition, off_debt, world, &[])
+}
+
+/// Capture current admission facts while excluding Path-reserved food ids.
+pub fn capture_excluding(
+    snapshot: &GameSnapshot,
+    map_members: bool,
+    condition: Option<&api::condition::BotCondition>,
+    off_debt: bool,
+    world: Option<&NavWorld>,
+    protected_items: &[i32],
+) -> RiskInput {
     let poison = condition
         .filter(|fact| {
             fact.tick == snapshot.tick() && fact.session == api::condition::SessionMark::Live
@@ -360,7 +372,14 @@ pub fn capture(
         if let Some(frame) = Frame::borrow(SnapshotView::new(Some(snapshot), stamp)) {
             let mut threats = ThreatSet::default();
             threats.observe(&frame, &tables, frame.tick);
-            input = RiskInput::capture(&frame, &tables, &threats, poison, off_debt);
+            input = RiskInput::capture_excluding(
+                &frame,
+                &tables,
+                &threats,
+                poison,
+                off_debt,
+                protected_items,
+            );
         }
     }
     input.set_map_members(map_members);

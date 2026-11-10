@@ -5552,7 +5552,14 @@ impl ScriptWalkArm {
         if request.protect {
             let view = SnapshotView::new(Some(snapshot), evidence);
             let admission = super::admission::condition_tables(world)
-                .map(|(tables, _)| script::combat::WalkGuard::begin_with(&request, &view, tables))
+                .map(|(tables, _)| {
+                    script::combat::WalkGuard::begin_with_protected(
+                        &request,
+                        &view,
+                        tables,
+                        authority.clone_protected_items(),
+                    )
+                })
                 .unwrap_or(Err(script::combat::guard::GuardRefusal::Tables));
             if let Err(reason) = admission {
                 refusal(&format!("Walk protection: {reason:?}"));
@@ -5581,13 +5588,15 @@ impl ScriptWalkArm {
         };
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
-        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
+        let (mut options, decision) = super::walk_permissions::native_admission(
             &self.navs,
             &self.name,
             request.options,
             session_permissions,
             !request.cross.is_empty(),
         );
+        let policy = decision.policy;
+        let enforce = decision.enforce;
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
@@ -5610,21 +5619,29 @@ impl ScriptWalkArm {
         let admission = {
             let navs = self.navs.lock().unwrap();
             let bot = navs.get(&self.name);
-            let input = crate::admission::capture(
+            let input = crate::admission::capture_excluding(
                 snapshot,
                 state.map_members,
                 bot.and_then(|bot| bot.condition.current()),
                 bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
                 Some(world),
+                authority.protected_items().unwrap_or(&[]),
             );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
             let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
+            let food_credit = super::walk_permissions::walk_arms_danger_food_guard(
+                decision,
+                request.allow.food,
+                compat_v1,
+            );
+            let mut allow = request.allow;
+            allow.food = food_credit;
             crate::admission::Admission {
                 policy,
                 enforce,
                 grants: options.zones,
-                allow: request.allow,
+                allow,
                 input,
                 generation: authority.request_id().get(),
                 compat_v1,
@@ -5745,26 +5762,31 @@ impl ScriptWalkArm {
                 return false;
             }
         }
-        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
+        let (mut options, decision) = super::walk_permissions::native_admission(
             &self.navs,
             &self.name,
             request.options,
             session_permissions,
             !request.cross.is_empty(),
         );
-        // Every permitted native danger crossing arms the walk's food guard,
-        // whether the permission is the global override, a card request or a
-        // Path `cross`. Eating refuses nothing. A compat v1 walk keeps its
-        // frozen behavior: no guard.
+        let policy = decision.policy;
+        let enforce = decision.enforce;
         let compat_v1 = self
             .navs
             .lock()
             .unwrap()
             .get(&self.name)
             .is_some_and(|bot| bot.compat_v1);
-        let danger_guard =
-            super::walk_permissions::walk_arms_danger_food_guard(options.zones, compat_v1);
-        let protect = request.protect;
+        // The same decided food permission supplies route credit and the
+        // danger-food guard; enforced routes count before the runtime net ships.
+        let route_food = super::walk_permissions::walk_arms_danger_food_guard(
+            decision,
+            request.allow.food,
+            compat_v1,
+        );
+        let danger_guard = route_food;
+        let mut allow = request.allow;
+        allow.food = route_food;
         let guard = if protect || request.food_guard || request.cure_guard || danger_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
@@ -5780,12 +5802,18 @@ impl ScriptWalkArm {
                 script::combat::guard::shared_tables().ok()
             };
             let admission = match tables {
-                Some(tables) if protect => {
-                    script::combat::WalkGuard::begin_with(&request, &view, tables)
-                }
-                Some(tables) => {
-                    script::combat::WalkGuard::begin_food_only_with(&request, &view, tables)
-                }
+                Some(tables) if protect => script::combat::WalkGuard::begin_with_protected(
+                    &request,
+                    &view,
+                    tables,
+                    authority.clone_protected_items(),
+                ),
+                Some(tables) => script::combat::WalkGuard::begin_food_only_with_protected(
+                    &request,
+                    &view,
+                    tables,
+                    authority.clone_protected_items(),
+                ),
                 None => Err(script::combat::guard::GuardRefusal::Tables),
             };
             match admission {
@@ -5834,13 +5862,14 @@ impl ScriptWalkArm {
             policy,
             enforce,
             grants: options.zones,
-            allow: request.allow,
-            input: crate::admission::capture(
+            allow,
+            input: crate::admission::capture_excluding(
                 snapshot,
                 self.state.as_ref().is_some_and(|state| state.map_members),
                 condition.as_ref(),
                 off_debt,
                 self.world.as_deref(),
+                authority.protected_items().unwrap_or(&[]),
             ),
             generation: 0,
             compat_v1,

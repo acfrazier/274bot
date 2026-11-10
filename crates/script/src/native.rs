@@ -828,6 +828,7 @@ pub fn with_test_tick<R>(
         actions: &mut actions,
         cx: ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: PrereqOptions::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -936,6 +937,8 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
+    /// Compiled Path items reserved for the active run's food decisions.
+    pub(crate) protected_items: Option<Arc<[i32]>>,
     /// The Wilderness levels the host lends for this frame; `None` when the
     /// host has no nav pack. The combat machine's zone gate treats `None` as
     /// "outside the wilderness".
@@ -1764,6 +1767,9 @@ impl<'a> ActionContext<'a> {
     /// The profile's Cure poison setting for this frame.
     pub fn cure_poison(&self) -> crate::survival::CurePoison {
         self.cure_poison
+    }
+    pub(crate) fn protected_items(&self) -> &[i32] {
+        self.protected_items.as_deref().unwrap_or(&[])
     }
     pub fn retained(&mut self) -> &mut RetainedMemory {
         self.retained

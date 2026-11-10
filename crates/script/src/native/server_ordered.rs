@@ -73,6 +73,7 @@ impl ActionContext<'_> {
             effect: HostEffect::ServerOrdered(envelope),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
@@ -153,6 +154,7 @@ mod tests {
         fn with<R>(&mut self, f: impl FnOnce(&mut ActionContext<'_>) -> R) -> R {
             let mut cx = ActionContext {
                 stage_cross: None,
+                protected_items: None,
                 walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
@@ -408,6 +410,7 @@ mod tests {
                             ),
                             observed_walk_outcome_seq: 0,
                             bank_deposit: None,
+                            protected_items: None,
                         });
                     }
                 }

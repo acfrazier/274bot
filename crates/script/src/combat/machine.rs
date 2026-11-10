@@ -740,7 +740,8 @@ impl NativeMachine for Combat {
                 tick,
             );
             let lines = select::lines(danger, arbiter::stat(&frame, 3).1).with_poison(poison_fire);
-            let food_available = self.emergency_food_available(&frame, danger);
+            let food_available =
+                self.emergency_food_available(&frame, danger, cx.protected_items());
             self.safety_end(&frame, tick, danger, lines.emergency, food_available);
             self.counters.locked = self.counters.locked.saturating_add(1);
             return Poll::Pending;
@@ -2236,20 +2237,23 @@ impl Combat {
         eat_floor: i32,
         cx: &ActionContext<'_>,
     ) -> bool {
-        let decision = cure::cure_choice(&CureInputs {
-            cond: cx.condition(),
-            danger,
-            exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
-            policy: cx.cure_poison(),
-            route_refused_for_poison: false,
-            inventory: frame.inventory,
-            tables: &self.tables,
-            schedule: &self.schedule,
-            clue_reserve: false,
-            tick,
-            q_unknown: cx.poison_unknown_pulse(),
-            eat_floor,
-        });
+        let decision = cure::cure_choice(
+            &CureInputs {
+                cond: cx.condition(),
+                danger,
+                exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
+                policy: cx.cure_poison(),
+                route_refused_for_poison: false,
+                inventory: frame.inventory,
+                tables: &self.tables,
+                schedule: &self.schedule,
+                clue_reserve: false,
+                tick,
+                q_unknown: cx.poison_unknown_pulse(),
+                eat_floor,
+            },
+            cx.protected_items(),
+        );
         let row = match decision {
             CureDecision::Drink { item, kind, .. } => {
                 PlanRow::new(RowKind::Drink, item, kind as u8)
@@ -2261,11 +2265,16 @@ impl Combat {
         true
     }
 
-    fn emergency_food_available(&self, frame: &Frame<'_>, danger: Option<i32>) -> bool {
+    fn emergency_food_available(
+        &self,
+        frame: &Frame<'_>,
+        danger: Option<i32>,
+        protected_items: &[i32],
+    ) -> bool {
         if !self.request.allow.food {
             return false;
         }
-        if arbiter::food_by(frame, &self.tables, None, |food| {
+        if arbiter::food_by_excluding(frame, &self.tables, None, protected_items, |food| {
             food.eat_delay_arg.is_some()
         })
         .is_some()
@@ -2274,7 +2283,7 @@ impl Combat {
         }
 
         let (hp, max) = arbiter::stat(frame, 3);
-        arbiter::food_by(frame, &self.tables, None, |food| {
+        arbiter::food_by_excluding(frame, &self.tables, None, protected_items, |food| {
             let Some(delay) = food.message_delay else {
                 return false;
             };
@@ -2285,11 +2294,17 @@ impl Combat {
         })
         .is_some()
     }
-    fn plain_food(&self, frame: &Frame<'_>, tick: u16, gate: Option<i32>) -> Option<i32> {
+    fn plain_food(
+        &self,
+        frame: &Frame<'_>,
+        tick: u16,
+        gate: Option<i32>,
+        protected_items: &[i32],
+    ) -> Option<i32> {
         if !self.request.allow.food || self.pending_row(RowKind::Eat) {
             return None;
         }
-        arbiter::food_by(frame, &self.tables, gate, |food| {
+        arbiter::food_by_excluding(frame, &self.tables, gate, protected_items, |food| {
             food.eat_delay_arg.is_some() && self.schedule.food_ready(food, tick)
         })
     }
@@ -2300,6 +2315,7 @@ impl Combat {
         tick: u16,
         danger: Option<i32>,
         poison_fire: i32,
+        protected_items: &[i32],
     ) {
         if plan.contains(RowKind::Eat)
             || self.pending_row(RowKind::Eat)
@@ -2309,7 +2325,7 @@ impl Combat {
             return;
         }
         let (hp, max) = arbiter::stat(frame, 3);
-        let Some(choice) = policy::eat_choice(
+        let Some(choice) = policy::eat_choice_excluding(
             frame,
             &self.tables,
             &self.schedule,
@@ -2318,6 +2334,7 @@ impl Combat {
             hp,
             max,
             tick,
+            protected_items,
             0,
         ) else {
             return;
@@ -2343,6 +2360,7 @@ impl Combat {
         frame: &Frame<'_>,
         tick: u16,
         gate: i32,
+        protected_items: &[i32],
     ) {
         if plan.closed(&self.tables)
             || !self.request.allow.potions
@@ -2374,7 +2392,7 @@ impl Combat {
         if !lowers_danger || eat.is_some() {
             return;
         }
-        if let Some(food) = self.plain_food(frame, tick, Some(gate)) {
+        if let Some(food) = self.plain_food(frame, tick, Some(gate), protected_items) {
             if self.push(plan, PlanRow::new(RowKind::Eat, food, 0)) && reached(tick, self.eat_ready)
             {
                 self.push(plan, PlanRow::new(RowKind::Drink, id, kind as u8));
@@ -2509,7 +2527,7 @@ impl Combat {
         let poison_fire =
             crate::survival::math::poison_fire(cx.condition(), &self.threats, &self.tables, tick);
         let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
-        let food_available = self.emergency_food_available(frame, danger);
+        let food_available = self.emergency_food_available(frame, danger, cx.protected_items());
         self.safety_end(frame, tick, danger, lines.emergency, food_available);
         if self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx) {
             return Ok(plan);
@@ -2537,7 +2555,14 @@ impl Combat {
                 && (danger != Some(0) || poison_fire > 0)
                 && hp <= lines.eat
             {
-                self.eat(&mut plan, frame, tick, danger, poison_fire);
+                self.eat(
+                    &mut plan,
+                    frame,
+                    tick,
+                    danger,
+                    poison_fire,
+                    cx.protected_items(),
+                );
             }
             if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
                 self.ranged_sweep(&mut plan, frame, tick, cx);
@@ -2566,7 +2591,14 @@ impl Combat {
                 return Ok(plan);
             }
             if hp > 0 && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
-                self.eat(&mut plan, frame, tick, danger, poison_fire);
+                self.eat(
+                    &mut plan,
+                    frame,
+                    tick,
+                    danger,
+                    poison_fire,
+                    cx.protected_items(),
+                );
             }
             if plan.len == 0 && self.pending_walk.is_none() {
                 self.walk(tile, tick, cx, false)?;
@@ -2575,7 +2607,14 @@ impl Combat {
         }
         // Emergency uses the original danger, before free reducers project it.
         if (danger != Some(0) || poison_fire > 0) && hp <= lines.emergency {
-            self.eat(&mut plan, frame, tick, danger, poison_fire);
+            self.eat(
+                &mut plan,
+                frame,
+                tick,
+                danger,
+                poison_fire,
+                cx.protected_items(),
+            );
         }
         if plan.closed(&self.tables) {
             return Ok(plan);
@@ -2617,6 +2656,7 @@ impl Combat {
                     frame,
                     tick,
                     lines.drink_gate,
+                    cx.protected_items(),
                 );
             }
             if points > 0
@@ -2652,7 +2692,14 @@ impl Combat {
         let wanted_varp = wanted.map(|row| row.varp);
         let protection_wanted = wanted_varp.is_some();
         if !plan.closed(&self.tables) && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
-            self.eat(&mut plan, frame, tick, danger, poison_fire);
+            self.eat(
+                &mut plan,
+                frame,
+                tick,
+                danger,
+                poison_fire,
+                cx.protected_items(),
+            );
         }
         if plan.closed(&self.tables) {
             return Ok(plan);
@@ -2735,11 +2782,20 @@ impl Combat {
                     frame,
                     tick,
                     lines.drink_gate,
+                    cx.protected_items(),
                 );
             }
             if self.flags & BOOST_WORTH != 0 {
                 if let Some(kind) = self.boost(frame) {
-                    self.drink_or_recover(&mut plan, kind, false, frame, tick, lines.drink_gate);
+                    self.drink_or_recover(
+                        &mut plan,
+                        kind,
+                        false,
+                        frame,
+                        tick,
+                        lines.drink_gate,
+                        cx.protected_items(),
+                    );
                 }
             }
             if plan.closed(&self.tables)
@@ -2809,13 +2865,22 @@ impl Combat {
                 frame,
                 tick,
                 lines.drink_gate,
+                cx.protected_items(),
             );
         }
         let cycle_room = !self.schedule.cycle.known
             || !reached(tick.wrapping_add(2), self.schedule.cycle.deadline);
         if cycle_room && self.flags & BOOST_WORTH != 0 && self.target_above_quarter(frame) {
             if let Some(kind) = self.boost(frame) {
-                self.drink_or_recover(&mut plan, kind, false, frame, tick, lines.drink_gate);
+                self.drink_or_recover(
+                    &mut plan,
+                    kind,
+                    false,
+                    frame,
+                    tick,
+                    lines.drink_gate,
+                    cx.protected_items(),
+                );
             }
         }
         if cycle_room
@@ -2829,6 +2894,7 @@ impl Combat {
                 frame,
                 tick,
                 lines.drink_gate,
+                cx.protected_items(),
             );
         }
         if plan.closed(&self.tables) {

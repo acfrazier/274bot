@@ -128,6 +128,7 @@ pub struct HostAction {
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
     pub bank_deposit: Option<Arc<BankDepositTrace>>,
+    pub(crate) protected_items: Option<Arc<[i32]>>,
 }
 
 /// The owner of one queued host action, and the host's custody of a single
@@ -201,6 +202,7 @@ pub struct HostAuthority {
     owner: Arc<Owner>,
     request: NonZeroU64,
     walk: bool,
+    protected_items: Option<Arc<[i32]>>,
 }
 
 impl HostAuthority {
@@ -223,6 +225,14 @@ impl HostAuthority {
     }
     pub fn action_id(&self) -> NonZeroU64 {
         self.owner.id
+    }
+    /// Path items reserved from food selection for this authorized walk.
+    pub fn protected_items(&self) -> Option<&[i32]> {
+        self.protected_items.as_deref()
+    }
+    /// Share the compiled Path allocation with a persistent route guard.
+    pub fn clone_protected_items(&self) -> Option<Arc<[i32]>> {
+        self.protected_items.as_ref().map(Arc::clone)
     }
     pub fn request_id(&self) -> NonZeroU64 {
         self.request
@@ -264,6 +274,7 @@ impl HostAction {
             owner: Arc::clone(&self.custody.owner),
             request: self.request_id,
             walk: matches!(self.effect, HostEffect::Walk(_)),
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
         }
     }
     /// The host has taken this action for dispatch in an eligible pass.
@@ -1044,6 +1055,7 @@ mod tests {
             owner: Arc::clone(&owner),
             request,
             walk: true,
+            protected_items: None,
         };
         let allowed = super::super::PrereqAllow {
             dialogue: true,
@@ -1091,6 +1103,7 @@ mod tests {
                 owner: foreign_owner,
                 request: next_request,
                 walk: true,
+                protected_items: None,
             };
             assert!(foreign.live());
             assert!(!ledger.capture_walk_prereq_allow(&foreign, allowed));
@@ -1122,11 +1135,13 @@ mod tests {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         let current = HostAuthority {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         ledger.interaction_request = Some(current.request);
         owner.set_interaction(current.request);
@@ -1209,11 +1224,13 @@ mod tests {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         let current = HostAuthority {
             owner: Arc::clone(&owner),
             request: ledger.next_id().unwrap(),
             walk: false,
+            protected_items: None,
         };
         ledger.bank_pick_request = Some(current.request);
         owner.set_interaction(current.request);

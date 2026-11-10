@@ -174,20 +174,23 @@ impl SurvivalStep {
                 .eat
         });
         let eat_floor = upkeep.eat_floor.max(hazard_floor);
-        let cure = cure_choice(&CureInputs {
-            cond: condition,
-            danger,
-            exposure,
-            policy: cx.cure_poison(),
-            route_refused_for_poison: false,
-            inventory: frame.inventory,
-            tables,
-            schedule: &schedule,
-            clue_reserve: false,
-            tick,
-            q_unknown,
-            eat_floor,
-        });
+        let cure = cure_choice(
+            &CureInputs {
+                cond: condition,
+                danger,
+                exposure,
+                policy: cx.cure_poison(),
+                route_refused_for_poison: false,
+                inventory: frame.inventory,
+                tables,
+                schedule: &schedule,
+                clue_reserve: false,
+                tick,
+                q_unknown,
+                eat_floor,
+            },
+            cx.protected_items(),
+        );
         let eat_line = select::lines(danger, hp_max)
             .with_poison(poison_fire)
             .eat

@@ -273,12 +273,14 @@ impl WalkGlobals {
     }
 }
 
-/// Whether a native walk's decided zone grant arms the walk's food guard.
-/// Every permitted danger crossing arms it (the global override, a card
-/// request or a Path `cross`); a compat v1 walk keeps its frozen behavior
-/// and gets no guard. Eating refuses nothing.
-pub(crate) fn walk_arms_danger_food_guard(zones: ZoneExempt, compat_v1: bool) -> bool {
-    zones.is_all() && !compat_v1
+/// Whether one danger decision both credits food and arms its danger-food
+/// guard. Enforced routes count even when the runtime net is not yet active.
+pub(crate) fn walk_arms_danger_food_guard(
+    decision: DangerDecision,
+    allow_food: bool,
+    compat_v1: bool,
+) -> bool {
+    allow_food && !compat_v1 && (decision.permitted || decision.enforce)
 }
 
 /// The globals one slot's walks see. A compat v1 slot counts as the global
@@ -311,18 +313,17 @@ pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mu
     }
 }
 
-/// Resolve native search options and risk policy from the cached durable view.
-/// Callback-scoped permissions override the per-bot mirror. Otherwise, the
-/// mirror is the fallback. Load API Gather values come from the slot lock.
-/// `crossing_requested` is true when the request names zones to cross (a
-/// Quester stage or step `cross`).
+/// Resolve native search options and one danger decision from the cached
+/// durable view. Callback-scoped permissions override the per-bot mirror;
+/// Load API Gather values come from the slot lock. `crossing_requested` is
+/// true when the request names zones to cross (a Quester stage or step `cross`).
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
     session_permissions: Option<script::native::WalkPermissions>,
     crossing_requested: bool,
-) -> (FindOptions, RiskPolicy, bool) {
+) -> (FindOptions, DangerDecision) {
     let mut all = navs.lock().unwrap();
     let mut bot = all.get_mut(name);
     let globals = globals_for(bot.as_deref());
@@ -389,12 +390,11 @@ fn resolve_native_admission(
     script: WalkPermissions,
     walk: WalkOptions,
     crossing_requested: bool,
-) -> (FindOptions, RiskPolicy, bool) {
+) -> (FindOptions, DangerDecision) {
     let decision = globals.danger_decision(script, walk, crossing_requested);
     (
         globals.native_options_with_decision(script, walk, decision),
-        decision.policy,
-        decision.enforce,
+        decision,
     )
 }
 
@@ -435,7 +435,7 @@ impl<'a> SelectionDangerQuery<'a> {
 
     fn resolved(&self) -> &SelectionDanger {
         self.resolved.get_or_init(|| {
-            let (options, _, _) = native_admission(
+            let (options, _) = native_admission(
                 self.navs,
                 self.name,
                 WalkOptions::default(),
@@ -1026,20 +1026,20 @@ mod tests {
                 ..Default::default()
             },
         )])));
-        let (current_options, current_policy, _) = native_admission(
+        let (current_options, current_decision) = native_admission(
             &navs,
             "alice",
             WalkOptions::default(),
             Some(WalkPermissions::default()),
             false,
         );
-        assert_eq!(current_policy, RiskPolicy::Avoid);
+        assert_eq!(current_decision.policy, RiskPolicy::Avoid);
         assert!(!current_options.zones.is_all());
 
-        let (fallback_options, fallback_policy, _) =
+        let (fallback_options, fallback_decision) =
             native_admission(&navs, "alice", WalkOptions::default(), None, false);
         // The previous card request: permitted, judged by the enforced bound.
-        assert_eq!(fallback_policy, RiskPolicy::Avoid);
+        assert_eq!(fallback_decision.policy, RiskPolicy::Avoid);
         assert!(fallback_options.zones.is_all());
     }
 
@@ -1473,12 +1473,12 @@ mod tests {
             },
         )])));
         let native_navs = Arc::clone(&navs);
-        let (native, policy, _) = completes_before_release(&mut held, move || {
+        let (native, decision) = completes_before_release(&mut held, move || {
             measured_walk_call("native_admission", || {
                 native_admission(&native_navs, "alice", WalkOptions::default(), None, false)
             })
         });
-        assert_eq!(policy, RiskPolicy::Avoid);
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
         assert!(!native.allow_teleports);
         assert!(!native.allow_wilderness);
         assert!(!native.allow_bank_fetch);
@@ -1557,10 +1557,10 @@ mod tests {
                     "allow_danger_zones": enabled,
                 }),
             );
-            let (native, policy, _) =
+            let (native, decision) =
                 native_admission(&navs, "alice", WalkOptions::default(), None, false);
             assert_eq!(
-                policy,
+                decision.policy,
                 if enabled {
                     RiskPolicy::Proceed
                 } else {
@@ -1778,13 +1778,40 @@ mod tests {
                     assert_eq!(decision.policy, RiskPolicy::Proceed);
                     assert!(!decision.enforce, "the override is informational");
                 }
-                let (options, policy, enforce) =
-                    resolve_native_admission(globals, script, walk, false);
+                let (options, decision) = resolve_native_admission(globals, script, walk, false);
                 assert!(options.zones.is_all());
-                assert_eq!((policy, enforce), (RiskPolicy::Proceed, false));
-                assert!(walk_arms_danger_food_guard(options.zones, false));
+                assert_eq!(decision.policy, RiskPolicy::Proceed);
+                assert!(!decision.enforce);
+                assert!(walk_arms_danger_food_guard(decision, true, false));
             }
         }
+    }
+
+    #[test]
+    fn route_food_credit_and_guard_share_the_enforced_decision() {
+        let proceed = DangerDecision {
+            permitted: true,
+            policy: RiskPolicy::Proceed,
+            enforce: false,
+        };
+        assert!(walk_arms_danger_food_guard(proceed, true, false));
+        assert!(!walk_arms_danger_food_guard(proceed, false, false));
+        assert!(!walk_arms_danger_food_guard(proceed, true, true));
+
+        // A future NET_AVAILABLE-only route is enforced before it is granted.
+        let future_enforced = DangerDecision {
+            permitted: false,
+            policy: RiskPolicy::Inherit,
+            enforce: true,
+        };
+        assert!(walk_arms_danger_food_guard(future_enforced, true, false));
+
+        let unrequested = DangerDecision {
+            permitted: false,
+            policy: RiskPolicy::Avoid,
+            enforce: false,
+        };
+        assert!(!walk_arms_danger_food_guard(unrequested, true, false));
     }
 
     #[test]
@@ -1798,15 +1825,16 @@ mod tests {
         // The request does not proceed: admission enforces the 1% bound.
         assert_eq!(crossing.policy, RiskPolicy::Avoid);
         assert!(crossing.enforce);
-        let (options, policy, enforce) = resolve_native_admission(
+        let (options, decision) = resolve_native_admission(
             globals,
             WalkPermissions::default(),
             WalkOptions::default(),
             true,
         );
         assert!(options.zones.is_all());
-        assert_eq!((policy, enforce), (RiskPolicy::Avoid, true));
-        assert!(walk_arms_danger_food_guard(options.zones, false));
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
+        assert!(decision.enforce);
+        assert!(walk_arms_danger_food_guard(decision, true, false));
         // A native script's card setting and its walk option.
         let card = WalkPermissions {
             allow_danger_zones: true,
@@ -1838,10 +1866,10 @@ mod tests {
                 let decision = globals.danger_decision(WalkPermissions::default(), walk, false);
                 assert!(!decision.permitted, "level={level:?}, walk={bit:?}");
                 assert_eq!(decision.policy, RiskPolicy::Avoid);
-                let options =
-                    resolve_native_admission(globals, WalkPermissions::default(), walk, false).0;
+                let (options, decision) =
+                    resolve_native_admission(globals, WalkPermissions::default(), walk, false);
                 assert!(options.zones == ZoneExempt::NONE);
-                assert!(!walk_arms_danger_food_guard(options.zones, false));
+                assert!(!walk_arms_danger_food_guard(decision, true, false));
             }
         }
     }
@@ -1869,7 +1897,15 @@ mod tests {
             assert_eq!(globals.for_script_family(false), globals);
         }
         // No food guard for a compat v1 walk, even with every zone granted.
-        assert!(!walk_arms_danger_food_guard(ZoneExempt::all(), true));
+        assert!(!walk_arms_danger_food_guard(
+            DangerDecision {
+                permitted: true,
+                policy: RiskPolicy::Proceed,
+                enforce: false,
+            },
+            true,
+            true
+        ));
     }
 
     /// The compat (compiled, bool-wire) path reads the same decision: the

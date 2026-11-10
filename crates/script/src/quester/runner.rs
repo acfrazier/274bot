@@ -4034,6 +4034,7 @@ impl Script for Quester {
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         tick.cx.walk_prereq = self.path.prereq;
+        tick.cx.protected_items = Some(Arc::clone(&self.path.provisioning.carried_items));
         if tick.cx.run() != self.run {
             api::host_log!(
                 api::hostlog::Category::ScriptLifecycle,

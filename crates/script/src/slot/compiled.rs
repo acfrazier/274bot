@@ -413,6 +413,7 @@ pub(super) fn frame_context<'a>(
     runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
     ActionContext {
         walk_prereq: Default::default(),
+        protected_items: None,
         evidence,
         revision,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
