@@ -92,6 +92,7 @@ const WILLOW_LOG_ID: i32 = 1519;
 const OAK_STUMP_ID: i32 = 1355;
 const OAK_RESPAWN_MAX_TICKS: u32 = 30;
 const AUTO_TREE_IDS: &[i32] = &[1276, 1278];
+const GAS_HAZARD_LOC_ID: i32 = 2121;
 const IRON_ROCK_IDS: &[i32] = &[2092, 2093];
 const MINE_PRODUCTS: &[i32] = &[
     COPPER_ID, TIN_ID, IRON_ID, COAL_ID, 1625, 1627, 1629, 1623, 1621, 1619, 1617,
@@ -1218,6 +1219,7 @@ struct FixturePlan {
     bank_seed: Vec<(String, i32)>,
     inventory_seed: Vec<(String, i32)>,
     reserve_runes: Vec<(i32, i32)>,
+    inject_after_progress: Option<LocSeed>,
     bank_cost_air_banks: Vec<(String, WorldTile)>,
     bank_cost_air_nearest: Option<String>,
     bank_cost_origin: Option<WorldTile>,
@@ -1228,7 +1230,11 @@ struct FixturePlan {
 enum FixtureStage {
     Start,
     WaitTile,
+    Place,
+    WaitLoc,
     WaitStump,
+    Return,
+    WaitReturn,
 }
 
 #[derive(Debug, Clone)]
@@ -1237,6 +1243,21 @@ enum FixtureTask {
         tile: WorldTile,
         stage: FixtureStage,
     },
+    InjectAfterProgress {
+        seed: LocSeed,
+        tile: Option<WorldTile>,
+        return_to: Option<WorldTile>,
+        stage: FixtureStage,
+    },
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct FixtureProgress {
+    baseline_xp: i32,
+    xp: i32,
+    product_count: i32,
+    tile: Option<(i32, i32, i32)>,
+    nearest_live_iron: Option<WorldTile>,
 }
 
 #[derive(Debug, Clone)]
@@ -1905,7 +1926,7 @@ struct Witness {
     gas_hazard_start_tile: Option<(i32, i32, i32)>,
     edge_initial_distance: Option<i32>,
     auto_selected_next: bool,
-    gas_site_observed: bool,
+    gas_hazard_seeded: bool,
     gas_hazard_observed: bool,
     gas_hazard_escaped: bool,
     fish_targets: BTreeSet<FishTarget>,
@@ -2603,6 +2624,25 @@ impl GatherSlot {
         Ok(())
     }
 
+    fn fixture_progress(&self) -> FixtureProgress {
+        let latest = self.latest.as_ref();
+        let nearest_live_iron = latest.and_then(|row| {
+            let (x, z, level) = row.tile?;
+            row.live_iron_tiles
+                .iter()
+                .filter(|tile| tile.2 == level)
+                .min_by_key(|tile| (x - tile.0).abs().max((z - tile.1).abs()))
+                .map(|&(x, z, level)| WorldTile { x, z, level })
+        });
+        FixtureProgress {
+            baseline_xp: self.baseline.as_ref().map_or(0, |row| row.xp),
+            xp: latest.map_or(0, |row| row.xp),
+            product_count: latest.map_or(0, |row| row.product_count),
+            tile: latest.and_then(|row| row.tile),
+            nearest_live_iron,
+        }
+    }
+
     fn fixture_ready(&self) -> bool {
         let Some(latest) = self.latest.as_ref() else {
             return false;
@@ -2629,7 +2669,6 @@ impl GatherSlot {
                             .is_some_and(|distance| distance <= 20)
                     })
             }
-            LiveCase::GasHazard => latest.live_iron_tiles.contains(&tile_key(self.target)),
             LiveCase::OakNoPlacementArea => {
                 latest.bank_booths.iter().any(|&booth| {
                     tile_distance(booth, self.target).is_some_and(|distance| distance <= 1)
@@ -2704,7 +2743,12 @@ impl GatherSlot {
     }
 
     fn ready_to_start(&self) -> bool {
-        self.phase == Prep::Ready && self.fixture_done && self.fixture_ready()
+        self.phase == Prep::Ready
+            && if self.case == LiveCase::GasHazard {
+                true
+            } else {
+                self.fixture_done && self.fixture_ready()
+            }
     }
 
     fn name(&self) -> &'static str {
@@ -2869,7 +2913,12 @@ impl GatherSlot {
         }
     }
 
-    fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
+    fn frame(
+        &mut self,
+        client: &mut client::client::Client,
+        hold: bool,
+        progress: Option<&FixtureProgress>,
+    ) {
         let previous_chat_root = self.snapshot.modals().chat;
         let observation = self.publish(client);
         if self.case == LiveCase::PauseResumeOtherPlane
@@ -2935,7 +2984,7 @@ impl GatherSlot {
                 return;
             }
             if self.fixture_task.is_some() {
-                if let Err(error) = self.advance_fixture(client) {
+                if let Err(error) = self.advance_fixture_with_progress(client, progress) {
                     self.error = Some(error);
                 }
             }
@@ -2945,7 +2994,7 @@ impl GatherSlot {
                 }
             }
         } else if self.fixture_task.is_some() && self.phase == Prep::Ready {
-            if let Err(error) = self.advance_fixture(client) {
+            if let Err(error) = self.advance_fixture_with_progress(client, progress) {
                 self.error = Some(error);
             }
         } else if let Err(error) = self.advance_prep(client) {
@@ -3224,6 +3273,127 @@ impl GatherSlot {
         }
     }
 
+    fn advance_fixture_with_progress(
+        &mut self,
+        client: &mut client::client::Client,
+        progress: Option<&FixtureProgress>,
+    ) -> Result<(), String> {
+        if matches!(
+            self.fixture_task,
+            Some(FixtureTask::InjectAfterProgress { .. })
+        ) {
+            let progress = match progress {
+                Some(progress) => *progress,
+                None => self.fixture_progress(),
+            };
+            self.advance_inject_fixture(client, &progress)
+        } else {
+            self.advance_fixture(client)
+        }
+    }
+
+    /// Places the gas hazard loc beside the subject's iron rock with the
+    /// engine's `~loc` debug cheat once the subject has mined at least once.
+    fn advance_inject_fixture(
+        &mut self,
+        client: &mut client::client::Client,
+        progress: &FixtureProgress,
+    ) -> Result<(), String> {
+        let Some(FixtureTask::InjectAfterProgress {
+            seed,
+            mut tile,
+            mut return_to,
+            mut stage,
+        }) = self.fixture_task.take()
+        else {
+            self.fixture_done = true;
+            return Ok(());
+        };
+        match stage {
+            FixtureStage::Start => {
+                if progress.xp > progress.baseline_xp && progress.product_count > 0 {
+                    if let Some(target) = progress.nearest_live_iron {
+                        tile = Some(target);
+                        return_to = progress.tile.map(|(x, z, level)| WorldTile { x, z, level });
+                        if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
+                            stage = FixtureStage::Place;
+                        } else {
+                            send_cheat(
+                                client,
+                                &interact::tele_args(target.level, target.x, target.z),
+                            )?;
+                            stage = FixtureStage::WaitTile;
+                        }
+                    }
+                }
+            }
+            FixtureStage::WaitTile => {
+                if let Some(target) = tile {
+                    if self.snapshot.tile() == Some((target.x, target.z, target.level)) {
+                        stage = FixtureStage::Place;
+                    }
+                }
+            }
+            FixtureStage::Place => {
+                if let Some(target) = tile {
+                    if progress.nearest_live_iron == Some(target) {
+                        send_cheat(client, &format!("~loc {}", seed.alias))?;
+                        self.plan.inject_after_progress = Some(LocSeed {
+                            tile: target,
+                            ..seed
+                        });
+                        stage = FixtureStage::WaitLoc;
+                    } else {
+                        tile = None;
+                        return_to = None;
+                        stage = FixtureStage::Start;
+                    }
+                }
+            }
+            FixtureStage::WaitLoc => {
+                if tile.is_some_and(|target| {
+                    self.latest
+                        .as_ref()
+                        .is_some_and(|row| row.has_loc(seed.id, target))
+                }) {
+                    if return_to.is_some() {
+                        stage = FixtureStage::Return;
+                    } else {
+                        self.fixture_done = true;
+                        return Ok(());
+                    }
+                }
+            }
+            FixtureStage::Return => {
+                let home = return_to.ok_or("hazard injector lost its return tile")?;
+                if self.snapshot.tile() == Some((home.x, home.z, home.level)) {
+                    self.fixture_done = true;
+                    return Ok(());
+                }
+                send_cheat(client, &interact::tele_args(home.level, home.x, home.z))?;
+                stage = FixtureStage::WaitReturn;
+            }
+            FixtureStage::WaitReturn => {
+                if return_to
+                    .is_some_and(|home| self.snapshot.tile() == Some((home.x, home.z, home.level)))
+                {
+                    self.fixture_done = true;
+                    return Ok(());
+                }
+            }
+            FixtureStage::WaitStump => {
+                return Err("hazard injector entered the oak-fell wait state".into());
+            }
+        }
+        self.fixture_task = Some(FixtureTask::InjectAfterProgress {
+            seed,
+            tile,
+            return_to,
+            stage,
+        });
+        Ok(())
+    }
+
     fn advance_fixture(&mut self, client: &mut client::client::Client) -> Result<(), String> {
         let Some(FixtureTask::Chop { tile, mut stage }) = self.fixture_task.take() else {
             self.fixture_done = true;
@@ -3305,6 +3475,7 @@ impl GatherSlot {
                     return Ok(());
                 }
             }
+            _ => return Err("oak feller entered an invalid fixture state".into()),
         }
         self.fixture_task = Some(FixtureTask::Chop { tile, stage });
         Ok(())
@@ -3775,12 +3946,12 @@ impl GatherSlot {
         }
 
         if self.case == LiveCase::GasHazard {
-            if observation.live_iron_tiles.contains(&tile_key(self.target))
-                && !self.witness.gas_site_observed
-            {
-                self.witness.gas_site_observed = true;
-                self.witness.gas_hazard_tile = Some(tile_key(self.target));
-                self.witness.gas_hazard_xp_start = observation.xp;
+            if let Some(hazard) = self.plan.inject_after_progress {
+                if observation.has_loc(hazard.id, hazard.tile) && !self.witness.gas_hazard_seeded {
+                    self.witness.gas_hazard_seeded = true;
+                    self.witness.gas_hazard_tile = Some(tile_key(hazard.tile));
+                    self.witness.gas_hazard_xp_start = observation.xp;
+                }
             }
             if self.witness.gas_hazard_observed {
                 if self.witness.gas_hazard_start_tile.is_none() {
@@ -5361,15 +5532,18 @@ impl GatherSlot {
                 Ok(())
             }
             LiveCase::GasHazard => {
-                let expected_hazard = Some(tile_key(self.target));
-                if !self.witness.gas_site_observed
+                let expected_hazard = self
+                    .plan
+                    .inject_after_progress
+                    .map(|seed| tile_key(seed.tile));
+                if !self.witness.gas_hazard_seeded
                     || !self.witness.gas_hazard_observed
                     || self.witness.gas_hazard_tile != expected_hazard
                     || !self.witness.gas_hazard_escaped
                     || !self.witness.gas_hazard_xp_after_escape
                 {
                     return Err(format!(
-                        "{} did not observe a real iron placement, hazard, escape, and resumed yield: {:?}",
+                        "{} did not observe the seeded gas hazard, escape, and resume yield: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -6344,7 +6518,11 @@ fn fixture_plan(
             fixture_tile("GATHERER_WC_NO_PLACEMENT_TILE", OAK_NO_PLACEMENT_START)?
         }
         LiveCase::LocationAuto => fixture_tile("GATHERER_AUTO_START_TILE", AUTO_START)?,
-        LiveCase::GasHazard => fixture_tile("GATHERER_GAS_TILE", GAS_START)?,
+        LiveCase::GasHazard => {
+            let tile = fixture_tile("GATHERER_GAS_TILE", GAS_START)?;
+            plan.inject_after_progress = Some(seed(tile, "macro_ironrock1", GAS_HAZARD_LOC_ID));
+            tile
+        }
         LiveCase::WoodcuttingBank
         | LiveCase::WoodcuttingBankUnwieldable
         | LiveCase::BankCostNoCandidate
@@ -6375,6 +6553,15 @@ fn fixture_plan(
             tile,
             stage: FixtureStage::Start,
         }),
+        LiveCase::GasHazard => {
+            plan.inject_after_progress
+                .map(|seed| FixtureTask::InjectAfterProgress {
+                    seed,
+                    tile: None,
+                    return_to: None,
+                    stage: FixtureStage::Start,
+                })
+        }
         _ => None,
     };
     if matches!(
@@ -6466,17 +6653,6 @@ fn selected_profile(
     Ok((profile, template))
 }
 
-fn macro_event_fixture_blocker(case: LiveCase) -> Option<&'static str> {
-    match case {
-        LiveCase::GasHazard => Some(
-            "gas-hazard requires a deterministic engine-side gas event; account-only state cannot create its loc",
-        ),
-        LiveCase::RandomEvent => Some(
-            "random-event identity requires deterministic owner and foreign events; account-only state cannot force the random macro-event selector",
-        ),
-        _ => None,
-    }
-}
 include!("../src/clean_logout_guard.inc.rs");
 define_clean_logout_guard!(host_play::Play, CLEAN_LOGOUT_DEADLINE);
 
@@ -6494,9 +6670,6 @@ fn run_cell_with_fixture(
 ) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
-    }
-    if let Some(reason) = macro_event_fixture_blocker(case) {
-        return Err(reason.into());
     }
     if !api::test_support::game_data_available() {
         return Ok(());
@@ -6649,7 +6822,7 @@ fn run_cell_with_fixture(
             }
         }
     }
-    let helper_needed = fixture_task.is_some();
+    let helper_needed = fixture_task.is_some() || case == LiveCase::RandomEvent;
     let names = host_play::mint_live_names(if helper_needed { 2 } else { 1 });
     let credentials = host_play::mint_live_entries(&names);
     let account = names.first().cloned().ok_or("failed to mint account")?;
@@ -6667,16 +6840,27 @@ fn run_cell_with_fixture(
         None,
         false,
     )));
-    let helper_state = fixture_task.map(|task| {
-        Arc::new(Mutex::new(GatherSlot::new(
+    let helper_state = if case == LiveCase::RandomEvent {
+        Some(Arc::new(Mutex::new(GatherSlot::new(
             cell,
             case,
             target,
             plan.clone(),
-            Some(task),
+            None,
             true,
-        )))
-    });
+        ))))
+    } else {
+        fixture_task.map(|task| {
+            Arc::new(Mutex::new(GatherSlot::new(
+                cell,
+                case,
+                target,
+                plan.clone(),
+                Some(task),
+                true,
+            )))
+        })
+    };
     // The preparation relogs each bot before any script runs: each slot's arm
     // is owned here so the fixture can post the Login after its own logout.
     let subject_arm = SlotArm::new(274_289_304, true);
@@ -6693,6 +6877,7 @@ fn run_cell_with_fixture(
     let frame_helper_account = helper_account.clone();
     let frame_helper_state = helper_state.clone();
     let frame_world = profile.world();
+    let frame_helper_needs_progress = case == LiveCase::GasHazard;
     let capture_request = Arc::new(Mutex::new(None::<(PathBuf, Value)>));
     let capture_result = Arc::new(Mutex::new(None::<Result<(), String>>));
     let frame_capture_request = Arc::clone(&capture_request);
@@ -6717,10 +6902,40 @@ fn run_cell_with_fixture(
         move |client, username, frame| {
             let hold = frame.hold;
             if frame_helper_account.as_deref() == Some(username) {
+                let progress = if frame_helper_needs_progress {
+                    frame_state.lock().ok().map(|slot| slot.fixture_progress())
+                } else {
+                    None
+                };
                 if let Some(helper_state) = &frame_helper_state {
                     if let Ok(mut helper) = helper_state.lock() {
-                        helper.frame(client, hold);
+                        // The foreign random event comes from the helper's own
+                        // `~macro_event 4` debug cheat (our 289 engine), after the
+                        // subject has released its own event and yielded again.
+                        let spawn_foreign_event = frame_state.lock().ok().is_some_and(|main| {
+                            main.case == LiveCase::RandomEvent
+                                && main.witness.random_owned_released
+                                && main.witness.random_fresh_yield
+                                && !main.witness.random_foreign_command_sent
+                        });
+                        if !hold
+                            && spawn_foreign_event
+                            && helper.phase == Prep::Ready
+                            && helper.snapshot.ingame()
+                            && interact::cheat(client, "~macro_event 4").is_sent()
+                        {
+                            if let Ok(mut main) = frame_state.lock() {
+                                main.witness.random_foreign_command_sent = true;
+                                main.witness.random_foreign_yield_baseline =
+                                    main.witness.last_status_yielded;
+                                main.witness.random_foreign_xp_baseline = main.witness.last_xp;
+                            }
+                        }
+                        helper.frame(client, hold, progress.as_ref());
                         if let Ok(mut main) = frame_state.lock() {
+                            if helper.case == LiveCase::GasHazard {
+                                main.plan.inject_after_progress = helper.plan.inject_after_progress;
+                            }
                             main.witness.fixture_chop_observed |=
                                 helper.witness.fixture_chop_observed;
                             main.witness
@@ -6776,7 +6991,7 @@ fn run_cell_with_fixture(
                     _ => {}
                 }
             }
-            let (trigger_recovery_death, death_command_tile) = frame_state
+            let (spawn_owned_event, trigger_recovery_death, death_command_tile) = frame_state
                 .lock()
                 .ok()
                 .map(|slot| {
@@ -6799,9 +7014,23 @@ fn run_cell_with_fixture(
                         } else {
                             slot.witness.death_recovery_command_sent == 0 && initial_progress
                         };
-                    (trigger_recovery_death, death_command_tile)
+                    (
+                        !hold
+                            && slot.case == LiveCase::RandomEvent
+                            && initial_progress
+                            && !slot.witness.random_owned_command_sent,
+                        trigger_recovery_death,
+                        death_command_tile,
+                    )
                 })
-                .unwrap_or((false, None));
+                .unwrap_or((false, false, None));
+            // The subject's own random event comes from the engine's
+            // `~macro_event 4` debug cheat (our 289 engine) once it has yielded.
+            if spawn_owned_event && interact::cheat(client, "~macro_event 4").is_sent() {
+                if let Ok(mut slot) = frame_state.lock() {
+                    slot.witness.random_owned_command_sent = true;
+                }
+            }
             // The content's `[debugproc,maze]`: the natural event's teleport,
             // reward and briefing, without waiting for the random-event RNG.
             let send_maze = frame_state.lock().ok().is_some_and(|slot| {
@@ -6846,7 +7075,7 @@ fn run_cell_with_fixture(
                 }
             }
             if let Ok(mut slot) = frame_state.lock() {
-                slot.frame(client, hold);
+                slot.frame(client, hold, None);
                 if case == LiveCase::DeathReturnRefused
                     && slot.witness.death_recovery_command_sent > 0
                 {
@@ -7010,7 +7239,11 @@ fn run_cell_with_fixture(
         };
         let (mut helper_done, helper_error) = if let Some(helper_state) = &helper_state {
             let helper = helper_state.lock().map_err(|_| "fixture state poisoned")?;
-            (helper.fixture_done, helper.error.clone())
+            (
+                helper.fixture_done
+                    && (case != LiveCase::RandomEvent || helper.phase == Prep::Ready),
+                helper.error.clone(),
+            )
         } else {
             (true, None)
         };
@@ -7061,7 +7294,7 @@ fn run_cell_with_fixture(
                 }
             }
         }
-        let ready_to_start = ready_to_start && helper_done;
+        let ready_to_start = ready_to_start && (case == LiveCase::GasHazard || helper_done);
         if let Some(error) = lifecycle_error {
             let death_receipt = case == LiveCase::DeathDuringDrop && witness.death_command_sent;
             if !death_receipt {
@@ -8151,7 +8384,7 @@ fn run_cell_with_fixture(
             "auto_next_gather_tick": witness.auto_next_gather_tick,
             "auto_real_next_tiles": fixture_plan.auto_next,
             "gas_hazard_tile": witness.gas_hazard_tile,
-            "gas_real_site_observed": witness.gas_site_observed,
+            "gas_hazard_seeded": witness.gas_hazard_seeded,
             "gas_hazard_observed": witness.gas_hazard_observed,
             "gas_hazard_escaped": witness.gas_hazard_escaped,
             "gas_hazard_xp_after_escape": witness.gas_hazard_xp_after_escape,
@@ -8687,7 +8920,7 @@ fn gatherer_wc_area_no_placement() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_GAS_TILE and local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_GAS_TILE, the engine's ~loc and ~tele debug cheats and local 289 engine"]
 fn gatherer_mine_gas_hazard() {
     run_cell(Cell::Mining, LiveCase::GasHazard).unwrap();
 }
@@ -8837,7 +9070,7 @@ fn relog_steps_must_restart_at_access_then_open_then_deposit() {
     assert!(!relog_steps_in_order(&[]));
 }
 #[test]
-#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, an own BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, the engine's ~macro_event debug cheat (our 289 engine) and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -11832,7 +12065,7 @@ mod gatherer_real_content_fixture_tests {
     }
 
     #[test]
-    fn macro_event_cases_use_real_targets_and_fail_closed() {
+    fn macro_event_cases_use_debug_cheat_fixtures() {
         let (gas_target, gas_plan, gas_task) =
             fixture_plan(Cell::Mining, LiveCase::GasHazard).unwrap();
         assert_eq!(gas_target, GAS_START);
@@ -11840,12 +12073,21 @@ mod gatherer_real_content_fixture_tests {
             Cell::Mining.resources(LiveCase::GasHazard),
             vec!["iron".to_owned()]
         );
+        let hazard = gas_plan.inject_after_progress.expect("gas hazard seed");
+        assert_eq!(hazard.tile, gas_target);
         assert!(gas_plan.seed_locs.is_empty());
         assert!(gas_plan.oak_tiles.is_empty());
         assert!(gas_plan.inventory_seed.is_empty());
         assert!(gas_plan.bank_seed.is_empty());
-        assert!(gas_task.is_none());
-        assert!(macro_event_fixture_blocker(LiveCase::GasHazard).is_some());
+        assert!(matches!(
+            gas_task,
+            Some(FixtureTask::InjectAfterProgress {
+                tile: None,
+                return_to: None,
+                stage: FixtureStage::Start,
+                ..
+            })
+        ));
 
         let (random_target, random_plan, random_task) =
             fixture_plan(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
@@ -11854,8 +12096,8 @@ mod gatherer_real_content_fixture_tests {
         assert!(random_plan.oak_tiles.is_empty());
         assert!(random_plan.inventory_seed.is_empty());
         assert!(random_plan.bank_seed.is_empty());
+        assert!(random_plan.inject_after_progress.is_none());
         assert!(random_task.is_none());
-        assert!(macro_event_fixture_blocker(LiveCase::RandomEvent).is_some());
     }
 
     #[test]
