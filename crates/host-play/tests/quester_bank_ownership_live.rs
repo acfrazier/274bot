@@ -830,6 +830,14 @@ fn insert_player_open_gundai_steps(
                     api::interact::SendResult::Sent { .. }
                 );
                 if sent {
+                    eprintln!(
+                        "gundai-prestart-click player={:?} npc_tile={:?} npc_network={:?} npc_index={} moving={}",
+                        snapshot.tile(),
+                        npc.tile,
+                        npc.network,
+                        npc.index,
+                        npc.moving,
+                    );
                     let mut witness = talk_trace.lock().expect("bank witness mutex");
                     witness.gundai_seed_before_talk = Some(seed_receipt);
                     witness.gundai_talk_sent = true;

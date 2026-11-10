@@ -3238,6 +3238,8 @@ mod tests {
             &quests,
         )
         .is_pending());
+        let dispatched = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(matches!(dispatched.effect, HostEffect::BankPick(_)));
         with_tick_bank(&snapshot, Some(&memory), &mut ledger, 2, |native| {
             provisioner
                 .bank_run
