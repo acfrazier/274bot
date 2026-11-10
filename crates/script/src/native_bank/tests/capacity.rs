@@ -130,6 +130,24 @@ fn capacity_deposit_preserves_large_shared_keep_set_and_extra_food() {
 }
 
 #[test]
+fn full_pack_capacity_deposit_keeps_every_held_food_during_gear_withdrawal() {
+    let keep: Arc<[i32]> = Arc::from([379, 2309, 317]);
+    let mut pack = vec![
+        held(379, "Lobster", 0),
+        held(2309, "Bread", 1),
+        held(317, "Raw shrimps", 2),
+    ];
+    pack.extend((3..28).map(|slot| held(4_000 + slot, "Unprotected item", slot)));
+    assert_eq!(pack.len(), 28);
+    let side = side(&pack);
+
+    assert!(matches!(
+        ops::deposit_capacity_next(&keep, None, Some(&side), Some(&pack), true),
+        DepositScan::Click(click) if click.id == 4_003
+    ));
+    assert!(keep.iter().all(|food| pack.iter().any(|row| row.def.id == *food)));
+}
+#[test]
 fn capacity_deposit_stops_when_previously_absent_kept_id_arrives() {
     if !api::test_support::game_data_available() {
         return;

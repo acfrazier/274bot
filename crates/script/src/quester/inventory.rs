@@ -25,6 +25,81 @@ pub(crate) struct StageInventory {
 }
 
 const _: () = assert!(std::mem::size_of::<StageInventory>() <= 24);
+/// Whether a candidate can be worn without displacing Path-owned inventory.
+///
+/// `managed_ids` protects authored items already worn; `carried_ids` excludes
+/// gear reserved for carried-only steps. `claimed_slots` excludes equipment
+/// positions reserved by the current stage.
+pub(crate) fn gear_allowed(
+    selected: &SelectedGameData,
+    id: i32,
+    stock: api::stock::Stock<'_>,
+    managed_ids: &[i32],
+    carried_ids: &[i32],
+    claimed_slots: u16,
+) -> bool {
+    if carried_ids.contains(&id) {
+        return false;
+    }
+    let Some(item) = selected.item_by_id(id) else {
+        return false;
+    };
+    let Some(mask) = wear_mask(item) else {
+        return false;
+    };
+    mask & claimed_slots == 0
+        && !stock.worn.into_iter().flatten().any(|row| {
+            row.count > 0
+                && row.def.id != id
+                && managed_ids.contains(&row.def.id)
+                && selected
+                    .item_by_id(row.def.id)
+                    .and_then(wear_mask)
+                    .is_none_or(|worn| mask & worn != 0)
+        })
+}
+
+fn wear_mask(item: &GameItem) -> Option<u16> {
+    let mut mask = 0u16;
+    for slot in [
+        item.wear_position,
+        item.wear_position_2,
+        item.wear_position_3,
+    ] {
+        if slot >= 0 {
+            mask |= 1u16.checked_shl(u32::try_from(slot).ok()?)?;
+        }
+    }
+    (mask != 0).then_some(mask)
+}
+
+/// Combine Path reservations with every currently held ordinary food item.
+///
+/// This is built once when a capacity-deposit request is prepared, not during
+/// polling. The inventory contributes at most 28 distinct rows.
+pub(crate) fn capacity_keep_with_held_foods(
+    stock: api::stock::Stock<'_>,
+    keep_ids: &Arc<[i32]>,
+    mut is_food: impl FnMut(i32) -> bool,
+) -> Arc<[i32]> {
+    let new_food = stock
+        .pack
+        .into_iter()
+        .flatten()
+        .any(|row| row.count > 0 && is_food(row.def.id) && !keep_ids.contains(&row.def.id));
+    if !new_food {
+        return Arc::clone(keep_ids);
+    }
+    let mut keep = Vec::with_capacity(keep_ids.len() + 28);
+    keep.extend_from_slice(keep_ids);
+    for row in stock.pack.into_iter().flatten() {
+        if row.count > 0 && is_food(row.def.id) && !keep.contains(&row.def.id) {
+            keep.push(row.def.id);
+        }
+    }
+    Arc::from(keep)
+}
+
 
 struct ItemFacts {
     id: i32,

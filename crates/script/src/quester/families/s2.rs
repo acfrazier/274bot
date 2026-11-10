@@ -1386,6 +1386,9 @@ impl LoadoutPlan {
             }),
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),
+            carried_ids: Arc::from([]),
+            equipment_slots: 0,
+            selected: None,
             worn_index: 0,
             equipment: None,
             strip: self.strip,
@@ -1407,6 +1410,8 @@ enum LoadoutStartPlan {
         bank_required: bool,
         items: Arc<[BankItem]>,
         keep_ids: Arc<[i32]>,
+        carried_ids: Arc<[i32]>,
+        equipment_slots: u16,
         protect_worn: bool,
     },
 }
@@ -1420,26 +1425,39 @@ impl LoadoutStartPlan {
                 bank_required,
                 items,
                 keep_ids,
+                carried_ids,
+                equipment_slots,
                 protect_worn,
-            } => Ok(LoadoutRun {
-                bank: None,
-                worn: Arc::from(Vec::<Arc<[BankItem]>>::new()),
-                worn_index: 0,
-                equipment: None,
-                keep_ids: Arc::clone(keep_ids),
-                strip: false,
-                stripped: false,
-                exclusive: false,
-                removing: false,
-                receipt: None,
-                survival: Some(SurvivalLoadout {
-                    bank: *bank,
-                    bank_required: *bank_required,
-                    items: Arc::clone(items),
-                    protect_worn: *protect_worn,
-                }),
-                survival_attempted: None,
-            }),
+            } => {
+                let selected =
+                    Some(api::game_data::for_revision(cx.tick.cx.revision()).map_err(|_| {
+                        ActionError::Unavailable(Arc::from(
+                            "selected equipment facts unavailable",
+                        ))
+                    })?);
+                Ok(LoadoutRun {
+                    bank: None,
+                    worn: Arc::from(Vec::<Arc<[BankItem]>>::new()),
+                    worn_index: 0,
+                    equipment: None,
+                    keep_ids: Arc::clone(keep_ids),
+                    carried_ids: Arc::clone(carried_ids),
+                    equipment_slots: *equipment_slots,
+                    selected,
+                    strip: false,
+                    stripped: false,
+                    exclusive: false,
+                    removing: false,
+                    receipt: None,
+                    survival: Some(SurvivalLoadout {
+                        bank: *bank,
+                        bank_required: *bank_required,
+                        items: Arc::clone(items),
+                        protect_worn: *protect_worn,
+                    }),
+                    survival_attempted: None,
+                })
+            }
         }
     }
 }
@@ -1457,6 +1475,8 @@ pub(crate) fn begin_survival_loadout(
     bank: Option<api::named_banks::NamedBank>,
     bank_required: bool,
     keep_ids: Arc<[i32]>,
+    carried_ids: Arc<[i32]>,
+    equipment_slots: u16,
     protect_worn: bool,
     cx: &mut StepContext<'_, '_>,
 ) -> Result<Box<dyn StepRun>, ActionError> {
@@ -1465,6 +1485,8 @@ pub(crate) fn begin_survival_loadout(
         bank_required,
         items: Arc::from(items),
         keep_ids,
+        carried_ids,
+        equipment_slots,
         protect_worn,
     };
     let snapshot = cx.tick.cx.snapshot();
@@ -1555,6 +1577,9 @@ struct LoadoutRun {
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
     keep_ids: Arc<[i32]>,
+    carried_ids: Arc<[i32]>,
+    equipment_slots: u16,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
     strip: bool,
     stripped: bool,
     exclusive: bool,
@@ -1610,35 +1635,25 @@ impl LoadoutRun {
                 self.worn_index += 1;
                 continue;
             }
-            if survival.protect_worn {
-                let selected =
-                    api::game_data::for_revision(cx.tick.cx.revision()).map_err(|_| {
-                        ActionError::Unavailable(Arc::from("selected equipment facts unavailable"))
-                    })?;
-                let conflict = selected.item_by_id(item.id).is_none_or(|wanted| {
-                    let slots = [
-                        wanted.wear_position,
-                        wanted.wear_position_2,
-                        wanted.wear_position_3,
-                    ];
-                    equipment.value.iter().any(|row| {
-                        row.count > 0
-                            && self.keep_ids.contains(&row.def.id)
-                            && selected.item_by_id(row.def.id).is_none_or(|worn| {
-                                [
-                                    worn.wear_position,
-                                    worn.wear_position_2,
-                                    worn.wear_position_3,
-                                ]
-                                .into_iter()
-                                .any(|slot| slot >= 0 && slots.contains(&slot))
-                            })
-                    })
-                });
-                if conflict {
-                    self.worn_index += 1;
-                    continue;
-                }
+            let selected = self
+                .selected
+                .as_deref()
+                .expect("survival loadout retains selected equipment facts");
+            let managed_ids: &[i32] = if survival.protect_worn {
+                &self.keep_ids
+            } else {
+                &[]
+            };
+            if !crate::quester::inventory::gear_allowed(
+                selected,
+                item.id,
+                snapshot.stock(),
+                managed_ids,
+                &self.carried_ids,
+                self.equipment_slots,
+            ) {
+                self.worn_index += 1;
+                continue;
             }
             if inventory
                 .value

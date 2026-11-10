@@ -375,7 +375,7 @@ pub enum BankAction {
     /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
     DepositCapacity {
         keep: Arc<[i32]>,
-        /// A runtime-selected survival item, without copying the shared set.
+        /// One runtime-selected survival item preserved without copying `keep`.
         extra_keep: Option<i32>,
         slots: u8,
     },
@@ -409,7 +409,9 @@ enum ProtectedCounts {
     Capacity([BankCount; CAPACITY_PACK_SLOTS]),
 }
 
-const _: () = assert!(std::mem::size_of::<ProtectedCounts>() <= 232);
+// Measured at 232 B; the 64 B headroom retains the bounded inline 28-row
+// protected-count snapshot without per-check allocation.
+const _: () = assert!(std::mem::size_of::<ProtectedCounts>() <= 296);
 
 /// What a bank action settled to. The bank's rows are not carried here: the
 /// host observes the open table into the account's bank memory

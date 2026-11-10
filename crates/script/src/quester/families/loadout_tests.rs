@@ -1206,8 +1206,17 @@ fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
         1,
         &banks,
         |cx| {
-            begin_survival_loadout(&items, Some(bank), false, Arc::from([2000]), false, cx)
-                .expect("survival loadout begins")
+            begin_survival_loadout(
+                &items,
+                Some(bank),
+                false,
+                Arc::from([2000]),
+                Arc::from([]),
+                0,
+                false,
+                cx,
+            )
+            .expect("survival loadout begins")
         },
     );
     let mut events = Vec::new();
@@ -1414,6 +1423,8 @@ fn survival_loadout_skips_a_session_known_absent_item() {
                 Some(bank),
                 false,
                 Arc::from([]),
+                Arc::from([]),
+                0,
                 false,
                 cx,
             )
@@ -1471,6 +1482,8 @@ fn survival_loadout_rechecks_managed_worn_items_before_equipping() {
                     Some(bank),
                     false,
                     Arc::from([protected.id]),
+                    Arc::from([]),
+                    0,
                     protect_worn,
                     cx,
                 )
@@ -1508,8 +1521,8 @@ fn loadout_acquisition_owner_stays_within_its_bounded_inline_bank_budget() {
     let wait = std::mem::size_of::<LoadoutObservationWait>();
     let survival = std::mem::size_of::<SurvivalLoadout>();
     eprintln!("LoadoutRun={run} LoadoutObservationWait={wait} SurvivalLoadout={survival}");
-    // The inline 28-row capacity snapshot removes a per-check allocation:
-    // +208 B, with LoadoutRun at 1136 B on macOS and Linux.
-    assert!(run <= 1152, "LoadoutRun is {run} bytes");
+    // Measured at 1136 B before adding 24 B of shared carried/selected facts;
+    // the 1224 B ceiling leaves the required 64 B headroom after that growth.
+    assert!(run <= 1224, "LoadoutRun is {run} bytes");
     assert!(survival <= 128, "SurvivalLoadout is {survival} bytes");
 }

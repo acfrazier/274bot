@@ -1878,8 +1878,10 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<crate::quester::runner::Quester>(),
         size_of::<crate::survival::SurvivalStep>(),
     );
-    assert!(size_of::<crate::native_bank::BankMachine>() <= 456);
-    assert!(size_of::<AcquireRun>() <= 920);
+    // BankMachine=456 B and AcquireRun=920 B are measured baselines; the
+    // 64 B headroom allows shared capacity keep-set plumbing without per-tick state.
+    assert!(size_of::<crate::native_bank::BankMachine>() <= 520);
+    assert!(size_of::<AcquireRun>() <= 984);
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
     // Capacity deposits replace the 24-byte Vec with a bounded, allocation-free
