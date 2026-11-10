@@ -2467,7 +2467,7 @@ mod tests {
                     && fact.message_delay.is_none_or(|delay| delay <= 0))
                 .then_some((
                     item.id,
-                    item.name.as_deref()?,
+                    item.alias.as_deref()?,
                     fact.heal,
                     Stock::slots_for(28, item.stackable),
                 ))
@@ -2475,7 +2475,7 @@ mod tests {
             .collect::<Vec<_>>();
         usable.sort_by_key(|(id, _, heal, slots)| (std::cmp::Reverse(*heal), *slots, *id));
         assert!(usable.len() >= 3, "the fixture has three usable food kinds");
-        let (protected_id, protected_name, _, _) = usable[0];
+        let (protected_id, protected_alias, _, _) = usable[0];
         let (expected_id, _, _, _) = usable[1];
         let unavailable = usable
             .iter()
@@ -2497,7 +2497,7 @@ mod tests {
                 crate::quester::path::PredicateDocument::Fact {
                     kind: "has_item".into(),
                     version: 1,
-                    args: serde_json::json!({"obj": protected_name}),
+                    args: serde_json::json!({"obj": protected_alias}),
                 };
         });
         assert!(path.provisioning.carried_items.contains(&protected_id));
