@@ -208,7 +208,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             globals.effective_danger_level()
         );
     }
-    // Explicit overrides still proceed.
+    // Requests permit danger routing, but keep the model's verdict enforced.
     let globals = WalkGlobals::default();
     let script = WalkPermissions {
         allow_danger_zones: true,
@@ -222,21 +222,42 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         allow_danger_zones: WalkBit::Forbid,
         ..WalkOptions::default()
     };
-    assert_eq!(
-        globals.risk_policy(script, WalkOptions::default()),
-        RiskPolicy::Proceed
-    );
-    assert_eq!(
-        globals.risk_policy(WalkPermissions::default(), allow),
-        RiskPolicy::Proceed
-    );
-    // A walk-level Forbid never narrows a script grant: the danger setting has
-    // no exception.
-    assert_eq!(globals.risk_policy(script, forbid), RiskPolicy::Proceed);
-    assert_eq!(
-        globals.risk_policy(WalkPermissions::default(), forbid),
-        RiskPolicy::Avoid
-    );
+    for (permissions, options) in [
+        (script, WalkOptions::default()),
+        (WalkPermissions::default(), allow),
+        (script, forbid),
+    ] {
+        let decision = globals.danger_decision(permissions, options, false);
+        assert!(decision.permitted);
+        assert_eq!(decision.policy, RiskPolicy::Avoid);
+        assert!(decision.enforce);
+    }
+    let unrequested = globals.danger_decision(WalkPermissions::default(), forbid, false);
+    assert!(!unrequested.permitted);
+    assert_eq!(unrequested.policy, RiskPolicy::Avoid);
+    assert!(!unrequested.enforce);
+
+    // Only the global override bypasses enforcement, with no Forbid exception.
+    // Compat v1 reaches this decision through the same global override.
+    for overridden in [
+        WalkGlobals {
+            allow_danger_zones: true,
+            ..globals
+        },
+        globals.for_script_family(true),
+    ] {
+        for (permissions, options) in [
+            (script, WalkOptions::default()),
+            (WalkPermissions::default(), allow),
+            (script, forbid),
+            (WalkPermissions::default(), forbid),
+        ] {
+            let decision = overridden.danger_decision(permissions, options, false);
+            assert!(decision.permitted);
+            assert_eq!(decision.policy, RiskPolicy::Proceed);
+            assert!(!decision.enforce);
+        }
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -588,9 +609,24 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
                 policy == RiskPolicy::Proceed,
                 "{policy:?}"
             );
-            let compat = Admission {
+            let marker_only = Admission {
                 compat_v1: true,
                 ..enforcing
+            };
+            assert_eq!(
+                admission::permits(&route, &world, &marker_only, &assessment),
+                policy == RiskPolicy::Proceed,
+                "the compatibility marker does not bypass the decision"
+            );
+            let decision = WalkGlobals::default()
+                .for_script_family(true)
+                .danger_decision(WalkPermissions::default(), WalkOptions::default(), false);
+            assert_eq!(decision.policy, RiskPolicy::Proceed);
+            assert!(!decision.enforce);
+            let compat = Admission {
+                policy: decision.policy,
+                enforce: decision.enforce,
+                ..marker_only
             };
             assert!(admission::permits(&route, &world, &compat, &assessment));
         }
