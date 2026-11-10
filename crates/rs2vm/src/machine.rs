@@ -423,6 +423,12 @@ pub enum Effect {
         obj: LocObj,
         /// New or removed type.
         ty: LocTypeId,
+        /// Resolved mutation tile, including path-local created objects.
+        tile: Coord,
+        /// Resolved engine loc shape.
+        shape: u8,
+        /// Resolved engine loc angle.
+        angle: u8,
         /// Engine duration.
         duration: i32,
     },

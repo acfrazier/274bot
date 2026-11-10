@@ -549,6 +549,9 @@ impl Exec<'_, '_> {
                         kind: LocKind::Add,
                         obj,
                         ty,
+                        tile,
+                        shape: shape as u8,
+                        angle: angle as u8,
                         duration,
                     },
                 )?;
@@ -558,7 +561,7 @@ impl Exec<'_, '_> {
                 let ty = LocTypeId(self.not_null(st, args[0])?);
                 let duration = self.required(st, args[1])?;
                 let obj = self.active_loc(st, slot)?;
-                self.overlay(st, |world, w, budget| {
+                let (info, tile) = self.overlay(st, |world, w, budget| {
                     world.loc_change_bounded(w, obj, ty, duration, budget)
                 })?;
                 self.effect(
@@ -567,6 +570,9 @@ impl Exec<'_, '_> {
                         kind: LocKind::Change,
                         obj,
                         ty,
+                        tile,
+                        shape: info.shape,
+                        angle: info.angle,
                         duration,
                     },
                 )?;
@@ -575,11 +581,7 @@ impl Exec<'_, '_> {
                 let v = pop(st)?;
                 let duration = self.positive(st, v, true)?;
                 let obj = self.active_loc(st, slot)?;
-                let (info, _) = st
-                    .world
-                    .read(self.machine.world, obj)
-                    .map_err(|e| world_end(st.at, e))?;
-                self.overlay(st, |world, w, budget| {
+                let (info, tile) = self.overlay(st, |world, w, budget| {
                     world.loc_del_bounded(w, obj, duration, budget)
                 })?;
                 self.effect(
@@ -588,6 +590,9 @@ impl Exec<'_, '_> {
                         kind: LocKind::Del,
                         obj,
                         ty: info.ty,
+                        tile,
+                        shape: info.shape,
+                        angle: info.angle,
                         duration,
                     },
                 )?;

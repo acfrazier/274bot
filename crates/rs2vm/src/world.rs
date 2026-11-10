@@ -483,6 +483,7 @@ impl WorldOverlay {
         duration: i32,
     ) -> Result<(), WorldError> {
         self.loc_change_bounded(w, obj, ty, duration, &mut ByteBudget::unlimited())
+            .map(|_| ())
     }
 
     pub(crate) fn loc_change_bounded(
@@ -492,7 +493,7 @@ impl WorldOverlay {
         ty: LocTypeId,
         duration: i32,
         budget: &mut ByteBudget,
-    ) -> Result<(), WorldError> {
+    ) -> Result<(LocInfo, Coord), WorldError> {
         validate_duration_policy(duration, self.loc_duration)?;
         let life = if duration == 0 {
             self.loc_life(self.fixed_tile(w, obj)?, duration)?
@@ -501,18 +502,19 @@ impl WorldOverlay {
         };
         validate_loc_type(ty)?;
         let previous = self.record(w, obj)?;
-        if matches!(obj, LocObj::Created(_)) && !previous.active {
-            return Ok(());
-        }
         let mut info = previous.cur;
         info.ty = ty;
-        self.change_existing(w, obj, info, life, budget)
+        if !matches!(obj, LocObj::Created(_)) || previous.active {
+            self.change_existing(w, obj, info, life, budget)?;
+        }
+        Ok((info, previous.tile))
     }
 
     /// Delete an active object, or do nothing when the object is already inactive.
     /// Mirrors `src/engine/World.ts:1417-1439` and `src/engine/zone/Zone.ts:266-281`.
     pub fn loc_del(&mut self, w: &dyn World, obj: LocObj, duration: i32) -> Result<(), WorldError> {
         self.loc_del_bounded(w, obj, duration, &mut ByteBudget::unlimited())
+            .map(|_| ())
     }
 
     pub(crate) fn loc_del_bounded(
@@ -521,11 +523,11 @@ impl WorldOverlay {
         obj: LocObj,
         duration: i32,
         budget: &mut ByteBudget,
-    ) -> Result<(), WorldError> {
+    ) -> Result<(LocInfo, Coord), WorldError> {
         validate_positive_duration(duration)?;
         let record = self.record(w, obj)?;
         if !record.active {
-            return Ok(());
+            return Ok((record.cur, record.tile));
         }
 
         let zone = ZoneKey::of(record.tile);
@@ -554,7 +556,7 @@ impl WorldOverlay {
             None
         };
         self.zones[zone_index].stamp = next_stamp;
-        Ok(())
+        Ok((record.cur, record.tile))
     }
 
     /// Find the first active object of `ty` on `tile` in current zone-list order.

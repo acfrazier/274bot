@@ -7,8 +7,8 @@ use rs2vm::{
     },
     profile::EngineProfile,
     program::{Instruction, Operand, Packs, Program, Script, Signature, Varbit, Varp},
-    world::{Alloc, PlacedId, PlacedLoc, Tri, World, ZoneKey},
-    Coord, OpCount, ScriptId, Site, VarpId,
+    world::{Alloc, LocObj, PlacedId, PlacedLoc, Tri, World, ZoneKey},
+    Coord, LocTypeId, OpCount, ScriptId, Site, VarpId,
 };
 
 const OPCODES: &[(&str, u16)] = &[
@@ -58,6 +58,7 @@ const OPCODES: &[(&str, u16)] = &[
     ("mes", 44),
     ("cam_reset", 45),
     ("outside_slice_command", 46),
+    ("loc_add", 47),
 ];
 
 #[derive(Default)]
@@ -681,6 +682,74 @@ fn nav_join_erases_cosmetic_forks_but_var_and_all_view_keep_them() {
             .count(),
         1
     );
+}
+
+#[test]
+fn nav_terminal_equality_preserves_created_location_geometry() {
+    fn add_location(code: &mut Vec<Instruction>, geometry: (Coord, u8, u8)) {
+        for value in [
+            geometry.0 .0,
+            10,
+            i32::from(geometry.2),
+            i32::from(geometry.1),
+            3,
+        ] {
+            code.push(int("PUSH_CONSTANT_INT", value));
+        }
+        code.push(command("loc_add"));
+    }
+
+    let base = (Coord::new(3200, 0, 3200), 0, 0);
+    for other in [
+        base,
+        (Coord::new(3201, 0, 3200), 0, 0),
+        (base.0, 1, 0),
+        (base.0, 0, 1),
+    ] {
+        let mut code = vec![
+            int("PUSH_CONSTANT_INT", 0),
+            command("stat"),
+            int("PUSH_CONSTANT_INT", 0),
+            int("BRANCH_EQUALS", 0),
+        ];
+        add_location(&mut code, base);
+        let skip = code.len();
+        code.push(int("BRANCH", 0));
+        let alternative = code.len();
+        add_location(&mut code, other);
+        let finish = code.len();
+        code.push(command("RETURN"));
+        branch_to(&mut code, 3, alternative);
+        branch_to(&mut code, skip, finish);
+        let program = program([script(0, code, 0, 0)]);
+
+        let result = run(&program, Entry::new(ScriptId(0)), View::NAV);
+        let same = base == other;
+        assert_eq!(result.paths.len(), if same { 1 } else { 2 }, "{other:?}");
+        assert!(result
+            .paths
+            .iter()
+            .all(|path| { path.end == End::Finished && path.conds.is_empty() == same }));
+        let geometries: Vec<_> = result
+            .paths
+            .iter()
+            .flat_map(|path| &path.effects)
+            .filter_map(|record| match record.effect {
+                Effect::Loc {
+                    kind: rs2vm::machine::LocKind::Add,
+                    obj: LocObj::Created(0),
+                    ty: LocTypeId(10),
+                    tile,
+                    shape,
+                    angle,
+                    ..
+                } => Some((tile, shape, angle)),
+                _ => None,
+            })
+            .collect();
+        assert!(geometries.contains(&base));
+        assert!(geometries.contains(&other));
+    }
 }
 
 #[test]

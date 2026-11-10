@@ -51,6 +51,7 @@ const OPCODES: &[(&str, u16)] = &[
     ("npc_add", 36),
     ("npc_findall", 37),
     ("npc_findnext", 38),
+    ("loc_change", 39),
 ];
 
 fn opcode(name: &str) -> u16 {
@@ -752,6 +753,81 @@ fn row_18_delete_add_delay_restores_the_placed_location() {
             }
         )
     }));
+}
+
+#[test]
+fn location_effects_resolve_placed_and_created_geometry() {
+    let mut source = placed(500, tile(10, 20), 10, 10);
+    source.info.angle = 3;
+    let world = TestWorld::with_locs([source]);
+
+    for created in [false, true] {
+        let (obj, geometry, shape, angle) = if created {
+            (LocObj::Created(0), tile(11, 20), 4, 2)
+        } else {
+            (LocObj::Placed(PlacedId(500)), source.tile, 10, 3)
+        };
+        let mut code = Vec::new();
+        let mut expected = Vec::new();
+        if created {
+            for value in [geometry.0, 30, i32::from(angle), i32::from(shape), 5] {
+                code.push(int("PUSH_CONSTANT_INT", value));
+            }
+            code.push(int("loc_add", 0));
+            expected.push(Effect::Loc {
+                kind: rs2vm::machine::LocKind::Add,
+                obj,
+                ty: LocTypeId(30),
+                tile: geometry,
+                shape,
+                angle,
+                duration: 5,
+            });
+        }
+        code.extend([
+            int("PUSH_CONSTANT_INT", 20),
+            int("PUSH_CONSTANT_INT", 5),
+            int("loc_change", 0),
+            int("PUSH_CONSTANT_INT", 3),
+            int("loc_del", 0),
+            int("RETURN", 0),
+        ]);
+        expected.extend([
+            Effect::Loc {
+                kind: rs2vm::machine::LocKind::Change,
+                obj,
+                ty: LocTypeId(20),
+                tile: geometry,
+                shape,
+                angle,
+                duration: 5,
+            },
+            Effect::Loc {
+                kind: rs2vm::machine::LocKind::Del,
+                obj,
+                ty: LocTypeId(20),
+                tile: geometry,
+                shape,
+                angle,
+                duration: 3,
+            },
+        ]);
+        let program = program(vec![script(1, code)]);
+        let mut input = entry(1);
+        input.active_loc = Some(LocObj::Placed(PlacedId(500)));
+        let result = run(&program, &world, input);
+
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].end, End::Finished);
+        let actual: Vec<_> = result.paths[0]
+            .effects
+            .iter()
+            .filter_map(|record| {
+                matches!(record.effect, Effect::Loc { .. }).then_some(record.effect.clone())
+            })
+            .collect();
+        assert_eq!(actual, expected, "created={created}");
+    }
 }
 
 #[test]

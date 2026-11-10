@@ -152,6 +152,10 @@ Each retained path has transfer evidence. A join adds the counts from the paths
 it represents. Aggregate counts record dispatcher events, so they need not match
 the number of retained results.
 
+Loc effects record the resolved tile, shape, and angle. Created object ids are
+path-local, so equal ids alone cannot prove equal navigation effects. The shadow
+uses this geometry to bind an opened loc to the interaction target.
+
 An NPC loop summary requires a stable population and a fresh iterator. An NPC add
 or delete instruction on a closed pass stops the path as unsupported at its
 iterator step. It does not use the engine's NPC capacity as a work bound.
