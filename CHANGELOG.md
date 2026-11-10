@@ -164,9 +164,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   after three windows in a row with a refusal and no hit landing on the target
   (about 24 ticks), the fight ends with `single-way-blocked` instead of
   repeating the click without end.
-- Selected combat facts now include all NPC combat levels, signed bonuses,
-  player defence inputs, weapon style slots, and declared NPC damage defaults.
-  Missing required defaults stop data generation.
 
 ### Survival
 
@@ -195,9 +192,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   when the game applies a click late.
 - After a bite or a closed page that leaves nothing more to do, the Quester
   goes back to its step in the same game tick.
-- Route planning now reuses each bot's unchanged eligibility facts between
-  observations. It refreshes those facts when their source data changes.
-  Queued routes keep the facts captured when they start.
 
 ### Gatherer
 
@@ -793,10 +787,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Developer tools
 
-- Contributors can run the same checks as GitHub CI with
-  `cargo run --locked -p xtask -- ci --all`. The command writes a log and exit
-  code for each step.
-- `seed-calc` computes no-food fight seeds from revision-289 combat formulas and
+- Contributors can run the same checks as GitHub CI with one command (see
+  `CONTRIBUTING.md`). The command writes a log and exit code for each step.
+- A seed calculator for quest fixtures computes no-food fight seeds from revision-289 combat formulas and
   carries remaining Hitpoints across consecutive kills without healing. It also
   finds crossing seeds through the product route planner and admission code,
   with the queried Defence and worn-armour bonuses bound to the current risk
@@ -807,9 +800,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   folder guide headlessly and record game-tick stage changes, completion, debug
   logs and CPU screenshots. A partial guide can declare an exact boundary and
   record a `gap-reached` result. Campaign runs avoid danger zones by default.
-- Rust integrations now use the native script crate for interaction, paint and
-  snapshot types. JavaScript runtime types stay in the separate JS crate.
-  This removes the temporary import aliases without changing script behavior.
 
 ### Fixed during development
 
