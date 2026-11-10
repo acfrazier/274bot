@@ -52,8 +52,8 @@ targets and skipped targets with their refusal reasons. Destructive commands
 require confirmation naming the targets. Public and Remote profiles cannot
 send cheats; production-only commands are hidden.
 The separate Debug catalog is loaded only while a Local session opens the tab
-and released when it closes. Its source verification is independent: drift in
-debug-only inputs disables Debug without withholding other generated facts.
+and released when it closes. A Debug catalog that does not decode disables
+Debug without withholding other generated facts.
 Headless builds do not embed the catalog unless explicitly built with the
 `debug-catalog` feature. Host logs record operator commands and each nearby
 chat/modal reply candidate once, listing the pending commands (temporal

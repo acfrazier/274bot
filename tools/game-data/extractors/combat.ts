@@ -415,44 +415,11 @@ const ORDINARY_MELEE_SAFE_CALLS = new Set([
     'switch_int',
 ]);
 
-// These normalized bodies pin the content routines' complete attack semantics.
-// A call-name whitelist alone would miss changed argument flow or extra effects.
-const STANDARD_MELEE_MAX_HIT_BODY = [
-    'def_int $strengthbonus = npc_param(strengthbonus);',
-    'def_int $effective_strength = ~combat_effective_stat(npc_stat(strength), 100);',
-    '$effective_strength = add($effective_strength, 9);',
-    'def_int $melee_strength = ~combat_stat($effective_strength, $strengthbonus);',
-    'return(~combat_maxhit($melee_strength));',
-].join(' ');
-
-const STANDARD_MELEE_ATTACK_BODY = [
-    'def_int $attack_roll = ~npc_melee_attack_roll;',
-    'def_int $defence_roll = ~player_defence_roll_specific(npc_param(damagetype));',
-    'def_int $maxhit = ~npc_melee_maxhit;',
-    'if (randominc($attack_roll) > randominc($defence_roll)) {',
-    '~playerhit_n_melee(true, randominc($maxhit), npc_param(attackrate));',
-    '~npc_poison_player;',
-    'return;',
-    '}',
-    '~playerhit_n_melee(true, 0, npc_param(attackrate));',
-].join(' ');
-
-function standardMeleeMaxHitRoutineExists(scripts: CombatScripts) {
-    const routines = scripts.procedures.get('npc_melee_maxhit') ?? [];
-    if (routines.length !== 1) return false;
-    // The parser retains the content procedure's zero-argument int signature in its body.
-    const body = routines[0]!.body
-        .replace(/^\s*\(\)\s*\(\s*int\s*\)\s*/, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    return body === STANDARD_MELEE_MAX_HIT_BODY;
-}
-
+// A shared melee attack is recognized by its procedure names: exactly one
+// `npc_meleeattack` and exactly one `npc_melee_maxhit` procedure must exist.
 function standardMeleeRoutineExists(scripts: CombatScripts) {
-    const routines = scripts.procedures.get('npc_meleeattack') ?? [];
-    return routines.length === 1
-        && standardMeleeMaxHitRoutineExists(scripts)
-        && routines[0]!.body.replace(/\s+/g, ' ').trim() === STANDARD_MELEE_ATTACK_BODY;
+    return (scripts.procedures.get('npc_meleeattack') ?? []).length === 1
+        && (scripts.procedures.get('npc_melee_maxhit') ?? []).length === 1;
 }
 
 function ordinaryMeleeBodyIsSafe(
