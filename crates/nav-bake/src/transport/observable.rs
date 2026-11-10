@@ -19,8 +19,11 @@ impl JournalLinks {
                 .unwrap_or_default();
         // A green row means progress >= the call's completion argument: the
         // colour helper is modelled by name. Without exactly one declaration
-        // of it there is no proof.
-        let helpers = proc_bodies(&journal, "send_quest_progress_colour").len();
+        // of it under `scripts` there is no proof.
+        let mut helpers = 0;
+        visit_rs2(&content_root.join("scripts"), &mut |text| {
+            helpers += proc_bodies(text, "send_quest_progress_colour").len();
+        });
         if !declared_once("[proc,send_quest_progress_colour]", helpers) {
             return Self {
                 by_varp: HashMap::new(),

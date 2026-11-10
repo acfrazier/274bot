@@ -5349,21 +5349,23 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
     }
 }
 
-/// Hand-modelled behaviour keyed by a script name needs exactly one parsed
-/// declaration of that name. A missing name, a duplicate (even with an equal
-/// body) and a header that appears only in a comment give no edge.
+/// The glider edges need exactly one parsed declaration of the pilot handler
+/// and of the colour helper, counted over every script under `scripts`. A
+/// missing name, a duplicate in the same file or another file, and a header
+/// that appears only in a line or block comment give no edge.
 #[test]
-fn name_keyed_behaviour_needs_exactly_one_declaration() {
+fn glider_edges_need_one_declaration_across_all_scripts() {
+    const PILOT_PATH: &str = "scripts/areas/area_gnome/scripts/gnome_glider.rs2";
+    const JOURNAL_PATH: &str = "scripts/general/scripts/quests.rs2";
+    const OTHER_PATH: &str = "scripts/areas/area_other/scripts/other.rs2";
     const PILOT: &str = "[opnpc1,gnomepilot]\nreturn;\n";
     const COLOUR_CALL: &str =
         "~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n";
-    let gliders = |pilot: &str, journal_helper: &str| {
+    let gliders = |files: &[(&str, String)]| {
         let fx = Fixture::new();
-        fx.write("scripts/areas/area_gnome/scripts/gnome_glider.rs2", pilot);
-        fx.write(
-            "scripts/general/scripts/quests.rs2",
-            &format!("{journal_helper}{COLOUR_CALL}"),
-        );
+        for (path, text) in files {
+            fx.write(path, text);
+        }
         fx.write(
             "scripts/general/configs/quest.constant",
             "^grandtree_complete=160\n",
@@ -5380,32 +5382,97 @@ fn name_keyed_behaviour_needs_exactly_one_declaration() {
             .filter(|edge| edge.kind == TransportKind::Glider)
             .count()
     };
-    let commented_pilot = "// [opnpc1,gnomepilot]\nreturn;\n";
-    let commented_helper = JOURNAL_GREEN_SOURCE
-        .lines()
-        .map(|line| format!("// {line}\n"))
-        .collect::<String>();
     let twice = |text: &str| format!("{text}\n{text}");
-    assert_eq!(gliders(PILOT, JOURNAL_GREEN_SOURCE), 7, "control");
-    for (case, pilot, helper) in [
-        ("missing pilot", String::new(), JOURNAL_GREEN_SOURCE.into()),
-        ("duplicate pilot", twice(PILOT), JOURNAL_GREEN_SOURCE.into()),
+    let journal = |helper: &str| (JOURNAL_PATH, format!("{helper}{COLOUR_CALL}"));
+    let line_commented = |text: &str| {
+        text.lines()
+            .map(|line| format!("// {line}\n"))
+            .collect::<String>()
+    };
+    let block_commented = |text: &str| format!("/*\n{text}*/\n");
+    let pilot = |text: &str| (PILOT_PATH, text.to_owned());
+    let helper_source = JOURNAL_GREEN_SOURCE;
+    let mut failures = Vec::new();
+    for (case, files, expected) in [
         (
-            "commented pilot",
-            commented_pilot.to_owned(),
-            JOURNAL_GREEN_SOURCE.into(),
+            "one pilot and one helper",
+            vec![pilot(PILOT), journal(helper_source)],
+            7,
         ),
-        ("missing helper", PILOT.to_owned(), String::new()),
+        ("missing pilot", vec![journal(helper_source)], 0),
         (
-            "duplicate helper",
-            PILOT.to_owned(),
-            twice(JOURNAL_GREEN_SOURCE),
+            "same-file duplicate pilot",
+            vec![pilot(&twice(PILOT)), journal(helper_source)],
+            0,
         ),
-        ("commented helper", PILOT.to_owned(), commented_helper),
+        (
+            "same-file duplicate helper",
+            vec![pilot(PILOT), journal(&twice(helper_source))],
+            0,
+        ),
+        (
+            "pilot header in a line comment",
+            vec![pilot(&line_commented(PILOT)), journal(helper_source)],
+            0,
+        ),
+        (
+            "helper header in a line comment",
+            vec![pilot(PILOT), journal(&line_commented(helper_source))],
+            0,
+        ),
+        (
+            "pilot header only in a block comment",
+            vec![pilot(&block_commented(PILOT)), journal(helper_source)],
+            0,
+        ),
+        (
+            "helper header only in a block comment",
+            vec![pilot(PILOT), journal(&block_commented(helper_source))],
+            0,
+        ),
+        (
+            "pilot declared again in another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, PILOT.to_owned()),
+            ],
+            0,
+        ),
+        (
+            "helper declared again in another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, helper_source.to_owned()),
+            ],
+            0,
+        ),
+        (
+            "second pilot only in a block comment of another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, block_commented(PILOT)),
+            ],
+            7,
+        ),
     ] {
-        assert_eq!(gliders(&pilot, &helper), 0, "{case}");
+        let edges = gliders(&files);
+        if edges != expected {
+            failures.push(format!("{case}: {edges} glider edges, expected {expected}"));
+        }
     }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
 
+/// Hand-modelled door, gate and membergate behaviour keyed by a script name
+/// needs exactly one parsed declaration of that name, counted over every
+/// script under `scripts`. A missing name, a duplicate (even with an equal
+/// body) in the same or another file, and a header that appears only in a
+/// line or block comment give no edge.
+#[test]
+fn name_keyed_behaviour_needs_exactly_one_declaration() {
     let door = |text: &str| {
         let fx = Fixture::new();
         fx.write("scripts/doors/scripts/doors.rs2", text);
@@ -5490,6 +5557,102 @@ fn name_keyed_behaviour_needs_exactly_one_declaration() {
         !membergate(&handlers.replace("[oploc1,membergatel]", "// [oploc1,membergatel]"))
             .contains_key(&true),
         "a commented membergate header is not a declaration"
+    );
+
+    // Every script under `scripts` counts, and a block comment declares nothing.
+    let block = |text: &str| format!("/*\n{text}*/\n");
+    let door_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doors.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        generic_door_handlers(fx.path()).contains("door_closed")
+    };
+    let gate_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/general_use/scripts/gates.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        generic_gate_handlers(fx.path()).contains(&false)
+    };
+    assert!(
+        door_in(GENERIC_DOOR_RS2, &block(door_handler)),
+        "a block-commented door handler elsewhere is not a duplicate"
+    );
+    assert!(
+        gate_in(gate_source, &block(gate_proc)),
+        "a block-commented gate proc elsewhere is not a duplicate"
+    );
+    for (case, first, second) in [
+        (
+            "door handler declared in another file too",
+            GENERIC_DOOR_RS2.to_owned(),
+            door_handler.to_owned(),
+        ),
+        (
+            "door proc declared in another file too",
+            GENERIC_DOOR_RS2.to_owned(),
+            door_proc.to_owned(),
+        ),
+        (
+            "door handler only in a block comment",
+            door_proc.to_owned(),
+            block(door_handler),
+        ),
+        (
+            "door proc only in a block comment",
+            format!("{door_handler}{}", block(door_proc)),
+            String::new(),
+        ),
+    ] {
+        assert!(!door_in(&first, &second), "{case}");
+    }
+    for (case, first, second) in [
+        (
+            "gate handler declared in another file too",
+            gate_source.to_owned(),
+            gate_handler.to_owned(),
+        ),
+        (
+            "gate proc declared in another file too",
+            gate_source.to_owned(),
+            gate_proc.to_owned(),
+        ),
+        (
+            "gate handler only in a block comment",
+            gate_proc.to_owned(),
+            block(gate_handler),
+        ),
+        (
+            "gate proc only in a block comment",
+            format!("{gate_handler}{}", block(gate_proc)),
+            String::new(),
+        ),
+    ] {
+        assert!(!gate_in(&first, &second), "{case}");
+    }
+    let membergate_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doubledoors.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        membergate_handlers(fx.path())
+    };
+    assert_eq!(
+        membergate_in(handlers, "").get(&true),
+        Some(&MembergateHandler::Ok),
+        "membergate control over two files"
+    );
+    assert_eq!(
+        membergate_in(handlers, "[oploc1,membergatel]\nreturn;\n").get(&true),
+        Some(&MembergateHandler::Conflict),
+        "a second membergate declaration in another file is a conflict"
+    );
+    assert_eq!(
+        membergate_in(handlers, &block("[oploc1,membergatel]\nreturn;\n")).get(&true),
+        Some(&MembergateHandler::Ok),
+        "a block-commented membergate header elsewhere is not a duplicate"
+    );
+    assert!(
+        !membergate_in(&block(handlers), "").contains_key(&true),
+        "membergate headers only in a block comment are not declarations"
     );
 }
 

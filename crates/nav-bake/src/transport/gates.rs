@@ -95,8 +95,9 @@ pub(super) fn gate_category_handlers(text: &str) -> Vec<(bool, String)> {
 
 /// Loc names targeted by `[oploc1,<name>]` in a script text, including
 /// same-line bodies (`[oploc1,foo] ~open_gate;`) that [`script_blocks`]
-/// cannot see.
+/// cannot see. A header inside a `/* */` comment names nothing.
 pub(super) fn oploc1_names(text: &str, into: &mut HashSet<String>) {
+    let text = super::rs2_syntax::strip_block_comments(text);
     for raw in text.lines() {
         let line = match raw.find("//") {
             Some(i) => &raw[..i],

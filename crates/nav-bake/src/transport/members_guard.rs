@@ -422,7 +422,7 @@ fn is_word(s: &str) -> bool {
 }
 
 fn handler_facts(body: &str) -> Handler {
-    let code = strip_block_comments(body);
+    let code = super::rs2_syntax::strip_block_comments(body);
     let statements = top_level_statements(&code);
     let first = statements.first().map(String::as_str);
     let refuses_f2p = first
@@ -515,19 +515,6 @@ fn refusal_head(head: &str) -> bool {
 /// The arm ends the handler: its last statement is `return;`.
 fn refusal_arm(arm: &str) -> bool {
     normalized_body(arm).ends_with("return;}")
-}
-
-fn strip_block_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("/*") {
-        out.push_str(&rest[..start]);
-        rest = rest[start + 2..]
-            .split_once("*/")
-            .map_or("", |(_, after)| after);
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Code with `"…"` string literals blanked, so colour tags such as

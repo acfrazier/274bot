@@ -186,23 +186,20 @@ pub(super) fn membergate_handlers(content_root: &Path) -> HashMap<bool, Memberga
         }
     });
     let mut out = HashMap::new();
-    for left in [true, false] {
-        let Some(&count) = declared.get(&left) else {
-            continue;
-        };
-        out.insert(
-            left,
-            if count > 1 {
-                MembergateHandler::Conflict
-            } else {
-                MembergateHandler::Ok
-            },
-        );
+    for (left, name) in [(true, MEMBERGATE_LEFT), (false, MEMBERGATE_RIGHT)] {
+        let count = declared.get(&left).copied().unwrap_or(0);
+        if declared_once(&format!("[oploc1,{name}]"), count) {
+            out.insert(left, MembergateHandler::Ok);
+        } else if count > 1 {
+            out.insert(left, MembergateHandler::Conflict);
+        }
     }
     out
 }
 
+/// A header inside a `/* */` comment is not a declaration.
 pub(super) fn membergate_oploc_handlers(text: &str) -> Vec<(bool, String)> {
+    let text = super::rs2_syntax::strip_block_comments(text);
     let mut out = Vec::new();
     let mut cur: Option<(bool, String)> = None;
     for raw in text.lines() {

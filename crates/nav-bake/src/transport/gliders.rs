@@ -61,15 +61,13 @@ pub(super) const GNOME_PILOT: i32 = 170;
 /// is linked to its observable quest journal row. `%grandtree` is not
 /// transmitted, so no varp-only alternative is emitted.
 pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
-    let Ok(script) =
-        fs::read_to_string(content_root.join("scripts/areas/area_gnome/scripts/gnome_glider.rs2"))
-    else {
-        return;
-    };
-    let pilots = script_blocks(&script)
-        .into_iter()
-        .filter(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
-        .count();
+    let mut pilots = 0;
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        pilots += script_blocks(text)
+            .into_iter()
+            .filter(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
+            .count();
+    });
     if !declared_once("[opnpc1,gnomepilot]", pilots) {
         return;
     }
