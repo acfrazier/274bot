@@ -154,7 +154,7 @@ pub struct WalkGuard {
     eat_id: i32,
     eat_count: u16,
     eat_hp: i16,
-    eat_floor: i16,
+    eat_basis: eat::Basis,
     eat_admission_tick: u16,
 }
 
@@ -340,7 +340,7 @@ impl WalkGuard {
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
-            eat_floor: 0,
+            eat_basis: eat::Basis::default(),
             eat_admission_tick: 0,
         }
     }
@@ -529,7 +529,7 @@ impl WalkGuard {
             None
         };
         if let Some(choice) = &eat_choice {
-            self.eat_floor = i16::try_from(choice.danger_floor).unwrap_or(i16::MAX);
+            self.eat_basis = choice.basis;
         }
         if (danger != Some(0) || poison_fire > 0)
             && hp
@@ -759,7 +759,7 @@ impl WalkGuard {
                 heal: food.heal,
                 hp_before: i32::from(self.eat_hp),
                 hp_max,
-                danger_floor: i32::from(self.eat_floor),
+                basis: self.eat_basis,
                 hp_after: hp,
             }
             .log();
@@ -3417,51 +3417,80 @@ mod tests {
         )
     }
 
-    /// A caller floor above the danger floor asks for a bite only when the
-    /// missing HP holds the whole heal (lobster 12,
-    /// `consume_normal.dbrow:178-179`). At 37/40 with no danger the old rule
-    /// spent a lobster for 3 HP.
+    /// Caution tier: above `danger + 1` a bite is taken only when the missing
+    /// HP holds the whole heal (lobster 12, `consume_normal.dbrow:178-179`).
+    /// At 37/40 with a danger of 18 (eat line 37, critical 19) the old rule
+    /// spent a lobster for 3 HP. The same holds for a caller floor with no
+    /// danger at all.
     #[test]
-    fn no_bite_above_the_danger_floor_when_the_heal_does_not_fit() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut scene = Scene::new(43);
-        scene.add_food("lobster", 0, 1);
-        assert_eq!(eat_with_floor(&scene, Some(0), 37, 38), None, "37/40");
-        assert_eq!(eat_with_floor(&scene, Some(0), 29, 38), None, "29/40");
-        let fits = eat_with_floor(&scene, Some(0), 28, 38).expect("28/40 holds the heal");
-        assert_eq!(fits.ordinary, Some(food_id("lobster")));
-        assert_eq!(fits.combo, None);
-        // Unknown danger keeps its half-max floor of 20; a caller floor above
-        // it is the same case.
-        assert_eq!(eat_with_floor(&scene, None, 37, 38), None);
-    }
-
-    /// At or below the danger floor survival comes first: the bite is taken
-    /// even when it overheals. A danger of 18 puts the floor at 37.
-    #[test]
-    fn at_the_danger_floor_the_bite_is_taken_even_when_it_overheals() {
+    fn no_bite_in_the_caution_tier_when_the_heal_does_not_fit() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         assert_eq!(select::lines(Some(18), 40).eat, 37);
-        let at_floor = eat_with_floor(&scene, Some(18), 37, 0).expect("37 is at the floor");
-        assert_eq!(at_floor.ordinary, Some(food_id("lobster")));
-        assert_eq!(at_floor.danger_floor, 37);
-        assert_eq!(eat_with_floor(&scene, Some(18), 38, 0), None, "above it");
-        // A caller floor does not move the danger floor, and the same HP is
-        // fit-only once the danger line is lower.
-        assert!(eat_with_floor(&scene, Some(18), 37, 38).is_some());
-        assert_eq!(eat_with_floor(&scene, Some(5), 37, 38), None);
-        let low = eat_with_floor(&scene, Some(5), 11, 38).expect("11 is the floor for danger 5");
-        assert_eq!(low.danger_floor, 11);
+        assert_eq!(eat_with_floor(&scene, Some(18), 37, 0), None, "37/40");
+        assert_eq!(eat_with_floor(&scene, Some(18), 29, 0), None, "29/40");
+        let fits = eat_with_floor(&scene, Some(18), 28, 0).expect("28/40 holds the heal");
+        assert_eq!(fits.ordinary, Some(food_id("lobster")));
+        assert_eq!(fits.combo, None);
+        assert_eq!(
+            eat_with_floor(&scene, Some(0), 37, 38),
+            None,
+            "caller floor"
+        );
+        assert_eq!(
+            eat_with_floor(&scene, Some(0), 29, 38),
+            None,
+            "caller floor"
+        );
+        assert!(eat_with_floor(&scene, Some(0), 28, 38).is_some());
+        // Unknown danger: the caution floor is half the maximum (20), the
+        // critical floor a quarter (10); a caller floor above half is
+        // caution too.
+        assert_eq!(eat_with_floor(&scene, None, 37, 38), None);
+    }
+
+    /// Critical tier: at or below `danger + 1` the next hit can kill, so the
+    /// bite is taken even when it overheals. A danger of 36 puts the critical
+    /// floor at 37 of 40; the same bite one point higher is caution and finds
+    /// no fitting food.
+    #[test]
+    fn in_the_critical_tier_the_bite_is_taken_even_when_it_overheals() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut scene = Scene::new(43);
+        scene.add_food("lobster", 0, 1);
+        let critical = eat_with_floor(&scene, Some(36), 37, 0).expect("37 is critical");
+        assert_eq!(critical.ordinary, Some(food_id("lobster")));
+        assert_eq!(critical.basis.critical(), 37);
+        assert_eq!(critical.basis.danger(), Some(36));
+        assert_eq!(eat_with_floor(&scene, Some(36), 38, 0), None, "caution");
+        // Unknown danger: critical at a quarter of 40.
+        let unknown = eat_with_floor(&scene, None, 10, 0).expect("10/40 is critical");
+        assert_eq!(unknown.basis.critical(), 10);
+        assert_eq!(unknown.basis.danger(), None);
+        // The next poison fire raises the critical floor.
+        let frame = Frame::borrow(scene.view()).unwrap();
+        let fired = policy::eat_choice(
+            &frame,
+            &scene.tables,
+            &Schedule::default(),
+            Some(36),
+            3,
+            39,
+            40,
+            0,
+            0,
+        )
+        .expect("39 is critical with a fire of 3");
+        assert_eq!(fired.basis.critical(), 40);
     }
 
     /// The bite takes the held food whose heal best fits the missing HP, and
-    /// at the floor the smallest one when none fits.
+    /// in the critical tier the smallest one when none fits.
     #[test]
     fn the_bite_takes_the_best_fitting_food() {
         if !api::test_support::game_data_available() {
@@ -3472,18 +3501,18 @@ mod tests {
         scene.add_food("shrimp", 1, 1);
         let lobster = food_id("lobster");
         let shrimp = food_id("shrimp");
-        // Above the floor: missing 15 takes the lobster (12), missing 3 takes
-        // the shrimp (3), missing 2 takes neither.
+        // Caution: missing 15 takes the lobster (12), missing 3 takes the
+        // shrimp (3), missing 2 takes neither.
         for (hp, want) in [(25, Some(lobster)), (37, Some(shrimp)), (38, None)] {
             assert_eq!(
                 eat_with_floor(&scene, Some(0), hp, 40).and_then(|choice| choice.ordinary),
                 want,
-                "hp {hp}/40 above the floor"
+                "hp {hp}/40 in caution"
             );
         }
-        // At the floor: missing 2 overheals either food, so the smallest goes.
-        let at_floor = eat_with_floor(&scene, Some(19), 38, 0).expect("38 is the floor");
-        assert_eq!(at_floor.ordinary, Some(shrimp));
+        // Critical: missing 2 overheals either food, so the smallest goes.
+        let critical = eat_with_floor(&scene, Some(37), 38, 0).expect("38 is critical");
+        assert_eq!(critical.ordinary, Some(shrimp));
     }
 
     /// A bite settles on its count drop only once the heal shows: Hitpoints

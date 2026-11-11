@@ -392,13 +392,13 @@ impl FoodReserve {
 
 /// Food chosen on one HP observation. Ordinary food follows the next-eat
 /// clock; combo food is eligible only when it crosses its message-delay gate.
-/// `danger_floor` is the HP at or below which the bite is taken whatever it
-/// overheals; the survival log line records it.
+/// `basis` is what the bite was chosen on (the critical floor and the danger);
+/// the survival log line records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EatChoice {
     pub ordinary: Option<i32>,
     pub combo: Option<i32>,
-    pub danger_floor: i32,
+    pub basis: crate::survival::eat::Basis,
 }
 /// The scalar state used to choose food for one observation.
 pub(crate) struct EatInputs {
@@ -415,11 +415,16 @@ pub(crate) struct EatInputs {
 /// fire's damage. `eat_floor` is a caller-specific lower bound on the bite
 /// line. A bot at full HP never bites.
 ///
-/// The danger floor is the danger-derived eat line (`select::lines(..).eat`,
-/// poison included): at or below it, survival comes first and the best-fitting
-/// food is eaten even when it overheals. Above it, only the caller's own
-/// floor asks for a bite, and only a food whose heal fits the missing HP is
-/// chosen, so no bite is wasted; a combo bite is never added there.
+/// Two tiers. **Critical**: at or below `danger + 1` plus the next poison fire
+/// (the next hit can kill; with an unknown danger, a quarter of the maximum
+/// rounded up, plus the fire) the best-fitting food is eaten even when it
+/// overheals. **Caution**: above that and up to the eat line (`2 * danger + 1`,
+/// half the maximum when the danger is unknown, or the caller's floor) only a
+/// food whose heal fits the missing HP is chosen, so no bite is wasted; when
+/// none fits nothing is eaten (the next hit cannot kill). A combo bite keeps
+/// its own lock-survival gate in both tiers: its purpose is to carry the bot
+/// through the input lock, so it may overheal.
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame, tables and schedule borrows plus the danger, poison fire, HP pair, tick and eat-floor scalars stay explicit"
@@ -450,12 +455,57 @@ pub(crate) fn eat_choice(
         &[],
     )
 }
+/// The route replay's model keeps the single eat line (every bite up to the
+/// line may overheal): the replay prices a crossing by the HP its own floors
+/// ask for, and its synthetic danger (half the intended line) is not a threat
+/// the two tiers could judge. Same arguments as [`eat_choice`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same explicit scalars as eat_choice"
+)]
+pub(crate) fn eat_choice_modelled(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    schedule: &Schedule,
+    danger: Option<i32>,
+    poison_fire: i32,
+    hp: i32,
+    hp_max: i32,
+    tick: u16,
+    eat_floor: i32,
+) -> Option<EatChoice> {
+    choose(
+        frame,
+        tables,
+        schedule,
+        EatInputs {
+            danger,
+            poison_fire,
+            hp,
+            hp_max,
+            tick,
+            eat_floor,
+        },
+        &[],
+        false,
+    )
+}
 pub(crate) fn eat_choice_excluding(
     frame: &Frame<'_>,
     tables: &CombatTables,
     schedule: &Schedule,
     inputs: EatInputs,
     protected_items: &[FoodReserve],
+) -> Option<EatChoice> {
+    choose(frame, tables, schedule, inputs, protected_items, true)
+}
+fn choose(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    schedule: &Schedule,
+    inputs: EatInputs,
+    protected_items: &[FoodReserve],
+    two_tier: bool,
 ) -> Option<EatChoice> {
     let EatInputs {
         danger,
@@ -475,8 +525,12 @@ pub(crate) fn eat_choice_excluding(
         return None;
     }
 
-    let danger_floor = lines.eat;
-    let fit_only = hp > danger_floor;
+    let critical = match danger {
+        Some(_) => lines.emergency,
+        None => (hp_max.max(0) + 3) / 4 + poison_fire,
+    };
+    let basis = crate::survival::eat::Basis::new(critical, danger);
+    let fit_only = two_tier && hp > critical;
     let ordinary = food_choice(
         hp,
         hp_max,
@@ -494,14 +548,7 @@ pub(crate) fn eat_choice_excluding(
         return Some(EatChoice {
             ordinary,
             combo: None,
-            danger_floor,
-        });
-    }
-    if fit_only {
-        return ordinary.map(|ordinary| EatChoice {
-            ordinary: Some(ordinary),
-            combo: None,
-            danger_floor,
+            basis,
         });
     }
     let combo = food_by_excluding(
@@ -529,7 +576,7 @@ pub(crate) fn eat_choice_excluding(
     (ordinary.is_some() || combo.is_some()).then_some(EatChoice {
         ordinary,
         combo,
-        danger_floor,
+        basis,
     })
 }
 #[cfg(test)]

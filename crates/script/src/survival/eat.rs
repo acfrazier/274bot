@@ -98,6 +98,38 @@ impl Eater {
     }
 }
 
+/// What a bite was chosen on, kept until its log line goes out: the critical
+/// floor (the HP at or below which the next hit can kill and the bite is
+/// taken whatever it overheals) and the danger the floors came from. Two
+/// bytes: Hitpoints never pass 99 in revision 289, so both saturate, and the
+/// danger byte keeps 255 for "unknown".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Basis {
+    critical: u8,
+    danger: u8,
+}
+
+const DANGER_UNKNOWN: u8 = u8::MAX;
+
+impl Basis {
+    pub(crate) fn new(critical: i32, danger: Option<i32>) -> Self {
+        Self {
+            critical: u8::try_from(critical.max(0)).unwrap_or(u8::MAX),
+            danger: danger.map_or(DANGER_UNKNOWN, |danger| {
+                u8::try_from(danger.max(0)).unwrap_or(DANGER_UNKNOWN - 1)
+            }),
+        }
+    }
+
+    pub(crate) fn critical(self) -> i32 {
+        i32::from(self.critical)
+    }
+
+    pub(crate) fn danger(self) -> Option<i32> {
+        (self.danger != DANGER_UNKNOWN).then_some(i32::from(self.danger))
+    }
+}
+
 /// One bite as the survival log line reports it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Bite {
@@ -107,23 +139,29 @@ pub(crate) struct Bite {
     pub heal: i32,
     pub hp_before: i32,
     pub hp_max: i32,
-    pub danger_floor: i32,
+    pub basis: Basis,
     pub hp_after: i32,
 }
 
 impl Bite {
-    /// The log text. Every field is a number except the owner and outcome.
+    /// The log text. Every field is a number except the owner, the outcome
+    /// and an unknown danger.
     pub(crate) fn line(&self) -> String {
+        let danger = self
+            .basis
+            .danger()
+            .map_or_else(|| "unknown".to_owned(), |danger| danger.to_string());
         format!(
             "survival eat owner={} outcome={} food={} heal={} hp_before={} hp_max={} \
-             danger_floor={} hp_after={}",
+             danger={} critical_floor={} hp_after={}",
             self.eater.name(),
             self.outcome.name(),
             self.food_id,
             self.heal,
             self.hp_before,
             self.hp_max,
-            self.danger_floor,
+            danger,
+            self.basis.critical(),
             self.hp_after,
         )
     }
@@ -175,13 +213,18 @@ mod tests {
             heal: 12,
             hp_before: 21,
             hp_max: 40,
-            danger_floor: 19,
+            basis: Basis::new(19, Some(18)),
             hp_after: 33,
         };
         assert_eq!(
             bite.line(),
             "survival eat owner=step outcome=healed food=379 heal=12 hp_before=21 hp_max=40 \
-             danger_floor=19 hp_after=33"
+             danger=18 critical_floor=19 hp_after=33"
         );
+        let unknown = Bite {
+            basis: Basis::new(10, None),
+            ..bite
+        };
+        assert!(unknown.line().contains("danger=unknown critical_floor=10"));
     }
 }

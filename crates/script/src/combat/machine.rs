@@ -202,7 +202,7 @@ pub struct Combat {
     // The Hitpoints and danger floor of the plan that last held a bite: the
     // stale-HP rule and the survival log line read them.
     eat_hp: i16,
-    eat_floor: i16,
+    eat_basis: eat::Basis,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
     // Bits 42–55 hold Prep-origin and skipped boost-family masks.
@@ -454,7 +454,7 @@ impl NativeMachine for Combat {
             eat_ready: 0,
             food_total: 0,
             eat_hp: 0,
-            eat_floor: 0,
+            eat_basis: eat::Basis::default(),
 
             prep_failures: 0,
             approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
@@ -2212,7 +2212,7 @@ impl Combat {
             heal: food.heal,
             hp_before: i32::from(self.eat_hp),
             hp_max,
-            danger_floor: i32::from(self.eat_floor),
+            basis: self.eat_basis,
             hp_after: hp,
         }
         .log();
@@ -2403,7 +2403,7 @@ impl Combat {
         ) else {
             return;
         };
-        plan.eat_floor = i16::try_from(choice.danger_floor).unwrap_or(i16::MAX);
+        plan.eat_basis = choice.basis;
         let ordinary = choice.ordinary;
         if let Some(id) = ordinary {
             if !self.push(plan, PlanRow::new(RowKind::Eat, id, 0)) {
@@ -3869,7 +3869,7 @@ impl Combat {
             self.eat_hp = arbiter::stat(frame, 3)
                 .0
                 .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-            self.eat_floor = self.plan.eat_floor;
+            self.eat_basis = self.plan.eat_basis;
         }
         if self.phase == Phase::WindDown && self.plan.contains(RowKind::Eat) {
             self.flags |= TERMINAL_FOOD;

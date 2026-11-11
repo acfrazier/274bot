@@ -415,16 +415,18 @@ can decide first. Known incoming damage and the hazard add together.
 A bite cancels the current step and closes a game page before eating.
 The restarted step keeps its hazard and the family's original quantity target.
 
-A bite spends no food it cannot use. At or below the danger line (the eat line
-that the live threats set, or half the maximum Hitpoints when the danger is
-unknown) the bite goes out at once and takes the held food whose heal best fits
-the missing Hitpoints. Above that line, when only the step's hazard or the
-caller's floor asks for a bite, the Quester bites only a food whose heal fits
-the missing Hitpoints. After a bite the next bite waits until the heal shows
-in Hitpoints (a rise, or a fall when a hit lands first) or until the food's own
-delay has passed. Each bite writes one `survival eat` log line with the
-Hitpoints before, the maximum, the food and its heal, the danger line and the
-Hitpoints seen afterwards.
+A bite spends no food it cannot use while the next hit cannot kill. Eating has
+two tiers. At or below the danger plus one (the live threats set the danger;
+a quarter of the maximum Hitpoints when it is unknown) the next hit can kill,
+so the bite goes out at once and takes the held food whose heal best fits the
+missing Hitpoints, even if it overheals. Above that, up to the eat line (twice
+the danger plus one, half the maximum when the danger is unknown, or the
+step's hazard floor or the caller's floor), the Quester bites only a food whose
+heal fits the missing Hitpoints and waits when none fits. After a bite the next
+bite waits until the heal shows in Hitpoints (a rise, or a fall when a hit
+lands first) or until the food's own delay has passed. Each bite writes one
+`survival eat` log line with the Hitpoints before, the maximum, the food and
+its heal, the danger, the critical line and the Hitpoints seen afterwards.
 
 Before preparing supplies, the runner checks a proven next step's hazard.
 An available bite uses the existing upkeep owner before a bank action, not

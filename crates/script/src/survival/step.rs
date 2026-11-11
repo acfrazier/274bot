@@ -119,8 +119,8 @@ enum Stage {
 /// 16 bits.
 ///
 /// A bite also carries the stale-HP watch: `hp_before` is the Hitpoints the
-/// frame of the send showed and `danger_floor` the line the bite was chosen
-/// at, both saturated to a byte (Hitpoints never pass 99 in revision 289).
+/// frame of the send showed and `basis` what the bite was chosen on (the
+/// critical floor and the danger), both saturated to a byte.
 #[derive(Debug, Clone, Copy)]
 struct SentClick {
     kind: ClickKind,
@@ -129,7 +129,7 @@ struct SentClick {
     observed: u16,
     item_id: u16,
     hp_before: u8,
-    danger_floor: u8,
+    basis: eat::Basis,
 }
 
 /// A runner's compact threat history, park and current report.
@@ -139,13 +139,13 @@ pub struct SurvivalStep {
     sent: Option<SentClick>,
     park: Option<SurvivalNeed>,
     last: SurvivalReport,
-    /// The danger floor of the bite `want` last returned, for `record_sent`.
-    bite_floor: u8,
+    /// What the bite `want` last returned was chosen on, for `record_sent`.
+    bite_basis: eat::Basis,
 }
 
 // The 64-bit baseline measured 192 bytes. The stale-HP watch adds the bite's
-// Hitpoints and danger floor to the last click record (8 to 10 bytes) and a
-// one-byte bite floor to the step: 196 bytes measured, and a 260-byte ceiling
+// Hitpoints and basis to the last click record and a basis to the step; the
+// step measured 196 bytes before the basis grew to its danger, and a 260-byte ceiling
 // keeps the 64 bytes of headroom.
 const _: () = assert!(std::mem::size_of::<SurvivalStep>() <= 260);
 
@@ -253,7 +253,7 @@ impl SurvivalStep {
                     cx.protected_items(),
                 )
                 .and_then(|choice| {
-                    eat_args(choice, frame.inventory).map(|args| (args, choice.danger_floor))
+                    eat_args(choice, frame.inventory).map(|args| (args, choice.basis))
                 })
             };
             let timed = bite(&schedule);
@@ -276,8 +276,8 @@ impl SurvivalStep {
                 if heal_pending {
                     return SurvivalWant::Hold;
                 }
-                return timed.map_or(SurvivalWant::Hold, |(args, floor)| {
-                    self.bite_floor = u8::try_from(floor).unwrap_or(u8::MAX);
+                return timed.map_or(SurvivalWant::Hold, |(args, basis)| {
+                    self.bite_basis = basis;
                     SurvivalWant::Click(args)
                 });
             }
@@ -468,7 +468,11 @@ impl SurvivalStep {
             frame_tick: frame.tick,
             observed: low_ticks(cx.evidence().tick),
             hp_before: clamp_hp(hp.unwrap_or(0)),
-            danger_floor: if bite { self.bite_floor } else { 0 },
+            basis: if bite {
+                self.bite_basis
+            } else {
+                eat::Basis::default()
+            },
         });
     }
 
@@ -780,7 +784,7 @@ impl SentClick {
             heal: food.heal,
             hp_before: i32::from(self.hp_before),
             hp_max,
-            danger_floor: i32::from(self.danger_floor),
+            basis: self.basis,
             hp_after,
         }
     }

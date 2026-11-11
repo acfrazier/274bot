@@ -3968,6 +3968,37 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
     assert_eq!(spilled.machine.input_lock(), None);
 }
 
+/// The two tiers through the combat machine. A warlord (danger 9) on a
+/// 20-point account: critical at 10 (`danger + 1`), caution up to 19
+/// (`2 * danger + 1`). In caution a lobster (12) that would overheal is not
+/// eaten; in the critical tier it is.
+#[test]
+fn the_combat_machine_eats_an_overhealing_bite_only_in_the_critical_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (hp, eats) in [(15, false), (11, false), (10, true), (3, true)] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut own = fight(&mut scene);
+        scene.face_us();
+        scene.stat(3, hp, 20);
+        let mut lobster = scene.held("lobster", 0);
+        lobster.count = 2;
+        scene.inventory.push(lobster);
+        scene.refresh();
+        let batch = own.pending_batch(&scene, 3);
+        if eats {
+            assert_len(&batch, 2);
+            held_row(&batch, 0, "Eat");
+        } else {
+            assert!(
+                !own.machine.pending_row(RowKind::Eat),
+                "{hp}/20 is caution and no lobster fits"
+            );
+        }
+    }
+}
+
 /// A bite settles on its count drop only once the heal shows (the stale-HP
 /// rule): Hitpoints rising is the heal, falling is a hit that lands first,
 /// and the food's own delay after the bite ran bounds the wait

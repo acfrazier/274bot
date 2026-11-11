@@ -830,7 +830,7 @@ where
                 // The replay's own line already charges the poison term
                 // (`intended` above), so it passes no second fire here, or
                 // one fire would count twice.
-                if let Some(id) = policy::eat_choice(
+                if let Some(id) = policy::eat_choice_modelled(
                     &frame,
                     tables,
                     &schedule,
