@@ -395,7 +395,9 @@ fn harry_in_trade_range(snapshot: &GameSnapshot, stand: WorldTile, harry_id: i32
     };
     snapshot.npcs().iter().any(|npc| {
         npc.r#type == Some(harry_type)
-            && (0..=1).contains(&npc.distance)
+            // Use the path-head distance, not the rendered NPC tile.
+            && combat_proof::npc_network_distance(snapshot, npc)
+                .is_some_and(|distance| distance <= 1)
             && npc
                 .actions
                 .iter()
