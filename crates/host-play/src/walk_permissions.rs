@@ -1031,6 +1031,7 @@ mod tests {
                 allow_wilderness: global,
                 allow_bank_fetch: true,
                 allow_danger_zones: global,
+                survivable_routing: false,
                 allow_prereq_dialogue: global,
                 allow_quest_start: !global,
             };
@@ -1294,6 +1295,7 @@ mod tests {
             allow_wilderness: true,
             allow_bank_fetch: true,
             allow_danger_zones: true,
+            survivable_routing: false,
             allow_prereq_dialogue: false,
             allow_quest_start: true,
         };
@@ -1565,6 +1567,7 @@ mod tests {
                     allow_wilderness: true,
                     allow_bank_fetch: true,
                     allow_danger_zones: true,
+                    survivable_routing: false,
                     allow_prereq_dialogue: true,
                     allow_quest_start: true,
                 }))),
