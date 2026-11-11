@@ -2401,12 +2401,14 @@ impl Combat {
         );
         policy::food_for_tier(
             tier,
-            hp,
-            max,
+            &policy::FoodPick {
+                hp,
+                hp_max: max,
+                tables: &self.tables,
+                gate: Some(recovery.gate),
+                protected_items,
+            },
             frame.inventory.iter().map(|row| (row.def.id, row.count)),
-            &self.tables,
-            Some(recovery.gate),
-            protected_items,
             |food| food.eat_delay_arg.is_some() && self.schedule.food_ready(food, tick),
         )
     }

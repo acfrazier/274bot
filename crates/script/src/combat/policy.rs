@@ -292,34 +292,46 @@ pub(crate) fn food_by_excluding(
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
     food_choice(
-        hp,
-        hp_max,
+        &FoodPick {
+            hp,
+            hp_max,
+            tables,
+            gate,
+            protected_items,
+        },
         inventory,
-        tables,
-        gate,
-        protected_items,
         false,
         eligible,
     )
 }
 
+/// What one food choice reads besides the held rows and the eligibility
+/// test: the HP pair, the tables, the optional heal gate and the reserves.
+#[derive(Clone, Copy)]
+pub(crate) struct FoodPick<'a> {
+    pub hp: i32,
+    pub hp_max: i32,
+    pub tables: &'a CombatTables,
+    pub gate: Option<i32>,
+    pub protected_items: &'a [FoodReserve],
+}
+
 /// [`food_by_excluding`] with the waste rule: when `fit_only` is set, only a
 /// food whose heal fits the missing HP (`hp + heal <= hp_max`) is a choice,
 /// so a bite never overheals.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the HP pair, the held rows, the tables, the gate, the reserves, the waste rule and the eligibility test stay explicit"
-)]
 fn food_choice(
-    hp: i32,
-    hp_max: i32,
+    pick: &FoodPick<'_>,
     inventory: impl Iterator<Item = (i32, i32)> + Clone,
-    tables: &CombatTables,
-    gate: Option<i32>,
-    protected_items: &[FoodReserve],
     fit_only: bool,
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
+    let FoodPick {
+        hp,
+        hp_max,
+        tables,
+        gate,
+        protected_items,
+    } = *pick;
     if hp <= 0 || hp >= hp_max {
         return None;
     }
@@ -369,18 +381,10 @@ fn food_choice(
 /// critical tier even when it overheals, and in the caution tier only a food
 /// whose heal fits the missing HP. Every ordinary-food eater picks through
 /// this, so no eater chooses a food by another rule.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the tier, HP pair, held rows, tables, gate, reserves and eligibility test stay explicit"
-)]
 pub(crate) fn food_for_tier(
     tier: BiteTier,
-    hp: i32,
-    hp_max: i32,
+    pick: &FoodPick<'_>,
     inventory: impl Iterator<Item = (i32, i32)> + Clone,
-    tables: &CombatTables,
-    gate: Option<i32>,
-    protected_items: &[FoodReserve],
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
     let fit_only = match tier {
@@ -388,16 +392,7 @@ pub(crate) fn food_for_tier(
         BiteTier::Critical => false,
         BiteTier::Caution => true,
     };
-    food_choice(
-        hp,
-        hp_max,
-        inventory,
-        tables,
-        gate,
-        protected_items,
-        fit_only,
-        eligible,
-    )
+    food_choice(pick, inventory, fit_only, eligible)
 }
 
 /// An exact-ID minimum held count that survival food must leave untouched.
@@ -631,12 +626,14 @@ pub(crate) fn eat_choice_excluding(
     let basis = crate::survival::eat::Basis::new(critical, danger);
     let ordinary = food_for_tier(
         tier,
-        hp,
-        hp_max,
+        &FoodPick {
+            hp,
+            hp_max,
+            tables,
+            gate: None,
+            protected_items,
+        },
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
-        tables,
-        None,
-        protected_items,
         |food| food.eat_delay_arg.is_some() && schedule.food_ready(food, tick),
     );
     let heal = ordinary
