@@ -278,7 +278,13 @@ impl SurvivalStep {
                 };
                 // The last bite's heal is not seen yet, so the Hitpoints this
                 // bite would be chosen on are stale: hold, never bite twice.
-                if heal_pending {
+                // The critical tier is the exception: the next hit can kill,
+                // so it eats as soon as the food clock allows (`timed` holds
+                // only a bite the clock allows).
+                if heal_pending
+                    && policy::bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor)
+                        != policy::BiteTier::Critical
+                {
                     return SurvivalWant::Hold;
                 }
                 return timed.map_or(SurvivalWant::Hold, |(args, basis)| {
@@ -1310,6 +1316,68 @@ mod tests {
                 "{name}: the first bite is judged and logged once"
             );
         }
+    }
+
+    /// The critical tier never waits for the last heal. At 1/99 with no threat
+    /// in view the danger is zero and the critical floor is 1, so 1 Hitpoint
+    /// is critical: the second bite goes out at tick 23, as soon as the
+    /// next-food clock opens, with Hitpoints still unchanged. The caution-tier
+    /// twin above holds the same bite until tick 24.
+    #[test]
+    fn survival_step_critical_bite_does_not_wait_for_the_last_heal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let food = lobster();
+        let cured = condition(1, PoisonState::Clear);
+        let before = with_hitpoints(low_hp_snapshot(vec![food.clone(), food.clone()]), 1);
+        let after = with_hitpoints(low_hp_snapshot(vec![food.clone()]), 1);
+        let mut step = SurvivalStep::default();
+        let SurvivalWant::Click(first) = want_with_floor(
+            &mut step,
+            &before,
+            &cured,
+            CurePoison::WhenNeeded,
+            20,
+            GATHERER_FLOOR,
+        ) else {
+            panic!("the first bite is chosen");
+        };
+        record(&mut step, &before, first.kind, 20);
+        settled(&mut step, &after, true, 21);
+        for tick in 21..23 {
+            assert!(
+                matches!(
+                    want_with_floor(
+                        &mut step,
+                        &after,
+                        &cured,
+                        CurePoison::WhenNeeded,
+                        tick,
+                        GATHERER_FLOOR
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "the next-food clock holds the bite at tick {tick}"
+            );
+        }
+        assert!(
+            matches!(
+                want_with_floor(
+                    &mut step,
+                    &after,
+                    &cured,
+                    CurePoison::WhenNeeded,
+                    23,
+                    GATHERER_FLOOR
+                ),
+                SurvivalWant::Click(OneOpArgs {
+                    kind: OneOpKind::Eat { .. },
+                    ..
+                })
+            ),
+            "a critical bite at tick 23 does not wait for the unseen heal"
+        );
     }
 
     /// A bite whose op ended without the count drop never ran: nothing is

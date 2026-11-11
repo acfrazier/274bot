@@ -1403,7 +1403,7 @@ fn case27_recovery_food_and_drink_share_a_ready_plan() {
     }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
-    scene.stat(3, 25, 40);
+    scene.stat(3, 18, 40);
     scene.stat(5, 0, 43);
     scene.face_us();
     scene.inventory.push(scene.held("lobster", 0));
@@ -1556,7 +1556,7 @@ fn case43_capped_recovery_gates_the_drink_strictly() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for (hp, max, drink) in [(20, 30, true), (16, 30, false), (35, 40, true)] {
+    for (hp, max, drink) in [(18, 30, true), (16, 30, false), (35, 40, true)] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
         scene.stat(3, hp, max);
@@ -1583,6 +1583,31 @@ fn case43_capped_recovery_gates_the_drink_strictly() {
         if !drink {
             assert_eq!(harness.machine.input_lock(), None);
         }
+    }
+
+    // 20/30 and 19/30 against the warlord (danger 9, critical floor 10): 20 is
+    // above the eat line (19), and 19 is in the caution tier where the 12-point
+    // lobster does not fit the 11 missing points. Neither is a recovery bite
+    // (it would overheal), so nothing is eaten or drunk: a recovery bite
+    // follows the shared tier rule like every other eater.
+    for hp in [20, 19] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut harness = fight(&mut scene);
+        scene.stat(3, hp, 30);
+        scene.stat(5, 0, 43);
+        scene.face_us();
+        scene.inventory.push(scene.held("lobster", 0));
+        scene.inventory.push(scene.held("4doseprayerrestore", 1));
+        scene.refresh();
+        let plan = harness.pending_batch(&scene, 3);
+        assert!(
+            !plan.effects.iter().flatten().any(|row| matches!(
+                row,
+                HostEffect::Interaction(InteractReq::Held { action, .. })
+                    if action == "Eat" || action == "Drink"
+            )),
+            "an overhealing lobster is no recovery bite at {hp}/30"
+        );
     }
 
     let mut scene = Scene::new("khazard_warlord");
@@ -2149,7 +2174,9 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for hp in [9, 18, 25] {
+    // 19/40 is the eat line against the warlord (danger 9): a bite is due and
+    // the lobster fits. 25/40 is above it: no bite, so nothing carries the drink.
+    for hp in [9, 18, 19] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
         scene.stat(3, hp, 40);
@@ -2170,6 +2197,15 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
             held_row(&plan, 1, "Drink");
         }
     }
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.stat(3, 25, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 3), 0);
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(3, 25, 40);
@@ -3848,7 +3884,7 @@ fn case53_script_refused_recovery_food_never_enters_a_drink_lock() {
     }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
-    scene.stat(3, 25, 40);
+    scene.stat(3, 18, 40);
     scene.stat(5, 0, 43);
     scene.inventory.push(scene.held("lobster", 0));
     scene.inventory.push(scene.held("1doseprayerrestore", 1));
@@ -3935,7 +3971,7 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
 
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
-    scene.stat(3, 25, 40);
+    scene.stat(3, 16, 40);
     scene.stat(5, 0, 43);
     let mut lobster = scene.held("lobster", 0);
     lobster.count = 2;
@@ -3948,17 +3984,18 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
     held_row(&emitted, 0, "Eat");
     attack_row(&emitted, 1);
     assert_eq!(spilled.machine.eat_ready(), 3);
-    // One hit of nine after the spilled eat leaves HP at 28. Keep the pack
-    // baseline stale through E+1, then expose its decrease at E+2.
+    // From 16, the heal of 12 and one hit of nine after the spilled eat leave
+    // HP at 19. Keep the pack baseline stale through E+1, then expose its
+    // decrease at E+2.
     scene.install();
-    scene.stat(3, 28, 40);
+    scene.stat(3, 19, 40);
     scene.refresh();
     assert_len(&spilled.pending_batch(&scene, 2), 0);
     scene.inventory[0].count = 1;
     scene.refresh();
     assert_len(&spilled.pending_batch(&scene, 3), 0);
     assert_eq!(spilled.machine.eat_ready(), 5);
-    scene.stat(3, 28, 40);
+    scene.stat(3, 19, 40);
     scene.refresh();
     let before_proven = spilled.pending_batch(&scene, 4);
     assert_len(&before_proven, 2);
@@ -3999,25 +4036,26 @@ fn the_combat_machine_eats_an_overhealing_bite_only_in_the_critical_tier() {
     }
 }
 
-/// A bite settles on its count drop only once the heal shows (the stale-HP
-/// rule): Hitpoints rising is the heal, falling is a hit that lands first,
-/// and the food's own delay after the bite ran bounds the wait
+/// A caution-tier bite settles on its count drop only once the heal shows (the
+/// stale-HP rule): Hitpoints rising is the heal, falling is a hit that lands
+/// first, and the food's own delay after the bite ran bounds the wait
 /// (`consume.rs2:122-127`). The bite is emitted in tick 3; the count drop is
-/// first seen in tick 4.
+/// first seen in tick 4. 15/40 against the warlord (danger 9, critical floor
+/// 10) is the caution tier, where a lobster fits.
 #[test]
 fn a_bite_settles_only_when_its_heal_shows_after_the_count_drop() {
     if !api::test_support::game_data_available() {
         return;
     }
     for (name, hp_after, settles_at) in [
-        ("heal observed", 21, 4),
-        ("hit first", 5, 4),
-        ("heal not observed", 9, 7),
+        ("heal observed", 27, 4),
+        ("hit first", 11, 4),
+        ("heal not observed", 15, 7),
     ] {
         let mut scene = Scene::new("khazard_warlord");
         let mut own = fight(&mut scene);
         scene.face_us();
-        scene.stat(3, 9, 40);
+        scene.stat(3, 15, 40);
         let mut lobster = scene.held("lobster", 0);
         lobster.count = 2;
         scene.inventory.push(lobster);
@@ -4042,6 +4080,41 @@ fn a_bite_settles_only_when_its_heal_shows_after_the_count_drop() {
             "{name}: settled at tick {settles_at}"
         );
     }
+}
+
+/// The critical tier never waits for the last heal: 9/40 against the warlord is
+/// critical (floor 10). The bite sent in tick 3 ran (its count dropped in tick
+/// 4) and Hitpoints still read 9. The old bite ends as `no-heal-seen` and the
+/// next one is planned as soon as the next-food clock allows it, in tick 6,
+/// where the caution-tier twin above waits for tick 7.
+#[test]
+fn a_critical_bite_does_not_wait_for_the_last_heal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("khazard_warlord");
+    let mut own = fight(&mut scene);
+    scene.face_us();
+    scene.stat(3, 9, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.count = 2;
+    scene.inventory.push(lobster);
+    scene.refresh();
+    let eat = own.pending_batch(&scene, 3);
+    held_row(&eat, 0, "Eat");
+    scene.install();
+    scene.inventory[0].count = 1;
+    scene.refresh();
+    for tick in 4..6 {
+        own.pending_batch(&scene, tick);
+        assert!(
+            own.machine.pending_row(RowKind::Eat),
+            "the next-food clock holds the old bite open at tick {tick}"
+        );
+    }
+    let next = own.pending_batch(&scene, 6);
+    held_row(&next, 0, "Eat");
+    assert_eq!(own.machine.counters.food, 1, "the old bite ended");
 }
 
 #[test]

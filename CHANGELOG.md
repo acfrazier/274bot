@@ -258,11 +258,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   floor), it eats only a food whose heal fits the missing hitpoints, and
   waits when none fits. With an unknown danger the critical line is a quarter
   of the maximum. At 37 of 40 hitpoints with a danger of 18 it no longer
-  spends a lobster for 3 hitpoints.
+  spends a lobster for 3 hitpoints. The same two tiers now also decide the
+  food bite that comes with a combat prayer-potion recovery and the bite the
+  Gatherer takes after a death (its `eatBelow` setting stays the line that
+  triggers it), so no bite overheals above the critical line.
 - After a bite, the next bite waits until the heal shows in hitpoints (a rise,
   or a fall when a hit lands first) or until the food's own delay has passed.
   The lost food item shows that the bite ran; the heal must show before the
-  next bite.
+  next bite. The critical line is the exception: at or below it the bot eats
+  again as soon as the food's delay allows, whether or not the last heal has
+  shown.
 - Every bite writes one `survival eat` line to the session log with the owner,
   the outcome, the food and its heal, the hitpoints before, the maximum, the
   danger, the critical line and the hitpoints seen afterwards.

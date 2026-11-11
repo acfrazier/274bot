@@ -365,6 +365,41 @@ fn food_choice(
     fitting.or(smallest).map(|(id, _)| id)
 }
 
+/// The food a bite in `tier` takes: none outside a tier, the best fit in the
+/// critical tier even when it overheals, and in the caution tier only a food
+/// whose heal fits the missing HP. Every ordinary-food eater picks through
+/// this, so no eater chooses a food by another rule.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the tier, HP pair, held rows, tables, gate, reserves and eligibility test stay explicit"
+)]
+pub(crate) fn food_for_tier(
+    tier: BiteTier,
+    hp: i32,
+    hp_max: i32,
+    inventory: impl Iterator<Item = (i32, i32)> + Clone,
+    tables: &CombatTables,
+    gate: Option<i32>,
+    protected_items: &[FoodReserve],
+    eligible: impl Fn(&FoodFact) -> bool,
+) -> Option<i32> {
+    let fit_only = match tier {
+        BiteTier::None => return None,
+        BiteTier::Critical => false,
+        BiteTier::Caution => true,
+    };
+    food_choice(
+        hp,
+        hp_max,
+        inventory,
+        tables,
+        gate,
+        protected_items,
+        fit_only,
+        eligible,
+    )
+}
+
 /// An exact-ID minimum held count that survival food must leave untouched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoodReserve {
@@ -589,20 +624,19 @@ pub(crate) fn eat_choice_excluding(
     } = inputs;
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
     let critical = critical_floor(danger, burst, hp_max, poison_fire);
-    let fit_only = match bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor) {
-        BiteTier::None => return None,
-        BiteTier::Critical => false,
-        BiteTier::Caution => true,
-    };
+    let tier = bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor);
+    if tier == BiteTier::None {
+        return None;
+    }
     let basis = crate::survival::eat::Basis::new(critical, danger);
-    let ordinary = food_choice(
+    let ordinary = food_for_tier(
+        tier,
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         None,
         protected_items,
-        fit_only,
         |food| food.eat_delay_arg.is_some() && schedule.food_ready(food, tick),
     );
     let heal = ordinary

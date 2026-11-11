@@ -508,6 +508,11 @@ impl WalkGuard {
         let burst = self.threats.burst(&frame, &self.tables, tick, false, false);
         let poison_fire =
             crate::survival::math::poison_fire(condition, &self.threats, &self.tables, tick);
+        if policy::bite_tier(hp, hp_max, danger, burst, poison_fire, 0)
+            == policy::BiteTier::Critical
+        {
+            self.release_stale_bite(&frame, tick, hp, hp_max);
+        }
         let eat_choice = if self.flags & FLAG_FOOD_ALLOWED != 0
             && !self.schedule.pending(OpKind::Eat)
             && self.schedule.unsettled[OpKind::Eat.index()] < 3
@@ -753,9 +758,26 @@ impl WalkGuard {
         } else {
             None
         };
-        let Some(outcome) = outcome else {
-            return;
-        };
+        if let Some(outcome) = outcome {
+            self.conclude_eat(outcome, hp, hp_max);
+        }
+    }
+
+    /// The critical tier never waits for a heal: when the pending bite already
+    /// ran (its count dropped) and only the stale-HP rule holds it open, and
+    /// the next-food clock allows another bite, the old bite ends as
+    /// `no-heal-seen` so the next one can be chosen.
+    fn release_stale_bite(&mut self, frame: &Frame<'_>, tick: u16, hp: i32, hp_max: i32) {
+        if self.schedule.pending(OpKind::Eat)
+            && food_count(frame, self.eat_id) < self.eat_count
+            && self.schedule.ready(OpKind::Eat, tick)
+        {
+            self.conclude_eat(eat::Outcome::NoHeal, hp, hp_max);
+        }
+    }
+
+    /// End the pending bite: its one log line, then its schedule row.
+    fn conclude_eat(&mut self, outcome: eat::Outcome, hp: i32, hp_max: i32) {
         if let Some(food) = self.tables.food(self.eat_id) {
             eat::Bite {
                 eater: eat::Eater::Guard,
@@ -3621,5 +3643,46 @@ mod tests {
             );
             assert_eq!(guard.eat_id, 0, "{name}");
         }
+    }
+
+    /// The stale-HP wait never blocks a critical bite: at 2/40 under fire the
+    /// next bite is chosen as soon as the food clock allows it (T+3 for a
+    /// lobster), whether or not the last heal shows in Hitpoints.
+    #[test]
+    fn a_critical_bite_does_not_wait_for_the_last_heal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 2;
+        scene.launch_arrow();
+        scene.add_food("lobster", 0, 2);
+        let lobster = food_id("lobster");
+        let mut guard = scene.begin().unwrap();
+        let bite = guard
+            .tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded)
+            .unwrap();
+        assert_eat(Some(&bite), "Lobster");
+        guard.admitted(&bite, &scene.view_at(0));
+        // The server ran the bite (one lobster left) and Hitpoints still read 2.
+        scene.inventory[0].count = 1;
+        scene.refresh();
+        for tick in 1..3 {
+            let op = guard.tick(
+                &scene.view_at(tick),
+                scene.condition(),
+                CurePoison::WhenNeeded,
+            );
+            assert!(
+                !matches!(op, Some(GuardOp::Eat { .. })),
+                "the food clock holds the bite at T+{tick}"
+            );
+        }
+        let op = guard.tick(&scene.view_at(3), scene.condition(), CurePoison::WhenNeeded);
+        assert_eat(op.as_ref(), "Lobster");
+        assert!(
+            !guard.schedule.pending(OpKind::Eat) && guard.eat_id != lobster,
+            "the unobserved heal ended the old bite"
+        );
     }
 }
