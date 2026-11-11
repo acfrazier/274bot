@@ -3096,15 +3096,24 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     assert!(session.core.walk_route_armed("alice"));
 }
 
-/// With the focused bot logged out, the map walk says why (`not logged in`),
-/// not `map: WalkTo was not applied`, and the command boundary logs the one
-/// refusal line for it.
-#[test]
-fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
-    use frontend_core::log::{global, LogScope, LogView};
+/// How the focused map bot of a refusal test stands in the host.
+#[derive(Clone, Copy)]
+enum MapBotSlot {
+    /// No running slot: the host's reason is `Walk/Teleport unavailable: no
+    /// focused running slot`.
+    NoSlot,
+    /// Attached but logged out: the reason is `not logged in`.
+    LoggedOut,
+    /// In the game at tile (0, 0), which is no position: the reason is
+    /// `no position yet`.
+    NoPosition,
+}
 
-    global();
-    let name = "tui-walk-logged-out";
+/// A focused map bot for the refusal tests.
+fn focused_map_bot(
+    name: &str,
+    slot: MapBotSlot,
+) -> (map_fixture::MapFixture, TuiSession, TuiApp, Tile) {
     let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
     let origin = Tile {
@@ -3116,16 +3125,19 @@ fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal
     session.core.fleet_mut().add(name);
     select(&mut session, name);
     let mut play = fixture.play(origin);
-    play.attach_arm(name, SlotArm::new(1, false));
-    play.statuses.lock().unwrap().push(host_play::SlotStatus {
-        username: name.into(),
-        connected: false,
-        ingame: false,
-        tile_x: origin.x,
-        tile_z: origin.z,
-        tile_level: origin.level,
-        ..Default::default()
-    });
+    if !matches!(slot, MapBotSlot::NoSlot) {
+        let in_game = matches!(slot, MapBotSlot::NoPosition);
+        play.attach_arm(name, SlotArm::new(1, false));
+        play.statuses.lock().unwrap().push(host_play::SlotStatus {
+            username: name.into(),
+            connected: in_game,
+            ingame: in_game,
+            tile_x: if in_game { 0 } else { origin.x },
+            tile_z: if in_game { 0 } else { origin.z },
+            tile_level: origin.level,
+            ..Default::default()
+        });
+    }
     play.focus(name);
     session.core.set_play(Some(play));
     let mut app = TuiApp::new("274bot headless");
@@ -3140,6 +3152,54 @@ fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal
         level: 0,
     };
     app.select_requested(destination);
+    (fixture, session, app, destination)
+}
+
+/// The process-log refusal lines of `command` for `name` that end with
+/// `reason`.
+fn refusal_lines(command: &str, name: &str, reason: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text(format!("command refused: {command}")));
+    global().refresh(&mut process);
+    process
+        .rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        // The fixture's bot has no vault profile, so the line names it by
+        // identity.
+        .filter(|message| {
+            message.contains(&format!(" on {name}:"))
+                && message.ends_with(&format!("NotApplicable: {reason}"))
+        })
+        .collect()
+}
+
+/// Draw the message line that shows `error` at 80x24 and 120x40, print both
+/// frames (`--nocapture`) and check that the whole text is on screen.
+fn capture_notice_line(label: &str, error: &str) {
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some(error.to_owned());
+        let shown = crate::test_support::text(&crate::test_support::draw(&mut app, width, height));
+        println!("CAPTURE {label} {width}x{height}\n{shown}");
+        assert!(
+            shown.contains(&format!("msg: {error}")),
+            "{label} {width}x{height}: {shown}"
+        );
+    }
+}
+
+/// With the focused bot logged out, the map walk says why (`not logged in`),
+/// not `map: WalkTo was not applied`, and the command boundary logs the one
+/// refusal line for it.
+#[test]
+fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    frontend_core::log::global();
+    let name = "tui-walk-logged-out";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::LoggedOut);
     session.arm_walk_on(&mut app, destination);
     assert_eq!(
         app.error.as_deref(),
@@ -3148,19 +3208,70 @@ fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal
         app.error
     );
     assert!(!session.core.walk_route_armed(name));
-
-    let mut process = LogView::new(LogScope::Process);
-    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
-    global().refresh(&mut process);
-    let lines: Vec<&str> = process
-        .rows()
-        .iter()
-        .map(|row| row.message())
-        // This fixture's bot has no vault profile, so the line names it by
-        // identity.
-        .filter(|message| message.ends_with("NotApplicable: not logged in"))
-        .collect();
+    let lines = refusal_lines("WalkTo", name, "not logged in");
     assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// A slot that is attached but has no observed tile shows the host's own
+/// reason, `no position yet`, not `not logged in`, and logs the one refusal.
+#[test]
+fn a_map_walk_for_a_bot_with_no_position_shows_no_position_yet() {
+    frontend_core::log::global();
+    let name = "tui-walk-no-position";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::NoPosition);
+    session.arm_walk_on(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("no position yet"),
+        "{:?}",
+        app.error
+    );
+    assert!(!session.core.walk_route_armed(name));
+    let lines = refusal_lines("WalkTo", name, "no position yet");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// With the focused bot logged out, Teleport says why (`not logged in`)
+/// and the command boundary logs the one refusal line for it.
+#[test]
+fn a_teleport_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    frontend_core::log::global();
+    let name = "tui-teleport-logged-out";
+    let (_fixture, mut session, mut app, destination) = focused_map_bot(name, MapBotSlot::NoSlot);
+    app.error = Some("an older error".into());
+    session.map_teleport(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("not logged in"),
+        "{:?}",
+        app.error
+    );
+    let lines = refusal_lines("Teleport", name, "not logged in");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    capture_notice_line("teleport-logged-out", "not logged in");
+}
+
+/// A Teleport that is not applied and has no member detail shows the same
+/// generic text as the panel, and never clears the line.
+#[test]
+fn a_teleport_not_applied_with_no_detail_shows_the_generic_text() {
+    frontend_core::log::global();
+    let name = "tui-teleport-no-detail";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::NoPosition);
+    // No focused map bot: nothing is staged, so the selected member settles
+    // not applied with no text of its own.
+    app.focused = None;
+    app.error = Some("an older error".into());
+    session.map_teleport(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("map: Teleport was not applied"),
+        "{:?}",
+        app.error
+    );
+    capture_notice_line("teleport-not-applied", "map: Teleport was not applied");
 }
 
 #[test]
@@ -3391,7 +3502,7 @@ fn refused_no_origin_walk_does_not_arm_destination() {
         app.walk_dest
     );
     let error = app.error.as_deref().unwrap_or("");
-    assert_eq!(error, "not logged in", "the reason must be visible");
+    assert_eq!(error, "no position yet", "the reason must be visible");
 }
 
 #[test]

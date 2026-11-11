@@ -12015,13 +12015,33 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
     );
 }
 
-/// With the focused bot logged out, WalkTo says why (`not logged in`), not
-/// the generic `map: WalkTo was not applied`, and the command boundary logs
-/// the one refusal line for it.
-#[test]
-fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+/// The process-log `command refused: WalkTo` lines that end with `reason`.
+/// The fixture's bots have no vault profile, so a line names its bot by
+/// identity.
+fn walk_refusal_lines(reason: &str) -> Vec<String> {
     use frontend_core::log::{global, LogScope, LogView};
-    global();
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
+    global().refresh(&mut process);
+    process
+        .rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|message| message.ends_with(&format!("NotApplicable: {reason}")))
+        .collect()
+}
+
+/// A WalkTo for a focused bot that is attached with `connected`, `ingame`
+/// and the observed `tile`, refused by the host. Returns the banner the
+/// panel shows and the refusal lines the command boundary logged for it.
+fn refused_walk_for_slot(
+    name: &str,
+    tile: Tile,
+    connected: bool,
+    ingame: bool,
+    reason: &str,
+) -> (Option<String>, usize) {
+    frontend_core::log::global();
     let mut s = Session::new();
     let world = open_world(20, 20);
     let origin = Tile {
@@ -12035,27 +12055,55 @@ fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
         level: 0,
     };
     let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
-    let name = "panel-walk-logged-out";
-    // Attached, but not connected and not in the game: no observed player.
-    push_session_slot(&mut s, name, origin, None, false, false);
+    push_session_slot(&mut s, name, tile, None, connected, ingame);
     s.statuses.refresh_from_play(&s.core);
     s.core.play_mut_for_test().unwrap().focus(name);
     s.set_focus_for_test(name);
     s.select_picker_tile(&world, destination);
+    let before = walk_refusal_lines(reason).len();
     assert!(!s.confirm_picker_walk(&world));
-    assert_eq!(s.error.as_deref(), Some("not logged in"), "{:?}", s.error);
+    let logged = walk_refusal_lines(reason).len() - before;
+    (s.error.clone(), logged)
+}
 
-    let mut process = LogView::new(LogScope::Process);
-    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
-    global().refresh(&mut process);
-    let lines: Vec<&str> = process
-        .rows()
-        .iter()
-        .map(|row| row.message())
-        // This fixture's bot has no vault profile, so the line names it by
-        // identity.
-        .filter(|message| message.ends_with("NotApplicable: not logged in"))
-        .collect();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].ends_with("not logged in"), "{}", lines[0]);
+/// With the focused bot logged out, WalkTo says why (`not logged in`), not
+/// the generic `map: WalkTo was not applied`, and the command boundary logs
+/// the one refusal line for it.
+#[test]
+fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    // Attached, but not connected and not in the game.
+    let origin = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let (error, logged) = refused_walk_for_slot(
+        "panel-walk-logged-out",
+        origin,
+        false,
+        false,
+        "not logged in",
+    );
+    assert_eq!(error.as_deref(), Some("not logged in"), "{error:?}");
+    assert_eq!(logged, 1);
+}
+
+/// A bot that is in the game without an observed tile shows the host's own
+/// reason, `no position yet`, not `not logged in`, and logs the one refusal.
+#[test]
+fn a_walk_for_a_bot_with_no_position_shows_no_position_yet_and_logs_one_refusal() {
+    let none = Tile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let (error, logged) = refused_walk_for_slot(
+        "panel-walk-no-position",
+        none,
+        true,
+        true,
+        "no position yet",
+    );
+    assert_eq!(error.as_deref(), Some("no position yet"), "{error:?}");
+    assert_eq!(logged, 1);
 }
