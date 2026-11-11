@@ -2606,6 +2606,7 @@ fn the_message_line_shows_the_brief_at_80x24_and_120x40() {
         let mut app = crate::test_support::fleet_app(&["alice"]);
         app.error = Some(line.clone());
         let rows = draw(&mut app, width, height);
+        println!("CAPTURE message-line {width}x{height}\n{}", text(&rows));
         let row =
             row_starting(&rows, "msg: ").unwrap_or_else(|| panic!("{width}x{height}: {rows:?}"));
         if cut {
@@ -2666,6 +2667,7 @@ fn the_status_and_script_panes_show_the_short_reason() {
             app.detail = Some(status.attach_to(detail));
             let rows = draw(&mut app, width, height);
             let all = text(&rows);
+            println!("CAPTURE reason-pane {screen:?} {width}x{height}\n{all}");
             let label = match screen {
                 Screen::Script => "blocked by danger zones",
                 _ => "reason: blocked by danger zones",
@@ -2756,6 +2758,7 @@ fn load_failure_list_shows_rows_and_detail_at_80x24_and_120x40() {
         assert!(app.script_failures_open);
         let rows = draw(&mut app, width, height);
         let all = text(&rows);
+        println!("CAPTURE load-failures {width}x{height}\n{all}");
         let (hx, hy) =
             find(&rows, "Load failures: 12").unwrap_or_else(|| panic!("{width}x{height}: {all}"));
         // The rule row sits below the list rows and spans the inner width.
