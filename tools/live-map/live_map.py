@@ -676,6 +676,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in login_plan.cells},
                 {
+                    "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",
                     "panel.headed-nav-script",
@@ -723,6 +724,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in moved_plan.cells},
                 {
+                    "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",
                     "panel.headed-nav-script",

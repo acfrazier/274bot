@@ -228,9 +228,10 @@ Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
 test-only client bump. `client/client.rs`,
 `client/actor_289.rs`, `render/draw.rs`, and `render/backend/cpu.rs` select
-both headed cells. `client/client.rs` also selects both relog cells because it
+both headed cells. `client/client.rs` also selects the relog cells and the idle
+cell (`host.transport-*` and `host.scriptless-idle-held`) because it
 contains `Client::login` (`vendor/fr-client-rust/crates/client/src/client/client.rs:3445`).
-Changes under `client/src/io/**` select both relog cells. The CPU headed cell
+Changes under `client/src/io/**` select the same cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in

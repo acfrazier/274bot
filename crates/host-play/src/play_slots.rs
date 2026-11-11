@@ -49,8 +49,8 @@ use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
     publish_script_survival, reset_script_nav, script_active, script_frame,
     script_observe_cached_with_channels, script_paint_of, script_slot, script_slot_or_insert,
-    script_survival_of, slot_arrival_reach, step_nav_bot,
-    take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
+    script_survival_of, slot_arrival_reach, step_nav_bot, take_manual_walk_ownership, NavBot,
+    ScriptSlot, ScriptWall,
 };
 #[cfg(feature = "test-support")]
 use crate::tick_engine_test_support::TickEngineTestHook;

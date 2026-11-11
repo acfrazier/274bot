@@ -9091,7 +9091,6 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
     );
 }
 
-
 #[test]
 fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
     for (host, transport, admitted) in [
@@ -25707,6 +25706,151 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
     release_wait.send(()).unwrap();
     play.stop_slot("dirty-exit-worker");
     server.join().unwrap();
+}
+
+/// A spawned worker with no script reconnects by itself after the server
+/// resets its connection, as it did before 0.2.9 (0.2.8 `play_login.rs`,
+/// release commit 65f526a09). A script is not needed for the reconnect.
+#[test]
+fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (reset_tx, reset_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut first);
+        attempt_tx.send((1, opcode, arrived)).unwrap();
+        answer_worker_login(&mut first, 2);
+        reset_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+        // Close the socket with the worker's bytes still unread: the close
+        // then ends the connection with a reset, not an orderly shutdown.
+        let mut probe = [0u8; 1];
+        let until = Instant::now() + Duration::from_secs(30);
+        while !matches!(first.peek(&mut probe), Ok(read) if read > 0) {
+            assert!(Instant::now() < until, "the worker sends nothing to reset");
+            thread::sleep(Duration::from_millis(20));
+        }
+        drop(first);
+
+        let (mut second, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut second);
+        attempt_tx.send((2, opcode, arrived)).unwrap();
+        answer_worker_login(&mut second, 2);
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("scriptless-reset-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!((number, opcode), (1, 16));
+    assert!(wait_settled(
+        || play.slot_connected("scriptless-reset-worker")
+    ));
+    reset_tx.send(()).unwrap();
+    let reconnect = attempt_rx.recv_timeout(Duration::from_secs(30));
+    // Stop the worker before judging, and free the fake server if the
+    // reconnect never came, so a failure ends at once and leaves no thread.
+    arm.stop.store(true, Ordering::Relaxed);
+    if reconnect.is_err() {
+        drop(std::net::TcpStream::connect(endpoint));
+    }
+    let _ = release_tx.send(());
+    play.stop_slot("scriptless-reset-worker");
+    let server_result = server.join();
+    let (number, opcode, _) = reconnect.expect("a bot with no script reconnects after a reset");
+    assert_eq!(
+        (number, opcode),
+        (2, 18),
+        "the reconnect resumes the dirty in-world session"
+    );
+    server_result.unwrap();
+    assert_eq!(
+        arm.login_latch_reason(),
+        None,
+        "no park or latch holds the bot logged out"
+    );
+}
+
+/// A spawned worker with no script never sends the Java idle logout: after
+/// its idle counter passes 4500 client cycles without input, the client still
+/// counts no idle cycles, queues no idle request and starts no logout timer. A bot with no script
+/// behaved this way before 0.2.9 (0.2.8 `play_slots.rs`: the host-owned
+/// client keeps the Java idle timer suppressed).
+#[test]
+fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        read_worker_login_attempt(&mut socket);
+        answer_worker_login(&mut socket, 2);
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+    let frames = Arc::new(AtomicUsize::new(0));
+    let idle_logout_started = Arc::new(AtomicBool::new(false));
+    let frame_count = Arc::clone(&frames);
+    let started = Arc::clone(&idle_logout_started);
+    let mut play = run_worker_play(endpoint, move |client, _, _| {
+        if !client.ingame {
+            return;
+        }
+        // The first in-game frame leaves the idle counter two cycles short
+        // of the Java threshold, as if the bot had sat idle for 90 s. Every
+        // frame after it is a client cycle past that threshold.
+        if frame_count.fetch_add(1, Ordering::Relaxed) == 0 {
+            client.shell.idle_cycles = 4498;
+        } else if client.shell.idle_cycles != 0 || client.logout_timer != 0 {
+            // A client that runs the Java timer keeps its idle count and
+            // starts the logout countdown when the request goes out; a
+            // host-owned client resets the count at every cycle.
+            started.store(true, Ordering::Relaxed);
+        }
+    });
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("scriptless-idle-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+    assert!(wait_settled(
+        || play.slot_connected("scriptless-idle-worker")
+    ));
+    assert!(
+        wait_settled(|| frames.load(Ordering::Relaxed) >= 20),
+        "the worker runs well past the 4500-cycle threshold"
+    );
+    let started_idle_logout = idle_logout_started.load(Ordering::Relaxed);
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("scriptless-idle-worker");
+    server.join().unwrap();
+    assert!(
+        !started_idle_logout,
+        "a bot with no script sends no idle logout request"
+    );
+    assert_eq!(arm.login_latch_reason(), None);
 }
 
 #[test]

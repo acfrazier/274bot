@@ -9,6 +9,9 @@
 //! - `live_dead_server_deadline_reconnects_into_a_world`: a test-only TCP
 //!   relay between the client and the engine stops forwarding the server's
 //!   bytes, so the client's 15 s deadline fires on real silence.
+//! - `live_scriptless_bot_stays_logged_in_idle_for_two_minutes`: a bot with
+//!   no script sits in the world for 130 s, past the Java idle threshold of
+//!   90 s, and keeps its session: no idle counter, no idle request, no exit.
 //!
 //! Env: `LIVE=1`, `BOT_EVIDENCE_DIR`, `RELOG_ENGINE_DIR`, `RELOG_CACHE_DIR`,
 //! `RELOG_UNPACK_DIR`, `RELOG_NAV_PACK` (absolute), optional
@@ -30,6 +33,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(180);
 const RELOG_TIMEOUT: Duration = Duration::from_secs(300);
 /// A rebuilt scene must hold steady this long before it is counted.
 const SETTLE: Duration = Duration::from_secs(4);
+/// How long an idle bot stays in the world: more than two minutes, well past
+/// the Java idle threshold of 90 s.
+const HELD_FOR: Duration = Duration::from_secs(130);
 
 struct Capture(Mutex<Vec<String>>);
 
@@ -59,6 +65,8 @@ static CAPTURE: Capture = Capture(Mutex::new(Vec::new()));
 enum Fault {
     ProtocolError,
     DeadServer,
+    /// A bot with no script sits idle in the world, past the idle threshold.
+    IdleHeld,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +74,8 @@ enum Phase {
     WaitReady,
     Faulted,
     WaitRelog,
+    /// [`Fault::IdleHeld`]: the bot sits in the world for [`HELD_FOR`].
+    Held,
     Done,
 }
 
@@ -130,6 +140,16 @@ struct LiveState {
     relog_since: Option<Instant>,
     after: Option<World>,
     pause_requested: bool,
+    /// [`Fault::IdleHeld`]: when the hold began, and how long the bot has
+    /// stayed in the world since.
+    held_since: Option<Instant>,
+    held_for: Option<Duration>,
+    /// The highest idle counter seen during the hold.
+    idle_cycles_max: Option<u32>,
+    /// The client's idle request went out (its logout countdown started).
+    idle_request_seen: bool,
+    /// The client left the world during the hold.
+    left_world: bool,
 }
 
 impl LiveState {
@@ -144,6 +164,11 @@ impl LiveState {
             relog_since: None,
             after: None,
             pause_requested: false,
+            held_since: None,
+            held_for: None,
+            idle_cycles_max: None,
+            idle_request_seen: false,
+            left_world: false,
         }
     }
 }
@@ -177,6 +202,29 @@ fn frame(client: &mut Client, state: &Mutex<LiveState>) {
                     client.handle_packet(74, &mut payload);
                 }
                 Fault::DeadServer => state.pause_requested = true,
+                Fault::IdleHeld => {
+                    // Nothing to inject: the bot has no script and only sits
+                    // in the world. Its idle time is the hold itself.
+                    state.phase = Phase::Held;
+                    state.held_since = Some(Instant::now());
+                }
+            }
+        }
+        Phase::Held => {
+            let idle_cycles = client.shell.idle_cycles;
+            state.idle_cycles_max = Some(
+                state
+                    .idle_cycles_max
+                    .map_or(idle_cycles, |max| max.max(idle_cycles)),
+            );
+            if client.logout_timer > 0 {
+                state.idle_request_seen = true;
+            }
+            if let Some(since) = state.held_since {
+                state.held_for = Some(since.elapsed());
+            }
+            if !client.ingame {
+                state.left_world = true;
             }
         }
         Phase::Faulted | Phase::WaitRelog => {
@@ -397,12 +445,15 @@ fn run_live(fault: Fault, label: &str) {
     let mut paused_connection = None;
     let deadline = started + READY_TIMEOUT + RELOG_TIMEOUT;
     loop {
-        let (phase, pause_requested) = {
+        let (phase, pause_requested, held_since) = {
             let state = state.lock().unwrap();
-            (state.phase, state.pause_requested)
+            (state.phase, state.pause_requested, state.held_since)
         };
         if pause_requested && paused_connection.is_none() {
             paused_connection = relay.as_ref().map(Relay::pause_live_connection);
+        }
+        if phase == Phase::Held && held_since.is_some_and(|at| at.elapsed() >= HELD_FOR) {
+            state.lock().unwrap().phase = Phase::Done;
         }
         if phase == Phase::Done || Instant::now() >= deadline {
             break;
@@ -445,6 +496,9 @@ fn run_live(fault: Fault, label: &str) {
         "before": state.before.map(World::json),
         "scenes_after_fault": state.scenes_after,
         "after": state.after.map(World::json),
+        "held_for_s": state.held_for.map(|held| held.as_secs_f64()),
+        "idle_cycles_max_while_held": state.idle_cycles_max,
+        "idle_request_seen": state.idle_request_seen,
         "host_log": log,
     });
     write_receipt(&evidence, label, &receipt);
@@ -455,6 +509,33 @@ fn run_live(fault: Fault, label: &str) {
         Phase::Done,
         "{account} did not come back: {receipt}"
     );
+    if fault == Fault::IdleHeld {
+        assert!(
+            !log.iter().any(|line| {
+                line.contains("session exit reason=") && !line.contains("operator_logout")
+            }),
+            "a bot with no script keeps its session: {receipt}"
+        );
+        assert!(
+            state.idle_cycles_max == Some(0),
+            "a bot with no script never counts idle cycles: {receipt}"
+        );
+        assert!(
+            !state.idle_request_seen,
+            "a bot with no script sends no idle request: {receipt}"
+        );
+        assert!(
+            !state.left_world,
+            "a bot with no script stays in the world: {receipt}"
+        );
+        assert!(
+            state
+                .held_for
+                .is_some_and(|held| held > Duration::from_secs(120)),
+            "the bot sat idle in the world for more than 120 s: {receipt}"
+        );
+        return;
+    }
     let after = state.after.expect("relogged world");
     assert!(after.populated(), "{receipt}");
     let attempts: Vec<&String> = log
@@ -494,6 +575,7 @@ fn run_live(fault: Fault, label: &str) {
                 "{attempts:?}"
             );
         }
+        Fault::IdleHeld => unreachable!("returned above"),
     }
 }
 
@@ -513,4 +595,14 @@ fn live_protocol_error_relogs_fresh_into_a_world() {
 #[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
 fn live_dead_server_deadline_reconnects_into_a_world() {
     run_live(Fault::DeadServer, "dead-server");
+}
+
+/// A bot with no script is never logged out for being idle: its client runs
+/// no Java idle timer (the host owns the session), so past the Java threshold
+/// of 4500 cycles (90 s at 20 ms) the bot is still in the same session, its
+/// idle counter stays at zero and no idle request has started a logout.
+#[test]
+#[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
+fn live_scriptless_bot_stays_logged_in_idle_for_two_minutes() {
+    run_live(Fault::IdleHeld, "idle-held");
 }
