@@ -186,7 +186,7 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
 }
 
 /// The Danger routing row (selected, so its line paints) costs a drawn frame
-/// the same allocations at both levels, and each level paints its label.
+/// the same allocations at all three levels, and each level paints its label.
 #[test]
 fn danger_routing_levels_cost_the_same_allocations_to_draw() {
     use frontend_core::{danger_routing_tooltip, DANGER_ROUTING_LEVELS};
@@ -214,5 +214,8 @@ fn danger_routing_levels_cost_the_same_allocations_to_draw() {
         assert!(shown.contains(&format!("Danger routing: {}", level.label())));
         assert!(shown.contains(&danger_routing_tooltip(level)[..20]));
     }
-    assert_eq!(counts[0], counts[1], "allocations at Never and Always");
+    let baseline = counts[0];
+    for (level, count) in DANGER_ROUTING_LEVELS.into_iter().zip(counts) {
+        assert_eq!(count, baseline, "allocations at Never and {level:?}");
+    }
 }

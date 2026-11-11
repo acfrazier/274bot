@@ -591,13 +591,16 @@ impl Widget for SettingsPane<'_> {
                 self.nav.allow_bank_fetch(),
                 BANK_FETCH_PERMISSION_SCOPE
             ),
-            format!(
-                "{}{}: {} — {}",
+            // Size the row once so longer level labels do not add reallocations.
+            [
                 marker(8),
                 GLOBAL_PERMISSION_LABELS[3].1,
+                ": ",
                 danger_level.label(),
-                frontend_core::danger_routing_tooltip(danger_level)
-            ),
+                " — ",
+                frontend_core::danger_routing_tooltip(danger_level),
+            ]
+            .concat(),
             format!(
                 "{}{}: {}",
                 marker(9),

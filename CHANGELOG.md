@@ -134,6 +134,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   exactly like Never for every script, walk and crossing combination. It
   uses the runtime safety net only when that net is available. **Always**
   takes precedence if both stored bits are true.
+- The TUI uses the same allocation count to draw all three danger-routing
+  levels.
 
 ### Combat
 
