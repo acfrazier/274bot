@@ -24,6 +24,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
+- The live nearest-shop cell waits for Harry to move within one tile before it
+  starts the acquisition run. This keeps his normal movement from causing a
+  false shop-close failure.
 
 ### Panel and terminal app
 

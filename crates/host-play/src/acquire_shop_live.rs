@@ -47,6 +47,8 @@ const HARPOON_TARGET: i32 = 1;
 const BAIT_TARGET: i32 = 15;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(600);
 const CELL_DEADLINE: Duration = Duration::from_secs(180);
+/// Wait for the moving keeper to enter interaction range before the live cell starts.
+const HARRY_TRADE_RANGE_WAIT_TICKS: u32 = 120;
 const TERMINAL_CAPTURE_GRACE: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// R289 selected-content Harry placement in Catherby.
@@ -318,7 +320,12 @@ fn seed_items() -> &'static [(&'static str, i32)] {
     &[("coins", SEED_COINS), ("fishing_bait", SEED_BAIT)]
 }
 
-fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> Scenario {
+fn scenario(
+    kind: CellKind,
+    stand: WorldTile,
+    harry_id: i32,
+    trace: Arc<Mutex<ShopTrace>>,
+) -> Scenario {
     let mut scenario = scenario::quester_stage(
         kind.name(),
         "Cook's Assistant",
@@ -339,6 +346,25 @@ fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> S
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("account preparation has StartScript");
     scenario.steps.truncate(start + 1);
+    if kind == CellKind::Nearest {
+        scenario.steps.insert(
+            start,
+            Step {
+                name: "wait for Harry within trade range",
+                kind: StepKind::Await {
+                    evidence: "Harry is within one tile of the seeded stand",
+                    ready: Box::new(move |snapshot| {
+                        harry_in_trade_range(snapshot, stand, harry_id)
+                    }),
+                    summary: None,
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 0, min: 1 },
+                    budget_ticks: HARRY_TRADE_RANGE_WAIT_TICKS,
+                },
+            },
+        );
+    }
     scenario.steps.push(Step {
         name: "await real AcquireRun receipt",
         kind: StepKind::Await {
@@ -358,6 +384,26 @@ fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> S
     scenario.settings.deadline = PREPARATION_DEADLINE + CELL_DEADLINE;
     scenario.settings.nav.engine_speed_ms = None;
     scenario
+}
+
+fn harry_in_trade_range(snapshot: &GameSnapshot, stand: WorldTile, harry_id: i32) -> bool {
+    if snapshot.tile() != Some((stand.x, stand.z, stand.level)) {
+        return false;
+    }
+    let Ok(harry_type) = usize::try_from(harry_id) else {
+        return false;
+    };
+    snapshot.npcs().is_some_and(|npcs| {
+        npcs.value.iter().any(|npc| {
+            npc.r#type == Some(harry_type)
+                && (0..=1).contains(&npc.distance)
+                && npc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.eq_ignore_ascii_case("trade"))
+        })
+    })
 }
 
 #[derive(Default)]
@@ -437,6 +483,11 @@ impl LiveState {
         }
         if self.snapshot.shop().open {
             return Some("shop modal was already open at StartScript".into());
+        }
+        if self.kind == CellKind::Nearest
+            && !harry_in_trade_range(&self.snapshot, self.fixture.stand, self.fixture.harry.id)
+        {
+            return Some("Harry was not within one tile at StartScript".into());
         }
         None
     }
@@ -1249,7 +1300,7 @@ fn run_cell(kind: CellKind) {
     let trace = Arc::new(Mutex::new(ShopTrace::default()));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario(kind, fixture.stand, Arc::clone(&trace));
+    let scenario = scenario(kind, fixture.stand, fixture.harry.id, Arc::clone(&trace));
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_live_names(&names);
     runner.set_shot_sink(Box::new(|_, _| {}));
