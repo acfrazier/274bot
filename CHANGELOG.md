@@ -249,6 +249,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   when the game applies a click late.
 - After a bite or a closed page that leaves nothing more to do, the Quester
   goes back to its step in the same game tick.
+- A survival bite no longer wastes food when only a floor asks for it. At or
+  below the danger line (the eat line that the threats set, or half the
+  maximum when the danger is unknown) the bot still eats at once and picks the
+  held food that best fits the missing hitpoints. Above that line, when a
+  step's own floor or the caller's floor asks for a bite, the bot eats only a
+  food whose heal fits the missing hitpoints, so at 37 of 40 it no longer
+  spends a lobster for 3 hitpoints.
+- After a bite, the next bite waits until the heal shows in hitpoints (a rise,
+  or a fall when a hit lands first) or until the food's own delay has passed,
+  in the Quester, the Gatherer, the walk guard and combat. The lost food item
+  shows that the bite ran; the heal must show before the next bite.
+- Every bite writes one `survival eat` line to the session log with the owner,
+  the outcome, the food and its heal, the hitpoints before, the maximum, the
+  danger line and the hitpoints seen afterwards.
 
 ### Gatherer
 

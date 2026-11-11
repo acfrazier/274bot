@@ -3576,6 +3576,16 @@ fn seed_low_hp(snapshot: &mut GameSnapshot) {
     snapshot.seed_stats(stats);
 }
 
+fn set_hitpoints(snapshot: &mut GameSnapshot, effective: i32) {
+    let mut stats = snapshot.stats().to_vec();
+    for stat in &mut stats {
+        if stat.index == 3 {
+            stat.effective = effective;
+        }
+    }
+    snapshot.seed_stats(stats);
+}
+
 /// Each distinct held click the runner sent, in order, as (action, request id).
 fn note_held(
     ledger: &Option<Box<crate::native::ledger::Ledger>>,
@@ -3692,7 +3702,9 @@ fn gatherer_late_bite_effect_moves_the_next_food_clock() {
         1,
         "tick 3: no count drop yet"
     );
+    // The bite's count drop and its 12-point heal reach the frame together.
     snapshot.seed_inventory(vec![held_lobster(1)], 28);
+    set_hitpoints(&mut snapshot, 17);
     let delay = crate::combat::guard::shared_tables()
         .unwrap()
         .food(held_lobster(1).def.id)
@@ -3703,7 +3715,7 @@ fn gatherer_late_bite_effect_moves_the_next_food_clock() {
     // tick `4 + delay + 1`, so it is sent after frame `4 + delay`.
     let ready = 4 + u64::try_from(delay).unwrap();
     for observed in 4..ready {
-        tick_with_hp(&mut gatherer, &snapshot, &mut ledger, observed, 5);
+        tick_with_hp(&mut gatherer, &snapshot, &mut ledger, observed, 17);
         assert_eq!(
             note_held(&ledger, &mut held),
             1,
@@ -3711,9 +3723,57 @@ fn gatherer_late_bite_effect_moves_the_next_food_clock() {
         );
         assert!(!matches!(gatherer.active, Active::Gather(_)));
     }
-    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, ready, 5);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, ready, 17);
     assert_eq!(note_held(&ledger, &mut held), 2, "tick {ready}");
     assert_eq!(held[1].0, "Eat", "the second bite follows the clock");
+}
+
+/// Two bites in a row with no heal to show: the count drop proves the first
+/// bite ran, but Hitpoints still read what they read before it, so the
+/// Hitpoints a second bite would be chosen on are stale. The second bite
+/// waits for the heal, or for the first food's own delay after the bite ran
+/// (`consume.rs2:122-127`: the next accepted bite is `eat_delay_arg + 1`
+/// ticks later), whichever comes first. The next-food clock alone would send
+/// it one tick earlier.
+#[test]
+fn gatherer_holds_the_second_bite_until_the_first_bites_heal_shows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot) = fixture();
+    snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
+    snapshot.seed_tick(20);
+    let mut ledger = None;
+    let mut held = Vec::new();
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 1, 60);
+    seed_low_hp(&mut snapshot);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 2, 5);
+    assert_eq!(note_held(&ledger, &mut held), 1);
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, 3, 5);
+    // The first bite ran in tick 4 and Hitpoints did not move.
+    snapshot.seed_inventory(vec![held_lobster(1)], 28);
+    let delay = crate::combat::guard::shared_tables()
+        .unwrap()
+        .food(held_lobster(1).def.id)
+        .unwrap()
+        .eat_delay_arg
+        .expect("lobster uses the shared next-food clock");
+    let clock = 4 + u64::try_from(delay).unwrap();
+    for observed in 4..=clock {
+        tick_with_hp(&mut gatherer, &snapshot, &mut ledger, observed, 5);
+        assert_eq!(
+            note_held(&ledger, &mut held),
+            1,
+            "the first bite's heal is unseen: tick {observed}"
+        );
+    }
+    tick_with_hp(&mut gatherer, &snapshot, &mut ledger, clock + 1, 5);
+    assert_eq!(
+        note_held(&ledger, &mut held),
+        2,
+        "the food's own delay has passed: tick {}",
+        clock + 1
+    );
 }
 
 /// Natural regeneration raises Hitpoints in the frame before the first bite's

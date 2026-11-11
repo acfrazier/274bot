@@ -3968,6 +3968,51 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
     assert_eq!(spilled.machine.input_lock(), None);
 }
 
+/// A bite settles on its count drop only once the heal shows (the stale-HP
+/// rule): Hitpoints rising is the heal, falling is a hit that lands first,
+/// and the food's own delay after the bite ran bounds the wait
+/// (`consume.rs2:122-127`). The bite is emitted in tick 3; the count drop is
+/// first seen in tick 4.
+#[test]
+fn a_bite_settles_only_when_its_heal_shows_after_the_count_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (name, hp_after, settles_at) in [
+        ("heal observed", 21, 4),
+        ("hit first", 5, 4),
+        ("heal not observed", 9, 7),
+    ] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut own = fight(&mut scene);
+        scene.face_us();
+        scene.stat(3, 9, 40);
+        let mut lobster = scene.held("lobster", 0);
+        lobster.count = 2;
+        scene.inventory.push(lobster);
+        scene.refresh();
+        let eat = own.pending_batch(&scene, 3);
+        held_row(&eat, 0, "Eat");
+        scene.install();
+        scene.inventory[0].count = 1;
+        scene.stat(3, hp_after, 40);
+        scene.refresh();
+        for tick in 4..settles_at {
+            own.pending_batch(&scene, tick);
+            assert!(
+                own.machine.pending_row(RowKind::Eat),
+                "{name}: the heal is unseen at tick {tick}"
+            );
+            assert_eq!(own.machine.counters.food, 0, "{name}: tick {tick}");
+        }
+        own.pending_batch(&scene, settles_at);
+        assert_eq!(
+            own.machine.counters.food, 1,
+            "{name}: settled at tick {settles_at}"
+        );
+    }
+}
+
 #[test]
 fn case44_ordinary_and_combo_food_share_only_a_proven_safe_lock() {
     if !api::test_support::game_data_available() {

@@ -12,6 +12,7 @@ use super::tables::{CombatTables, PotionKind, PrayerRole};
 use super::threats::ThreatSet;
 use crate::native::WalkRequest;
 use crate::survival::cure::{self, CureDecision, CureInputs, CurePoison};
+use crate::survival::eat;
 use api::condition::BotCondition;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
@@ -153,6 +154,7 @@ pub struct WalkGuard {
     eat_id: i32,
     eat_count: u16,
     eat_hp: i16,
+    eat_floor: i16,
     eat_admission_tick: u16,
 }
 
@@ -338,6 +340,7 @@ impl WalkGuard {
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
+            eat_floor: 0,
             eat_admission_tick: 0,
         }
     }
@@ -481,7 +484,7 @@ impl WalkGuard {
         self.last_tick = tick;
         self.threats.observe(&frame, &self.tables, tick);
         let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
-        self.settle_eat(&frame, tick, hp);
+        self.settle_eat(&frame, tick, hp, hp_max);
         if self.blocks_follow(tick) {
             return Some(GuardOp::Locked {
                 until: if self.schedule.locked(tick) {
@@ -525,6 +528,9 @@ impl WalkGuard {
         } else {
             None
         };
+        if let Some(choice) = &eat_choice {
+            self.eat_floor = i16::try_from(choice.danger_floor).unwrap_or(i16::MAX);
+        }
         if (danger != Some(0) || poison_fire > 0)
             && hp
                 <= select::lines(danger, hp_max)
@@ -709,26 +715,64 @@ impl WalkGuard {
         Some(GuardOp::Eat { name })
     }
 
-    fn settle_eat(&mut self, frame: &Frame<'_>, tick: u16, hp: i32) {
+    /// Settle an admitted bite on what the next frames show. Hitpoints rising
+    /// is the heal; the count drop is the second witness that the server ran
+    /// the bite, and it settles the bite only once the heal is seen, a hit
+    /// lands first, or the food's own delay passes
+    /// ([`crate::survival::eat::heal`]). The bite's one log line goes out here.
+    fn settle_eat(&mut self, frame: &Frame<'_>, tick: u16, hp: i32, hp_max: i32) {
         if !self.schedule.pending(OpKind::Eat) {
             return;
         }
-        let observed = food_count(frame, self.eat_id) < self.eat_count
-            || (hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16) > self.eat_hp;
-        if observed {
-            self.schedule.settle(OpKind::Eat);
-            self.eat_id = 0;
-            self.eat_count = 0;
-            self.eat_hp = 0;
-            self.eat_admission_tick = 0;
-        } else if elapsed(tick, self.eat_admission_tick) >= u16::from(EAT_OBSERVATION_WINDOW_TICKS)
-        {
-            self.schedule.timeout(OpKind::Eat);
-            self.eat_id = 0;
-            self.eat_count = 0;
-            self.eat_hp = 0;
-            self.eat_admission_tick = 0;
+        let since = elapsed(tick, self.eat_admission_tick);
+        let outcome = if hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 > self.eat_hp {
+            Some(eat::Outcome::Healed)
+        } else if food_count(frame, self.eat_id) < self.eat_count {
+            match self.tables.food(self.eat_id) {
+                Some(food) => match eat::heal(
+                    self.eat_hp,
+                    hp,
+                    // The server runs the click in the tick after its send.
+                    since.saturating_sub(1),
+                    food,
+                ) {
+                    eat::Heal::Pending => None,
+                    eat::Heal::Rose => Some(eat::Outcome::Healed),
+                    eat::Heal::Fell => Some(eat::Outcome::Fell),
+                    eat::Heal::Unseen => Some(eat::Outcome::NoHeal),
+                },
+                None => Some(eat::Outcome::NoHeal),
+            }
+        } else if since >= u16::from(EAT_OBSERVATION_WINDOW_TICKS) {
+            Some(eat::Outcome::NotRun)
+        } else {
+            None
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        if let Some(food) = self.tables.food(self.eat_id) {
+            eat::Bite {
+                eater: eat::Eater::Guard,
+                outcome,
+                food_id: food.item_id,
+                heal: food.heal,
+                hp_before: i32::from(self.eat_hp),
+                hp_max,
+                danger_floor: i32::from(self.eat_floor),
+                hp_after: hp,
+            }
+            .log();
         }
+        if outcome == eat::Outcome::NotRun {
+            self.schedule.timeout(OpKind::Eat);
+        } else {
+            self.schedule.settle(OpKind::Eat);
+        }
+        self.eat_id = 0;
+        self.eat_count = 0;
+        self.eat_hp = 0;
+        self.eat_admission_tick = 0;
     }
 
     fn settle_drink(&mut self, frame: &Frame<'_>, tick: u16, points: i32) {
@@ -2170,7 +2214,10 @@ mod tests {
         assert_eat(Some(&first), "Lobster");
         guard.admitted(&first, &scene.view_at(0));
 
+        // The bite's count drop and its heal reach the frame together: the
+        // 12-point heal lands net of one hit of 11.
         scene.inventory[0].count = 1;
+        scene.stats[3].effective = 2;
         scene.refresh();
         let observed = guard.tick(
             &scene.view_at(1),
@@ -2279,7 +2326,10 @@ mod tests {
             );
             assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
 
+            // The count drop and the heal share the frame; a hit then takes
+            // the heal back before the next bite.
             scene.inventory.remove(0);
+            scene.stats[3].effective = emergency + 1;
             scene.refresh();
             let settled = guard.tick(
                 &scene.view_at(tick.wrapping_add(2)),
@@ -2296,6 +2346,8 @@ mod tests {
                 0,
                 "each two-tick count-drop observation must settle the Eat"
             );
+            scene.stats[3].effective = emergency;
+            scene.refresh();
         }
     }
 
@@ -2877,7 +2929,7 @@ mod tests {
         scene.stats[3].effective += 12;
         scene.refresh();
         let frame = Frame::borrow(scene.view_at(4)).unwrap();
-        guard.settle_eat(&frame, 4, emergency + 12);
+        guard.settle_eat(&frame, 4, emergency + 12, 43);
         assert!(!guard.schedule.pending(OpKind::Eat));
         assert!(guard.schedule.pending(OpKind::Drink));
         assert_eq!(guard.eat_id, 0);
@@ -3343,5 +3395,142 @@ mod tests {
         assert_eq!(pick(20), Some(lobster));
         assert_eq!(pick(30), Some(shrimp));
         assert_eq!(pick(39), Some(shrimp));
+    }
+
+    fn eat_with_floor(
+        scene: &Scene,
+        danger: Option<i32>,
+        hp: i32,
+        eat_floor: i32,
+    ) -> Option<policy::EatChoice> {
+        let frame = Frame::borrow(scene.view()).unwrap();
+        policy::eat_choice(
+            &frame,
+            &scene.tables,
+            &Schedule::default(),
+            danger,
+            0,
+            hp,
+            40,
+            0,
+            eat_floor,
+        )
+    }
+
+    /// A caller floor above the danger floor asks for a bite only when the
+    /// missing HP holds the whole heal (lobster 12,
+    /// `consume_normal.dbrow:178-179`). At 37/40 with no danger the old rule
+    /// spent a lobster for 3 HP.
+    #[test]
+    fn no_bite_above_the_danger_floor_when_the_heal_does_not_fit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut scene = Scene::new(43);
+        scene.add_food("lobster", 0, 1);
+        assert_eq!(eat_with_floor(&scene, Some(0), 37, 38), None, "37/40");
+        assert_eq!(eat_with_floor(&scene, Some(0), 29, 38), None, "29/40");
+        let fits = eat_with_floor(&scene, Some(0), 28, 38).expect("28/40 holds the heal");
+        assert_eq!(fits.ordinary, Some(food_id("lobster")));
+        assert_eq!(fits.combo, None);
+        // Unknown danger keeps its half-max floor of 20; a caller floor above
+        // it is the same case.
+        assert_eq!(eat_with_floor(&scene, None, 37, 38), None);
+    }
+
+    /// At or below the danger floor survival comes first: the bite is taken
+    /// even when it overheals. A danger of 18 puts the floor at 37.
+    #[test]
+    fn at_the_danger_floor_the_bite_is_taken_even_when_it_overheals() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut scene = Scene::new(43);
+        scene.add_food("lobster", 0, 1);
+        assert_eq!(select::lines(Some(18), 40).eat, 37);
+        let at_floor = eat_with_floor(&scene, Some(18), 37, 0).expect("37 is at the floor");
+        assert_eq!(at_floor.ordinary, Some(food_id("lobster")));
+        assert_eq!(at_floor.danger_floor, 37);
+        assert_eq!(eat_with_floor(&scene, Some(18), 38, 0), None, "above it");
+        // A caller floor does not move the danger floor, and the same HP is
+        // fit-only once the danger line is lower.
+        assert!(eat_with_floor(&scene, Some(18), 37, 38).is_some());
+        assert_eq!(eat_with_floor(&scene, Some(5), 37, 38), None);
+        let low = eat_with_floor(&scene, Some(5), 11, 38).expect("11 is the floor for danger 5");
+        assert_eq!(low.danger_floor, 11);
+    }
+
+    /// The bite takes the held food whose heal best fits the missing HP, and
+    /// at the floor the smallest one when none fits.
+    #[test]
+    fn the_bite_takes_the_best_fitting_food() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut scene = Scene::new(43);
+        scene.add_food("lobster", 0, 1);
+        scene.add_food("shrimp", 1, 1);
+        let lobster = food_id("lobster");
+        let shrimp = food_id("shrimp");
+        // Above the floor: missing 15 takes the lobster (12), missing 3 takes
+        // the shrimp (3), missing 2 takes neither.
+        for (hp, want) in [(25, Some(lobster)), (37, Some(shrimp)), (38, None)] {
+            assert_eq!(
+                eat_with_floor(&scene, Some(0), hp, 40).and_then(|choice| choice.ordinary),
+                want,
+                "hp {hp}/40 above the floor"
+            );
+        }
+        // At the floor: missing 2 overheals either food, so the smallest goes.
+        let at_floor = eat_with_floor(&scene, Some(19), 38, 0).expect("38 is the floor");
+        assert_eq!(at_floor.ordinary, Some(shrimp));
+    }
+
+    /// A bite settles on its count drop only once the heal shows: Hitpoints
+    /// rising is the heal, falling is a hit that lands first, and the food's
+    /// own delay bounds the wait.
+    #[test]
+    fn a_bite_waits_for_its_heal_after_the_count_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for (name, hp_after, settles_at) in [
+            ("heal seen", 12, 1u16),
+            ("hit first", -1, 1),
+            ("no change", 0, 4),
+        ] {
+            let mut scene = Scene::new(43);
+            scene.stats[3].effective = 2;
+            scene.launch_arrow();
+            scene.add_food("lobster", 0, 1);
+            let lobster = food_id("lobster");
+            let mut guard = scene.begin().unwrap();
+            let bite = guard
+                .tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded)
+                .unwrap();
+            assert_eat(Some(&bite), "Lobster");
+            guard.admitted(&bite, &scene.view_at(0));
+            assert_eq!(guard.eat_id, lobster);
+
+            scene.inventory.retain(|item| item.def.id != lobster);
+            scene.stats[3].effective += hp_after;
+            scene.refresh();
+            let hp = scene.stats[3].effective;
+            for tick in 1..settles_at {
+                let frame = Frame::borrow(scene.view_at(tick)).unwrap();
+                guard.settle_eat(&frame, tick, hp, 40);
+                assert!(
+                    guard.schedule.pending(OpKind::Eat),
+                    "{name}: the heal is unseen at T+{tick}"
+                );
+            }
+            let frame = Frame::borrow(scene.view_at(settles_at)).unwrap();
+            guard.settle_eat(&frame, settles_at, hp, 40);
+            assert!(
+                !guard.schedule.pending(OpKind::Eat),
+                "{name}: settled at T+{settles_at}"
+            );
+            assert_eq!(guard.eat_id, 0, "{name}");
+        }
     }
 }

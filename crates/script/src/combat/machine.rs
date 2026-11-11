@@ -18,6 +18,7 @@ use crate::native::{
     WalkRequest, QUEST_WALK_MAX_ATTEMPTS,
 };
 use crate::survival::cure::{self, CureDecision, CureInputs};
+use crate::survival::eat;
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
 use std::num::NonZeroU64;
@@ -198,6 +199,10 @@ pub struct Combat {
     raised_prayers: RaisedPrayers,
     eat_ready: u16,
     food_total: u16,
+    // The Hitpoints and danger floor of the plan that last held a bite: the
+    // stale-HP rule and the survival log line read them.
+    eat_hp: i16,
+    eat_floor: i16,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
     // Bits 42–55 hold Prep-origin and skipped boost-family masks.
@@ -448,6 +453,8 @@ impl NativeMachine for Combat {
             raised_prayers: RaisedPrayers::default(),
             eat_ready: 0,
             food_total: 0,
+            eat_hp: 0,
+            eat_floor: 0,
 
             prep_failures: 0,
             approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
@@ -2020,8 +2027,12 @@ impl Combat {
                 continue;
             }
             let kind = op_kind(row.kind);
+            let mut eat_outcome = None;
             let settled = match row.kind {
-                RowKind::Eat => arbiter::count(frame, row.id) < i32::from(pending.baseline),
+                RowKind::Eat => {
+                    eat_outcome = self.eat_verdict(frame, row.id, pending);
+                    eat_outcome.is_some()
+                }
                 RowKind::CureFruit => arbiter::count(frame, row.id) < i32::from(pending.baseline),
                 RowKind::Drink => {
                     arbiter::doses(frame, &self.tables, potion_kind(row.aux)) < pending.baseline
@@ -2065,7 +2076,12 @@ impl Combat {
             if settled {
                 self.pending[slot] = PendingRow::default();
                 match row.kind {
-                    RowKind::Eat => self.counters.food = self.counters.food.saturating_add(1),
+                    RowKind::Eat => {
+                        self.counters.food = self.counters.food.saturating_add(1);
+                        if let Some(outcome) = eat_outcome {
+                            self.log_eat(frame, row.id, outcome);
+                        }
+                    }
                     RowKind::Drink => match potion_kind(row.aux) {
                         PotionKind::Prayer => {
                             self.counters.prayer = self.counters.prayer.saturating_add(1)
@@ -2106,6 +2122,9 @@ impl Combat {
                     continue;
                 }
                 self.pending[slot] = PendingRow::default();
+                if row.kind == RowKind::Eat {
+                    self.log_eat(frame, row.id, eat::Outcome::NotRun);
+                }
                 if row.kind == RowKind::Prayer && row.aux != 0 {
                     if let Some(varp) = self.prayer_varp(row.id) {
                         if observation.is_off(varp) {
@@ -2154,6 +2173,49 @@ impl Combat {
                 }
             }
         }
+    }
+    /// The stale-HP rule for a pending bite: its count drop shows the server
+    /// ran it, and it settles only once Hitpoints rose (the heal), fell (a
+    /// hit landed first) or the food's own delay passed
+    /// ([`eat::heal`]). `None` means the bite is still waiting.
+    fn eat_verdict(&self, frame: &Frame<'_>, id: i32, pending: PendingRow) -> Option<eat::Outcome> {
+        if arbiter::count(frame, id) >= i32::from(pending.baseline) {
+            return None;
+        }
+        let Some(food) = self.tables.food(id) else {
+            return Some(eat::Outcome::NoHeal);
+        };
+        // A bite sent in tick T runs in T + 1 at the earliest, where its age
+        // is 0.
+        match eat::heal(
+            self.eat_hp,
+            arbiter::stat(frame, 3).0,
+            u16::from(pending.age),
+            food,
+        ) {
+            eat::Heal::Pending => None,
+            eat::Heal::Rose => Some(eat::Outcome::Healed),
+            eat::Heal::Fell => Some(eat::Outcome::Fell),
+            eat::Heal::Unseen => Some(eat::Outcome::NoHeal),
+        }
+    }
+    /// One survival log line for a finished bite.
+    fn log_eat(&self, frame: &Frame<'_>, id: i32, outcome: eat::Outcome) {
+        let Some(food) = self.tables.food(id) else {
+            return;
+        };
+        let (hp, hp_max) = arbiter::stat(frame, 3);
+        eat::Bite {
+            eater: eat::Eater::Combat,
+            outcome,
+            food_id: food.item_id,
+            heal: food.heal,
+            hp_before: i32::from(self.eat_hp),
+            hp_max,
+            danger_floor: i32::from(self.eat_floor),
+            hp_after: hp,
+        }
+        .log();
     }
     fn shield(&self, frame: &Frame<'_>) -> bool {
         self.tables
@@ -2341,6 +2403,7 @@ impl Combat {
         ) else {
             return;
         };
+        plan.eat_floor = i16::try_from(choice.danger_floor).unwrap_or(i16::MAX);
         let ordinary = choice.ordinary;
         if let Some(id) = ordinary {
             if !self.push(plan, PlanRow::new(RowKind::Eat, id, 0)) {
@@ -3801,6 +3864,12 @@ impl Combat {
             let state = self.ranged_mut();
             state.sweep_attempts += 1;
             state.pickup_baseline = baseline;
+        }
+        if self.plan.contains(RowKind::Eat) {
+            self.eat_hp = arbiter::stat(frame, 3)
+                .0
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+            self.eat_floor = self.plan.eat_floor;
         }
         if self.phase == Phase::WindDown && self.plan.contains(RowKind::Eat) {
             self.flags |= TERMINAL_FOOD;

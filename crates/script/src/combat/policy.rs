@@ -291,6 +291,35 @@ pub(crate) fn food_by_excluding(
     protected_items: &[FoodReserve],
     eligible: impl Fn(&FoodFact) -> bool,
 ) -> Option<i32> {
+    food_choice(
+        hp,
+        hp_max,
+        inventory,
+        tables,
+        gate,
+        protected_items,
+        false,
+        eligible,
+    )
+}
+
+/// [`food_by_excluding`] with the waste rule: when `fit_only` is set, only a
+/// food whose heal fits the missing HP (`hp + heal <= hp_max`) is a choice,
+/// so a bite never overheals.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the HP pair, the held rows, the tables, the gate, the reserves, the waste rule and the eligibility test stay explicit"
+)]
+fn food_choice(
+    hp: i32,
+    hp_max: i32,
+    inventory: impl Iterator<Item = (i32, i32)> + Clone,
+    tables: &CombatTables,
+    gate: Option<i32>,
+    protected_items: &[FoodReserve],
+    fit_only: bool,
+    eligible: impl Fn(&FoodFact) -> bool,
+) -> Option<i32> {
     if hp <= 0 || hp >= hp_max {
         return None;
     }
@@ -308,6 +337,9 @@ pub(crate) fn food_by_excluding(
             continue;
         }
         let fits = hp.saturating_add(heal) <= hp_max;
+        if fit_only && !fits {
+            continue;
+        }
         let replace_smallest = smallest.is_none_or(|(_, current)| heal < current);
         let replace_fitting = fits && fitting.is_none_or(|(_, current)| heal > current);
         if !replace_smallest && !replace_fitting {
@@ -360,10 +392,13 @@ impl FoodReserve {
 
 /// Food chosen on one HP observation. Ordinary food follows the next-eat
 /// clock; combo food is eligible only when it crosses its message-delay gate.
+/// `danger_floor` is the HP at or below which the bite is taken whatever it
+/// overheals; the survival log line records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EatChoice {
     pub ordinary: Option<i32>,
     pub combo: Option<i32>,
+    pub danger_floor: i32,
 }
 /// The scalar state used to choose food for one observation.
 pub(crate) struct EatInputs {
@@ -379,6 +414,12 @@ pub(crate) struct EatInputs {
 /// evaluates the current observation. `poison_fire` is the next poison
 /// fire's damage. `eat_floor` is a caller-specific lower bound on the bite
 /// line. A bot at full HP never bites.
+///
+/// The danger floor is the danger-derived eat line (`select::lines(..).eat`,
+/// poison included): at or below it, survival comes first and the best-fitting
+/// food is eaten even when it overheals. Above it, only the caller's own
+/// floor asks for a bite, and only a food whose heal fits the missing HP is
+/// chosen, so no bite is wasted; a combo bite is never added there.
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame, tables and schedule borrows plus the danger, poison fire, HP pair, tick and eat-floor scalars stay explicit"
@@ -434,13 +475,16 @@ pub(crate) fn eat_choice_excluding(
         return None;
     }
 
-    let ordinary = food_by_excluding(
+    let danger_floor = lines.eat;
+    let fit_only = hp > danger_floor;
+    let ordinary = food_choice(
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         None,
         protected_items,
+        fit_only,
         |food| food.eat_delay_arg.is_some() && schedule.food_ready(food, tick),
     );
     let heal = ordinary
@@ -450,6 +494,14 @@ pub(crate) fn eat_choice_excluding(
         return Some(EatChoice {
             ordinary,
             combo: None,
+            danger_floor,
+        });
+    }
+    if fit_only {
+        return ordinary.map(|ordinary| EatChoice {
+            ordinary: Some(ordinary),
+            combo: None,
+            danger_floor,
         });
     }
     let combo = food_by_excluding(
@@ -474,7 +526,11 @@ pub(crate) fn eat_choice_excluding(
                     > gate
         },
     );
-    (ordinary.is_some() || combo.is_some()).then_some(EatChoice { ordinary, combo })
+    (ordinary.is_some() || combo.is_some()).then_some(EatChoice {
+        ordinary,
+        combo,
+        danger_floor,
+    })
 }
 #[cfg(test)]
 mod tests {

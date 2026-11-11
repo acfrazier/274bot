@@ -415,6 +415,17 @@ can decide first. Known incoming damage and the hazard add together.
 A bite cancels the current step and closes a game page before eating.
 The restarted step keeps its hazard and the family's original quantity target.
 
+A bite spends no food it cannot use. At or below the danger line (the eat line
+that the live threats set, or half the maximum Hitpoints when the danger is
+unknown) the bite goes out at once and takes the held food whose heal best fits
+the missing Hitpoints. Above that line, when only the step's hazard or the
+caller's floor asks for a bite, the Quester bites only a food whose heal fits
+the missing Hitpoints. After a bite the next bite waits until the heal shows
+in Hitpoints (a rise, or a fall when a hit lands first) or until the food's own
+delay has passed. Each bite writes one `survival eat` log line with the
+Hitpoints before, the maximum, the food and its heal, the danger line and the
+Hitpoints seen afterwards.
+
 Before preparing supplies, the runner checks a proven next step's hazard.
 An available bite uses the existing upkeep owner before a bank action, not
 beside it. If no edible food is held, preparation can still fetch supplies

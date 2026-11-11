@@ -5,6 +5,7 @@ pub use hazard::{HazardStat, StepHazard};
 
 pub mod condition;
 pub mod cure;
+pub(crate) mod eat;
 pub mod math;
 pub mod step;
 
