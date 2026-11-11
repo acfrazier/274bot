@@ -150,7 +150,6 @@ fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     ));
     let identity = CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     };
     let booth = poi_record(

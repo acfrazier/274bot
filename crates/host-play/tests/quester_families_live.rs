@@ -3460,10 +3460,9 @@ impl PrereqFailureOracle {
         let messages = row
             .crossings
             .iter()
-            .map(|crossing| {
+            .map(|_| {
                 let step = PrereqStepIdentity {
                     id: Arc::clone(&row.id),
-                    source: Arc::clone(&crossing.source.0),
                 };
                 match expected {
                     "FreeSlots" => PrereqRefusal::PreconditionMissing {

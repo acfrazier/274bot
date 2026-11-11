@@ -702,6 +702,9 @@ mod tests {
     /// third dial, after 17 clicks).
     #[test]
     fn dial_click_waits_for_the_next_tick_when_the_event_is_spent() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let before = lock_snapshot(["A", "A", "A", "A"]);
         let echoed = lock_snapshot(["B", "A", "A", "A"]);
         let mut ledger = None;

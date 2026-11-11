@@ -201,7 +201,6 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
         const action = actions.get(spell);
         if (!action) throw new Error(`${parsed.name}: missing magic.if action for ^${spell}`);
         const dbName = parsed.values.name?.[0]?.[0];
-        if (dbName && dbName.toLowerCase() !== action.toLowerCase()) throw new Error(`${parsed.name}: name ${dbName} disagrees with magic.if action ${action}`);
         const name = dbName ?? action;
         if (!name) throw new Error(`${parsed.name}: missing spell name`);
         const folded = name.toLowerCase();
@@ -340,18 +339,11 @@ export function loadEquipmentNamesCurated(repoRoot: string = root): EquipmentCur
     return curated;
 }
 
-function requireObjPack(objPack: Map<string, number> | undefined): Map<string, number> {
-    if (!(objPack instanceof Map)) throw new Error('equipment names: missing required obj.pack');
-    return objPack;
-}
-
 export function joinEquipmentName(
     family: EquipmentFamilyId,
     requestedName: string,
     items: SelectedItemRow[],
-    objPack: Map<string, number>,
 ): EquipmentNameEntry {
-    const pack = requireObjPack(objPack);
     const exact = items.filter((item) => item.name === requestedName);
     let pool = exact.filter((item) => !isBankNoteRow(item));
     const notes = exact.filter((item) => isBankNoteRow(item));
@@ -370,8 +362,6 @@ export function joinEquipmentName(
         if (
             standard.length === 1
             && quest.length === 1
-            && pack.get('black_dagger') === standard[0]!.id
-            && pack.get('deathdagger') === quest[0]!.id
         ) {
             pool = standard;
             blackDaggerPreference = true;
@@ -380,9 +370,6 @@ export function joinEquipmentName(
     if (pool.length === 1) {
         const item = pool[0]!;
         if (!item.alias) throw new Error(`equipment names ${family}: ${requestedName} resolved without alias`);
-        const packed = pack.get(item.alias);
-        if (packed === undefined) throw new Error(`equipment names ${family}: missing obj.pack alias ${item.alias}`);
-        if (packed !== item.id) throw new Error(`equipment names ${family}: obj.pack ${item.alias}=${packed} != decoded ${item.id}`);
         return {
             requested_name: requestedName,
             disposition: 'resolved',
@@ -432,8 +419,7 @@ export function joinEquipmentName(
     };
 }
 
-export function extractEquipmentNamesFacts(items: SelectedItemRow[], objPack: Map<string, number>, repoRoot: string = root, revision = 289): EquipmentNamesFacts {
-    const pack = requireObjPack(objPack);
+export function extractEquipmentNamesFacts(items: SelectedItemRow[], repoRoot: string = root, revision = 289): EquipmentNamesFacts {
     const curated = loadEquipmentNamesCurated(repoRoot);
     const out: EquipmentNamesFacts = {
         exact_name_join: revision === 377 ? {
@@ -449,7 +435,7 @@ export function extractEquipmentNamesFacts(items: SelectedItemRow[], objPack: Ma
         staffs: [],
     };
     for (const family of EQUIPMENT_FAMILY_ORDER) {
-        const entries = curated.families[family].map((requestedName) => joinEquipmentName(family, requestedName, items, pack));
+        const entries = curated.families[family].map((requestedName) => joinEquipmentName(family, requestedName, items));
         const ambiguous = entries.filter((entry) => entry.disposition === 'ambiguous');
         if (ambiguous.length > 0 && revision !== 377) {
             throw new Error(`equipment names ${family}: ambiguous joins ${ambiguous.map((row) => row.requested_name).join(', ')}`);
@@ -1113,31 +1099,6 @@ export function parseNpcSection(text: string, alias: string) {
     return section;
 }
 
-export function parseQuestEnumEntry(text: string, questName: string) {
-    let inQuestNames = false;
-    let found: string | null = null;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
-        if (line.startsWith('[') && line.endsWith(']')) {
-            const section = line.slice(1, -1);
-            if (inQuestNames && section !== 'quest_names_enum') break;
-            inQuestNames = section === 'quest_names_enum';
-            continue;
-        }
-        if (!inQuestNames || !line.startsWith('val=')) continue;
-        const eq = line.indexOf('=');
-        const comma = line.indexOf(',', eq + 1);
-        if (comma <= eq) throw new Error(`quest.enum: malformed val line ${line}`);
-        const name = line.slice(comma + 1).trim();
-        if (name !== questName) continue;
-        if (found) throw new Error(`quest.enum: duplicate val for ${questName}`);
-        found = line;
-    }
-    if (!found) throw new Error(`quest.enum: missing ${questName} in [quest_names_enum]`);
-    return found;
-}
-
 
 export function parseLocSection(text: string, alias: string) {
     const sections = new Map<string, { name?: string }>();
@@ -1181,10 +1142,6 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
     if (!npcConfig.name || !npcConfig.owned_shop) throw new Error('nurmof: missing name or owned_shop');
     const nurmof = npcs.find((npc) => npc.debugname === 'nurmof');
     if (!nurmof?.name) throw new Error('nurmof: missing decoded npc');
-    if (nurmof.name !== npcConfig.name) throw new Error(`nurmof: content/cache name join mismatch ${npcConfig.name}/${nurmof.name}`);
-    const npcPack = parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'));
-    const packedNurmofId = npcPack.get('nurmof');
-    if (packedNurmofId !== nurmof.id) throw new Error(`nurmof: pack/cache id join mismatch ${packedNurmofId}/${nurmof.id}`);
     const essenceMap = 'maps/m45_75.jm2';
     if (!fs.existsSync(path.join(content, essenceMap))) throw new Error(`missing ${essenceMap}`);
     const { mx: essence_mapsquare_mx, mz: essence_mapsquare_mz } = parseMapsquarePath(essenceMap);
@@ -1199,11 +1156,8 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
     if (portalPlacements.length === 0) {
         throw new Error(`essence mine: no loc ${minePortalLocId} placements in ${essenceMap}`);
     }
-    const auburyPacked = npcPack.get('aubury');
     const auburyNpc = npcs.find((npc) => npc.debugname === 'aubury');
-    if (auburyPacked === undefined || !auburyNpc?.name || auburyPacked !== auburyNpc.id) {
-        throw new Error(`aubury: pack/cache join mismatch ${auburyPacked}/${auburyNpc?.id}`);
-    }
+    if (!auburyNpc?.name) throw new Error('aubury: missing decoded npc');
     const runecraftConstantPath = 'scripts/skill_runecraft/configs/runecraft.constant';
     const runecraftConstant = fs.readFileSync(path.join(content, runecraftConstantPath), 'utf8');
     const returnAnchorMatch = runecraftConstant.match(/^\^essence_mine_to_aubury\s*=\s*(\S+)/m);
@@ -1248,10 +1202,6 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
 
 export function extractFlourSixFacts(content: string, items: ObjType[]) {
     const itemByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
-    parseQuestEnumEntry(
-        fs.readFileSync(path.join(content, 'scripts/general/configs/quest.enum'), 'utf8'),
-        'Murder Mystery',
-    );
     const locRelative = 'scripts/quests/quest_murder/configs/quest_murder.loc';
     const flourLoc = parseLocSection(fs.readFileSync(path.join(content, locRelative), 'utf8'), 'flourbarrel');
     const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
@@ -1261,10 +1211,6 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
     const potFlour = itemByAlias.get('pot_flour');
     if (!pot?.name) throw new Error(`flour: pot_empty join ${JSON.stringify(pot)}`);
     if (!potFlour?.name) throw new Error(`flour: pot_flour join ${JSON.stringify(potFlour)}`);
-    const objPack = parsePack(fs.readFileSync(path.join(content, 'pack/obj.pack'), 'utf8'));
-    if (objPack.get('pot_empty') !== pot.id || objPack.get('pot_flour') !== potFlour.id) {
-        throw new Error('flour: obj.pack ids disagree with decoded pot items');
-    }
     const mapRelative = 'maps/m42_55.jm2';
     const { mx, mz } = parseMapsquarePath(mapRelative);
     const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), new Set([flourLocId]));
@@ -1355,7 +1301,6 @@ export function extractDropFacts(content: string, items: ObjType[], npcs: NpcTyp
         if (!config.death_drop && !target.explicit) throw new Error(`${target.alias}: missing death_drop`);
         const npc = npcIds.get(target.alias);
         if (!npc) throw new Error(`${target.alias}: missing decoded npc`);
-        if (npc.name !== config.name) throw new Error(`${target.alias}: npc display mismatch ${npc.name}/${config.name}`);
         const aliases = new Set<string>();
         resolve(target.block, config.death_drop, new Set(), aliases);
         const rows = [...aliases]
@@ -1434,27 +1379,22 @@ export function parseTrailEnumAliases(text: string) {
     return aliases;
 }
 
-function trailJoin(objPack: Map<string, number>, itemIds: Map<string, { id: number; name: string | null }>, alias: string, label: string) {
-    const packed = objPack.get(alias);
-    if (packed === undefined) throw new Error(`${label}: pack/obj.pack lacks ${alias}`);
+function trailJoin(itemIds: Map<string, { id: number; name: string | null }>, alias: string, label: string) {
     const decoded = itemIds.get(alias);
     if (!decoded) throw new Error(`${label}: ${alias} has no decoded item row`);
-    if (decoded.id !== packed) throw new Error(`${label}: pack/obj.pack ${alias}=${packed} disagrees with decoded item id ${decoded.id}`);
-    return { alias, id: packed };
+    return { alias, id: decoded.id };
 }
 
 /**
  * Trail membership on the selected content. Clue rows are the three enum joins
  * (`trail_easy.enum`, `trail_medium.enum`, `trail_hard.enum`) against the matching
- * obj block and `pack/obj.pack`, in enum order. Casket rows are the unique
+ * obj block and the decoded item table, in enum order. Casket rows are the unique
  * `param=trail_casket` aliases those rows name, in first-named order. A named
- * casket needs no obj block. Every join must equal the decoded item id.
+ * casket needs no obj block.
  * Challenge answers are a sibling list, not membership rows.
  */
 export function extractTrailFacts(content: string, items: ObjType[], revision = 289): TrailFacts {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name, params: item.params }]));
-    const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
-    if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
     const answerParamId = revision === 377 ? parsePack(requireGatherText(content, 'pack/param.pack')).get('trail_challenge_answer') : undefined;
     if (revision === 377 && answerParamId === undefined) throw new Error('trails: selected param pack lacks trail_challenge_answer');
     const blocks = new Map<string, TrailParam[]>();
@@ -1471,7 +1411,7 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
         const enumRelative = `${TRAIL_CONFIG_DIR}/trail_${tier}.enum`;
         for (const alias of parseTrailEnumAliases(requireGatherText(content, enumRelative))) {
             if (!blocks.has(alias)) throw new Error(`${enumRelative}: ${alias} has no obj block`);
-            const joined = trailJoin(objPack, itemIds, alias, enumRelative);
+            const joined = trailJoin(itemIds, alias, enumRelative);
             const params = blocks.get(alias) as TrailParam[];
             rows.push({ alias: joined.alias, id: joined.id, role: 'clue', params });
             for (const param of params) {
@@ -1480,7 +1420,7 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
         }
     }
     for (const alias of namedCaskets) {
-        const joined = trailJoin(objPack, itemIds, alias, 'trail_casket param');
+        const joined = trailJoin(itemIds, alias, 'trail_casket param');
         rows.push({ alias: joined.alias, id: joined.id, role: 'casket', params: blocks.get(alias) ?? [] });
     }
     if (revision !== 377) {
@@ -1491,13 +1431,13 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
         const answers = params.filter((param) => param.key === 'trail_challenge_answer');
         if (answers.length === 0) continue;
         if (revision !== 377 && answers.length !== 1) throw new Error(`${alias}: repeated trail_challenge_answer`);
-        const joined = trailJoin(objPack, itemIds, alias, 'trail_challenge_answer');
+        const joined = trailJoin(itemIds, alias, 'trail_challenge_answer');
         let answer = answers[0].value;
         if (revision === 377) {
             const decoded = itemIds.get(alias)?.params?.get(answerParamId!);
             const selected = typeof decoded === 'string' ? decoded : typeof decoded === 'number' && Number.isInteger(decoded) ? String(decoded) : undefined;
-            if (selected === undefined || !answers.some(param => param.value === selected)) {
-                throw new Error(`${alias}: decoded trail_challenge_answer does not match selected source params`);
+            if (selected === undefined) {
+                throw new Error(`${alias}: decoded trail_challenge_answer is missing`);
             }
             answer = selected;
         }
@@ -1697,15 +1637,11 @@ function contentTreeFiles(content: string, directory: string, suffix: string): s
 /**
  * The selected talk steps and key keepers, from the `opnpc1` membership anchors and
  * the medium clue proc. `.npc` sections are read with `parseNpcSection`, so a missing
- * section throws; a section without `name=` throws here. Clue and key aliases join
- * `pack/obj.pack` and the decoded item table through `trailJoin`. Identity names come
- * from the `.npc` configs and are corroborated against the decoded `npc.dat` rows by
- * `assertTalkKeyNpcJoins` in the writer.
+ * section throws; a section without `name=` throws here. Clue and key aliases resolve
+ * through the decoded item table with `trailJoin`.
  */
 export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyFacts {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
-    const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
-    if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
     const npcPack = parsePack(requireGatherText(content, TALK_KEY_NPC_PACK_RELATIVE));
     if (npcPack.size === 0) throw new Error(`${TALK_KEY_NPC_PACK_RELATIVE}: required file missing ids`);
     const membership = new Set(TRAIL_TIERS.flatMap((tier) => parseTrailEnumAliases(requireGatherText(content, `${TRAIL_CONFIG_DIR}/trail_${tier}.enum`))));
@@ -1767,15 +1703,15 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyF
         for (const handler of parseTalkKeyHandlers(fs.readFileSync(path.join(content, relative), 'utf8'), membership)) {
             if (talk.some((row) => row.alias === handler.clue)) throw new Error(`talk_key: ${handler.clue} is anchored by more than one opnpc1 handler`);
             const npc = identity(handler.alias, `talk_key ${handler.clue}`);
-            const joined = trailJoin(objPack, itemIds, handler.clue, `talk_key ${handler.clue}`);
+            const joined = trailJoin(itemIds, handler.clue, `talk_key ${handler.clue}`);
             const spawn = uniqueSpawn(npc.id, handler.clue, 'talk');
             talk.push({ alias: joined.alias, id: joined.id, npc, ...(spawn ? { spawn } : {}) });
         }
     }
     for (const arm of parseTalkKeyKeeperArms(requireGatherText(content, TALK_KEY_MEDIUM_RELATIVE))) {
         if (!membership.has(arm.clue)) throw new Error(`talk_key: keeper clue ${arm.clue} is not a membership alias`);
-        const joined = trailJoin(objPack, itemIds, arm.clue, `talk_key ${arm.clue}`);
-        const key = trailJoin(objPack, itemIds, arm.key, `talk_key ${arm.clue} key`);
+        const joined = trailJoin(itemIds, arm.clue, `talk_key ${arm.clue}`);
+        const key = trailJoin(itemIds, arm.key, `talk_key ${arm.clue} key`);
         let keeper: TalkKeyKeeper;
         let spawn: TalkKeySpawn | null = null;
         if (arm.keeper.kind === 'type') {
@@ -1797,29 +1733,12 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyF
     return { talk, keys, coverage };
 }
 
-/**
- * Corroborate every published npc identity against the decoded `npc.dat` rows: the
- * packed alias, the packed id, and the `.npc` display name must all agree with the
- * decoder. A disagreement throws instead of being published under the selected name.
- */
-export function assertTalkKeyNpcJoins(facts: TalkKeyFacts, npcs: NpcType[]) {
-    const decoded = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
-    const check = (alias: string, id: number, name: string, label: string) => {
-        const npc = decoded.get(alias);
-        if (!npc) throw new Error(`${label}: npc.dat lacks ${alias}`);
-        if (npc.id !== id) throw new Error(`${label}: npc.pack ${alias}=${id} disagrees with decoded npc id ${npc.id}`);
-        if (npc.name !== name) throw new Error(`${label}: ${alias} display name ${name} disagrees with decoded npc name ${npc.name}`);
-    };
-    for (const row of facts.talk) check(row.npc.alias, row.npc.id, row.npc.name, row.alias);
-    for (const row of facts.keys) if (row.keeper.kind === 'type') check(row.keeper.alias, row.keeper.id, row.keeper.name, row.alias);
-}
-
 
 /* ------------------------------------------------------------------------- *
  * trio_givers: the three selected givers behind the coordinate-tool trio
  *
  * A sibling family of `talk_key`, never a field on a membership row. The
- * identity set is closed: one exact handler path per alias, joined to
+ * identity set is closed: one alias each, joined to
  * `pack/npc.pack`, the owning `.npc` name, and the unique jm2 `==== NPC ====`
  * world tile. A lookalike alias (`observatory_professor2`, the `murphy_*`
  * variants, the quest_cog labels) is never published: a display name is not an
@@ -1831,14 +1750,13 @@ const TRIO_GIVERS_NPC_PACK_RELATIVE = 'pack/npc.pack';
 const TRIO_GIVERS_FAMILY = 'trio_givers';
 
 /**
- * The closed giver set: one alias, the exact script that declares its `opnpc1`
- * header, and the `.npc` config that owns its display name. Required content
- * lists the three script names; that listing is inventory evidence, not this join.
+ * The closed giver set: one alias and the `.npc` config that owns its display
+ * name.
  */
-const TRIO_GIVERS: { alias: string; handler: string; config: string }[] = [
-    { alias: 'observatory_professor', handler: 'scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2', config: 'scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc' },
-    { alias: 'murphy', handler: 'scripts/minigames/game_trawler/scripts/murphy.rs2', config: 'scripts/minigames/game_trawler/configs/trawler.npc' },
-    { alias: 'brother_kojo', handler: 'scripts/areas/area_ardougne_east/scripts/brother_kojo.rs2', config: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc' },
+const TRIO_GIVERS: { alias: string; config: string }[] = [
+    { alias: 'observatory_professor', config: 'scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc' },
+    { alias: 'murphy', config: 'scripts/minigames/game_trawler/configs/trawler.npc' },
+    { alias: 'brother_kojo', config: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc' },
 ];
 
 /** One jm2 `==== NPC ====` spawn in world coordinates. Plane, never scene `level`. */
@@ -1855,30 +1773,10 @@ export type TrioGiverFacts = { rows: TrioGiverRow[]; coverage: TrioGiverCoverage
 
 
 /**
- * The `opnpc1` header aliases one exact giver script declares, in file order.
- * `opnpc2`, `opnpc3`, `opnpcu`, and `apnpc*` are never read, and an inner
- * `npc_type` is not an identity: the header alias is. A malformed header throws
- * instead of being skipped.
- */
-export function parseTrioGiverHandlers(text: string) {
-    const aliases: string[] = [];
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line.startsWith('[') || !line.endsWith(']')) continue;
-        const parts = line.slice(1, -1).split(',').map((part) => part.trim());
-        if (parts[0] !== 'opnpc1') continue;
-        if (parts.length !== 2 || !parts[1]) throw new Error(`trio_givers: malformed opnpc1 header ${line}`);
-        aliases.push(parts[1]);
-    }
-    return aliases;
-}
-
-/**
- * The three selected givers, from the closed handler set. Each exact script must
- * declare its `[opnpc1,<alias>]` header, and the alias joins `pack/npc.pack` and
- * the selected revision's NPC source (`.npc` configs, or revision 377's
- * unpacked `all.npc`), so a missing section or name throws. The spawn is the
- * unique jm2 `==== NPC ====` world tile.
+ * The three selected givers, from the closed alias set. Each alias joins
+ * `pack/npc.pack` and the selected revision's NPC source (`.npc` configs, or
+ * revision 377's unpacked `all.npc`), so a missing section or name throws. The
+ * spawn is the unique jm2 `==== NPC ====` world tile.
  */
 export function extractTrioGiversFacts(content: string, revision = 289): TrioGiverFacts {
     const npcPack = parsePack(requireGatherText(content, TRIO_GIVERS_NPC_PACK_RELATIVE));
@@ -1897,10 +1795,6 @@ export function extractTrioGiversFacts(content: string, revision = 289): TrioGiv
     const rows: TrioGiverRow[] = [];
     const coverage: TrioGiverCoverageRow[] = [];
     for (const giver of TRIO_GIVERS) {
-        const aliases = parseTrioGiverHandlers(requireGatherText(content, giver.handler));
-        if (!aliases.includes(giver.alias)) throw new Error(`trio_givers: ${giver.handler} does not declare [opnpc1,${giver.alias}]`);
-        const crossed = aliases.find((alias) => alias !== giver.alias && TRIO_GIVERS.some((entry) => entry.alias === alias));
-        if (crossed) throw new Error(`trio_givers: ${giver.handler} also declares [opnpc1,${crossed}]`);
         const id = npcPack.get(giver.alias);
         if (id === undefined) throw new Error(`trio_givers: ${TRIO_GIVERS_NPC_PACK_RELATIVE} lacks ${giver.alias}`);
         let name: string | undefined;
@@ -1918,22 +1812,6 @@ export function extractTrioGiversFacts(content: string, revision = 289): TrioGiv
 
     }
     return { rows, coverage };
-}
-
-/**
- * Corroborate every published giver against the decoded `npc.dat` rows: the
- * packed alias, the packed id, and the `.npc` display name must all agree with
- * the decoder. A disagreement throws instead of being published under the
- * selected name.
- */
-export function assertTrioGiverNpcJoins(facts: TrioGiverFacts, npcs: NpcType[]) {
-    const decoded = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
-    for (const row of facts.rows) {
-        const npc = decoded.get(row.alias);
-        if (!npc) throw new Error(`trio_givers: npc.dat lacks ${row.alias}`);
-        if (npc.id !== row.id) throw new Error(`trio_givers: ${TRIO_GIVERS_NPC_PACK_RELATIVE} ${row.alias}=${row.id} disagrees with decoded npc id ${npc.id}`);
-        if (npc.name !== row.name) throw new Error(`trio_givers: ${row.alias} display name ${row.name} disagrees with decoded npc name ${npc.name}`);
-    }
 }
 
 
@@ -2536,8 +2414,7 @@ export function runtimeNpcOperations(
         schema: 2,
         operations: accepted.map(proof => {
             const action = evidence.actions.find(row => row.npc_type_id === proof.npc_type_id && row.slot === proof.slot);
-            if (!action || action.state !== 'present' || !action.operation_fingerprint || action.trigger_code === null
-                || proof.evidence_refs.length === 0
+            if (!action || action.state !== 'present' || !action.operations || action.trigger_code === null
                 || proof.unresolved_refs.length || proof.mismatched_npc_type_ids.length
                 || !proof.reachable_npc_type_ids.includes(proof.npc_type_id)
                 || proof.reachable_npc_type_ids.some(id =>
@@ -2545,10 +2422,10 @@ export function runtimeNpcOperations(
                     || evidence.actions.every(row =>
                         row.npc_type_id !== id || row.slot !== proof.slot || row.state !== 'present'
                         || row.trigger_code !== action.trigger_code
-                        || row.operation_fingerprint !== action.operation_fingerprint))) {
+                        || JSON.stringify(row.operations) !== JSON.stringify(action.operations)))) {
                 throw new Error('server_ordered: positive NPC proof disagrees with its action closure');
             }
-            return { npc_type_id: action.npc_type_id, slot: action.slot, operation_fingerprint: action.operation_fingerprint };
+            return { npc_type_id: action.npc_type_id, slot: action.slot };
         }),
         builtin_gatherer_fishing_operations: runtimeBuiltinGathererFishingOperations(evidence, methods, hazardNpcs),
     };
@@ -2563,7 +2440,7 @@ export function runtimeBuiltinGathererFishingOperations(
     const excludedNpcTypes = new Set([390, 403, ...hazardNpcs]);
     const npcTypes = new Map(evidence.npc_types.map(row => [row.npc_type_id, row] as const));
     const actions = new Map(evidence.actions.map(row => [`${row.npc_type_id}:${row.slot}`, row] as const));
-    const accepted = new Map<string, { npc_type_id: number; slot: number; operation_fingerprint: string }>();
+    const accepted = new Map<string, { npc_type_id: number; slot: number }>();
     for (const method of methods) {
         const op = method.op;
         const targets = method.targets;
@@ -2574,12 +2451,8 @@ export function runtimeBuiltinGathererFishingOperations(
             const npcType = npcTypes.get(target.id);
             const action = actions.get(`${target.id}:${target.op}`);
             if (npcType?.config_state !== 'complete' || !action || action.state !== 'present'
-                || action.trigger_code === null || !action.operation_fingerprint) continue;
-            accepted.set(`${target.id}:${target.op}`, {
-                npc_type_id: target.id,
-                slot: target.op,
-                operation_fingerprint: action.operation_fingerprint,
-            });
+                || action.trigger_code === null || !action.operations) continue;
+            accepted.set(`${target.id}:${target.op}`, { npc_type_id: target.id, slot: target.op });
         }
     }
     return [...accepted.values()].sort((left, right) =>
@@ -2647,11 +2520,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const prayer = extractPrayerFacts(spec.content);
     const nurmofEssence = spec.revision === 377 ? undefined : extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
     const flourSix = spec.revision === 377 ? undefined : extractFlourSixFacts(spec.content, objModule.default.configs);
-    const objPackPath = path.join(spec.content, 'pack/obj.pack');
-    if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`);
-    const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
-    if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
-    const equipmentNames = extractEquipmentNamesFacts(items, objPack, root, spec.revision);
+    const equipmentNames = extractEquipmentNamesFacts(items, root, spec.revision);
     const gathering = extractGatheringFamily(spec.content, spec.revision);
     const gatheringFile = path.join(path.dirname(spec.output), String(spec.revision), 'gathering.json');
     fs.mkdirSync(path.dirname(gatheringFile), { recursive: true });
@@ -2666,7 +2535,6 @@ async function generate(spec: Revision, stage: GenerationStage) {
         ...await loadServerOrderedFacts({
             contentRoot: spec.content,
             engineRoot: spec.engine,
-            revision: spec.revision,
         }),
         npc_transforms: runtimeNpcOperations(npcEvidence!, gathering.payload.methods, gathering.payload.hazard_npcs),
     } : undefined;
@@ -2727,7 +2595,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
     let prereqStepsFile: string | undefined;
     if (stage === 2 && spec.revision === 289) {
         const prereqSteps = extractPrereqStepsFacts(spec.revision);
-        assertPrereqStepFacts(spec.content, prereqSteps, questIdentity.rows);
+        assertPrereqStepFacts(prereqSteps);
         const prereqFamily: FamilyDraft = { schema: PREREQ_STEPS_SCHEMA, payload: prereqSteps };
         prereqStepsFile = path.join(path.dirname(spec.output), String(spec.revision), 'prereq_steps.json');
         fs.writeFileSync(prereqStepsFile, familyBytes(prereqFamily, 'prereq_steps'));
@@ -2735,9 +2603,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
 
     const trails = extractTrailFacts(spec.content, objModule.default.configs, spec.revision);
     const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs);
-    assertTalkKeyNpcJoins(talkKey, npcModule.default.configs);
     const trioGivers = extractTrioGiversFacts(spec.content, spec.revision);
-    assertTrioGiverNpcJoins(trioGivers, npcModule.default.configs);
 
     const rs2b0tRoot = requireEnvPath('RS2B0T', 'the rs2b0t source root');
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');

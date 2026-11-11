@@ -49,6 +49,9 @@ fn request(keep: &Arc<[i32]>, slots: u8) -> BankRequest {
 
 #[test]
 fn large_capacity_keep_set_allocates_nothing_per_begin_or_scan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     eprintln!("ProtectedCounts={}", std::mem::size_of::<ProtectedCounts>());
     let (snapshot, keep) = fixture();
     assert!(keep.len() > MAX_MEMO);

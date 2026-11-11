@@ -15,7 +15,6 @@ use super::ContractError;
 pub struct NpcTransformAction {
     npc_type_id: i32,
     slot: u8,
-    operation_fingerprint: String,
 }
 
 impl NpcTransformAction {
@@ -27,11 +26,6 @@ impl NpcTransformAction {
     /// Return the proved one-based operation slot.
     pub fn slot(&self) -> u8 {
         self.slot
-    }
-
-    /// Borrow the ordered OP/AP handler fingerprint, not a display label.
-    pub fn operation_fingerprint(&self) -> &str {
-        &self.operation_fingerprint
     }
 }
 
@@ -48,7 +42,6 @@ impl NpcTransformAction {
 pub struct BuiltinGathererFishingOperation {
     npc_type_id: i32,
     slot: u8,
-    operation_fingerprint: String,
 }
 
 impl BuiltinGathererFishingOperation {
@@ -61,11 +54,6 @@ impl BuiltinGathererFishingOperation {
     pub fn slot(&self) -> u8 {
         self.slot
     }
-
-    /// Borrow the ordered OP/AP handler fingerprint, not a display label.
-    pub fn operation_fingerprint(&self) -> &str {
-        &self.operation_fingerprint
-    }
 }
 
 #[derive(Deserialize)]
@@ -73,7 +61,6 @@ impl BuiltinGathererFishingOperation {
 struct ActionWire {
     npc_type_id: i32,
     slot: u8,
-    operation_fingerprint: String,
 }
 
 impl super::wire::DecodeFact for NpcTransformAction {
@@ -87,7 +74,6 @@ impl super::wire::DecodeFact for NpcTransformAction {
 struct BuiltinFishingWire {
     npc_type_id: i32,
     slot: u8,
-    operation_fingerprint: String,
 }
 
 impl super::wire::DecodeFact for BuiltinGathererFishingOperation {
@@ -158,11 +144,10 @@ impl NpcTransformEvidence {
             || self.operations.windows(2).any(|rows| {
                 (rows[0].npc_type_id, rows[0].slot) >= (rows[1].npc_type_id, rows[1].slot)
             })
-            || self.operations.iter().any(|action| {
-                action.npc_type_id < 0
-                    || !(1..=5).contains(&action.slot)
-                    || !is_digest(&action.operation_fingerprint)
-            })
+            || self
+                .operations
+                .iter()
+                .any(|action| action.npc_type_id < 0 || !(1..=5).contains(&action.slot))
             || self
                 .builtin_gatherer_fishing_operations
                 .windows(2)
@@ -176,20 +161,12 @@ impl NpcTransformEvidence {
                     action.npc_type_id < 0
                         || matches!(action.npc_type_id, 390 | 403..=406)
                         || !(1..=5).contains(&action.slot)
-                        || !is_digest(&action.operation_fingerprint)
                 })
         {
             return Err(ContractError::InvalidContract);
         }
         Ok(())
     }
-}
-
-fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -205,33 +182,26 @@ mod tests {
 
     #[test]
     fn closure_and_builtin_fishing_rows_have_separate_admission_queries() {
-        let facts = decode(&format!(
-            r#"{{"schema":2,"operations":[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{}"}}],"builtin_gatherer_fishing_operations":[{{"npc_type_id":8,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-            "b".repeat(64),
-            "c".repeat(64),
-        ));
+        let facts = decode(
+            r#"{"schema":2,"operations":[{"npc_type_id":7,"slot":2}],"builtin_gatherer_fishing_operations":[{"npc_type_id":8,"slot":1}]}"#,
+        );
         assert_eq!(facts.validate(), Ok(()));
         let action = facts.operation(7, 2).unwrap();
         assert_eq!(action.npc_type_id(), 7);
         assert_eq!(action.slot(), 2);
-        assert_eq!(action.operation_fingerprint(), "b".repeat(64));
         assert!(facts.operation(7, 1).is_none());
         assert!(facts.operation(8, 2).is_none());
         let fishing = facts.builtin_gatherer_fishing_operation(8, 1).unwrap();
         assert_eq!(fishing.npc_type_id(), 8);
         assert_eq!(fishing.slot(), 1);
-        assert_eq!(fishing.operation_fingerprint(), "c".repeat(64));
         assert!(facts.builtin_gatherer_fishing_operation(7, 2).is_none());
     }
 
     #[test]
     fn invalid_runtime_operation_rows_refuse_binding() {
         for rows in [
-            r#"[{"npc_type_id":-1,"slot":1,"operation_fingerprint":"bad"}]"#.to_owned(),
-            format!(
-                r#"[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}},{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}}]"#,
-                "b".repeat(64)
-            ),
+            r#"[{"npc_type_id":-1,"slot":1}]"#.to_owned(),
+            r#"[{"npc_type_id":7,"slot":2},{"npc_type_id":7,"slot":2}]"#.to_owned(),
         ] {
             let facts = decode(&format!(
                 r#"{{"schema":2,"operations":{rows},"builtin_gatherer_fishing_operations":[]}}"#
@@ -244,16 +214,14 @@ mod tests {
     fn static_fishing_rows_cannot_replace_full_closure_or_admit_event_npcs() {
         for npc_type_id in [390, 403, 404, 405, 406] {
             let facts = decode(&format!(
-                r#"{{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":{npc_type_id},"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-                "b".repeat(64),
+                r#"{{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":{npc_type_id},"slot":1}}]}}"#
             ));
             assert_eq!(facts.validate(), Err(ContractError::InvalidContract));
         }
 
-        let facts = decode(&format!(
-            r#"{{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":309,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-            "b".repeat(64),
-        ));
+        let facts = decode(
+            r#"{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{"npc_type_id":309,"slot":1}]}"#,
+        );
         assert_eq!(facts.validate(), Ok(()));
         assert!(facts.operation(309, 1).is_none());
         assert!(facts.builtin_gatherer_fishing_operation(309, 1).is_some());

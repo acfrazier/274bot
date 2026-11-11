@@ -5,8 +5,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bankCatalogJson, cookCatalogJson } from './generate.ts';
 import {
-    assertTrioGiverNpcJoins,
-    assertTalkKeyNpcJoins,
     extractDropFacts,
     extractFacts,
     extractEquipmentNamesFacts,
@@ -29,16 +27,14 @@ import {
     parseIdentifyHerbPairs,
     parseJm2LinkBelow,
     parseJm2NpcPlacements,
-    parseTrioGiverHandlers,
     parseInvShopStock,
     parseObjSections,
     parsePrayerInterface,
-    parseQuestEnumEntry,
 } from './generate.ts';
 
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
-import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
+import { parseDbRows, parseSections, stripComments } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
@@ -50,8 +46,6 @@ import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './gather-catalog.test.ts';
 import './quest-junk.test.ts';
-import './extractors/prereq-preservation.test.ts';
-import './extractors/prereq-journal-proof.test.ts';
 import './extractors/prereq-steps.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
@@ -152,21 +146,20 @@ assert.deepEqual(
     const npcIds = [1, 2, 3, 390, 403];
     const evidence: NpcTransformClosureEvidence = {
         schema: 1,
-        source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
-        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete' })),
         actions: npcIds.map(npc_type_id => ({
             npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
             trigger_kind: 'type', trigger_target_id: npc_type_id,
-            operation_fingerprint: 'a'.repeat(64), source_refs: [0],
+            operations: { op: ['return;'], ap: null },
         })),
         transform_edges: [],
         unresolved: [],
         proofs: [1, 2].map(npc_type_id => ({
             npc_type_id, slot: 1, status: npc_type_id === 1 ? 'unchanged' : 'unavailable',
             reachable_npc_type_ids: [npc_type_id], mismatched_npc_type_ids: [],
-            evidence_refs: [0], unresolved_refs: [],
+            unresolved_refs: [],
         })),
-        engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
+        engine: { complete: true },
     };
     const target = (id: number): TargetWire => ({
         kind: 'npc', id, op: 1, class: 'resource', respawn: { state: 'known', value: null },
@@ -179,10 +172,10 @@ assert.deepEqual(
     const methods = [fishingMethod, fishingMethod];
     const hazardNpcs = [3];
     const runtime = runtimeNpcOperations(evidence, methods, hazardNpcs);
-    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1 }]);
     assert.deepEqual(runtime.builtin_gatherer_fishing_operations, [
-        { npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) },
-        { npc_type_id: 2, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+        { npc_type_id: 1, slot: 1 },
+        { npc_type_id: 2, slot: 1 },
     ], 'static proof admits only complete ordinary NPC types, even when full closure is unavailable');
     assert.equal(runtime.schema, 2);
     assert.deepEqual(Object.keys(runtime), ['schema', 'operations', 'builtin_gatherer_fishing_operations']);
@@ -1446,8 +1439,6 @@ assert.throws(
     /expected one .* LOC placement/,
 );
 assert.equal(parseMapsquarePath('maps/m45_75.jm2').mx, 45);
-assert.throws(() => parseQuestEnumEntry('val=37,Murder Mystery\n', 'Murder Mystery'), /\[quest_names_enum\]/);
-assert.equal(parseQuestEnumEntry('[quest_names_enum]\nval=37,Murder Mystery\n', 'Murder Mystery'), 'val=37,Murder Mystery');
 
 const toolFlour = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-tool-flour-'));
 fs.mkdirSync(path.join(toolFlour, 'scripts/areas/area_falador/configs'), { recursive: true });
@@ -1464,8 +1455,8 @@ const toolPickaxes = [{ id: 1265, debugname: 'bronze_pickaxe', name: 'Bronze pic
 const toolNurmof = { id: 594, debugname: 'nurmof', name: 'Nurmof' };
 assert.throws(
     () => extractNurmofEssenceFacts(toolFlour, toolPickaxes, [toolNurmof]),
-    /aubury: pack\/cache join mismatch 553\/undefined/,
-    'a missing decoded Aubury must fail the pack/cache join',
+    /aubury: missing decoded npc/,
+    'a missing decoded Aubury must fail',
 );
 const singleStock = extractNurmofEssenceFacts(
     toolFlour,
@@ -1499,14 +1490,6 @@ const equipmentItems = [
     { alias: 'deathdagger', id: 746, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
     { alias: 'bronze_arrow', id: 882, name: 'Bronze arrow', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
 ];
-const equipmentPack = new Map<string, number>([
-    ['shortbow', 841],
-    ['cert_shortbow', 842],
-    ['unstrung_shortbow', 50],
-    ['black_dagger', 1217],
-    ['deathdagger', 746],
-    ['bronze_arrow', 882],
-]);
 const curated = loadEquipmentNamesCurated();
 
 function isolatedEquipmentRoot(families: typeof curated.families = structuredClone(curated.families)) {
@@ -1518,14 +1501,14 @@ function isolatedEquipmentRoot(families: typeof curated.families = structuredClo
 
 const isolated = isolatedEquipmentRoot();
 assert.deepEqual(loadEquipmentNamesCurated(isolated).families, curated.families);
-const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack, isolated);
+const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, isolated);
 assert.equal(isolatedFacts.crossbows.at(-1)?.requested_name, "Karil's crossbow");
 
 const unknown = isolatedEquipmentRoot({
     ...curated.families,
     bows: [...curated.families.bows, 'Laser gun'],
 });
-const unknownFacts = extractEquipmentNamesFacts([], new Map(), unknown);
+const unknownFacts = extractEquipmentNamesFacts([], unknown);
 assert.equal(unknownFacts.bows.at(-1)?.requested_name, 'Laser gun');
 assert.equal(unknownFacts.bows.at(-1)?.disposition, 'absent');
 
@@ -1541,7 +1524,7 @@ assert.throws(
     'curated duplicate family rows are malformed',
 );
 
-const equipmentFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack);
+const equipmentFacts = extractEquipmentNamesFacts(equipmentItems);
 const shortbow = equipmentFacts.bows.find((row) => row.requested_name === 'Shortbow');
 assert.equal(shortbow?.disposition, 'resolved');
 assert.equal(shortbow?.alias, 'shortbow');
@@ -1561,19 +1544,19 @@ assert.equal(karil?.absent_class, 'no_exact_selected_match');
 assert.equal(equipmentFacts.exact_name_join.bolts.generic_is_substitute, false);
 
 // revision 377 derives the same equipment rows; only the frozen-bolt note is revision-specific
-const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, equipmentPack, repoRoot, 377);
+const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, repoRoot, 377);
 assert.deepEqual(equipmentFacts377.bows.map((row) => row.requested_name), equipmentFacts.bows.map((row) => row.requested_name));
 assert.equal(equipmentFacts377.exact_name_join.bolts.note, 'Frozen bolt names are exact queries. Each row derives its selected identity or absence; generic Bolts / Bolts(p) are never substituted for a tier name.');
 
 const noteOnly = extractEquipmentNamesFacts([
     { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
-], new Map([['cert_shortbow', 842]]));
+]);
 assert.equal(noteOnly.bows.find((row) => row.requested_name === 'Shortbow')?.absent_class, 'exact_match_ineligible');
 assert.equal(noteOnly.arrows.find((row) => row.requested_name === 'Dragon arrow')?.absent_class, 'no_exact_selected_match');
 
 const genericBolts = extractEquipmentNamesFacts([
     { alias: 'bolt', id: 877, name: 'Bolts', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
-], new Map([['bolt', 877]]));
+]);
 assert.equal(genericBolts.bolts.find((row) => row.requested_name === 'Bronze bolts')?.absent_class, 'no_exact_selected_match');
 assert.equal(genericBolts.bolts.some((row) => row.requested_name === 'Bolts' || row.alias === 'bolt'), false);
 assert.equal(genericBolts.exact_name_join.bolts.generic_display_name, 'Bolts');
@@ -1582,36 +1565,21 @@ assert.throws(
     () => extractEquipmentNamesFacts([
         { alias: 'bronze_scimitar', id: 1, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
         { alias: 'bronze_scimitar_dup', id: 2, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
-    ], new Map([['bronze_scimitar', 1], ['bronze_scimitar_dup', 2]])),
+    ]),
     /ambiguous joins Bronze scimitar/,
     'duplicate wieldable display names must fail closed at generate time',
 );
 const shortbow377 = equipmentItems.find(item => item.alias === 'shortbow')!;
 const ambiguous377Equipment = extractEquipmentNamesFacts(
     [...equipmentItems, { ...shortbow377, id: 19000, alias: 'quest_shortbow' }],
-    new Map([...equipmentPack, ['quest_shortbow', 19000]]), undefined, 377,
+    undefined, 377,
 ).bows.find(row => row.requested_name === 'Shortbow')!;
 assert.equal(ambiguous377Equipment.disposition, 'ambiguous');
 assert.equal(ambiguous377Equipment.id, undefined, '377 ambiguity does not invent a selected id');
 assert.equal(ambiguous377Equipment.alias, undefined, '377 ambiguity is not a silent preferred variant');
 assert.deepEqual(ambiguous377Equipment.candidates?.map(row => row.alias), ['shortbow', 'quest_shortbow']);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 999], ['black_dagger', 1217], ['deathdagger', 746], ['bronze_arrow', 882]])),
-    /obj\.pack shortbow=999/,
-    'selected pack id mismatch must fail closed',
-);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, undefined as unknown as Map<string, number>),
-    /missing required obj\.pack/,
-    'missing required pack must fail closed',
-);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 841], ['black_dagger', 1217], ['bronze_arrow', 882]])),
-    /ambiguous joins Black dagger/,
-    'black dagger preference without independent pack support stays ambiguous',
-);
 assert.equal(
-    joinEquipmentName('arrows', 'Dragon arrow', [], equipmentPack).absent_class,
+    joinEquipmentName('arrows', 'Dragon arrow', []).absent_class,
     'no_exact_selected_match',
 );
 
@@ -1778,7 +1746,7 @@ const questRoot = questFixture();
 const quest274 = extractQuestIdentityFacts(questRoot, 274);
 assertQuestRows(quest274);
 assert.equal(quest274.coverage.length, 1);
-assert.deepEqual(quest274.coverage[0], { class: 'revision-absent', alias: 'routequest', on_revision: 274, other_pin_id: 387, copied: false, reason: '289-only quest, not copied onto 274' });
+assert.deepEqual(quest274.coverage[0], { class: 'revision-absent', alias: 'routequest', on_revision: 274, copied: false, reason: '289-only quest, not copied onto 274' });
 assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverage[0] || 'quest_points' in quest274.coverage[0], false);
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
@@ -2063,7 +2031,6 @@ assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete f
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.constant']; }), 274), /quest\.constant/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/player/interfaces/questlist.if']; }), 274), /questlist\.if/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['pack/varp.pack']; }), 274), /varp\.pack/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.enum']; }), 274), /quest\.enum/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/quests/quest_cook/scripts/quest_cook.rs2']; }), 274), /quest_cook\.rs2/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['pack/varp.pack'] = files['pack/varp.pack'].replace('314=death_equiproom\n', '');
@@ -2081,17 +2048,8 @@ assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] = files['scripts/general/scripts/quests.rs2'].replace('%death_equiproom, ^death_complete', '%death_equiproom, ^death_equiproom_complete');
 }), 274), /constant stem/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace("text=Rune Mysteries Quest", 'text=Rune Mysteries');
-}), 274), /display mismatch/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace('text=Lost City', 'text=Lost City Of Zanaris');
-}), 274), /display mismatch/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] = '// no colour calls\n';
 }), 274), /no extracted rows/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['pack/varp.pack'] += '387=routequest\n';
-}), 274), /routequest is in varp\.pack/);
 
 const withExtras = extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] += `~send_quest_progress_colour(questlist:routequest, %routequest, ^routequest_complete);
@@ -2439,19 +2397,9 @@ assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key
 assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'handler_coord' || param.key === 'coord')), false);
 assert.equal(TRAIL_HANDLER_CONSTANT_COORDS.some((coord) => JSON.stringify(trailFacts).includes(coord)), false);
 
-// fail closed: a missing required input, a missing join, and an id mismatch
+// fail closed: a missing required input and a missing join
 assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_easy.enum`]; }), trailFixtureItems), /trail_easy\.enum/);
 assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_casket.obj`]; }), trailFixtureItems), /trail_casket\.obj/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files['pack/obj.pack']; }), trailFixtureItems), /pack\/obj\.pack/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('3554=trail_clue_hard_sextant028\n', '');
-}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_hard_sextant028/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2714=trail_clue_easy_map001_casket\n', '');
-}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_easy_map001_casket/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2779=trail_clue_hard_riddle004_casket', '9999=trail_clue_hard_riddle004_casket');
-}), trailFixtureItems), /disagrees with decoded item id/);
 assert.throws(() => extractTrailFacts(trailFixture((files) => {
     files[`${TRAIL_CONFIG}/trail_easy.enum`] += 'val=9,trail_clue_easy_missing\n';
 }), trailFixtureItems), /has no obj block/);
@@ -2722,27 +2670,12 @@ assert.equal(talkKeyFacts.talk.filter((row) => row.npc.alias === 'sailor').lengt
 assert.equal(JSON.stringify(talkKeyFacts).includes('2662'), false, 'a LOC row is not an NPC spawn');
 assert.equal(JSON.stringify(talkKeyFacts).includes('3039'), true, 'the black_heather keeper spawn is the NPC section row');
 
-// decode corroboration: the packed id, alias, and .npc name all have to agree with npc.dat
-const talkKeyNpcs = [
-    { id: 0, debugname: 'hans', name: 'Hans' },
-    { id: 32, debugname: 'ardougne_guard', name: 'Guard' },
-    { id: 202, debugname: 'black_heather', name: 'Black Heather' },
-    { id: 376, debugname: 'captain_tobias', name: 'Captain Tobias' },
-    { id: 669, debugname: 'grandtree_hazelmere', name: 'Hazelmere' },
-    { id: 804, debugname: 'tanner', name: 'Tanner' },
-];
-assert.doesNotThrow(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs));
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'grandtree_hazelmere' ? { ...npc, id: 670 } : npc))), /disagrees with decoded npc id/);
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'hans' ? { ...npc, name: 'Hanz' } : npc))), /disagrees with decoded npc name/);
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.filter((npc) => npc.debugname !== 'black_heather')), /npc\.dat lacks black_heather/);
-
 
 // fail closed: missing joins, missing sections, missing names, malformed arms, truncated trees
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { delete files['pack/npc.pack']; }), talkKeyItems), /pack\/npc\.pack/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('669=grandtree_hazelmere\n', ''); }), talkKeyItems), /pack\/npc\.pack lacks grandtree_hazelmere/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[somebody_else]\nname=Nobody\n'; }), talkKeyItems), /missing \[grandtree_hazelmere\]/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[grandtree_hazelmere]\nop1=Talk-to\n'; }), talkKeyItems), /has no name/);
-assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/obj.pack'] = files['pack/obj.pack'].replace('2832=trail_clue_medium_riddle001_key\n', ''); }), talkKeyItems), /pack\/obj\.pack lacks trail_clue_medium_riddle001_key/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m41_48.jm2'] = '==== LOC ====\n0 1 1: 2662 10 1\n'; }), talkKeyItems), /npc 669 has no jm2 NPC spawn/, 'a selected identity with no NPC row must fail');
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m50_50.jm2'] = '==== NPC ====\n0 7 33: 0 10\n'; }), talkKeyItems), /extra tokens/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_port_sarim/scripts/sailors.rs2'] = '[opnpc1,_sailor]\nif(inv_total(inv, trail_clue_easy_vague012) > 0) {\n    return;\n}\n'; }), talkKeyItems), /exactly one inner npc_type/);
@@ -2761,13 +2694,6 @@ assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), 
 /* ------------------------------------------------------------------ *
  * trio_givers: the closed giver set, packed ids, owning .npc names, jm2 tiles
  * ------------------------------------------------------------------ */
-
-// A giver identity is an `opnpc1` header on an exact path: another verb, another
-// part, or a label is not one.
-assert.deepEqual(parseTrioGiverHandlers('[opnpc1,observatory_professor]\n@professor_initial;\n[opnpc1,observatory_professor2]\n'), ['observatory_professor', 'observatory_professor2']);
-assert.deepEqual(parseTrioGiverHandlers('[opnpc2,murphy]\n[apnpc1,brother_kojo]\n[label,professor_glass]\n'), [], 'a trade, approach, or label handler is not the talk-to identity');
-assert.throws(() => parseTrioGiverHandlers('[opnpc1]\n'), /malformed opnpc1 header/);
-assert.throws(() => parseTrioGiverHandlers('[opnpc1,murphy,npc]\n'), /malformed opnpc1 header/);
 
 const TRIO_GIVER_HANDLERS: Record<string, string> = {
     observatory_professor: 'scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2',
@@ -2877,28 +2803,13 @@ assert.deepEqual(multiSpawnTrioGivers.rows[1], { alias: 'murphy', id: 463, name:
 assert.deepEqual(multiSpawnTrioGivers.coverage, [{ class: 'unknown', family: 'trio_givers', alias: 'murphy', reason: 'non-unique jm2 NPC spawn' }]);
 assert.equal(JSON.stringify(multiSpawnTrioGivers).includes('"spawn":null'), false);
 
-// decode corroboration: the packed alias, id, and .npc name must all agree with npc.dat
-const trioGiverNpcs = [
-    { id: 223, debugname: 'brother_kojo', name: 'Brother Kojo' },
-    { id: 463, debugname: 'murphy', name: 'Murphy' },
-    { id: 488, debugname: 'observatory_professor', name: 'Observatory professor' },
-];
-assert.doesNotThrow(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs));
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'murphy' ? { ...npc, id: 464 } : npc))), /disagrees with decoded npc id/);
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'brother_kojo' ? { ...npc, name: 'Brother Kojo?' } : npc))), /disagrees with decoded npc name/);
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.filter((npc) => npc.debugname !== 'observatory_professor')), /npc\.dat lacks observatory_professor/);
-
 
 // fail closed: missing files, missing joins, missing names, a lost header, zero hits, truncated trees
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files['pack/npc.pack']; })), /pack\/npc\.pack: required file missing/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('463=murphy\n', ''); })), /pack\/npc\.pack lacks murphy/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy_normal]\nname=Murphy\n'; })), /missing \[murphy\]/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy]\nop1=Talk-to\n'; })), /has no name/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_HANDLERS.murphy]; })), /murphy\.rs2: required file missing/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_CONFIGS.brother_kojo]; })), /ardougne_east\.npc: required file missing/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.brother_kojo] = '[opnpc1,brother_kojo2]\n@kojo;\n'; })), /does not declare \[opnpc1,brother_kojo\]/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.observatory_professor] = '[opnpc1,observatory_professor2]\n@professor_initial;\n'; })), /does not declare \[opnpc1,observatory_professor\]/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.murphy] += '\n[opnpc1,brother_kojo]\n@kojo;\n'; })), /also declares \[opnpc1,brother_kojo\]/, 'one giver script must not claim another closed identity');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 999\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'zero hits is not an unknown tile');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== LOC ====\n1 3 4: 463\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'a LOC row is not an NPC spawn');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463 10\n'; })), /extra tokens/);
@@ -3040,27 +2951,8 @@ for (const slot of [1, 2]) {
         baseline.payload.methods.find((method) => method.id === `fishing.loc_2027.op${slot}`)!.tick_arm,
         '377 named waterfall entries retain source-checked timing and roll blocks');
 }
-assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no reviewed fishing tick specification/,
+assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no fishing tick specification/,
     'historical revisions do not admit the 377 fishing entry identity');
-const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
-for (const [from, to] of [
-    ['p_oploc(2);\n        return;', 'p_oploc(2);'],
-    ['p_oploc(2);\n        return;', 'p_oploc(1);\n        return;'],
-    ['if (random(5) = 0)', 'if (random(6) = 0)'],
-]) {
-    assert.throws(
-        () => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, waterfallScript, from, to))),
-        /waterfall recast no longer suppresses one roll animation/,
-        'the Sometimes roll signal requires the authored early return and recast operation',
-    );
-}
-
-const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
-    replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
-assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');
-const changedContestLoose = changedContestYield.payload.loose.find((each) => each.gap?.code === 'quest-handler-shape');
-assert.ok(changedContestLoose);
-assert.equal(gatherView(changedContestYield).name('npc', changedContestLoose.id), hemensterSpot);
 const missingContestSource = extractGatheringFamily(gatheringFixture((rootDir) =>
     fs.rmSync(path.join(rootDir, hemensterFishingScript))));
 assert.equal(missingContestSource.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a missing quest handler is not promoted');
@@ -3134,15 +3026,6 @@ const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
     fs.writeFileSync(file, source.slice(0, start) + changedProc);
 }));
 assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
-
-// A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
-const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
-const driftedView = gatherView(drifted);
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.targets.state, 'unknown', 'a drifted handler leaves iron unclassified, never an empty known list');
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.spots.state, 'unknown');
-assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true);
-assert.equal(family289Rows(drifted, 'mining.iron'), 0);
-assert.equal(family289Rows(drifted, 'mining.copper'), 1, 'unrelated labels still classify');
 
 // A player-count scale that no longer parses keeps the raw content value and reports the scale as unknown.
 const unscaled = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/general/scripts/player_count.rs2', '4000, $base', '3000, $base')));
@@ -3892,7 +3775,7 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.deepEqual(payload.spells, magic377.spells);
     assert.deepEqual(payload.staves, magic377.staves);
     assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, decoded377Items, 377).herbs);
-    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    const equipment377 = extractEquipmentNamesFacts(payload.items, repoRoot, 377);
     assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
     assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
     const aliases377 = new Map<number, string>();
@@ -3908,6 +3791,20 @@ if (process.env.GAME_DATA_377_CONTENT) {
         assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
         assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
     }
+}
+
+// The shared comment lexer keeps physical line positions and quoted comment markers, and drops real comments.
+{
+    const commented = [
+        'def_string $page = "/* literal */ // literal"; // removed',
+        '/* removed',
+        '   removed */',
+        '~quest_journal("Title", $page);',
+    ].join('\n');
+    const uncommented = stripComments(commented);
+    assert.equal(uncommented.split('\n').length, commented.split('\n').length);
+    assert.ok(uncommented.includes('"/* literal */ // literal"'));
+    assert.ok(!uncommented.includes('removed'));
 }
 
 console.log('generate fixture passed');

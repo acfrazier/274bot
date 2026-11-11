@@ -1151,7 +1151,7 @@ fn bare_quest_identity_vec_does_not_decode() {
 fn coverage_only_quest_identity_is_not_success() {
     let error = SelectedGameData::decode(
             minimal_json(
-                r#", "quest_identity": {"rows": [], "coverage": [{"class": "revision-absent", "alias": "routequest", "on_revision": 274, "other_pin_id": 387, "copied": false, "reason": "not copied"}]}"#,
+                r#", "quest_identity": {"rows": [], "coverage": [{"class": "revision-absent", "alias": "routequest", "on_revision": 274, "copied": false, "reason": "not copied"}]}"#,
             )
             .as_bytes(),
             ClientRevision::R274,

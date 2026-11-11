@@ -1006,10 +1006,6 @@ mod tests {
         let data = json!({
             "schema_version":5,
             "revision":289,
-            "provenance":{
-                "cache_identity":{"cache_id":"test"},
-                "inputs":[],"content_inputs":[],"decoder_sources":[]
-            },
             "items":item_rows,
             "consumption":consumption,
             "pickpocket":[],

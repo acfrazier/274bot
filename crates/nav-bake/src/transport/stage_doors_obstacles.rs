@@ -1,8 +1,7 @@
-//! Narrow content proofs for obstacle paths with failure rolls or scenery writes.
-//! Geometry and requirements still come from the live parsed handler. The pinned
-//! AST admits only the reviewed success path, never arbitrary random branches.
+//! Narrow content rules for obstacle handlers with failure rolls or scenery
+//! writes. The obstacle class is selected by handler name; geometry and
+//! requirements come from the live parsed handler.
 use super::*;
-use std::sync::LazyLock;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Class {
@@ -14,88 +13,52 @@ pub(super) enum Class {
     Gate,
 }
 
-struct Templates {
-    handlers: Vec<(Block, Class)>,
-    labels: HashMap<String, Block>,
-    failures: Vec<Stmt>,
-}
-
-fn templates() -> &'static Templates {
-    static TEMPLATES: LazyLock<Templates> = LazyLock::new(|| {
-        let mut templates = Templates {
-            handlers: Vec::new(),
-            labels: HashMap::new(),
-            failures: Vec::new(),
-        };
-        for (kind, name, params, body) in header_blocks(include_str!("obstacle_handlers.rs2")) {
-            let body = parse_body(&body).expect("reviewed obstacle syntax");
-            for stmt in &body {
-                if let Stmt::If(arms, _) = stmt {
-                    if arms.iter().any(|(test, _)| {
-                        let mut calls = Vec::new();
-                        Stmt::ReturnValue(test.clone()).calls(&mut calls);
-                        calls.iter().any(|call| call == "stat_random")
-                    }) {
-                        templates.failures.push(stmt.clone());
-                    }
-                }
-            }
-            let block = Block {
-                params,
-                body,
-                reads_members: false,
-            };
-            if kind == "label" {
-                templates.labels.insert(name, block);
-            } else {
-                let class = match name.as_str() {
-                    "death_fullstyle" => Class::Stile,
-                    "troll_climbingrocks"
-                    | "troll_climbingrocks_top"
-                    | "troll_climbingrocks_bottom" => Class::Rocks,
-                    "ardougnewalldoor_left" | "ardougnewalldoor_right" => Class::Wall,
-                    "loc_2299" => Class::Window,
-                    "watchladderup" => Class::Ladder,
-                    "_ball_irongate" => Class::Gate,
-                    _ => unreachable!("reviewed obstacle handler"),
-                };
-                templates.handlers.push((block, class));
-            }
+/// The obstacle handlers the interpreter models, by handler name.
+fn class_of(name: &str) -> Option<Class> {
+    match name {
+        "death_fullstyle" => Some(Class::Stile),
+        "troll_climbingrocks" | "troll_climbingrocks_top" | "troll_climbingrocks_bottom" => {
+            Some(Class::Rocks)
         }
-        templates
-    });
-    &TEMPLATES
+        "ardougnewalldoor_left" | "ardougnewalldoor_right" => Some(Class::Wall),
+        "loc_2299" => Some(Class::Window),
+        "watchladderup" => Some(Class::Ladder),
+        "_ball_irongate" => Some(Class::Gate),
+        _ => None,
+    }
 }
 
-pub(super) fn classify(handler: &Block, src: &Sources) -> Option<Class> {
-    let templates = templates();
-    let (_, class) = templates
-        .handlers
-        .iter()
-        .find(|(template, _)| template.params == handler.params && template.body == handler.body)?;
+/// The class of the obstacle handler `name`. Every label the handler can
+/// jump to must resolve to exactly one definition.
+pub(super) fn classify(name: &str, handler: &Block, src: &Sources) -> Option<Class> {
+    let class = class_of(name)?;
     let mut calls = Vec::new();
     handler.body.iter().for_each(|stmt| stmt.calls(&mut calls));
     let mut seen = HashSet::new();
     while let Some(call) = calls.pop() {
-        if let Some(name) = call.strip_prefix('@') {
-            if !seen.insert(name.to_owned()) {
+        if let Some(label) = call.strip_prefix('@') {
+            if !seen.insert(label.to_owned()) {
                 continue;
             }
-            let expected = templates.labels.get(name)?;
-            let Lookup::Found(actual) = Sources::one(&src.labels, name) else {
+            let Lookup::Found(actual) = Sources::one(&src.labels, label) else {
                 return None;
             };
-            if actual.params != expected.params || actual.body != expected.body {
-                return None;
-            }
             actual.body.iter().for_each(|stmt| stmt.calls(&mut calls));
         }
     }
-    Some(*class)
+    Some(class)
 }
 
+/// A failure roll of a Rocks handler: an `if` whose test calls `stat_random`.
 pub(super) fn failure(stmt: &Stmt) -> bool {
-    templates().failures.contains(stmt)
+    let Stmt::If(arms, _) = stmt else {
+        return false;
+    };
+    arms.iter().any(|(test, _)| {
+        let mut calls = Vec::new();
+        Stmt::ReturnValue(test.clone()).calls(&mut calls);
+        calls.iter().any(|call| call == "stat_random")
+    })
 }
 
 impl Class {
