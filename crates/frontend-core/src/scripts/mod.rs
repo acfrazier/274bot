@@ -42,6 +42,8 @@ pub use prestart_zones::{
     START_ZONE_PANEL_SCROLL_HINT, START_ZONE_SCOPE_TITLE, START_ZONE_TUI_SCROLL_HINT,
     START_ZONE_UNAVAILABLE_NOTICE,
 };
+#[cfg(feature = "js")]
+pub use script_js::UnloadReason;
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView, StatusView,
@@ -585,11 +587,11 @@ impl<'a> BrowseCard<'a> {
         }
     }
 
-    pub fn unloadable(self) -> Option<&'a str> {
+    #[cfg(feature = "js")]
+    pub fn unloadable(self) -> Option<&'a UnloadReason> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
-            #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => card.unloadable.as_deref(),
+            BrowseCardKind::Loaded(card) => card.unloadable.as_ref(),
         }
     }
 

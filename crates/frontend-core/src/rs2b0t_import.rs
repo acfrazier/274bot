@@ -676,14 +676,14 @@ fn credential_problem(username: &str, password: &str) -> Option<CredentialProble
 /// A catalog card the import can assign and fill.
 pub struct CatalogCard<'a> {
     schema: &'a [script::SettingDef],
-    unloadable: Option<&'a str>,
+    unloadable: Option<&'a script_js::UnloadReason>,
     assignment: ScriptAssignment,
 }
 
 impl<'a> CatalogCard<'a> {
     pub fn new(
         schema: &'a [script::SettingDef],
-        unloadable: Option<&'a str>,
+        unloadable: Option<&'a script_js::UnloadReason>,
         assignment: ScriptAssignment,
     ) -> Self {
         Self {
@@ -698,7 +698,7 @@ impl<'a> CatalogCard<'a> {
     }
 
     /// Why the card cannot run in 274bot (it is dimmed in Browse).
-    pub fn unloadable(&self) -> Option<&'a str> {
+    pub fn unloadable(&self) -> Option<&'a script_js::UnloadReason> {
         self.unloadable
     }
 
@@ -727,7 +727,7 @@ impl ImportCatalog for script_js::JsLibrary {
         self.get(script::ScriptSource::Catalog, name).map(|card| {
             CatalogCard::new(
                 &card.settings_schema,
-                card.unloadable.as_deref(),
+                card.unloadable.as_ref(),
                 card.assignment(),
             )
         })
@@ -1417,7 +1417,10 @@ fn map_selected_script(mapped: &mut Mapped, name: &str, catalog: &impl ImportCat
         Some(card) => match card.unloadable {
             Some(reason) => mapped.skipped.push(skipped(
                 item,
-                format!("dimmed in 274bot, it cannot run here ({reason}); its parameters are still imported"),
+                format!(
+                    "dimmed in 274bot, it cannot run here ({}); its parameters are still imported",
+                    reason.line()
+                ),
             )),
             None => {
                 mapped.imported.push(format!("script: {name}"));

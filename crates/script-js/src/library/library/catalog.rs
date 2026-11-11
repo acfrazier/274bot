@@ -223,7 +223,7 @@ struct CatalogAddedCard {
     shape: LoadShape,
     api_family: ApiFamily,
     sha256: String,
-    unloadable: Option<String>,
+    unloadable: Option<UnloadReason>,
 }
 
 impl JsLibrary {
@@ -735,7 +735,7 @@ fn catalog_incoming_bytes(incoming: &CatalogIncoming) -> Option<usize> {
     if let Some(addition) = &incoming.addition {
         bytes = bytes.checked_add(addition.sha256.capacity())?;
         if let Some(unloadable) = &addition.unloadable {
-            bytes = bytes.checked_add(unloadable.capacity())?;
+            bytes = bytes.checked_add(unloadable.retained_bytes())?;
         }
     }
     Some(bytes)
@@ -1966,7 +1966,7 @@ fn prepared_card_retained_bytes(prepared: &PreparedCard) -> Option<usize> {
         card.settings_schema.capacity(),
     )?;
     if let Some(unloadable) = &card.unloadable {
-        add_catalog_bytes(&mut bytes, unloadable.capacity()).ok()?;
+        add_catalog_bytes(&mut bytes, unloadable.retained_bytes()).ok()?;
     }
     add_catalog_bytes(
         &mut bytes,
@@ -2406,16 +2406,21 @@ impl JsLibrary {
                 api_family: addition.api_family,
             };
             self.fingerprints.insert(key.clone(), fingerprint.clone());
-            if let Some(specifier) = &js_card.unloadable {
+            if let Some(diagnostic) = js_card
+                .unloadable
+                .as_ref()
+                .and_then(UnloadReason::failure_diagnostic)
+            {
                 self.record_failure(LoadFailure::capture_with_fingerprint(
                     ScriptSource::Catalog,
                     &js_card.path,
                     &js_card.name,
-                    &format!("unloadable import: {specifier}"),
+                    &diagnostic,
                     fingerprint.clone(),
                     Some(js_card.api_family),
                 ));
             } else {
+                // A catalog policy hold is not a load failure.
                 self.clear_failure(&key);
             }
             self.cards.push(js_card);
@@ -2533,7 +2538,7 @@ impl CatalogDiff {
             if let Some(addition) = &incoming.addition {
                 add_catalog_bytes(&mut bytes, addition.sha256.capacity()).ok()?;
                 if let Some(unloadable) = &addition.unloadable {
-                    add_catalog_bytes(&mut bytes, unloadable.capacity()).ok()?;
+                    add_catalog_bytes(&mut bytes, unloadable.retained_bytes()).ok()?;
                 }
             }
         }

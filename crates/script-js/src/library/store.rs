@@ -23,7 +23,7 @@ use super::shape::{
     catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
     raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_api_family,
     resolve_sibling_modules_bounded, ApiFamily, FirstUnloadableWork, LoadShape,
-    PreparationFingerprintWork, SiblingCompilationWork, MAX_PREPARATION_RESULT_BYTES,
+    PreparationFingerprintWork, SiblingCompilationWork, UnloadReason, MAX_PREPARATION_RESULT_BYTES,
     MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES, MAX_SOURCE_BYTES,
 };
 
@@ -43,9 +43,9 @@ pub struct JsCard {
     pub category: String,
     pub tags: Vec<String>,
     pub settings_schema: Vec<SettingDef>,
-    /// First import specifier that does not remap to a registered shim.
-    /// `None` means Start may spawn; `not impl` members do not set this.
-    pub unloadable: Option<String>,
+    /// Why the card cannot Start: an unresolved import or a catalog policy
+    /// hold. `None` means Start may spawn; `not impl` members do not set this.
+    pub unloadable: Option<UnloadReason>,
     /// Provenance only — not part of identity or the cache key.
     pub api_family: ApiFamily,
 }
@@ -390,7 +390,8 @@ impl JsLibrary {
                         continue;
                     }
                 };
-            let unloadable = first_unloadable_for_card(&origin, &path);
+            let unloadable =
+                first_unloadable_for_card(&origin, &path).map(UnloadReason::UnsupportedImport);
             self.cards.push(JsCard {
                 name: entry.name,
                 path,
@@ -480,7 +481,8 @@ impl JsLibrary {
         let settings_schema =
             crate::library::rs2b0t_registry::try_settings_schema_from_source(&origin)
                 .map_err(|e| format!("{name}: {e}"))?;
-        let unloadable = first_unloadable_for_card(&origin, path);
+        let unloadable =
+            first_unloadable_for_card(&origin, path).map(UnloadReason::UnsupportedImport);
         let card = JsCard {
             name,
             path: path.to_path_buf(),
@@ -606,17 +608,24 @@ impl JsLibrary {
     }
 
     fn note_card_outcome(&mut self, card: &JsCard) {
-        if let Some(spec) = &card.unloadable {
-            self.record_failure(LoadFailure::capture(
-                card.source,
-                &card.path,
-                &card.name,
-                &format!("unloadable import: {spec}"),
-                Some(card.origin.as_str()),
-                Some(card.api_family),
-            ));
-        } else {
-            self.clear_failure(&card.identity_key());
+        match card
+            .unloadable
+            .as_ref()
+            .and_then(UnloadReason::failure_diagnostic)
+        {
+            Some(diagnostic) => {
+                self.record_failure(LoadFailure::capture(
+                    card.source,
+                    &card.path,
+                    &card.name,
+                    &diagnostic,
+                    Some(card.origin.as_str()),
+                    Some(card.api_family),
+                ));
+            }
+            // A catalog policy hold is not a load failure. The picker reads
+            // its reason from the card itself.
+            None => self.clear_failure(&card.identity_key()),
         }
     }
 
@@ -1001,7 +1010,7 @@ struct CardPreparationTemplate {
     category: String,
     tags: Vec<String>,
     settings_schema: Vec<SettingDef>,
-    unloadable: Option<String>,
+    unloadable: Option<UnloadReason>,
     api_family: Option<ApiFamily>,
 }
 
@@ -1050,7 +1059,7 @@ impl CardPreparationTemplate {
             add_capacity(&mut bytes, tag.capacity())?;
         }
         if let Some(unloadable) = &self.unloadable {
-            add_capacity(&mut bytes, unloadable.capacity())?;
+            add_capacity(&mut bytes, unloadable.retained_bytes())?;
         }
         add_schema_bytes(
             &mut bytes,
@@ -1067,7 +1076,7 @@ impl CardPreparationTemplate {
         shape: LoadShape,
         api_family: ApiFamily,
         settings_schema: Vec<SettingDef>,
-        unloadable: Option<String>,
+        unloadable: Option<UnloadReason>,
     ) -> JsCard {
         JsCard {
             name: self.name.clone(),
@@ -1344,7 +1353,7 @@ impl CardPreparationSnapshot {
         );
         if !self.allow_unloadable {
             if let Some(reason) = &unloadable {
-                return Err(format!("unloadable import: {reason}"));
+                return Err(reason.failure_diagnostic().unwrap_or_else(|| reason.line()));
             }
         }
         let siblings = resolve_sibling_modules_bounded(
@@ -1489,7 +1498,7 @@ pub(crate) struct CardPreparationTask {
     cached: Option<CachedJs>,
     result_bytes: usize,
     unloadable_work: Option<FirstUnloadableWork>,
-    unloadable: Option<String>,
+    unloadable: Option<UnloadReason>,
     siblings_work: Option<SiblingCompilationWork>,
     siblings: Option<Vec<(String, String)>>,
     fingerprint: Option<String>,
@@ -1744,10 +1753,9 @@ impl CardPreparationTask {
                 );
                 if !self.snapshot.allow_unloadable {
                     if let Some(reason) = &unloadable {
-                        return self.begin_failure(
-                            format!("unloadable import: {reason}"),
-                            self.api_family,
-                        );
+                        let diagnostic =
+                            reason.failure_diagnostic().unwrap_or_else(|| reason.line());
+                        return self.begin_failure(diagnostic, self.api_family);
                     }
                 }
                 self.unloadable = unloadable;

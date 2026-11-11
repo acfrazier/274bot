@@ -9288,3 +9288,85 @@ fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
     assert!(banner.contains(state), "{banner}");
     assert!(status.contains(state), "{status}");
 }
+
+/// The panel driver for a dim catalog card: the Browse card draws the typed
+/// reason in the operator's terms. A retired card reads `unavailable: …`; an
+/// unresolved import reads `failed import: …`. The two cards make the kinds
+/// observable in one frame.
+#[cfg(feature = "js")]
+#[test]
+fn browse_card_draws_policy_holds_and_import_failures_apart() {
+    use crate::session::Session;
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("browse-dim-reasons");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
+    std::fs::create_dir_all(scripts.join("AccountLeveler")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Woodcutter from './Woodcutter/Woodcutter.js';\n\
+         import AccountLeveler from './AccountLeveler/AccountLeveler.js';\n\
+         ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });\n\
+         ScriptRegistry.register({ name: 'AccountLeveler', create: () => new AccountLeveler() });\n",
+    )
+    .unwrap();
+    let body = "import { Game } from '../../api/game/Game.js';\n\
+                export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
+    std::fs::write(
+        scripts.join("AccountLeveler/AccountLeveler.ts"),
+        "import x from '../../event/webwalk/Something.js';\n\
+         export default class T extends LoopingBot { loop() {} }",
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    session
+        .scripts
+        .register_catalog(&root, &dir.join("rs2b0t-path"))
+        .expect("fixture catalog registers");
+
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("browse")
+                .size([520.0, 600.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    for card in session.scripts.browse_cards() {
+                        if matches!(card.name(), "Woodcutter" | "AccountLeveler") {
+                            super::browse_script_card(ui, &session, card, 480.0);
+                        }
+                    }
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("unavailable: replaced by the native Gatherer"),
+        "a retired card reads as unavailable:\n{text}"
+    );
+    assert!(
+        text.contains("failed import: ../../event/webwalk/Something.js"),
+        "an unsupported import names its specifier:\n{text}"
+    );
+    assert!(
+        !text.contains("failed import: replaced by the native Gatherer"),
+        "a policy hold is never a failed import:\n{text}"
+    );
+    assert!(
+        !text.contains("unavailable: ../../event/webwalk/Something.js"),
+        "an import failure is never a policy hold:\n{text}"
+    );
+}

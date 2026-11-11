@@ -1410,7 +1410,7 @@ impl Scripts {
     ) -> Result<Arc<script_js::CardPreparationSnapshot>, String> {
         let card = self.startable_card(source, lookup)?;
         if let Some(reason) = &card.unloadable {
-            return Err(format!("unloadable import: {reason}"));
+            return Err(reason.line());
         }
         Ok(Arc::new(
             self.js

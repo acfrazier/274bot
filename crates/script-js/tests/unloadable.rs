@@ -61,7 +61,6 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 #[test]
 fn catalog_dim_names_are_locked() {
     for name in [
-        "AIOQuester",
         "Woodcutter",
         "Miner",
         "Fisher",
@@ -123,7 +122,12 @@ ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
     let wood = lib
         .get(ScriptSource::Catalog, "Woodcutter")
         .expect("Woodcutter listed");
-    assert_eq!(wood.unloadable.as_deref(), Some("dim: Woodcutter"));
+    assert_eq!(
+        wood.unloadable,
+        Some(script_js::UnloadReason::Retired(
+            "replaced by the native Gatherer".into()
+        ))
+    );
     let cook = lib
         .get(ScriptSource::Catalog, "CookBot")
         .expect("CookBot listed");
@@ -139,8 +143,10 @@ ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
         .get(ScriptSource::Catalog, "JiveKQ")
         .expect("JiveKQ stays listed for the Beta 1 witness");
     assert_eq!(
-        jive.unloadable.as_deref(),
-        Some("dim: JiveKQ is unavailable: four-player qualification incomplete")
+        jive.unloadable,
+        Some(script_js::UnloadReason::Retired(
+            "four-player qualification incomplete".into()
+        ))
     );
 }
 
@@ -224,8 +230,10 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
         .get(ScriptSource::Catalog, "EssMiner")
         .expect("EssMiner listed");
     assert_eq!(
-        ess.unloadable.as_deref(),
-        Some("dim: EssMiner is unavailable until the native Gatherer replaces it")
+        ess.unloadable,
+        Some(script_js::UnloadReason::Retired(
+            "replaced by the native Gatherer: choose Mining and the rune essence resource".into()
+        ))
     );
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -45,7 +45,11 @@ fn def(
 /// subset), optionally dimming one card.
 struct FakeCatalog {
     loaded: bool,
-    cards: Vec<(String, Vec<script::SettingDef>, Option<String>)>,
+    cards: Vec<(
+        String,
+        Vec<script::SettingDef>,
+        Option<script_js::UnloadReason>,
+    )>,
 }
 
 impl FakeCatalog {
@@ -90,7 +94,9 @@ impl FakeCatalog {
     fn dim(mut self, name: &str) -> Self {
         for card in &mut self.cards {
             if card.0 == name {
-                card.2 = Some("needs an unsupported import".into());
+                card.2 = Some(script_js::UnloadReason::Retired(
+                    "needs an unsupported import".into(),
+                ));
             }
         }
         self
@@ -109,7 +115,7 @@ impl ImportCatalog for FakeCatalog {
             .map(|(name, schema, dim)| {
                 CatalogCard::new(
                     schema,
-                    dim.as_deref(),
+                    dim.as_ref(),
                     ScriptAssignment {
                         source_kind: "catalog".into(),
                         identity: name.clone(),
