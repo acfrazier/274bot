@@ -5798,9 +5798,11 @@ mod tests {
             bytes <= 4000,
             "Quester changed its per-bot layout: {bytes} B"
         );
+        // The stale-HP watch grew SurvivalStep from 192 B to 196 B; the
+        // ceiling keeps 64 B of headroom.
         assert!(
-            std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
-            "SurvivalStep={} exceeds its 192 B bound",
+            std::mem::size_of::<crate::survival::SurvivalStep>() <= 260,
+            "SurvivalStep={} exceeds its 260 B bound",
             std::mem::size_of::<crate::survival::SurvivalStep>()
         );
         assert!(std::mem::size_of::<QueuedQuester>() < 4096);

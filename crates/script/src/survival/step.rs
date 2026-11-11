@@ -9,11 +9,12 @@ use crate::combat::frame::Frame;
 use crate::combat::policy::{self, EatChoice};
 use crate::combat::schedule::{InputEffect, OpKind, Schedule};
 use crate::combat::select;
-use crate::combat::tables::CombatTables;
+use crate::combat::tables::{CombatTables, FoodFact};
 use crate::combat::threats::ThreatSet;
 use crate::gatherer::oneop::{OneOpArgs, OneOpKind};
 use crate::native::ActionContext;
 use crate::survival::cure::{cure_choice, CureDecision, CureInputs, CureWhy};
+use crate::survival::eat;
 use crate::survival::math::{self, NeedWhy, SurvivalNeed};
 use crate::survival::StepHazard;
 
@@ -92,6 +93,22 @@ enum ClickKind {
     Food,
 }
 
+/// Where the last survival click stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// The runner's op for this click is in flight. `watched` is set for a
+    /// bite whose Hitpoints reading was known when it was sent: its heal is
+    /// watched once the op settles.
+    Awaiting { watched: bool },
+    /// The op ended and nothing is watched.
+    Ended,
+    /// A bite ran (its count drop was seen) and its heal is watched.
+    Landed,
+    /// The bite's heal was seen, given up on, or the bite never ran, and its
+    /// one log line is out.
+    Judged,
+}
+
 /// The last held survival click the runner sent. `frame_tick` is the frame
 /// tick the schedule replays it at: the frame the click was sent after, until
 /// its op settles on the content's own signal, then the frame before the one
@@ -99,15 +116,20 @@ enum ClickKind {
 /// `observed` holds the low 16 bits of the observed tick that bound the
 /// replay. Both are compared by wrapping subtraction, so a reset of either
 /// count ends the replay instead of extending it. Revision-289 item ids fit in
-/// 16 bits; the record stays 8 bytes so the step keeps its 192-byte bound.
+/// 16 bits.
+///
+/// A bite also carries the stale-HP watch: `hp_before` is the Hitpoints the
+/// frame of the send showed and `basis` what the bite was chosen on (the
+/// critical floor and the danger), both saturated to a byte.
 #[derive(Debug, Clone, Copy)]
 struct SentClick {
     kind: ClickKind,
-    /// True until the runner's op for this click settles or ends.
-    awaiting: bool,
+    stage: Stage,
     frame_tick: u16,
     observed: u16,
     item_id: u16,
+    hp_before: u8,
+    basis: eat::Basis,
 }
 
 /// A runner's compact threat history, park and current report.
@@ -117,9 +139,15 @@ pub struct SurvivalStep {
     sent: Option<SentClick>,
     park: Option<SurvivalNeed>,
     last: SurvivalReport,
+    /// What the bite `want` last returned was chosen on, for `record_sent`.
+    bite_basis: eat::Basis,
 }
 
-const _: () = assert!(std::mem::size_of::<SurvivalStep>() <= 192);
+// The 64-bit baseline measured 192 bytes. The stale-HP watch adds the bite's
+// Hitpoints and basis to the last click record and a basis to the step; the
+// step measured 196 bytes before the basis grew to its danger, and a 260-byte ceiling
+// keeps the 64 bytes of headroom.
+const _: () = assert!(std::mem::size_of::<SurvivalStep>() <= 260);
 
 impl SurvivalStep {
     /// Observe threats and choose the cure, bite, or park trigger for this frame.
@@ -136,7 +164,12 @@ impl SurvivalStep {
         };
         let tick = frame.tick;
         self.threats.observe(&frame, tables, tick);
-        let (schedule, replayed) = self.schedule(tick, low_ticks(cx.evidence().tick), tables);
+        let observed = low_ticks(cx.evidence().tick);
+        let (schedule, replayed) = self.schedule(tick, observed, tables);
+        let (hp, hp_max) = hitpoints(&frame);
+        // The stale-HP rule: judge the last bite's heal on every frame, so its
+        // one log line goes out even while the step holds for a lock.
+        let heal_pending = self.heal_pending(hp, hp_max, tables, observed);
         if schedule.locked(tick) {
             // The drink's `p_delay(1)` (`consume_effects.rs2:124-126`,
             // `consume_messages.dbrow` `message_delay,1`) keeps the player
@@ -147,21 +180,15 @@ impl SurvivalStep {
             return SurvivalWant::Hold;
         }
         let base = self.threats.danger(&frame, tables, tick, false, false);
-        let hp = frame
-            .stats
-            .iter()
-            .find(|stat| stat.index == 3)
-            .map(|stat| stat.effective);
-        let hp_max = frame
-            .stats
-            .iter()
-            .find(|stat| stat.index == 3)
-            .map_or(0, |stat| stat.base);
         let hazard = upkeep
             .hazard
             .zip(hp)
             .map(|(hazard, hp)| hazard.max_damage(hp, hp_max));
         let danger = base.map(|danger| danger.saturating_add(hazard.unwrap_or(0)));
+        let burst = self
+            .threats
+            .burst(&frame, tables, tick, false, false)
+            .map(|burst| burst.saturating_add(hazard.unwrap_or(0)));
         let exposure = math::exposure(&self.threats, tables, tick);
         let condition = cx.condition();
         let q_unknown = cx.poison_unknown_pulse();
@@ -221,6 +248,7 @@ impl SurvivalStep {
                     schedule,
                     policy::EatInputs {
                         danger,
+                        burst,
                         poison_fire,
                         hp,
                         hp_max,
@@ -229,7 +257,9 @@ impl SurvivalStep {
                     },
                     cx.protected_items(),
                 )
-                .and_then(|choice| eat_args(choice, frame.inventory))
+                .and_then(|choice| {
+                    eat_args(choice, frame.inventory).map(|args| (args, choice.basis))
+                })
             };
             let timed = bite(&schedule);
             // A bite that only the next-food clock of the last survival click
@@ -246,7 +276,21 @@ impl SurvivalStep {
                     tried: 0,
                     owner: Owner::Step,
                 };
-                return timed.map_or(SurvivalWant::Hold, SurvivalWant::Click);
+                // The last bite's heal is not seen yet, so the Hitpoints this
+                // bite would be chosen on are stale: hold, never bite twice.
+                // The critical tier is the exception: the next hit can kill,
+                // so it eats as soon as the food clock allows (`timed` holds
+                // only a bite the clock allows).
+                if heal_pending
+                    && policy::bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor)
+                        != policy::BiteTier::Critical
+                {
+                    return SurvivalWant::Hold;
+                }
+                return timed.map_or(SurvivalWant::Hold, |(args, basis)| {
+                    self.bite_basis = basis;
+                    SurvivalWant::Click(args)
+                });
             }
         }
 
@@ -409,7 +453,9 @@ impl SurvivalStep {
             | OneOpKind::CloseChat { .. }
             | OneOpKind::ContinueDialog => {
                 if let Some(sent) = &mut self.sent {
-                    sent.awaiting = false;
+                    if matches!(sent.stage, Stage::Awaiting { .. }) {
+                        sent.stage = Stage::Ended;
+                    }
                 }
                 return;
             }
@@ -418,13 +464,91 @@ impl SurvivalStep {
         else {
             return;
         };
+        let (hp, hp_max) = hitpoints(&frame);
+        // A bite that is still unjudged when another click replaces it ends
+        // here, so every bite logs once.
+        self.close_bite(hp, hp_max);
+        let bite = kind == ClickKind::Food;
         self.sent = Some(SentClick {
             kind,
-            awaiting: true,
+            // A bite without a known Hitpoints reading has nothing to watch.
+            stage: Stage::Awaiting {
+                watched: bite && hp.is_some(),
+            },
             item_id,
             frame_tick: frame.tick,
             observed: low_ticks(cx.evidence().tick),
+            hp_before: clamp_hp(hp.unwrap_or(0)),
+            basis: if bite {
+                self.bite_basis
+            } else {
+                eat::Basis::default()
+            },
         });
+    }
+
+    /// The stale-HP rule. After a bite ran (its count drop was seen), its heal
+    /// must show in Hitpoints before the next bite: Hitpoints rising is the
+    /// heal, Hitpoints falling is a hit that lands first (a reason to eat, not
+    /// to wait), and the food's own delay bounds the wait
+    /// ([`eat::heal_wait_ticks`]). The judgement logs the bite's one line.
+    /// Returns true while the heal is unseen and the bound is open.
+    fn heal_pending(
+        &mut self,
+        hp: Option<i32>,
+        hp_max: i32,
+        tables: &CombatTables,
+        observed: u16,
+    ) -> bool {
+        let (Some(sent), Some(hp)) = (self.sent.as_mut(), hp) else {
+            return false;
+        };
+        if sent.kind != ClickKind::Food || sent.stage != Stage::Landed {
+            return false;
+        }
+        let Some(food) = tables.food(i32::from(sent.item_id)) else {
+            sent.stage = Stage::Judged;
+            return false;
+        };
+        // `sent.observed` is the frame before the server tick that ran the
+        // bite (`record_settled`), so the bite ran one tick after it.
+        let bite_ticks = observed.wrapping_sub(sent.observed).saturating_sub(1);
+        let outcome = match eat::heal(i16::from(sent.hp_before), hp, bite_ticks, food) {
+            eat::Heal::Pending => return true,
+            eat::Heal::Rose => eat::Outcome::Healed,
+            eat::Heal::Fell => eat::Outcome::Fell,
+            eat::Heal::Unseen => eat::Outcome::NoHeal,
+        };
+        sent.stage = Stage::Judged;
+        sent.bite(food, outcome, hp, hp_max).log();
+        false
+    }
+
+    /// End the last bite if it is still being watched: a bite that ran and
+    /// showed no heal logs `no-heal-seen`, one whose op never settled logs
+    /// `not-run`.
+    fn close_bite(&mut self, hp: Option<i32>, hp_max: i32) {
+        let Some(sent) = self.sent.as_mut() else {
+            return;
+        };
+        let outcome = match sent.stage {
+            Stage::Landed => eat::Outcome::NoHeal,
+            Stage::Awaiting { watched: true } => eat::Outcome::NotRun,
+            _ => return,
+        };
+        sent.stage = Stage::Judged;
+        let Some(food) = crate::combat::guard::shared_tables_ref()
+            .and_then(|tables| tables.food(i32::from(sent.item_id)))
+        else {
+            return;
+        };
+        sent.bite(
+            food,
+            outcome,
+            hp.unwrap_or(i32::from(sent.hp_before)),
+            hp_max,
+        )
+        .log();
     }
 
     /// The runner's op for the last survival click has ended. `applied` is
@@ -446,18 +570,42 @@ impl SurvivalStep {
     /// late moves every clock with it. A click whose op ended without the
     /// signal keeps the send-frame clocks.
     pub fn record_settled(&mut self, applied: bool, cx: &ActionContext<'_>) {
-        let Some(sent) = self.sent.as_mut().filter(|sent| sent.awaiting) else {
+        let Some(sent) = self
+            .sent
+            .as_mut()
+            .filter(|sent| matches!(sent.stage, Stage::Awaiting { .. }))
+        else {
             return;
         };
-        sent.awaiting = false;
-        if !applied {
-            return;
-        }
+        let watched = sent.stage == Stage::Awaiting { watched: true };
+        sent.stage = Stage::Ended;
         let Some(frame) = Frame::borrow(cx.snapshot()) else {
             return;
         };
+        let (hp, hp_max) = hitpoints(&frame);
+        let observed = low_ticks(cx.evidence().tick);
+        if !applied {
+            // A bite whose op ended without the count drop did not run.
+            if watched {
+                sent.stage = Stage::Judged;
+                if let Some(food) = crate::combat::guard::shared_tables_ref()
+                    .and_then(|tables| tables.food(i32::from(sent.item_id)))
+                {
+                    sent.bite(food, eat::Outcome::NotRun, hp.unwrap_or(0), hp_max)
+                        .log();
+                }
+            }
+            return;
+        }
+        if watched {
+            sent.stage = Stage::Landed;
+        }
         sent.frame_tick = frame.tick.wrapping_sub(1);
-        sent.observed = low_ticks(cx.evidence().tick).wrapping_sub(1);
+        sent.observed = observed.wrapping_sub(1);
+        // The frame that shows the count drop usually shows the heal too.
+        if let Some(tables) = crate::combat::guard::shared_tables_ref() {
+            self.heal_pending(hp, hp_max, tables, observed);
+        }
     }
 
     /// The runner defers this frame's click to a walk, a fight or a bank
@@ -615,6 +763,42 @@ fn eat_args(choice: EatChoice, inventory: &[api::snapshot::ItemView]) -> Option<
 /// The low 16 bits of an observed tick count.
 fn low_ticks(tick: u64) -> u16 {
     (tick & u64::from(u16::MAX)) as u16
+}
+
+/// Effective and base Hitpoints of a frame; the effective one is unknown when
+/// the stat row is absent.
+fn hitpoints(frame: &Frame<'_>) -> (Option<i32>, i32) {
+    let row = frame.stats.iter().find(|stat| stat.index == 3);
+    (
+        row.map(|stat| stat.effective),
+        row.map_or(0, |stat| stat.base),
+    )
+}
+
+fn clamp_hp(hp: i32) -> u8 {
+    u8::try_from(hp.max(0)).unwrap_or(u8::MAX)
+}
+
+impl SentClick {
+    /// This bite's survival log record, judged on `hp_after`.
+    fn bite(
+        &self,
+        food: &FoodFact,
+        outcome: eat::Outcome,
+        hp_after: i32,
+        hp_max: i32,
+    ) -> eat::Bite {
+        eat::Bite {
+            eater: eat::Eater::Step,
+            outcome,
+            food_id: food.item_id,
+            heal: food.heal,
+            hp_before: i32::from(self.hp_before),
+            hp_max,
+            basis: self.basis,
+            hp_after,
+        }
+    }
 }
 
 fn held_item(inventory: &[api::snapshot::ItemView], item_id: i32) -> Option<(&str, i32)> {
@@ -1037,6 +1221,227 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn settled(step: &mut SurvivalStep, snapshot: &GameSnapshot, applied: bool, tick: u64) {
+        let mut ledger = None;
+        with_tick(snapshot, &mut ledger, tick, |tick| {
+            step.record_settled(applied, &tick.cx)
+        });
+    }
+
+    fn with_hitpoints(mut snapshot: GameSnapshot, effective: i32) -> GameSnapshot {
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot
+    }
+
+    /// Two bites in a row without an observed heal do not happen. The count
+    /// drop shows the first bite ran in tick 21, but Hitpoints still read 5,
+    /// so the Hitpoints a second bite would be chosen on are stale. The
+    /// next-food clock (`consume.rs2:122-127`, `eat_delay_arg + 1` ticks after
+    /// the bite) opens at tick 23; the heal wait counts from the bite too and
+    /// ends one tick later, so the second bite is held at tick 23 and sent at
+    /// tick 24. The same bite is sent at tick 23 once the heal shows (HP rose)
+    /// or a hit lands first (HP fell).
+    #[test]
+    fn survival_step_holds_a_second_bite_until_the_first_heal_is_observed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let food = lobster();
+        let cured = condition(5, PoisonState::Clear);
+        let before = low_hp_snapshot(vec![food.clone(), food.clone()]);
+        for (name, hp_after, second_bite_at) in [
+            ("heal not observed", 5, 24),
+            ("heal observed", 17, 23),
+            ("hit first", 2, 23),
+        ] {
+            let after = with_hitpoints(low_hp_snapshot(vec![food.clone()]), hp_after);
+            let mut step = SurvivalStep::default();
+            let SurvivalWant::Click(first) = want_with_floor(
+                &mut step,
+                &before,
+                &cured,
+                CurePoison::WhenNeeded,
+                20,
+                GATHERER_FLOOR,
+            ) else {
+                panic!("{name}: the first bite is chosen");
+            };
+            record(&mut step, &before, first.kind, 20);
+            settled(&mut step, &after, true, 21);
+            for tick in 21..second_bite_at {
+                assert!(
+                    matches!(
+                        want_with_floor(
+                            &mut step,
+                            &after,
+                            &cured,
+                            CurePoison::WhenNeeded,
+                            tick,
+                            GATHERER_FLOOR
+                        ),
+                        SurvivalWant::Hold
+                    ),
+                    "{name}: held at tick {tick}"
+                );
+            }
+            assert!(
+                matches!(
+                    want_with_floor(
+                        &mut step,
+                        &after,
+                        &cured,
+                        CurePoison::WhenNeeded,
+                        second_bite_at,
+                        GATHERER_FLOOR
+                    ),
+                    SurvivalWant::Click(OneOpArgs {
+                        kind: OneOpKind::Eat { .. },
+                        ..
+                    })
+                ),
+                "{name}: the second bite at tick {second_bite_at}"
+            );
+            assert_eq!(
+                step.sent.map(|sent| sent.stage),
+                Some(Stage::Judged),
+                "{name}: the first bite is judged and logged once"
+            );
+        }
+    }
+
+    /// The critical tier never waits for the last heal. At 1/99 with no threat
+    /// in view the danger is zero and the critical floor is 1, so 1 Hitpoint
+    /// is critical: the second bite goes out at tick 23, as soon as the
+    /// next-food clock opens, with Hitpoints still unchanged. The caution-tier
+    /// twin above holds the same bite until tick 24.
+    #[test]
+    fn survival_step_critical_bite_does_not_wait_for_the_last_heal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let food = lobster();
+        let cured = condition(1, PoisonState::Clear);
+        let before = with_hitpoints(low_hp_snapshot(vec![food.clone(), food.clone()]), 1);
+        let after = with_hitpoints(low_hp_snapshot(vec![food.clone()]), 1);
+        let mut step = SurvivalStep::default();
+        let SurvivalWant::Click(first) = want_with_floor(
+            &mut step,
+            &before,
+            &cured,
+            CurePoison::WhenNeeded,
+            20,
+            GATHERER_FLOOR,
+        ) else {
+            panic!("the first bite is chosen");
+        };
+        record(&mut step, &before, first.kind, 20);
+        settled(&mut step, &after, true, 21);
+        for tick in 21..23 {
+            assert!(
+                matches!(
+                    want_with_floor(
+                        &mut step,
+                        &after,
+                        &cured,
+                        CurePoison::WhenNeeded,
+                        tick,
+                        GATHERER_FLOOR
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "the next-food clock holds the bite at tick {tick}"
+            );
+        }
+        assert!(
+            matches!(
+                want_with_floor(
+                    &mut step,
+                    &after,
+                    &cured,
+                    CurePoison::WhenNeeded,
+                    23,
+                    GATHERER_FLOOR
+                ),
+                SurvivalWant::Click(OneOpArgs {
+                    kind: OneOpKind::Eat { .. },
+                    ..
+                })
+            ),
+            "a critical bite at tick 23 does not wait for the unseen heal"
+        );
+    }
+
+    /// A bite whose op ended without the count drop never ran: nothing is
+    /// watched, and the second bite follows the send-frame clock.
+    #[test]
+    fn survival_step_does_not_wait_for_a_heal_of_a_bite_that_never_ran() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let food = lobster();
+        let cured = condition(5, PoisonState::Clear);
+        let snapshot = low_hp_snapshot(vec![food.clone(), food.clone()]);
+        let mut step = SurvivalStep::default();
+        record(
+            &mut step,
+            &snapshot,
+            OneOpKind::Eat {
+                item_id: food.def.id,
+                before_count: 2,
+            },
+            20,
+        );
+        settled(&mut step, &snapshot, false, 28);
+        assert_eq!(step.sent.map(|sent| sent.stage), Some(Stage::Judged));
+        // The send-frame clock is long past, so the retry goes out at once.
+        assert!(matches!(
+            want_with_floor(
+                &mut step,
+                &snapshot,
+                &cured,
+                CurePoison::WhenNeeded,
+                29,
+                GATHERER_FLOOR
+            ),
+            SurvivalWant::Click(OneOpArgs {
+                kind: OneOpKind::Eat { .. },
+                ..
+            })
+        ));
+    }
+
+    /// The survival step keeps the danger floor of the bite it chose for the
+    /// log line and chooses no bite above it for a caller floor alone when the
+    /// heal does not fit: 95/99 with a caller floor of 96 spends nothing.
+    #[test]
+    fn survival_step_spends_no_food_above_the_danger_floor_when_the_heal_does_not_fit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let cured = condition(95, PoisonState::Clear);
+        let snapshot = with_hitpoints(low_hp_snapshot(vec![lobster()]), 95);
+        let mut step = SurvivalStep::default();
+        assert!(!matches!(
+            want_with_floor(&mut step, &snapshot, &cured, CurePoison::WhenNeeded, 20, 96),
+            SurvivalWant::Click(_)
+        ));
+        // 87/99 holds the 12-point heal, so the same caller floor bites.
+        let snapshot = with_hitpoints(low_hp_snapshot(vec![lobster()]), 87);
+        let SurvivalWant::Click(args) =
+            want_with_floor(&mut step, &snapshot, &cured, CurePoison::WhenNeeded, 20, 96)
+        else {
+            panic!("87/99 holds the lobster's heal");
+        };
+        assert!(matches!(args.kind, OneOpKind::Eat { .. }));
     }
 
     /// Strange fruit cures poison and heals nothing (`strange_fruit.rs2:1-12`).

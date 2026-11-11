@@ -465,6 +465,100 @@ fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, Unknown
     add(mul(i32::from(kind.r), 2)?, LAG)
 }
 
+/// One interval's damage inside the window `low..=high`: its maximum hit
+/// once, and once per attack it can make in the window.
+fn row_window(
+    path: RoutePath<'_>,
+    row: &ZoneInterval,
+    low: i32,
+    high: i32,
+) -> Result<(i32, i32), UnknownWhy> {
+    let (start, end) = exposure(path, row)?;
+    let hit = i32::from(row.max_hit);
+    Ok(if row.hazard() {
+        if (low..=high).contains(&start) {
+            (hit, hit)
+        } else {
+            (0, 0)
+        }
+    } else if start <= high && end > low {
+        (hit, mul(hit, policy::hits_before_bite(row.rate))?)
+    } else {
+        (0, 0)
+    })
+}
+/// The damage the plan's own rows can land in the ticks before a bite sent
+/// at `tick` takes effect (`tick + 1` through `tick + LAG`): the sum of each
+/// attacker's maximum hit once (`danger`, what the real eater reads from its
+/// live threats) and once per attack it can make inside the window
+/// (`burst`, [`policy::hits_before_bite`], what the real eater's critical
+/// floor reads). A credited protection removes a crossing's attackers from
+/// both, as the replay's own `hits` does; a fixed hazard and a queued launch
+/// hit once.
+pub(super) async fn window_damage<F, U>(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    tick: i32,
+    input: &RiskInput,
+    tables: &CombatTables,
+    allow: WalkAllow,
+    checkpoint: &mut F,
+) -> Result<(i32, i32), UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    let (low, high) = (add(tick, 1)?, add(tick, LAG)?);
+    let mut danger = 0;
+    let mut burst = 0;
+    for c in &plan.crossings {
+        if protect(c, plan, path, input, tables, allow, checkpoint).await {
+            if (low..=high).contains(&path.point(c.first).ok_or(UnknownWhy::Overflow)?.tick) {
+                let mut worst = 0;
+                for i in c.first..=c.last {
+                    worst = worst.max(volley(plan, i, false, checkpoint).await?);
+                }
+                danger = add(danger, worst)?;
+                burst = add(burst, worst)?;
+            }
+            super::checkpoint(checkpoint).await;
+            continue;
+        }
+        for row in rows(plan, c) {
+            let (one, many) = row_window(path, row, low, high)?;
+            danger = add(danger, one)?;
+            burst = add(burst, many)?;
+            super::checkpoint(checkpoint).await;
+        }
+    }
+    let escape_end = plan
+        .crossings
+        .first()
+        .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
+    for row in &plan.intervals[..escape_end] {
+        let (one, many) = row_window(path, row, low, high)?;
+        danger = add(danger, one)?;
+        burst = add(burst, many)?;
+        super::checkpoint(checkpoint).await;
+    }
+    for live in input.live_iter() {
+        let hit = i32::from(live.max_hit);
+        if low < origin_duration(live, tables)? {
+            danger = add(danger, hit)?;
+            burst = add(burst, mul(hit, policy::hits_before_bite(live.rate))?)?;
+        }
+        if live
+            .due()
+            .is_some_and(|due| (low..=high).contains(&i32::from(due.wrapping_sub(input.tick))))
+        {
+            danger = add(danger, hit)?;
+            burst = add(burst, hit)?;
+        }
+        super::checkpoint(checkpoint).await;
+    }
+    Ok((danger, burst))
+}
+
 async fn hits<F, U>(
     path: RoutePath<'_>,
     plan: &RoutePlan,
@@ -576,6 +670,11 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
 
 /// Replays the shared picker against stack-only inventory/count overlays.
 /// The hook exposes applied hits and bites to independent test simulations.
+///
+/// Test model only: no production path calls it. Production admission is
+/// [`assess`] (the 1 % `timeline_bound` with the `guarded_bound` supply
+/// planner), so this replay's failure rule (HP at or below the route floor
+/// `estimated_floor`) is not a production gate.
 #[allow(clippy::too_many_arguments)]
 pub fn replay(
     path: RoutePath<'_>,
@@ -827,19 +926,30 @@ where
                     reach: None,
                     wilderness: None,
                 };
-                // The replay's own line already charges the poison term
-                // (`intended` above), so it passes no second fire here, or
-                // one fire would count twice.
-                if let Some(id) = policy::eat_choice(
+                // The same two-tier choice the real eater makes. Its danger
+                // and burst come from the plan's own rows over the ticks
+                // before this bite takes effect; the replay's line is its
+                // caller floor. The line already charges the poison term, so
+                // only the critical floor takes the pulse.
+                let (danger, burst) =
+                    window_damage(path, plan, tick, input, tables, allow, checkpoint).await?;
+                if let Some(id) = policy::eat_choice_excluding(
                     &frame,
                     tables,
                     &schedule,
-                    Some(intended / 2),
-                    0,
-                    hp,
-                    cap,
-                    tick as u16,
-                    0,
+                    policy::EatInputs {
+                        danger: Some(danger),
+                        burst: Some(burst),
+                        poison_fire: i32::from(poison_pulse_now(
+                            input.poison,
+                            tables.unknown_poison_pulse(),
+                        )),
+                        hp,
+                        hp_max: cap,
+                        tick: tick as u16,
+                        eat_floor: intended,
+                    },
+                    &[],
                 )
                 .and_then(|choice| choice.ordinary)
                 {
@@ -989,14 +1099,24 @@ fn scheduled_bound(
         |tick| {
             let tick = i32::from(tick);
             let mut danger = 0i32;
+            let mut burst = 0i32;
             for row in &plan.intervals {
                 if exposure(path, row).is_ok_and(|(start, end)| tick >= start && tick < end) {
-                    danger = danger.saturating_add(i32::from(row.max_hit));
+                    let hit = i32::from(row.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst.saturating_add(if row.hazard() {
+                        hit
+                    } else {
+                        hit.saturating_mul(policy::hits_before_bite(row.rate))
+                    });
                 }
             }
             for live in input.live_iter() {
                 if origin_duration(live, context.combat).is_ok_and(|end| tick < end) {
-                    danger = danger.saturating_add(i32::from(live.max_hit));
+                    let hit = i32::from(live.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst
+                        .saturating_add(hit.saturating_mul(policy::hits_before_bite(live.rate)));
                 }
             }
             let point = (0..path.len())
@@ -1006,6 +1126,7 @@ fn scheduled_bound(
                 .last();
             super::GuardTick {
                 danger: Some(danger),
+                burst: Some(burst),
                 poison_fire: i32::from(poison_pulse_now(
                     input.poison,
                     context.risks.poison_unknown_v,

@@ -475,10 +475,16 @@ prayer is wanted or on and points fall to `base − (7 + base/4)` (at least 3).
 The eat line is `2 × danger + 1` hitpoints, where `danger` is the most the
 live threats can hit in one attack after the active protection, from the
 engine's npc facts; when a threat's damage is unknown the line is half the
-bot's hitpoints, and when nothing can hurt the bot it does not eat. The bot
-takes the largest heal that fits the missing hitpoints (else the smallest),
-and adds a no-delay combo food only when ordinary food cannot lift it above
-the drink gate (`3 × danger + 1`). At the emergency line (`danger + 1`, or
+bot's hitpoints, and when nothing can hurt the bot it does not eat. At or
+below `danger + 1` (a quarter of the bot's hitpoints when the danger is
+unknown) the bot takes the largest heal that fits the missing hitpoints (else
+the smallest), even if it overheals. Between that and the eat line it takes
+only a food whose heal fits, and waits when none does. It adds a no-delay
+combo food only when ordinary food cannot lift it above the drink gate
+(`3 × danger + 1`). After a bite the next bite waits until the heal shows in
+hitpoints (a rise, or a fall when a hit lands first) or until the food's own
+delay has passed, and each bite writes one `survival eat` log line. At the
+emergency line (`danger + 1`, or
 half when unknown) with no food left, the fight ends `aborted` with reason
 `no-food`. Potions are drunk only while hitpoints stay above the drink gate:
 combat boosts (melee: super attack, strength, defence; ranged: ranging and

@@ -10,7 +10,15 @@ use api::snapshot::{
 };
 
 fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
-    let config = api::selected::FamilyPreparation::run(|families| {
+    fixture_with(&[])
+}
+
+fn fixture_with(extra: &[(&str, serde_json::Value)]) -> (Gatherer, GameSnapshot, TargetPlan) {
+    let extra: Vec<(String, serde_json::Value)> = extra
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), value.clone()))
+        .collect();
+    let config = api::selected::FamilyPreparation::run(move |families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut settings = crate::native::SettingsBag::new();
         for (key, value) in [
@@ -20,6 +28,9 @@ fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
             ("food", serde_json::json!("Lobster")),
         ] {
             settings.insert(key.into(), value);
+        }
+        for (key, value) in extra {
+            settings.insert(key, value);
         }
         crate::slot::prepare_config(
             families,
@@ -889,5 +900,60 @@ fn per_target_applicability_rechecks_the_method_and_changed_tool_before_the_next
             gatherer.tick_applicability, expected,
             "{method_id} tool {tool}"
         );
+    }
+}
+
+/// The post-death recovery bite follows the shared tier rule
+/// (`policy::eats_food`) with the user's `eatBelow` as the caller floor: no
+/// bite at full Hitpoints even when `eatBelow` reaches the maximum, none in the
+/// caution tier when the lobster's 12-point heal does not fit the missing
+/// Hitpoints (37/40 with `eatBelow` 38), a bite when it fits (28/40), and in
+/// the critical tier a bite whatever it overheals (1/40).
+#[test]
+fn recovery_bite_follows_the_shared_tier_rule_with_eat_below_as_the_floor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (eat_below, hp, eats) in [
+        (40, 40, false),
+        (38, 37, false),
+        (38, 28, true),
+        (38, 1, true),
+        (38, 39, false),
+    ] {
+        let (mut gatherer, mut snapshot, _) =
+            fixture_with(&[("eatBelow", serde_json::json!(eat_below))]);
+        let food = gatherer.prepared.supply.food.as_ref().unwrap();
+        let food_name = food.name.clone();
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(food.id, &food_name),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 40,
+            effective: hp,
+            xp: 0,
+            used: true,
+        }]);
+        let mut ledger = None;
+        let began = with_tick(&snapshot, &mut ledger, 102, |tick| {
+            gatherer.fence.observe(102);
+            gatherer.begin_recovery_eat(tick)
+        });
+        assert_eq!(
+            began, eats,
+            "{hp}/40 with eatBelow {eat_below}: the recovery bite"
+        );
+        assert_eq!(matches!(gatherer.active, Active::Tend(_)), eats);
     }
 }
