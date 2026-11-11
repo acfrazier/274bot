@@ -12,7 +12,7 @@ The tool reads paths with `git diff --name-only` and expands changes to the
 `vendor/fr-client-rust` gitlink into paths changed between its old and new
 commits. If either commit is missing locally, the tool prints a fetch command
 and exits with an error. It lists covering cells and their exact commands.
-Run each listed cell three times on the changed code. The tool also lists
+Run each listed cell once on the changed code. The tool also lists
 uncovered live paths and unclassified paths. Exit code 0 means no gaps. Exit
 code 1 means a live path has no cell or a path is unclassified. Exit code 2
 means the input or Git diff is invalid.
@@ -61,6 +61,16 @@ for 16 more observed game ticks. R289 content sets this combat lockout in
 frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
+
+## Quarantined map cells
+
+These cells stay out of the active map until their fixtures are repaired.
+Do not cite them as live proof.
+
+| Cell | Fixture defect | Repair needed |
+|---|---|---|
+| `host.gather-bait-stale-hint` | The fixture writes an unscoped bank hint. The supported hint format requires the active revision and content scope, so the loader correctly refuses it. The cell then fails its expectation that the hint loaded. | Write the active profile's revision and content scope into the hint before the run. |
+| `host.gatherer-wc-near-edge` | The fresh-XP check uses distance to the oak's origin tile, not its 3×3 footprint. A valid adjacent stand can be more than one tile from that origin, so the cell times out after the bot approaches and chops the tree. | Check XP against the target's full footprint and valid adjacent stand, not only its origin. |
 
 ## Quarantined ignored live tests
 

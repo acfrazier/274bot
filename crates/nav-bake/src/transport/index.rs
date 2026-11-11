@@ -6,6 +6,7 @@ use super::*;
 
 /// One loc placement read from a jm2 file (all levels). `level` is the
 /// engine's game plane, not the raw LOC plane (see [`parse_jm2_locs`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Placement {
     pub(crate) id: i32,
     pub(crate) shape: i32,
@@ -125,6 +126,14 @@ pub(super) fn mapsquare_coords(name: &str) -> Option<(i32, i32)> {
 /// by). `loc_coord` in the loc's scripts and the collision plane its
 /// footprint blocks are both that game plane.
 pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
+    parse_jm2_locs_ordered(text, mx, mz)
+        .into_iter()
+        .map(|(placement, _)| placement)
+        .collect()
+}
+
+/// Every `LOC` placement with the original packed-map sort coordinate.
+pub(super) fn parse_jm2_locs_ordered(text: &str, mx: i32, mz: i32) -> Vec<(Placement, i32)> {
     let mut out = Vec::new();
     let mut link_below: HashSet<(usize, usize)> = HashSet::new();
     let mut section: Option<&str> = None;
@@ -170,28 +179,33 @@ pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
         // token is the shape, the third the angle.
         let shape: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
         let angle: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
-        // `level` stays the raw plane until every MAP row is known.
-        out.push(Placement {
-            id,
-            shape,
-            angle,
-            level,
-            x: mx * 64 + x,
-            z: mz * 64 + z,
-        });
+        // Keep the raw plane and local coordinates for MapPack's
+        // `level << 12 | x << 6 | z` sort, before the bridge adjustment.
+        let packed_coord = (level << 12) | (x << 6) | z;
+        out.push((
+            Placement {
+                id,
+                shape,
+                angle,
+                level,
+                x: mx * 64 + x,
+                z: mz * 64 + z,
+            },
+            packed_coord,
+        ));
     }
-    out.retain_mut(|p| {
+    out.retain_mut(|(placement, _)| {
         let local = (
-            usize::try_from(p.x - mx * 64).ok(),
-            usize::try_from(p.z - mz * 64).ok(),
+            usize::try_from(placement.x - mx * 64).ok(),
+            usize::try_from(placement.z - mz * 64).ok(),
         );
         let bridged = match local {
             (Some(x), Some(z)) => link_below.contains(&(x, z)),
             _ => false,
         };
-        match nav_planner::collision::game_plane(p.level, bridged) {
+        match nav_planner::collision::game_plane(placement.level, bridged) {
             Some(plane) => {
-                p.level = plane;
+                placement.level = plane;
                 true
             }
             None => false,

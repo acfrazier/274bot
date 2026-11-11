@@ -15,6 +15,7 @@ pub(crate) const CARD: CompiledCard = CompiledCard {
     description: "Internal continuation for a host-owned manual walk.",
     category: "Internal",
     schema_version: 1,
+    reads_schema_versions: &[],
     schema,
     per_account_settings: &[],
     prepare,

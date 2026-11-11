@@ -74,47 +74,16 @@ fn the_wire_omits_an_empty_unassigned_row_and_keeps_a_full_one() {
 }
 
 #[test]
-fn pre_0_2_8_loadout_rows_are_not_current_loadouts() {
-    for row in [
-        json!({
-            "name": "old",
-            "worn": ["helm", "plate"],
-            "carry": [{"item": "Lobster", "qty": 1}],
-        }),
-        json!({
-            "name": "old",
-            "worn": {},
-            "carry": ["Lobster"],
-        }),
-    ] {
-        assert!(parse_loadout(&row).is_none(), "{row}");
-        assert!(
-            serde_json::from_value::<Loadout>(row).is_err(),
-            "older rows are not deserialized as current loadouts"
-        );
-    }
-}
-
-#[test]
-fn the_saved_file_probe_recognizes_only_the_older_row_shapes() {
-    assert!(loadouts_have_pre_0_2_8_shape(
-        br#"[{"name":"old","worn":["Helm"],"carry":[]}]"#
-    ));
-    assert!(loadouts_have_pre_0_2_8_shape(
-        br#"[{"name":"old","worn":{},"carry":["Shark"]}]"#
-    ));
-
-    let current = [Loadout::new("melee")
-        .with_slot("hat", "Helm")
-        .with_carry("Shark", 2)];
-    assert!(!loadouts_have_pre_0_2_8_shape(
-        &serde_json::to_vec(&current).unwrap()
-    ));
-    assert!(!loadouts_have_pre_0_2_8_shape(
-        br#"[{"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}],"extension":{"worn":["ignored"],"carry":["ignored"]}}]"#
-    ));
-    assert!(!loadouts_have_pre_0_2_8_shape(br#"[{"worn":["truncated"]"#));
-    assert!(!loadouts_have_pre_0_2_8_shape(br#"not json"#));
+fn a_legacy_array_worn_never_invents_slots() {
+    let row = parse_loadout(&json!({
+        "name": "old",
+        "worn": ["helm", "plate"],
+        "carry": ["Lobster"],
+    }))
+    .expect("legacy row parses");
+    assert!(row.worn.is_empty(), "array order must not invent slots");
+    assert_eq!(row.unassigned, vec!["helm", "plate"]);
+    assert_eq!(row.carry, vec![CarryEntry::new("Lobster", 1)]);
 }
 
 #[test]
@@ -123,13 +92,16 @@ fn object_slots_split_known_slots_from_unknown_gear() {
         "name": "melee",
         "worn": { "hat": "Helm", "cape": "Fire cape", "legs": "  " },
         "unassigned": ["Boots"],
-        "carry": [{ "item": "Lobster", "qty": 10 }, { "item": "", "qty": 3 }],
+        "carry": [{ "item": "Lobster", "qty": 10 }, "Shark", { "item": "", "qty": 3 }],
     }))
     .expect("object row parses");
     assert_eq!(row.worn.get("hat").map(String::as_str), Some("Helm"));
     assert!(!row.worn.contains_key("legs"), "blank items are skipped");
     assert_eq!(row.unassigned, vec!["Fire cape", "Boots"]);
-    assert_eq!(row.carry, vec![CarryEntry::new("Lobster", 10)]);
+    assert_eq!(
+        row.carry,
+        vec![CarryEntry::new("Lobster", 10), CarryEntry::new("Shark", 1)]
+    );
 }
 
 #[test]

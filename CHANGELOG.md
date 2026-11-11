@@ -1,6 +1,6 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 
@@ -17,8 +17,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   builds install the shipped map again; other builds rebuild the map images
   and the catalogue once after you upgrade. This is the only saved data that
   does not carry over; every other 0.2.9 saved format still loads.
+- Direct navigation-pack builds now require `--engine` with the engine checkout
+  for the selected game revision. The local-data builder supplies it automatically.
 
-## [0.2.9] — Unreleased
+### Developer tools
+
+- A generated game data file that fails to decode now names the file and says
+  to regenerate it with `python3 tools/local-data/build.py`.
+
+### Panel and terminal app
+
+- The TUI keeps every Quester start-zone row reachable with PageUp and
+  PageDown. The unqualified-guide warning stays visible while the list scrolls.
+
+## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
 
@@ -26,15 +38,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Saved data in formats from before 0.2.8 no longer upgrades. Interactive users
   can move refused files aside and start fresh. Noninteractive runs stop without
   changing files. Supported 0.2.8 formats still load.
-- Release builds start only Quester guides that have passed a full live run.
-  In this release there are fourteen: Cook's Assistant, Demon Slayer, Doric's
-  Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend, Priest in
-  Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep Shearer,
-  Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released are now
-  drafts and no longer start: Prince Ali Rescue, Pirate's Treasure, The
-  Knight's Sword, Death Plateau, The Tourist Trap, Clock Tower and Plague City.
-  The quest picker does not offer drafts, and a saved choice of one shows why
-  it cannot start. Known issues lists the draft guides.
+- By default, release builds start only Quester guides that passed a full live
+  run. In this release there are fourteen: Cook's Assistant, Demon Slayer,
+  Doric's Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend,
+  Priest in Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep
+  Shearer, Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released
+  are now drafts: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword,
+  Death Plateau, The Tourist Trap, Clock Tower and Plague City. By default, the
+  quest picker does not offer drafts. Start refuses a saved draft choice and
+  names the guide. To select and run drafts, turn on **Allow unqualified
+  guides** in Script prefs with the Quester picked. It is off by default.
+  Before Start, a warning names the unqualified guides. Known issues lists
+  the draft guides.
 
 ### Panel and terminal app
 
@@ -96,63 +111,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   redirected error stream is full, no longer stops every bot. Before, the failed
   write left the shared navigation state unusable and every bot stopped with a
   panic.
-- Route publication and reroutes exclude protected quest food from survival
-  credit. Survival preparation selects one available food kind before sizing,
-  so a bank with many food kinds does not repeat the sizing calculation.
-- The Quester chooses survival gear and food from its bank before risky stages,
-  including stages whose Path manages its inventory. It protects quest-managed
-  items and authored equipment slots, equips permitted gear first, reserves
-  space for the stage's items, and reports supply or capacity shortfalls.
-  Quest item protection also works for Paths with more than 64 managed items.
-  Crossing admission still makes the final survival decision.
-- Survival preparation and eating reserve only each declared `must_have`
-  quantity, not every held item with that ID. Surplus food remains available
-  for upkeep, combat, route guards, and crossing admission.
-  It preserves held food during gear deposits and reports each shortfall
-  once with its stage, NPCs, target and actual cause. Mixed survival food
-  has a specific model-limit message. An unavailable calculation does not
-  stop preparation.
-- Survival preparation counts held food even before the bank has been read.
-  It does not visit a bank when carried supplies already meet the bound.
-  If no bank is reachable for automatic supplies, it reports the shortfall
-  instead of repeating the scan and parking the Path. Required quest supplies
-  and route admission keep their existing checks.
-- The Quester checks the next step's local damage hazard before preparing
-  supplies. A needed bite takes priority over a stage-supply bank search.
-  Step selection still checks current evidence after preparation.
-  Missing food can still be fetched before the step starts. Quester upkeep
-  also excludes protected quest food from ordinary eating.
-- The unattackable-tree live fixture reads its own empty bank before its HP8
-  setup. Stage-supply preparation stays enabled without a bank detour that
-  would heal the fixture before the encounter.
-- The cell-rock upkeep live fixture uses the same native client-cycle clock
-  for observations and sends. Separate observer reads no longer advance it.
-- The PvP live oracle accepts combat XP gained during the fight when a one-hit
-  kill ends before the attacker's in-combat state is sampled. Its kill,
-  permission-source and attack checks stay required.
-- The global Danger routing setting applies to every walk again, including
-  Quester. With it on, every Quester walk may cross danger zones, declared or
-  not, and the walk goes: the survival check is shown for information only.
-  Your choice is not overridden. With it off, a guide can still ask for the
-  crossings it needs with `cross`, and a walk that a declaration covers may
-  cross any danger zone, but the survival check applies: the walk is refused
-  when its route has more than a 1% chance of death. This holds for every
-  script that asks to cross, not only for Quester. Scripts that run under the
-  rs2b0t compatibility framework behave as if the global setting is on, as
-  before. Every walk that is allowed to cross danger zones keeps its food
-  guard (compatibility scripts have none, as before). The limit of eight
-  zones per route is gone: a guide can declare any number. Start still lists
-  the zones a guide declares. A walk option that forbids danger zones no
-  longer overrides the global setting.
-- Danger routing has three levels: **Never** (the default), **When
-  survivable**, and **Always**. The middle level stays selectable and stored
-  as `allow_danger_zones=false` and `survivable_routing=true`. Reading that
-  saved pair does not rewrite it. While `NET_AVAILABLE` is false, it behaves
-  exactly like Never for every script, walk and crossing combination. It
-  uses the runtime safety net only when that net is available. **Always**
-  takes precedence if both stored bits are true.
-- The TUI uses the same allocation count to draw all three danger-routing
-  levels.
 
 ### Combat
 
@@ -360,9 +318,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 ### Quester
 
 - The Quester supports **The Restless Ghost**. Each of its fourteen release
-  guides now passes a full run on a live server. The quest picker offers only
-  those guides. A saved choice of a draft guide still loads, shows why it
-  cannot start, and does not enable the draft.
+  guides now passes a full run on a live server. By default, the quest picker
+  offers only those guides. A saved draft choice still loads. Start refuses it
+  unless **Allow unqualified guides** is on, and says how to allow it.
+- The Quester setting that 0.2.8 called "Include draft guides when no quests are
+  picked" is back as **Allow unqualified guides**, in Script prefs of the panel
+  and of the terminal app. It is off by default. When you turn it on, Start runs
+  guides that have not passed a full live run: the quests you picked, the Order
+  override, and, when you picked no quest, every draft guide. This lets a quest
+  list that you saved in 0.2.8 start again. Before Start, the Quester panel
+  shows one warning that names those guides, and the log records it. A 0.2.8
+  setting file that had this setting on keeps it on. Live testing has not shown
+  that a draft guide works.
 - The Quester's blocked message now ends "then start the Quester again": the
   Stop button is unavailable once the run has ended, so the message names the
   action you can take.
@@ -459,12 +426,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   before Start. Selecting a card in Browse closes Browse, and Start will not
   run Quester while Browse hides that list. The TUI palette opens that section
   first; the user must select Start after reviewing the zones.
-- The Quester card has no `Allow danger zones` setting. The old saved value
-  still loads, but it has no effect. The harness no longer offers
-  `QUESTER_ALLOW_DANGER_ZONES`. Guides use `cross` to declare the zones that
-  a stage or step needs; a declared crossing arms the food guard for the walk.
-  Protect stays active only on steps that request it. Desert Rescue declares
-  the same zones for both walks to the captain.
+- The Quester card no longer offers the blanket `Allow danger zones` setting.
+  The old saved value still loads, but it no longer affects Quester routes.
+  Guides use
+  `cross` to declare stage and step zones. A declared crossing arms the food
+  guard for the walk. Protect stays active only on steps that request it.
+  Even a Quester scope with no grants avoids every danger zone, even when the
+  global setting allows danger routing. Desert Rescue declares the same zones
+  for both walks to the captain.
 - Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
   Use `cross` to declare the danger zones that a step may cross.
 - A Quester trade between two of your own accounts (the Arrav shield halves and
@@ -634,9 +603,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   or at its content-declared completion value. An in-progress colour proves
   a window only when the full in-progress value range lies inside it. A walk
   reports the quest, window bounds and unknown evidence state.
-- A profile no longer loads if its navigation pack was built from different
-  quest data. The error identifies the mismatch and asks you to rebuild or
-  replace the pack, instead of reporting missing quest evidence.
 - When a walk needs quest evidence, the bot waits up to one game tick for
   the quest list. Once the needed rows arrive, it plans the route once more.
 - Failed walks now check for missing items and entrance requirements before
@@ -926,7 +892,277 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   logs and CPU screenshots. A partial guide can declare an exact boundary and
   record a `gap-reached` result. Campaign runs avoid danger zones by default.
 
+### Not in this release
+
+- Legends Guild bank gate is conservative (completion instead of the door's
+  stage-50 threshold). This is a navigation correctness follow-up for work after
+  0.2.9.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  the random pause length (`bankPaceTicks`) remain deliberately unavailable: the
+  host does not recreate the foreign router or random pacing. These private
+  exports reported `not impl` in earlier releases and are removed in 0.2.9.
+  `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick pause.
+  0.2.4 to 0.2.8 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 to 0.2.8 have the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.8 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.8 have
+  the same problem.
+- After a super antipoison the bot counts only the ordinary immunity time (120
+  game ticks instead of 570), so it may drink again sooner than needed. It is
+  still immune for the real time. Counting the super immunity is planned for a
+  later release. 0.2.7 to 0.2.8 have the same problem.
+- Fetching a cure or food when the bot would otherwise die is planned for a
+  later release. In this release a native script that would die of poison with
+  no cure held pauses its work and names what it needs.
+- Buying a cure from a shop is planned, not included here.
+- Taking a cure from a ground spawn, or making one from held supplies, is
+  planned for a later release.
+- A quest step without a declared damage source uses only the fallback: the bot
+  eats at half its Hitpoints on the tick that the damage lands. A first
+  undeclared hit larger than its current Hitpoints is not prevented. The Tourist
+  Trap guide declares its cell climb and mine cart damage.
+- Damage from a game area while the bot stands in it is not a step hazard. This
+  includes the Underground Pass spear and spring traps, desert heat, and
+  Trollweiss cold. Outside fights and walks the bot does not eat for this
+  damage. A bot holding for food on such a tile keeps taking damage. The
+  Underground Pass guide is not covered by this release.
+- The serialization and date libraries retain compatibility versions until the
+  JavaScript runtime libraries can be updated together. The recorded date-parser
+  advisory is not reachable: the calendar dependency does not enable date
+  parsing or formatting.
+- Danger checks can count a monster that walls prevent from reaching the route.
+  A more exact reachability check is deferred until route evidence shows that
+  this count alone refuses a safe quest walk. This work returns for review in
+  0.3.0.
+- The Knife tick technique is offered for oak and higher trees only. Normal
+  trees still use the ordinary gathering cadence.
+- Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
+  applies; the Gatherer fishes it at the ordinary cadence.
+- A sustained tick schedule based on auto-retaliate flinches is not offered. An
+  NPC hit can change the skill delay, but that schedule has not been traced or
+  designed.
+- The rs2b0t four-tick fly re-click and iron-cadence re-click methods give no
+  gain in revision 289 and are not offered.
+- A rune pickaxe already mines every three ticks, which matches the Knife cycle.
+  Knife turns itself off with no-gain for that tool; ordinary mining continues.
+- Eating uses the existing checked eat action and pauses the Knife technique for
+  one cycle. A food-based tick arm is not offered; it needs per-food delay facts
+  and a live probe before its design is complete.
+- The planned connection rewrite is not included. This release keeps the
+  existing connection code. The rewrite and event-driven content downloads move
+  to a later 0.3.x release.
+- The planned move of preferences to a SQLite database is not included. Settings
+  keep their existing file storage. The database work moves to a later 0.3.x
+  release.
+- Automatic protection-prayer flicking is not included. It moves to a later
+  0.3.x release.
+- Choosing every gathering, combat and service target by a route that the
+  account can use is not complete. Shop vendor choice and fixed fishing spots
+  have their existing checks. Other target choices can still select a target
+  behind a fence or gate. The remaining work moves to a later 0.3.x release.
+- The planned Bullroarer gathering technique is not included. It moves to a
+  later 0.3.x release. The separate Knife technique remains available.
+- Fair, nonblocking sharing of the graphics renderer across bots is not active.
+  Bots keep the existing blocking render admission. The remaining work moves to
+  a later 0.3.x release.
+- Further reductions in work when the host publishes world snapshots are not
+  included. The planned snapshot optimizations move to a later 0.3.x release.
+- The planned background queue for runtime log messages is not included. The
+  existing optional session-file queue remains. Further runtime logging changes
+  move to a later 0.3.x release.
+- The final separation of route planning from route execution is not included.
+  This internal code change moves to a later 0.3.x release.
+- Route admission checks the chance of death without credit for eating,
+  protection prayers or escape. The planned more accurate policy calculation and
+  fight estimates move to a later 0.3.x release. This does not fix the default
+  **When survivable** setting, which remains a known issue.
+
+### Known issues
+
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
+- **Quester:** These Quester guides are drafts, and live testing has not shown
+  that they work. Release builds do not start them unless you turn on Allow
+  unqualified guides in Script prefs with the Quester picked. The guides are:
+  Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The
+  Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle
+  Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the
+  Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
+  Tree Gnome Village, Scorpion Catcher, Observatory Quest, Shield of Arrav,
+  Hero's Quest, Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest,
+  Biohazard, Murder Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf
+  Cannon, Family Crest, Fight Arena, The Grand Tree, Dragon Slayer, Horror from
+  the Deep, Shilo Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the
+  Myreque, Troll Stronghold, Eadgar's Ruse, Troll Romance, Throne of
+  Miscellania, Waterfall Quest, Legends Quest, Sheep Herder, Underground Pass,
+  Regicide, Shades of Mort'ton, The Fremennik Trials and Monkey Madness. 0.2.0
+  to 0.2.8 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
+  problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.8 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.8 have the
+  same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions. 0.2.6
+  to 0.2.8 have the same problem.
+- **Scripts:** A green poison hitsplat that the game shows without poison makes
+  the bot keep a poison reserve until the next poison message, poison tick or
+  cure. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** Strange fruit is recognized as a held cure and never fetched.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison and the bot cannot see which
+  creature poisoned it, when the poison message and the creatures' update
+  arrived together so the bot cannot tell which game tick the message belongs
+  to, or when a poisoned bot takes any hit, the bot assumes the strongest poison
+  in the game (330 damage) until the next poison tick shows the real value. Each
+  poison tick then shows the true remaining value. A bot with a cure may drink
+  it earlier than it strictly needed to. A script with no cure held can pause on
+  a poison it would have survived. The pause ends within five poison ticks
+  (about 150 game ticks) of the first poison tick at which the bot's hitpoints
+  and food would have carried it through, which can be later than the message
+  when the bot is eating as it waits, and then the script continues on its own.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison in a frame before its creatures'
+  update, the bot waits for that update before it decides which creature
+  poisoned it. A cure that is needed only for the worst case is then drunk one
+  game tick later. A cure that is needed at once is drunk at once. 0.2.7 to
+  0.2.8 have the same problem.
+- **Scripts:** The game does not say when a poison has ended. A paused script
+  whose hitpoints plus food are at or below the last poison tick's worst case (4
+  after the weakest tick) stays paused after the poison ran out, until it heals
+  past that or gets a cure.
+- **Scripts:** A paused script that is being hit by any creature stays paused
+  while the hits continue, because any hit can be a fresh poisoning. It does not
+  flee or fight back for that reason in this release.
+- **Scripts:** A native script that needs a cure while a bank deposit or
+  withdrawal is in flight lets that one transfer settle or time out first: eight
+  observed game ticks, without an elapsed-time minimum (twice that for a deposit
+  the game did not apply the first time). Then it closes the bank and drinks.
+  The Quester's own provisioning trips follow the same rule.
+- **Scripts:** When the bot reconnects while it is poisoned, it does not know it
+  is poisoned until the next poison tick, up to 30 game ticks later: the game
+  keeps the poison but does not repeat the poison message. In that time the bot
+  does not drink a held cure for that poison and does not eat early for it. A
+  bot whose hitpoints are at or below one poison tick's damage can die in that
+  tick. 0.2.7 to 0.2.8 have the same problem.
+- **Combat:** In a fight with no food left, a poisoned bot that holds an
+  antipoison can retreat or end the fight when its hitpoints are near the
+  poison-raised stop line, even though it drinks the antipoison in the same game
+  tick and would then be safe. 0.2.7 to 0.2.8 have the same problem.
+- **Navigation:** During a walk, a dialogue page that is open (for example a
+  level-up page or a gate's dialogue) can delay a drink or a bite until the walk
+  moves on and the page closes. An ordinary bite during a walk can go out in the
+  same game tick as a door or gate click. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** In Power mode, a Gatherer that finishes its last dose of an
+  antipoison keeps the empty vial. The vial takes a pack slot until you drop it.
+  Bank mode deposits it on the next bank trip.
+- **Panel and terminal app:** During a walk or a fight, the status row shows
+  that a cure or food is needed while the walk or the fight drinks or eats; it
+  does not show the drink or the bite itself.
+- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
+  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot makes up to three attempts each time the bot goes to talk to
+  Luthas. If all three fail, the fare is not paid and the trip does not cross.
+  After payment, the fare is paid. In observed cases, the bot still boards. No
+  workaround is known. 0.2.8 has the same problem.
+- **Scripts:** When a script starts a trip to the mainland without the boat fare
+  from some places on Karamja, for example near the Brimhaven cart, the first
+  walk can fail at once. The bot then does not earn the fare and does not cross.
+  No workaround is known. 0.2.8 has the same problem.
+- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
+  last piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an empty
+  pack. Watch the bot's food and stop the script when it runs low until the
+  script is fixed upstream. 0.2.6 to 0.2.8 have the same problem.
+- **Quester:** Without food, the Quester holds at a step that can hurt it until
+  its Hitpoints recover enough to clear that step's eat line, then tries again.
+  Hitpoints recover at one point per 100 game ticks. It does not fetch food. If
+  a game page stays open for 24 ticks while it holds, it stops with a clear
+  reason instead of waiting.
+- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
+  Strange fruit from a random event fills the last free backpack slot before it
+  holds a Magic log: it only goes to the bank when it holds logs. Clear one
+  backpack slot and the script resumes. The fix is in review upstream; update
+  your rs2b0t folder once it is merged. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** `ClientAdapter` readers that search interface components see only
+  the side tab that is open. For example, a button search by varp
+  (`reader.selectButtonByVarp`) on a side tab other than the combat tab finds
+  nothing while that tab is closed. The combat tab is not affected: combat style
+  reads (`Game.combatStyles`, `Game.setCombatMode`) work while another tab is
+  open. Open the side tab before you read it.
+- **Scripts:** `reader.locBox`, `reader.overlayPosWorld` and
+  `reader.projectAreaGameWorld` can return `null` once when a script reaches
+  them without their names in its code (for example through a computed property
+  name). A script that names the reader gets correct values from its first game
+  tick. Call the reader by its name.
+- **Audio:** When music is on, a bot reads the music font once, at its first
+  song. Music is off in the default low-memory mode. 0.1.0 to 0.2.8 have the
+  same problem.
+- **Combat:** A combat step can end at its start with `prep-failed:weapon` even
+  though the weapon is in the pack. The server moves a worn weapon in one step,
+  but the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by
+  then. 0.2.0 to 0.2.8 have the same problem.
+- **Terminal app:** Stopping the two bots after a paired Duel Arena fight can
+  time out before both clean logouts are acknowledged. The fight can work before
+  this stop failure. No verified workaround is recorded.
+- **Quester:** In Imp Catcher, the Quester can wrongly report that it has no way
+  out when it walks near the caged Lesser demon in the Wizards' Tower. The route
+  check treats the caged demon as free to chase the bot across a wide area, and
+  it ignores the cage, so it can refuse a walk that is safe. This does not
+  happen on every run; the release qualification run finished the quest. No
+  workaround is known. A fix is planned for after 0.2.9.
+- **Gatherer:** After Gatherer detects a gas hazard while mining, it can choose
+  another nearby rock without first walking away if that rock is ready to mine.
+  Do not rely on automatic escape from a gas hazard; stop the mining card if one
+  appears. A fix moves to a later 0.3.x release.
+
 ### Fixed during development
+
+#### Saved data
+
+- 0.2.9 again reads all saved data that 0.2.8 read. Earlier 0.2.9 builds
+  offered to move these files aside as older than 0.2.8:
+  - bank memory files saved by older releases, which 0.2.8 still read;
+  - a vault last saved by an older release (for example, one without the
+    Cure poison setting);
+  - loadouts that hold worn gear as a plain list or carried items without a
+    quantity.
+- Gatherer again starts with settings saved by 0.2.8. Earlier 0.2.9 builds
+  refused them with "compiled schema 4 unavailable for Gatherer". The new
+  Buy tools setting is on for these settings until you change it.
 
 #### Navigation
 
