@@ -1755,6 +1755,16 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
             tick,
         );
     }
+    assert!(
+        navs.lock()
+            .unwrap()
+            .get("alice")
+            .expect("the gate bot")
+            .condition
+            .current()
+            .is_some(),
+        "the warm frames must publish a completed selected condition fact"
+    );
     // 1,000 unchanged tick frames must allocate nothing.
     let measured = allocation_counter::measure(|| {
         for tick in 33..=1032u64 {
