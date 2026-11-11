@@ -101,7 +101,6 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.quester-partner-trade` | Run on a build-enabled lab host against a shared 289 engine with two free accounts. It needs the Sherlock inputs and also `BOT_LIVE_PARTNER_NAME_PREFIX` (1 to 4 bytes, different from `BOT_LIVE_NAME_PREFIX`). The command names Engine A's ports. On chardonnay set `WORLD_GAME_PORT=47594` and `WORLD_HTTP_PORT=3080` to run it on Engine L. Leave `QUESTER_TICK_MS` unset. The cell passes only when the Phoenix key moves between the two accounts and both log out. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
-| `host.transport-relog`, `host.transport-dead-server`, `host.transport-idle-held`, `host.scriptless-park-protocol-error`, `host.scriptless-park-dead-server`, `host.scriptless-idle-logout` | Run on any host with Engine A at `127.0.0.1:44594` and `127.0.0.1:1080` (on aubaine that is a relay to Engine L). The scripted cells (`transport-*`) run a native script that does nothing, so the bot keeps its reconnect. The `scriptless-*` cells run a bot with no script: it parks after the exit and stays logged out for 30 s until the cell logs it in. Local engines run with `debug: true`, which ignores the idle request. The `scriptless-idle-logout` cell therefore waits for the client's own idle request (90 s), then answers with the Logout packet a production server sends. |
 | `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_A_DIR` to the Engine L directory. Also set `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the composed head's pack and its merged Zanaris Path source. This cell proves entry to the Entrana dungeon, not completion of Lost City. |
 | `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
 | `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Run on aubaine against the 600 ms Engine L relay at game port `47594` and HTTP port `3080`. Set `GATHERER_ENGINE_DIR` to the read-only local Engine L client tree. Each cell uses a fresh account prefix and evidence path. Do not start, stop, or change Engine L. |
@@ -229,10 +228,9 @@ Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
 test-only client bump. `client/client.rs`,
 `client/actor_289.rs`, `render/draw.rs`, and `render/backend/cpu.rs` select
-both headed cells. `client/client.rs` also selects the six relog and park cells
-(`host.transport-*` and `host.scriptless-*`) because it
+both headed cells. `client/client.rs` also selects both relog cells because it
 contains `Client::login` (`vendor/fr-client-rust/crates/client/src/client/client.rs:3445`).
-Changes under `client/src/io/**` select the same six cells. The CPU headed cell
+Changes under `client/src/io/**` select both relog cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in

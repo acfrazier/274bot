@@ -120,17 +120,10 @@ asked, except that the bot you have selected goes first. 274bot also allows at
 most 29 login attempts from your address in a row. The count starts again after
 60 seconds with no attempt. That keeps it under the public server's limit.
 
-A bot that runs a script is logged in again if the game drops it. After three
-unexpected drops within ten minutes, the bot stops trying. Its state reads
-`logged out (repeat guard: 3 unexpected logouts in 600s; Log in to retry)`. Click
-**Log in** to clear it. If you stop the script while that bot is waiting to log
-in again, it stops trying and stays logged out.
-
-A bot with no script acts like a person at the game. The game's idle timer
-runs for it, so the game logs it out after a long time without input. If the
-game drops it for any reason, or logs it out, it stays logged out. Its state
-says why. Click **Log in**, or start a script on it, to bring it back. A bot
-that runs a script has the idle timer switched off.
+If the game drops a bot that has **Log in automatically** on, or that runs a
+script, 274bot logs it in again. After three unexpected drops within ten minutes,
+the bot stops trying. Its state reads `logged out (repeat guard: 3 unexpected
+logouts in 600s; Log in to retry)`. Click **Log in** to clear it.
 
 ## Read the login messages
 
@@ -150,8 +143,6 @@ app show the same text in lower case.
 | `…: next in line, server: too many login attempts` | The server refused a login for going too fast. | Wait. The wait grows after each refusal. |
 | `logging in…`, `loading scene…` | The login is under way. | Wait. |
 | `logged out (Log in to connect)` | The bot is logged out. | Click **Log in**. |
-| `logged out: disconnected while idle (Log in to connect)` | The bot had no script when the game dropped its connection. It does not reconnect by itself. | Click **Log in**, or start a script. |
-| `logged out: idle logout by the server (Log in to connect)` | The bot had no script, and the game logged it out for being idle. | Click **Log in**, or start a script. |
 
 ## Read the login codes about your account
 

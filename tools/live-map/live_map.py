@@ -676,11 +676,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in login_plan.cells},
                 {
-                    "host.scriptless-idle-logout",
-                    "host.scriptless-park-dead-server",
-                    "host.scriptless-park-protocol-error",
                     "host.transport-dead-server",
-                    "host.transport-idle-held",
                     "host.transport-relog",
                     "panel.headed-nav-script",
                     "panel.headed-render",
@@ -727,11 +723,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in moved_plan.cells},
                 {
-                    "host.scriptless-idle-logout",
-                    "host.scriptless-park-dead-server",
-                    "host.scriptless-park-protocol-error",
                     "host.transport-dead-server",
-                    "host.transport-idle-held",
                     "host.transport-relog",
                     "panel.headed-nav-script",
                     "panel.headed-render",
