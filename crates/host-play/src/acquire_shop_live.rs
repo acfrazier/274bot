@@ -320,12 +320,7 @@ fn seed_items() -> &'static [(&'static str, i32)] {
     &[("coins", SEED_COINS), ("fishing_bait", SEED_BAIT)]
 }
 
-fn scenario(
-    kind: CellKind,
-    stand: WorldTile,
-    harry_id: i32,
-    trace: Arc<Mutex<ShopTrace>>,
-) -> Scenario {
+fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> Scenario {
     let mut scenario = scenario::quester_stage(
         kind.name(),
         "Cook's Assistant",
@@ -347,23 +342,8 @@ fn scenario(
         .expect("account preparation has StartScript");
     scenario.steps.truncate(start + 1);
     if kind == CellKind::Nearest {
-        scenario.steps.insert(
-            start,
-            Step {
-                name: "wait for Harry within trade range",
-                kind: StepKind::Await {
-                    evidence: "Harry is within one tile of the seeded stand",
-                    ready: Box::new(move |snapshot| {
-                        harry_in_trade_range(snapshot, stand, harry_id)
-                    }),
-                    summary: None,
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 0, min: 1 },
-                    budget_ticks: HARRY_TRADE_RANGE_WAIT_TICKS,
-                },
-            },
-        );
+        // This StartScript budget also bounds the in-frame NPC wait.
+        scenario.steps[start].wait.budget_ticks = HARRY_TRADE_RANGE_WAIT_TICKS;
     }
     scenario.steps.push(Step {
         name: "await real AcquireRun receipt",
@@ -532,6 +512,12 @@ impl LiveState {
 
         if self.runner.on_start_script() && !self.started {
             if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
+                return;
+            }
+            // Check range in this dispatch frame. Harry can move between steps.
+            if self.kind == CellKind::Nearest
+                && !harry_in_trade_range(&self.snapshot, self.fixture.stand, self.fixture.harry.id)
+            {
                 return;
             }
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
@@ -1300,7 +1286,7 @@ fn run_cell(kind: CellKind) {
     let trace = Arc::new(Mutex::new(ShopTrace::default()));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario(kind, fixture.stand, fixture.harry.id, Arc::clone(&trace));
+    let scenario = scenario(kind, fixture.stand, Arc::clone(&trace));
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_live_names(&names);
     runner.set_shot_sink(Box::new(|_, _| {}));
