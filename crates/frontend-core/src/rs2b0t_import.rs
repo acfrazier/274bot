@@ -676,6 +676,9 @@ fn credential_problem(username: &str, password: &str) -> Option<CredentialProble
 /// A catalog card the import can assign and fill.
 pub struct CatalogCard<'a> {
     schema: &'a [script::SettingDef],
+    /// Only a JS catalog can dim a card: without the `js` feature there is
+    /// no `script_js` and no `ImportCatalog` implementation that dims.
+    #[cfg(feature = "js")]
     unloadable: Option<&'a script_js::UnloadReason>,
     assignment: ScriptAssignment,
 }
@@ -683,11 +686,12 @@ pub struct CatalogCard<'a> {
 impl<'a> CatalogCard<'a> {
     pub fn new(
         schema: &'a [script::SettingDef],
-        unloadable: Option<&'a script_js::UnloadReason>,
+        #[cfg(feature = "js")] unloadable: Option<&'a script_js::UnloadReason>,
         assignment: ScriptAssignment,
     ) -> Self {
         Self {
             schema,
+            #[cfg(feature = "js")]
             unloadable,
             assignment,
         }
@@ -698,6 +702,7 @@ impl<'a> CatalogCard<'a> {
     }
 
     /// Why the card cannot run in 274bot (it is dimmed in Browse).
+    #[cfg(feature = "js")]
     pub fn unloadable(&self) -> Option<&'a script_js::UnloadReason> {
         self.unloadable
     }
@@ -1414,19 +1419,21 @@ fn map_selected_script(mapped: &mut Mapped, name: &str, catalog: &impl ImportCat
         None => mapped
             .skipped
             .push(skipped(item, "274bot's catalog has no script of this name")),
-        Some(card) => match card.unloadable {
-            Some(reason) => mapped.skipped.push(skipped(
-                item,
-                format!(
-                    "dimmed in 274bot, it cannot run here ({}); its parameters are still imported",
-                    reason.line()
-                ),
-            )),
-            None => {
-                mapped.imported.push(format!("script: {name}"));
-                mapped.assignment = Some(card.assignment);
+        Some(card) => {
+            #[cfg(feature = "js")]
+            if let Some(reason) = card.unloadable {
+                mapped.skipped.push(skipped(
+                    item,
+                    format!(
+                        "dimmed in 274bot, it cannot run here ({}); its parameters are still imported",
+                        reason.line()
+                    ),
+                ));
+                return;
             }
-        },
+            mapped.imported.push(format!("script: {name}"));
+            mapped.assignment = Some(card.assignment);
+        }
     }
 }
 
