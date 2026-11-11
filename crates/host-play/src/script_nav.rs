@@ -5364,11 +5364,15 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
-fn format_zone_witness(table: &nav_planner::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+/// One `label [name]` item per zone key, in key order: the text a refusal
+/// names each blocking zone by.
+pub(crate) fn zone_witness_items(
+    table: &nav_planner::zones::ZoneTable,
+    keys: &[ZoneKey],
+) -> Vec<String> {
     keys.iter()
         .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect()
 }
 
 pub(crate) fn blocked_zone_detail(
@@ -5377,7 +5381,7 @@ pub(crate) fn blocked_zone_detail(
 ) -> String {
     format!(
         "blocked by danger zones: {}",
-        format_zone_witness(table, keys)
+        zone_witness_items(table, keys).join(", ")
     )
 }
 

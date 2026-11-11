@@ -596,6 +596,11 @@ impl<'a> LoadFailureView<'a> {
         self.0.sibling.as_deref()
     }
 
+    /// The failure's fingerprint (empty when none was captured).
+    pub fn fingerprint(&self) -> &'a str {
+        &self.0.fingerprint
+    }
+
     /// The one-line `name: stage …` text.
     pub fn named_line(&self) -> String {
         self.0.named_line()

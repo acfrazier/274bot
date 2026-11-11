@@ -958,11 +958,16 @@ enum ScriptPopup {
     Browse,
     Load,
     Catalog,
+    Failures,
 }
 
 #[cfg(feature = "js")]
-const SCRIPT_POPUPS: [ScriptPopup; 3] =
-    [ScriptPopup::Browse, ScriptPopup::Load, ScriptPopup::Catalog];
+const SCRIPT_POPUPS: [ScriptPopup; 4] = [
+    ScriptPopup::Browse,
+    ScriptPopup::Load,
+    ScriptPopup::Catalog,
+    ScriptPopup::Failures,
+];
 
 #[cfg(feature = "js")]
 fn popup_open(app: &TuiApp, popup: ScriptPopup) -> bool {
@@ -970,6 +975,7 @@ fn popup_open(app: &TuiApp, popup: ScriptPopup) -> bool {
         ScriptPopup::Browse => app.script_browse_open,
         ScriptPopup::Load => app.script_load_open,
         ScriptPopup::Catalog => app.rs2b0t_catalog_open,
+        ScriptPopup::Failures => app.script_failures_open,
     }
 }
 
@@ -1028,6 +1034,15 @@ fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
             // What tui-play's dispatch does with that action.
             app.rs2b0t_catalog_open = true;
             app.catalog_sel = 0;
+        }
+        ScriptPopup::Failures => {
+            app.script_failures = vec![crate::script_failures::LoadFailureRow {
+                name: "Broken".into(),
+                place: "ParseTranspile:1:1".into(),
+                first_line: "Unexpected token".into(),
+                text: "Broken (/scripts/broken.ts) ParseTranspile:1:1: Unexpected token".into(),
+            }];
+            assert_eq!(app.on_key(ch('F')), AppAction::None);
         }
     }
     assert!(popup_open(app, popup), "{popup:?} opened");
@@ -1091,6 +1106,7 @@ fn script_popups_own_every_key_until_closed() {
             ScriptPopup::Browse => "KEYS Script: Browse ▸",
             ScriptPopup::Load => "KEYS Script: load file ▸",
             ScriptPopup::Catalog => "KEYS Script: catalog folder ▸",
+            ScriptPopup::Failures => "KEYS Script: load failures ▸",
         };
         assert!(footer.starts_with(scope), "{footer}");
 
@@ -1156,6 +1172,8 @@ fn script_popups_swallow_clicks_outside_themselves() {
             ScriptPopup::Browse => assert_ne!(app.script_sel, sel_before),
             ScriptPopup::Load => assert!(app.script_load_sel > load_before),
             ScriptPopup::Catalog => assert!(app.catalog_sel > catalog_before),
+            // One failure: the wheel has nowhere to go.
+            ScriptPopup::Failures => assert_eq!(app.failure_sel, 0),
         }
 
         assert_eq!(app.on_click(map_x + 1, map_y), AppAction::None, "{popup:?}");

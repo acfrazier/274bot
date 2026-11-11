@@ -5618,7 +5618,12 @@ impl Session {
             self.route_gen = self.route_gen.wrapping_add(1);
             self.error = None;
         } else {
-            self.error = Some(String::from("map: WalkTo was not applied"));
+            // The member's own reason (`not logged in`), else the generic text.
+            self.error = Some(
+                self.core
+                    .not_applied_reason(submitted.request(), "WalkTo")
+                    .unwrap_or_else(|| String::from("map: WalkTo was not applied")),
+            );
         }
         applied
     }
@@ -5750,7 +5755,11 @@ impl Session {
         if walking > 0 {
             self.route_gen = self.route_gen.wrapping_add(1);
         }
-        self.error = Some(report.summary());
+        self.error = Some(
+            report
+                .brief()
+                .publish(&frontend_core::LogTarget::walk(None)),
+        );
         walking > 0
     }
 
@@ -5787,7 +5796,11 @@ impl Session {
         if applied {
             self.error = None;
         } else {
-            self.error = Some(String::from("map: Teleport was not applied"));
+            self.error = Some(
+                self.core
+                    .not_applied_reason(submitted.request(), "Teleport")
+                    .unwrap_or_else(|| String::from("map: Teleport was not applied")),
+            );
         }
         applied
     }

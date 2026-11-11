@@ -9275,3 +9275,109 @@ fn browse_card_draws_policy_holds_and_import_failures_apart() {
         "an import failure is never a policy hold:\n{text}"
     );
 }
+
+/// A walk refusal that names 99 danger zones, as a script's park reason.
+fn zone_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+fn parked_detail(reason: &str) -> frontend_core::SlotDetail {
+    let status = frontend_core::test_support::scripts::NativeStatus::working(
+        frontend_core::scripts::CompiledCardId::lookup("Quester").unwrap(),
+    )
+    .with_text_field("action_state", "Action", "blocked")
+    .with_text_field("block_reason", "Blocked", reason);
+    let mut parked = frontend_core::SlotDetail::default();
+    parked.row_mut().set_phase(frontend_core::Phase::Ready);
+    parked.row_mut().set_script(ScriptRunState::Running);
+    parked.set_state("ingame scene 2");
+    status.attach_to(parked)
+}
+
+/// The Status card shows a parked script's reason as one short line with no
+/// later zone, and offers the whole text under a collapsed "Full reason"
+/// header with a Copy button; opened, the header holds the whole text. A
+/// reason that is already one short line gets no header.
+#[test]
+fn the_status_and_script_panes_show_the_short_reason() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let reason = zone_reason();
+    let parked = parked_detail(&reason);
+    let shown = draw_status_detail(&parked, "—", "lowmem");
+    assert!(
+        shown.contains("reason") && shown.contains("blocked by danger zones"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("2567,3050"),
+        "only the first 100 characters: {shown}"
+    );
+    assert!(shown.contains("Full reason"), "{shown}");
+    assert!(
+        !shown.contains("Copy"),
+        "the header starts collapsed: {shown}"
+    );
+
+    // Open the header: it holds the whole reason (the child window wraps it).
+    let line = parked.script_phase().unwrap().reason().unwrap();
+    assert!(line.is_cut());
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("reason").build(|| {
+            ui.set_next_item_open(true);
+            super::full_reason(ui, line, "test-reason");
+        });
+        ui.log_finish();
+    }
+    ctx.render();
+    let open = drawn.0.take();
+    assert!(open.contains("Copy"), "{open}");
+    assert!(open.contains("blocked by danger zones"), "{open}");
+
+    let whole = draw_status_detail(&parked_detail("no step for stage"), "—", "lowmem");
+    assert!(
+        whole.contains("no step for stage") && !whole.contains("Full reason"),
+        "{whole}"
+    );
+}
+
+/// A 6,360-character refusal on the panel's top line is one line of at most
+/// `LINE_MAX` characters with no zone item after the first 112 characters.
+#[test]
+fn the_banner_for_a_99_zone_refusal_is_short() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    session.error = Some(zone_reason());
+    let (banner, _) = draw_banner_and_status(&session);
+    let lines: Vec<&str> = banner
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(lines.len(), 1, "{banner:?}");
+    assert!(
+        lines[0].chars().count() <= frontend_core::LINE_MAX,
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].ends_with('…'), "{}", lines[0]);
+    assert!(!banner.contains("2567,3050"), "{banner}");
+}

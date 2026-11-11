@@ -192,6 +192,44 @@ struct StatusDetails<'a> {
     area: Option<&'a str>,
     target: Option<&'a str>,
     last_event: Option<&'a str>,
+    /// Show each text field cut to this many characters (`…` ends a cut
+    /// one). `None` shows every field whole.
+    cut: Option<usize>,
+}
+
+impl<'a> StatusDetails<'a> {
+    fn shown(&self, value: &'a str) -> std::borrow::Cow<'a, str> {
+        match self.cut {
+            Some(max) => api::hostlog::cut_chars(value, max),
+            None => std::borrow::Cow::Borrowed(value),
+        }
+    }
+
+    /// The fields the line shows cut, as `(key, whole text)`, each text once:
+    /// the fields a log reader would otherwise lose the end of.
+    fn cut_fields(&self) -> Vec<(&'static str, &'a str)> {
+        let Some(max) = self.cut else {
+            return Vec::new();
+        };
+        let mut out: Vec<(&'static str, &'a str)> = Vec::new();
+        for (key, value) in [
+            ("failure_message", self.failure_message),
+            ("waiting_for", self.waiting_for),
+            ("action_state", self.action_state),
+            ("block_reason", self.block_reason),
+            ("method", self.method),
+            ("area", self.area),
+            ("target", self.target),
+            ("last_event", self.last_event),
+        ] {
+            if let Some(value) = value.filter(|value| value.chars().nth(max).is_some()) {
+                if out.iter().all(|(_, held)| *held != value) {
+                    out.push((key, value));
+                }
+            }
+        }
+        out
+    }
 }
 
 fn distinct_status_field<'a>(value: Option<&'a str>, occupied: &[&str]) -> Option<&'a str> {
@@ -227,32 +265,32 @@ fn status_text_has_field(text: &str, value: &str) -> bool {
 impl std::fmt::Display for StatusDetails<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(value) = self.failure_message {
-            write!(f, " failure_message={value}")?;
+            write!(f, " failure_message={}", self.shown(value))?;
         }
         if let Some(value) = self.waiting_for {
-            write!(f, " waiting_for={value}")?;
+            write!(f, " waiting_for={}", self.shown(value))?;
         }
         if let Some(value) = self.action_state {
-            write!(f, " action_state={value}")?;
+            write!(f, " action_state={}", self.shown(value))?;
         }
         if let Some(value) = self.block_reason {
-            write!(f, " block_reason={value}")?;
+            write!(f, " block_reason={}", self.shown(value))?;
         }
         let occupied = [
             self.failure_message.unwrap_or(""),
             self.last_event.unwrap_or(""),
         ];
         if let Some(value) = distinct_status_field(self.method, &occupied) {
-            write!(f, " method={value}")?;
+            write!(f, " method={}", self.shown(value))?;
         }
         if let Some(value) = distinct_status_field(self.area, &occupied) {
-            write!(f, " area={value}")?;
+            write!(f, " area={}", self.shown(value))?;
         }
         if let Some(value) = distinct_status_field(self.target, &occupied) {
-            write!(f, " target={value}")?;
+            write!(f, " target={}", self.shown(value))?;
         }
         if let Some(value) = self.last_event {
-            write!(f, " last_event={value}")?;
+            write!(f, " last_event={}", self.shown(value))?;
         }
         Ok(())
     }
@@ -324,7 +362,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
     let failure = status.failure.as_ref();
     let waiting_for = status_text(status, "waiting_for");
     let action_state = status_text(status, "action_state");
-    let details = StatusDetails {
+    let mut details = StatusDetails {
         failure_message: failure.map(|failure| failure.message.as_ref()),
         waiting_for,
         action_state,
@@ -345,18 +383,49 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
             None
         },
         last_event,
+        cut: None,
     };
-    api::host_log!(
-        api::hostlog::Category::ScriptLifecycle,
+    if !api::hostlog::enabled(api::hostlog::Category::ScriptLifecycle) {
+        return;
+    }
+    let to = api::hostlog::Emit {
+        category: api::hostlog::Category::ScriptLifecycle,
         level,
-        slot = slot,
-        "native {} run={} phase={} failure={}{}",
-        status.card.0,
-        status.run.run,
-        phase_label(status.phase),
-        failure.map_or("none", |failure| failure.code.as_ref()),
-        details,
-    );
+        slot: Some(slot),
+        always_stderr: false,
+    };
+    let line = |details: &StatusDetails<'_>| {
+        format!(
+            "native {} run={} phase={} failure={}{}",
+            status.card.0,
+            status.run.run,
+            phase_label(status.phase),
+            failure.map_or("none", |failure| failure.code.as_ref()),
+            details,
+        )
+    };
+    let whole = line(&details);
+    if whole.len() <= api::hostlog::LINE_BYTES {
+        // One line the log store keeps whole: unchanged.
+        api::hostlog::emit(to, format_args!("{whole}"));
+        return;
+    }
+    // A reason too long for one line (a walk refusal naming every danger zone
+    // on the route). The head line keeps its shape, with each long text field
+    // cut to `SUMMARY_CHARS` characters (a tighter cut when even that
+    // overflows); the whole of each cut field follows as packed lines, once,
+    // so the log store never cuts it. This runs on a change of status only.
+    details.cut = Some(api::hostlog::SUMMARY_CHARS);
+    let mut head = line(&details);
+    if head.len() > api::hostlog::LINE_BYTES {
+        details.cut = Some(40);
+        head = line(&details);
+    }
+    api::hostlog::emit(to, format_args!("{head}"));
+    for (key, text) in details.cut_fields() {
+        let prefix = format!("native {} run={} {key}: ", status.card.0, status.run.run);
+        api::hostlog::emit_packed(to, &prefix, &[text]);
+    }
 }
 
 impl NativeOutput for Output {

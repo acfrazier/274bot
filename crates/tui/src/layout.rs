@@ -185,6 +185,9 @@ pub struct Regions {
     pub log_rows: Rect,
     /// The message line; a click opens the full text.
     pub message: Rect,
+    /// The park reason rows the Status and Script panes cut; a click opens
+    /// the whole reason.
+    pub reasons: Vec<Rect>,
     /// The open overlay's box and its clickable rows (`index` into the
     /// overlay's own list).
     pub modal: Rect,
@@ -204,6 +207,7 @@ impl Regions {
         self.map = Rect::default();
         self.log_rows = Rect::default();
         self.message = Rect::default();
+        self.reasons.clear();
         self.modal = Rect::default();
         self.modal_items.clear();
     }

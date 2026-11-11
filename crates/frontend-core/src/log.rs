@@ -30,8 +30,8 @@ pub const SLOT_RING_CAP: usize = 500;
 /// Entries kept in the process ring (lines no slot owns).
 pub const PROCESS_RING_CAP: usize = 500;
 /// Longest stored message in bytes; longer lines keep their head and end
-/// in `…`.
-pub const MESSAGE_CAP: usize = 512;
+/// in `…`. [`api::hostlog::pack`] keeps its lines under it.
+pub const MESSAGE_CAP: usize = api::hostlog::LINE_BYTES;
 /// Rows a [`LogScope::All`] view keeps (the newest across every ring).
 pub const ALL_VIEW_CAP: usize = 1_000;
 

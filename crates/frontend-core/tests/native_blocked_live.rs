@@ -350,7 +350,8 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         assert_eq!(play.script_state(&account), script::RunState::Running);
         assert!(play.script_native_run(&account).is_some());
         let reason = script_status_reason(status_view(&blocked))
-            .expect("a parked Gatherer publishes its block reason");
+            .expect("a parked Gatherer publishes its block reason")
+            .full();
         assert!(
             reason.to_ascii_lowercase().contains("feather"),
             "unexpected supply block reason: {reason}"
@@ -382,7 +383,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
                 .expect("selected account detail retains the parked script phase");
             assert_eq!(phase.label(), "blocked");
             assert_eq!(phase.phase(), Some("blocked"));
-            assert_eq!(phase.reason(), Some(reason));
+            assert_eq!(phase.reason().map(|line| line.full()), Some(reason));
         }
         let observation = state.lock().unwrap();
         let snapshot = &observation.snapshot;

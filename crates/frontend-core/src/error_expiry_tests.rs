@@ -102,3 +102,89 @@ fn a_need_never_clears_a_different_message() {
     assert_eq!(error.as_deref(), Some("settings: write failed"));
     assert_eq!(clock.waiting_need(), None, "the stale need is dropped");
 }
+
+/// Every line of the process ring that holds `needle`, oldest first.
+fn ring_lines(scope: crate::log::LogScope, needle: char) -> Vec<String> {
+    let mut view = crate::log::LogView::new(scope);
+    crate::log::global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|message| message.contains(needle))
+        .collect()
+}
+
+/// Strip the head and the `[i/n] ` marker from a group's lines and join them.
+fn rejoin(lines: &[String], head: &str) -> String {
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let body = line
+                .strip_prefix(head)
+                .expect("every line starts with the head");
+            let marker = format!("[{}/{}] ", index + 1, lines.len());
+            body.strip_prefix(&marker).expect("numbered").to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn observe_logs_an_over_cap_multibyte_message_in_full_once_across_many_pumps() {
+    use crate::log::LogScope;
+    // 2-, 3- and 4-byte characters, 6,000 characters, one marker character
+    // that no other test writes.
+    let text: String = "ζ日😀 abc; ".chars().cycle().take(6_000).collect();
+    assert!(text.len() > 9_000, "{} bytes", text.len());
+    let base = Instant::now();
+    let mut clock = Clock::default();
+    let mut error = Some(text.clone());
+    for pump in 0..100 {
+        assert!(!clock.observe(&mut error, 0, at(base, pump / 20)));
+    }
+    assert_eq!(
+        error.as_deref(),
+        Some(text.as_str()),
+        "the stored text is unchanged"
+    );
+
+    let lines = ring_lines(LogScope::Process, 'ζ');
+    assert!(lines.len() > 1, "{} lines", lines.len());
+    for line in &lines {
+        assert!(
+            line.len() <= api::hostlog::LINE_BYTES,
+            "{} bytes",
+            line.len()
+        );
+        assert!(!line.ends_with('…'), "the store cut a line: {line}");
+    }
+    assert_eq!(
+        rejoin(&lines, "notice shortened: "),
+        text,
+        "one group holds the whole text"
+    );
+
+    // A published brief of the same text is one short line: the guard does not
+    // log it again, and the detail is in the ring once, written by `publish`.
+    let slot = "expiry-from-text";
+    let shown = crate::Brief::from_text(&text).publish(&crate::LogTarget::command(Some(slot)));
+    let mut error = Some(shown);
+    clock.observe(&mut error, 0, at(base, 30));
+    clock.observe(&mut error, 0, at(base, 31));
+    assert_eq!(
+        ring_lines(LogScope::Process, 'ζ'),
+        lines,
+        "the guard logged nothing for the short line"
+    );
+    let slot_lines = ring_lines(LogScope::slot(slot), 'ζ');
+    assert_eq!(rejoin(&slot_lines, "detail: "), text, "one group, once");
+}
+
+#[test]
+fn a_one_line_message_in_the_cap_is_not_logged_by_the_guard() {
+    let before = ring_lines(crate::log::LogScope::Process, 'η').len();
+    let mut clock = Clock::default();
+    let mut error = shown(&"η".repeat(crate::LINE_MAX));
+    clock.observe(&mut error, 0, Instant::now());
+    assert_eq!(ring_lines(crate::log::LogScope::Process, 'η').len(), before);
+}

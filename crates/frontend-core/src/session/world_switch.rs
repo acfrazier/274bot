@@ -372,10 +372,7 @@ impl<Io> OperatorSession<Io> {
         terminal: Settlement<Completion, CommandFailure>,
         detail: Option<&str>,
     ) {
-        let _ = self
-            .commands
-            .book
-            .settle(switch.request, switch.subject, terminal, detail);
+        self.settle_brief(switch.request, switch.subject, terminal, detail);
     }
 }
 

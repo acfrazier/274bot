@@ -2599,3 +2599,305 @@ fn space_on_the_map_toggles_the_focused_bots_model_mark() {
         AppAction::SetMark("alice".into(), false)
     );
 }
+
+/// A walk refusal that names 99 danger zones (6,360 characters), as the
+/// script's park reason.
+fn zone_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+/// The row of `rows` that starts with `prefix` after its leading border, with
+/// the border and padding at its end dropped.
+fn row_starting<'a>(rows: &'a [String], prefix: &str) -> Option<&'a str> {
+    rows.iter()
+        .map(|row| {
+            row.trim_start_matches(['│', ' '])
+                .trim_end_matches(['│', ' '])
+        })
+        .find(|row| row.starts_with(prefix))
+}
+
+/// A published brief is one short line: at 80x24 the message row cuts it to
+/// the 75 cells it has with `…`, at 120x40 the whole line fits; a click
+/// opens the modal with the whole line, and the modal keeps it after the
+/// message line's timeout.
+#[test]
+fn the_message_line_shows_the_brief_at_80x24_and_120x40() {
+    let line = format!(
+        "Blocked by 99 danger zones; tick \"Route through danger zones\" to walk anyway, then walk again{}",
+        frontend_core::LOG_POINTER
+    );
+    assert!(line.chars().count() <= frontend_core::LINE_MAX);
+    for (width, height, cut) in [(80u16, 24u16, true), (120, 40, false)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some(line.clone());
+        let rows = draw(&mut app, width, height);
+        let row =
+            row_starting(&rows, "msg: ").unwrap_or_else(|| panic!("{width}x{height}: {rows:?}"));
+        if cut {
+            assert!(row.ends_with('…'), "{width}x{height}: {row}");
+            assert!(crate::text::cells(row) <= usize::from(width), "{row}");
+            assert!(!row.contains("(see log)"), "cut before the pointer: {row}");
+        } else {
+            assert!(row.contains(&line), "{width}x{height}: {row}");
+        }
+        // The click opens the whole line; the text is the modal's own.
+        let (x, y) = find(&rows, "msg: ").expect("the message row");
+        app.on_click(x + 6, y);
+        assert!(
+            matches!(&app.modal, Some(Modal::Message { text, .. }) if *text == line),
+            "{width}x{height}: {:?}",
+            app.modal
+        );
+        app.error = None;
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("Blocked by 99 danger zones"),
+            "the modal keeps its text after the line expires: {width}x{height}"
+        );
+    }
+}
+
+/// A wide character is never split across the last column of the row.
+#[test]
+fn the_message_line_never_splits_a_wide_character_at_the_last_column() {
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some("日".repeat(60));
+        let rows = draw(&mut app, width, height);
+        let row = row_starting(&rows, "msg: ").expect("the message row");
+        // The test backend draws the second cell of a wide character as a
+        // space, so a whole last character reads `日 …`.
+        assert!(row.ends_with("日 …"), "{width}x{height}: {row}");
+        assert!(row.chars().count() <= usize::from(width));
+    }
+}
+
+/// The Status card and the Script pane show a parked script's reason as one
+/// short line, with no zone item; a click on it (or the palette's Show full
+/// reason) opens the whole text, which the modal keeps.
+#[test]
+fn the_status_and_script_panes_show_the_short_reason() {
+    let reason = zone_reason();
+    assert!(reason.chars().count() > 5_000);
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        for screen in [Screen::Overview, Screen::Script] {
+            let mut app = crate::test_support::fleet_app(&["alice"]);
+            app.show_screen(screen);
+            let mut detail = crate::test_support::ready_detail("alice");
+            detail.row_mut().set_script(ScriptRunState::Running);
+            let status = NativeStatus::working(CompiledCardId::QUESTER)
+                .with_text_field("action_state", "Action", "blocked")
+                .with_text_field("block_reason", "Blocked", &reason);
+            app.detail = Some(status.attach_to(detail));
+            let rows = draw(&mut app, width, height);
+            let all = text(&rows);
+            let label = match screen {
+                Screen::Script => "blocked by danger zones",
+                _ => "reason: blocked by danger zones",
+            };
+            let row = row_starting(&rows, label)
+                .unwrap_or_else(|| panic!("{screen:?} {width}x{height}: {all}"));
+            assert!(row.ends_with('…'), "{screen:?} {width}x{height}: {row}");
+            // Only the first 100 characters of the reason are drawn: the
+            // first zone, not the 51st.
+            assert!(
+                !all.contains("2567,3050"),
+                "{screen:?} {width}x{height}: {all}"
+            );
+            assert!(
+                !all.contains("to allow it, set Danger routing"),
+                "{screen:?} {width}x{height}: the whole reason is not drawn"
+            );
+            // A click on the row opens the whole reason.
+            let (x, y) = find(&rows, label).unwrap();
+            app.on_click(x + 2, y);
+            assert!(
+                matches!(&app.modal, Some(Modal::Message { text, title, .. })
+                    if *text == reason && title == "Reason"),
+                "{screen:?} {width}x{height}: {:?}",
+                app.modal.as_ref().map(|_| "a modal")
+            );
+            // The modal holds the text, and Esc closes it.
+            let shown = text(&draw(&mut app, width, height));
+            assert!(shown.contains("Reason"), "{screen:?} {width}x{height}");
+            app.on_key(key(KeyCode::Esc));
+            assert!(app.modal.is_none());
+            // The palette command opens the same text.
+            let action = app.run_command(crate::commands::Command::ShowReason);
+            assert_eq!(action, AppAction::None);
+            assert!(matches!(&app.modal, Some(Modal::Message { text, .. }) if *text == reason));
+        }
+    }
+    // A reason that is already one short line is not a click target.
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.show_screen(Screen::Overview);
+    let mut detail = crate::test_support::ready_detail("alice");
+    detail.row_mut().set_script(ScriptRunState::Running);
+    let status = NativeStatus::working(CompiledCardId::QUESTER)
+        .with_text_field("action_state", "Action", "blocked")
+        .with_text_field("block_reason", "Blocked", "no step for stage");
+    app.detail = Some(status.attach_to(detail));
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "reason: no step").expect("the reason row");
+    app.on_click(x + 2, y);
+    assert!(
+        app.modal.is_none(),
+        "a whole reason has nothing more to show"
+    );
+}
+
+#[cfg(feature = "js")]
+fn failure_rows(count: usize) -> Vec<crate::script_failures::LoadFailureRow> {
+    (0..count)
+        .map(|i| crate::script_failures::LoadFailureRow {
+            name: if i == 3 {
+                "AVeryLongCardNameThatDoesNotFitItsColumn".into()
+            } else {
+                format!("Card{i:02}")
+            },
+            place: "ParseTranspile:3:7".into(),
+            first_line: format!("Unexpected token number {i}"),
+            text: format!(
+                "Card{i:02} (/scripts/card{i:02}.ts) ParseTranspile:3:7: Unexpected token number {i}\nidentity: file:card{i:02}\nfingerprint: fp{i:02}"
+            ),
+        })
+        .collect()
+}
+
+/// The load-failure list owns the script pane's inner rectangle: at 80x24
+/// that is 78 x 16, a header, 7 list rows, a rule and 7 text rows; at 120x40
+/// it is 82 x 26, 12 list rows and 12 text rows. The selected failure's whole
+/// text is in the text area; a long name is cut to its column.
+#[cfg(feature = "js")]
+#[test]
+fn load_failure_list_shows_rows_and_detail_at_80x24_and_120x40() {
+    for (width, height, list_rows, inner_width) in
+        [(80u16, 24u16, 7usize, 78usize), (120, 40, 12, 82)]
+    {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.script_failures = failure_rows(12);
+        assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+        assert_eq!(app.on_key(ch('F')), AppAction::None, "{width}x{height}");
+        assert!(app.script_failures_open);
+        let rows = draw(&mut app, width, height);
+        let all = text(&rows);
+        let (hx, hy) =
+            find(&rows, "Load failures: 12").unwrap_or_else(|| panic!("{width}x{height}: {all}"));
+        // The rule row sits below the list rows and spans the inner width.
+        let rule = rows[usize::from(hy) + 1 + list_rows]
+            .chars()
+            .skip(usize::from(hx))
+            .collect::<String>();
+        assert!(
+            rule.starts_with(&"─".repeat(inner_width)),
+            "{width}x{height}: the rule is {list_rows} rows under the header: {rule}\n{all}"
+        );
+        // The first list row is the selection; the rows above the rule are all list rows.
+        assert!(
+            rows[usize::from(hy) + 1].contains("> Card00"),
+            "{width}x{height}: {}",
+            rows[usize::from(hy) + 1]
+        );
+        for list_row in 1..=list_rows.min(12) {
+            assert!(
+                rows[usize::from(hy) + list_row].contains("ParseTranspile:3:7"),
+                "{width}x{height}: list row {list_row}"
+            );
+        }
+        // The text rows below the rule hold the selected failure's text.
+        let below: String = rows[usize::from(hy) + 2 + list_rows..].join("\n");
+        assert!(
+            below.contains("identity: file:card00"),
+            "{width}x{height}: {below}"
+        );
+        assert!(below.contains("fingerprint: fp00"), "{width}x{height}");
+        // Pick the fourth failure: its long name is cut to 24 cells.
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Down));
+        }
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("> AVeryLongCardNameThatDo…  ParseTranspile:3:7"),
+            "{width}x{height}"
+        );
+        assert!(
+            text(&rows).contains("identity: file:card03"),
+            "{width}x{height}"
+        );
+        // The pane's own inner width bounds every row.
+        for row in &rows {
+            assert!(row.chars().count() <= usize::from(width));
+        }
+    }
+}
+
+/// The list opens from the `[Failed N F]` button (drawn only with N > 0) and
+/// from the palette, which switches to the Script tab first; Up/Down pick,
+/// PageDown scrolls the text, Esc and Enter close.
+#[cfg(feature = "js")]
+#[test]
+fn load_failure_list_opens_from_the_button_and_the_palette_and_closes_on_esc() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+    assert_eq!(app.screen, Screen::Script);
+    let rows = draw(&mut app, 120, 40);
+    assert!(!text(&rows).contains("Failed"), "no failures, no button");
+    app.run_command(crate::commands::Command::ScriptFailures);
+    assert!(
+        !app.script_failures_open,
+        "with no failure there is nothing to open"
+    );
+
+    app.script_failures = failure_rows(12);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[Failed 12 F]").expect("the button with its count");
+    app.on_click(x + 2, y);
+    assert!(app.script_failures_open, "the button opens the list");
+    app.on_key(key(KeyCode::Down));
+    app.on_key(ch('j'));
+    assert_eq!(app.failure_sel, 2);
+    app.on_key(ch('k'));
+    assert_eq!(app.failure_sel, 1);
+    app.on_key(key(KeyCode::PageDown));
+    app.on_key(key(KeyCode::PageUp));
+    assert_eq!(
+        app.failure_scroll, 0,
+        "the three-line text has nothing to scroll"
+    );
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.script_failures_open);
+
+    // The palette, from another tab.
+    app.show_screen(Screen::Overview);
+    app.on_key(ch(':'));
+    for c in "load failures".chars() {
+        app.on_key(ch(c));
+    }
+    app.on_key(key(KeyCode::Enter));
+    assert!(
+        app.script_failures_open,
+        "the palette command opens the list"
+    );
+    assert_eq!(app.screen, Screen::Script, "and shows the Script tab first");
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.script_failures_open, "Enter closes");
+
+    // A click outside the pane closes it too.
+    app.run_command(crate::commands::Command::ScriptFailures);
+    assert!(app.script_failures_open);
+    app.on_click(0, 0);
+    assert!(!app.script_failures_open);
+}

@@ -2825,7 +2825,8 @@ impl Scripts {
         }
         let (restarted, stopped_paused, failed, errors) =
             self.replace_prepared_slots(core, &prepared, &warning);
-        let mut summary = report.summary();
+        let counts = report.summary();
+        let mut summary = counts.clone();
         if failed > 0 {
             summary = format!("{summary}, start failed {}: {}", failed, errors.join("; "));
         }
@@ -2833,7 +2834,26 @@ impl Scripts {
         if !named.is_empty() {
             summary = format!("{summary}\n{named}");
         }
-        self.show(format!("Refresh catalog: {summary}"));
+        // The banner gets the counts; each failed card and each failed start
+        // goes to the log once.
+        let mut detail = self.fresh_load_failure_lines();
+        detail.extend(errors);
+        let banner = crate::Brief::new(format!(
+            "Refresh catalog: {counts}{}",
+            if failed > 0 {
+                format!(", start failed {failed}")
+            } else {
+                String::new()
+            }
+        ));
+        let banner = if !detail.is_empty() {
+            banner.with_detail(detail)
+        } else if named.is_empty() {
+            banner
+        } else {
+            banner.logged_by_producer()
+        };
+        self.show(banner.publish(&crate::LogTarget::script_load()));
         self.reload.catalog_report = Some(summary);
         self.reload.clear_pending();
         ReloadOutcome::applied(restarted, stopped_paused, failed)

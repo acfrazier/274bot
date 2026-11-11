@@ -187,7 +187,9 @@ pub(crate) fn walk_marked<Io>(
                 .iter()
                 .map(|name| BulkRow::new(name, BulkOutcome::failed(error.short()))),
         );
-        BulkReport::new(LABEL, DONE, rows, Some(error.to_string()))
+        // `refuse_group` wrote each bot's detail once; the report carries
+        // the summary.
+        BulkReport::new(LABEL, DONE, rows, Some(error.summary().into_owned())).with_detail_logged()
     };
     let (context, plan) = match walk.prepared {
         Ok(prepared) => prepared,
@@ -238,12 +240,15 @@ pub(crate) fn walk_marked<Io>(
                         (BulkOutcome::Done, None)
                     }
                     WalkSlotOutcomeKind::Excluded(_) => (BulkOutcome::skipped(reason), None),
-                    WalkSlotOutcomeKind::Failed(ActionError::BlockedByZones { detail }) => {
-                        (BulkOutcome::failed(reason), detail)
-                    }
-                    WalkSlotOutcomeKind::Failed(ActionError::RiskRefused { detail, .. }) => {
-                        (BulkOutcome::failed(reason), Some(detail))
-                    }
+                    // The host logged the whole refusal once for this bot
+                    // (`WalkRequest::run`); the row keeps the summary.
+                    WalkSlotOutcomeKind::Failed(
+                        error @ (ActionError::BlockedByZones { .. }
+                        | ActionError::RiskRefused { .. }),
+                    ) => (
+                        BulkOutcome::failed(reason),
+                        Some(error.summary().into_owned()),
+                    ),
                     WalkSlotOutcomeKind::Failed(_) => (BulkOutcome::failed(reason), None),
                 };
                 let row = BulkRow::new(outcome.name, result);
@@ -256,7 +261,7 @@ pub(crate) fn walk_marked<Io>(
                 }
             }),
     );
-    BulkReport::new(LABEL, DONE, rows, None)
+    BulkReport::new(LABEL, DONE, rows, None).with_detail_logged()
 }
 
 impl<Io> OperatorSession<Io> {

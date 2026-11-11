@@ -62,10 +62,33 @@ impl Widget for StatusPane<'_> {
         let block = Block::default().borders(Borders::ALL).title("status");
         let inner = block.inner(area);
         block.render(area, buf);
-        // Most important first, so a short pane keeps what explains the
-        // bot: its state, why it is retrying, its newest operation and any
-        // guardian or welcome hold; related cells share a line so the
-        // meter still fits the 120x40 pane.
+        let (lines, _) = self.lines(inner.width);
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(inner, buf);
+    }
+}
+
+impl<'a> StatusPane<'a> {
+    /// Where the `reason:` row sits in `area` when the reason is cut (a
+    /// click there opens the whole text), `None` when it is whole or off the
+    /// pane.
+    pub fn reason_hit(&self, area: Rect) -> Option<Rect> {
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let (lines, reason) = self.lines(inner.width);
+        let reason = reason?;
+        let row = crate::script_shape::wrapped_line_count(&lines[..reason], inner.width);
+        let y = inner.y.checked_add(u16::try_from(row).ok()?)?;
+        (y < inner.bottom()).then(|| Rect::new(inner.x, y, inner.width, 1))
+    }
+
+    /// The pane's lines for an inner width of `width` cells, and the index of
+    /// the `reason:` line when it is cut. Most important first, so a short
+    /// pane keeps what explains the bot: its state, why it is retrying, its
+    /// newest operation and any guardian or welcome hold; related cells
+    /// share a line so the meter still fits the 120x40 pane.
+    fn lines(&self, width: u16) -> (Vec<Line<'a>>, Option<usize>) {
+        let mut cut_reason = None;
         let mut lines: Vec<Line> = match self.detail {
             None => vec![
                 Line::from("state: no bot selected"),
@@ -79,7 +102,17 @@ impl Widget for StatusPane<'_> {
                         lines.push(Line::from(format!("phase: {phase}")));
                     }
                     if let Some(reason) = script.reason() {
-                        lines.push(Line::from(format!("reason: {reason}")));
+                        // One row: at most `SUMMARY_MAX` characters, then
+                        // the cells left. The whole text is one click away.
+                        const LABEL: &str = "reason: ";
+                        let room = usize::from(width).saturating_sub(LABEL.len());
+                        if reason.is_cut() {
+                            cut_reason = Some(lines.len());
+                        }
+                        lines.push(Line::from(format!(
+                            "{LABEL}{}",
+                            crate::text::ellipsize(&reason.as_str(), room)
+                        )));
                     }
                 }
                 // The current login notice takes the history row's place
@@ -149,9 +182,7 @@ impl Widget for StatusPane<'_> {
         if let Some(notice) = self.background_notice {
             lines.push(Line::from(format!("notice: {notice}")));
         }
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .render(inner, buf);
+        (lines, cut_reason)
     }
 }
 
@@ -414,7 +445,7 @@ mod tests {
         let detail = status.attach_to(detail);
         let projected = detail.script_phase().expect("the retained native failure");
         assert_eq!(projected.label(), "error");
-        assert_eq!(projected.reason(), Some(reason));
+        assert_eq!(projected.reason().map(|line| line.full()), Some(reason));
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
         assert!(text.contains("script: error"), "{text:?}");
         assert!(text.contains("phase: blocked"), "{text:?}");

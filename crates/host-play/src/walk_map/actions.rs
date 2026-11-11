@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -66,6 +67,36 @@ pub enum ActionKind {
     Walk,
     Teleport,
 }
+/// The danger zones that refused a walk, in route order: one `label [name]`
+/// item per zone key. The count and the first label feed the short notice;
+/// every item goes to the log once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockedZones {
+    items: Vec<String>,
+}
+
+impl BlockedZones {
+    /// The zones named by `items`, each `label [name]`, in route order.
+    pub fn new(items: Vec<String>) -> Self {
+        Self { items }
+    }
+
+    /// How many zone keys block the route.
+    pub fn count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// The first blocking zone, as `label [name]`.
+    pub fn first(&self) -> Option<&str> {
+        self.items.first().map(String::as_str)
+    }
+
+    /// Every blocking zone, as `label [name]`.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionError {
     NoSelection,
@@ -79,8 +110,9 @@ pub enum ActionError {
     SearchIncomplete {
         detail: String,
     },
+    /// `zones` is `None` on a pack without a zone table.
     BlockedByZones {
-        detail: Option<String>,
+        zones: Option<BlockedZones>,
     },
     InsufficientItems {
         detail: String,
@@ -95,42 +127,55 @@ pub enum ActionError {
     InvalidCoordinates,
     RunningScript,
 }
+impl ActionError {
+    /// The whole text of a variant that carries no data.
+    fn fixed_text(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::NoSelection => "Select a map destination first",
+            Self::Blocked => "No walkable tile within radius 16 (or no proven POI stand)",
+            Self::NoOrigin => "Walk/Teleport unavailable: no observed player",
+            Self::OriginNotStandable => "Walk unavailable: observed player tile is not standable",
+            Self::NoFocus => "Walk/Teleport unavailable: no focused running slot",
+            Self::Stale => "Map selection expired: nav identity or map binding changed",
+            Self::NoNavigation => "Navigation unavailable",
+            Self::NoPath => "No path to the selected destination with these routing options",
+            Self::BlockedByZones { zones: None } => {
+                "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
+            }
+            Self::MembersOnly => "This route requires a members' world",
+            Self::Unauthorized => "Debug Teleport requires a local loopback engine target",
+            Self::WrongAction => "Map confirmation has a different action",
+            Self::InvalidCoordinates => "Enter x,z,plane (plane 0–3)",
+            Self::RunningScript => "running a script (stop the script to include it)",
+            Self::SearchIncomplete { .. }
+            | Self::BlockedByZones { zones: Some(_) }
+            | Self::InsufficientItems { .. }
+            | Self::RiskRefused { .. } => return None,
+        })
+    }
+}
 impl fmt::Display for ActionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(text) = self.fixed_text() {
+            return f.write_str(text);
+        }
         match self {
-            Self::NoSelection => f.write_str("Select a map destination first"),
-            Self::Blocked => {
-                f.write_str("No walkable tile within radius 16 (or no proven POI stand)")
-            }
-            Self::NoOrigin => f.write_str("Walk/Teleport unavailable: no observed player"),
-            Self::OriginNotStandable => {
-                f.write_str("Walk unavailable: observed player tile is not standable")
-            }
-            Self::NoFocus => f.write_str("Walk/Teleport unavailable: no focused running slot"),
-            Self::Stale => {
-                f.write_str("Map selection expired: nav identity or map binding changed")
-            }
-            Self::NoNavigation => f.write_str("Navigation unavailable"),
-            Self::NoPath => {
-                f.write_str("No path to the selected destination with these routing options")
-            }
             Self::SearchIncomplete { detail } => write!(f, "Route search incomplete: {detail}"),
-            Self::BlockedByZones { detail: Some(detail) } => write!(
-                f,
-                "{detail}; tick \"Route through danger zones\" to walk anyway"
-            ),
-            Self::BlockedByZones { detail: None } => f.write_str(
-                "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway",
-            ),
-            Self::InsufficientItems { detail } => write!(f, "Insufficient route supplies: {detail}"),
-            Self::RiskRefused { detail, .. } => f.write_str(detail),
-            Self::MembersOnly => f.write_str("This route requires a members' world"),
-            Self::Unauthorized => {
-                f.write_str("Debug Teleport requires a local loopback engine target")
+            Self::BlockedByZones { zones: Some(zones) } => {
+                f.write_str("blocked by danger zones: ")?;
+                for (index, item) in zones.items.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    f.write_str(item)?;
+                }
+                f.write_str("; tick \"Route through danger zones\" to walk anyway")
             }
-            Self::WrongAction => f.write_str("Map confirmation has a different action"),
-            Self::InvalidCoordinates => f.write_str("Enter x,z,plane (plane 0–3)"),
-            Self::RunningScript => f.write_str("running a script (stop the script to include it)"),
+            Self::InsufficientItems { detail } => {
+                write!(f, "Insufficient route supplies: {detail}")
+            }
+            Self::RiskRefused { detail, .. } => f.write_str(detail),
+            _ => Ok(()),
         }
     }
 }
@@ -156,6 +201,83 @@ impl ActionError {
             Self::InvalidCoordinates => "invalid coordinates",
             Self::RunningScript => "running a script",
         }
+    }
+
+    /// The variant name, with none of its payload: what the walk receipts
+    /// (`refused=`, `reason=`) print. The payload text belongs to
+    /// [`Self::detail_items`], written once by [`WalkRequest::run`].
+    pub fn log_tag(&self) -> &'static str {
+        match self {
+            Self::NoSelection => "NoSelection",
+            Self::Blocked => "Blocked",
+            Self::NoOrigin => "NoOrigin",
+            Self::OriginNotStandable => "OriginNotStandable",
+            Self::NoFocus => "NoFocus",
+            Self::Stale => "Stale",
+            Self::NoNavigation => "NoNavigation",
+            Self::NoPath => "NoPath",
+            Self::SearchIncomplete { .. } => "SearchIncomplete",
+            Self::BlockedByZones { .. } => "BlockedByZones",
+            Self::InsufficientItems { .. } => "InsufficientItems",
+            Self::RiskRefused { .. } => "RiskRefused",
+            Self::MembersOnly => "MembersOnly",
+            Self::Unauthorized => "Unauthorized",
+            Self::WrongAction => "WrongAction",
+            Self::InvalidCoordinates => "InvalidCoordinates",
+            Self::RunningScript => "RunningScript",
+        }
+    }
+
+    /// The operator-facing text: the cause and the count, at most
+    /// [`api::hostlog::SUMMARY_CHARS`] characters, on one line. [`Display`]
+    /// stays the whole text (scripts read it); this is what a front end shows.
+    ///
+    /// [`Display`]: fmt::Display
+    pub fn summary(&self) -> Cow<'static, str> {
+        use api::hostlog::{cut_chars, SUMMARY_CHARS};
+        if let Some(text) = self.fixed_text() {
+            return Cow::Borrowed(text);
+        }
+        let text = match self {
+            Self::BlockedByZones { zones: Some(zones) } => format!(
+                "Blocked by {} danger zone{}; tick \"Route through danger zones\" to walk anyway",
+                zones.count(),
+                if zones.count() == 1 { "" } else { "s" },
+            ),
+            Self::RiskRefused { refusal, .. } => format!("Walk refused: {refusal}"),
+            Self::SearchIncomplete { .. } | Self::InsufficientItems { .. } => self.to_string(),
+            _ => String::new(),
+        };
+        Cow::Owned(cut_chars(&single_line(&text), SUMMARY_CHARS).into_owned())
+    }
+
+    /// What the summary leaves out, to be logged once: every blocking zone,
+    /// or the whole text when the summary cut it. Empty when the summary
+    /// says everything.
+    pub fn detail_items(&self) -> Vec<String> {
+        match self {
+            Self::BlockedByZones { zones: Some(zones) } => zones.items.clone(),
+            Self::SearchIncomplete { .. }
+            | Self::InsufficientItems { .. }
+            | Self::RiskRefused { .. } => {
+                let full = self.to_string();
+                if self.summary() == single_line(&full) {
+                    Vec::new()
+                } else {
+                    vec![full]
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// `text` with each line break or tab as one space.
+fn single_line(text: &str) -> Cow<'_, str> {
+    if text.contains(['\n', '\r', '\t']) {
+        Cow::Owned(text.replace(['\n', '\r', '\t'], " "))
+    } else {
+        Cow::Borrowed(text)
     }
 }
 impl std::error::Error for ActionError {}
@@ -223,6 +345,19 @@ impl WalkRequest<'_> {
         }
         if let Err(reason) = outcome.as_ref() {
             emit_walk_rejected(self.slot, self.destination, self.origin, reason);
+            // The one writer of the refusal's detail (every blocking zone, the
+            // whole route text): the receipts above carry only the tag, and
+            // the front ends show only the summary.
+            api::hostlog::emit_packed(
+                api::hostlog::Emit {
+                    category: api::hostlog::Category::NavEvent,
+                    level: api::hostlog::Level::Info,
+                    slot: self.slot,
+                    always_stderr: false,
+                },
+                &format!("WalkTo refused detail ({}): ", reason.log_tag()),
+                &reason.detail_items(),
+            );
         }
         outcome
     }
@@ -299,7 +434,7 @@ impl fmt::Display for WalkOutcome<'_> {
                 return f.write_str("prerequisite_started")
             }
             Ok(WalkActionOutcome::Walking(admitted)) => admitted,
-            Err(reason) => return write!(f, "refused={reason:?}"),
+            Err(reason) => return write!(f, "refused={}", reason.log_tag()),
         };
         let route = &admitted.route;
         let steps: usize = route
@@ -451,9 +586,10 @@ fn emit_walk_rejected(
             always_stderr: false,
         },
         format_args!(
-            "WalkTo outcome=aborted destination={} at={} reason={reason:?} leg=- transport=-",
+            "WalkTo outcome=aborted destination={} at={} reason={} leg=- transport=-",
             WalkTile(destination),
             WalkTile(at),
+            reason.log_tag(),
         ),
     );
 }
@@ -1166,21 +1302,12 @@ impl MapCommand {
                 },
                 arms,
             ) {
-                let detail = world
+                let zones = world
                     .graph
                     .zones
                     .as_ref()
-                    .map(|table| crate::blocked_zone_detail(table, &keys));
-                if let Some(detail) = detail.as_deref() {
-                    crate::walk_map::emit_walk_aborted(
-                        Some(name),
-                        world_tile(self.destination),
-                        Some(world_tile(self.origin)),
-                        detail,
-                        false,
-                    );
-                }
-                return Err(ActionError::BlockedByZones { detail });
+                    .map(|table| BlockedZones::new(crate::zone_witness_items(table, &keys)));
+                return Err(ActionError::BlockedByZones { zones });
             }
         }
         match result {

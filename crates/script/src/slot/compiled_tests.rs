@@ -4262,6 +4262,123 @@ fn native_status_logs_gatherer_last_event_at_info() {
     );
 }
 
+/// The 99-zone refusal of the live Quester run that first showed the problem,
+/// as a park reason of 4,000 bytes and more (multibyte characters included).
+fn long_park_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}, Ünïcode Zöne 日本 😀 [uni@1,1,0]; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+#[test]
+fn a_script_park_reason_is_logged_in_full_once_per_change() {
+    const SLOT: &str = "status-park-reason-full";
+    install_status_line_sink();
+    let reason = long_park_reason();
+    assert!(reason.len() > 4_000);
+    let mut output = Output {
+        account: Some(SLOT.into()),
+        ..Output::default()
+    };
+    let mut parked = status_line_test_status(NativePhase::Blocked, None);
+    parked.fields = vec![
+        crate::native::StatusField {
+            key: "block_reason",
+            label: "Blocked",
+            value: crate::native::StatusValue::Text(Arc::from(reason.as_str())),
+        },
+        crate::native::StatusField {
+            key: "last_event",
+            label: "Last event",
+            value: crate::native::StatusValue::Text(Arc::from("walk refused")),
+        },
+    ]
+    .into();
+    output.status(parked.clone());
+
+    let lines = status_lines_for(SLOT);
+    let head = &lines[0].message;
+    assert!(
+        head.len() <= api::hostlog::LINE_BYTES,
+        "{} bytes",
+        head.len()
+    );
+    assert!(
+        head.starts_with("native Gatherer run=1 phase=blocked failure=none block_reason=blocked by danger zones: Ogre"),
+        "{head}"
+    );
+    let cut: String = reason
+        .chars()
+        .take(api::hostlog::SUMMARY_CHARS - 1)
+        .collect();
+    assert!(
+        head.contains(&format!("block_reason={cut}…")),
+        "the field is cut at 100 characters: {head}"
+    );
+    assert!(
+        head.ends_with(" last_event=walk refused"),
+        "last_event stays on the head line: {head}"
+    );
+
+    // The packed lines rejoin to the whole reason, each under the store cap.
+    let prefix = "native Gatherer run=1 block_reason: ";
+    let packed = &lines[1..];
+    assert!(
+        packed.len() > 1 && packed.len() <= 16,
+        "{} packed lines",
+        packed.len()
+    );
+    let mut rejoined = String::new();
+    for (index, line) in packed.iter().enumerate() {
+        assert!(
+            line.message.len() <= api::hostlog::LINE_BYTES,
+            "{} bytes",
+            line.message.len()
+        );
+        assert!(
+            !line.message.ends_with('…'),
+            "the store would cut it: {}",
+            line.message
+        );
+        assert_eq!(line.level, lines[0].level, "same level as the head");
+        let body = line.message.strip_prefix(prefix).expect("head");
+        let marker = format!("[{}/{}] ", index + 1, packed.len());
+        rejoined.push_str(body.strip_prefix(&marker).expect("numbered"));
+    }
+    assert_eq!(rejoined, reason);
+
+    // The same status again, and one whose other fields are unchanged,
+    // add nothing: the reason is written once per change.
+    output.status(parked.clone());
+    assert_eq!(status_lines_for(SLOT).len(), lines.len());
+
+    // A line that fits in 512 bytes stays one unchanged line.
+    let mut short = parked;
+    short.fields = vec![crate::native::StatusField {
+        key: "block_reason",
+        label: "Blocked",
+        value: crate::native::StatusValue::Text(Arc::from("no step for stage")),
+    }]
+    .into();
+    output.status(short);
+    let after = status_lines_for(SLOT);
+    assert_eq!(after.len(), lines.len() + 1);
+    assert_eq!(
+        after[lines.len()].message,
+        "native Gatherer run=1 phase=blocked failure=none block_reason=no step for stage"
+    );
+}
+
 #[test]
 fn completed_native_status_survives_teardown_without_copying() {
     if !api::test_support::game_data_available() {

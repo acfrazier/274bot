@@ -912,7 +912,7 @@ fn bulk_outcome(applied: &Applied) -> crate::BulkOutcome {
     }
 }
 
-fn skip_label(reason: SkipReason) -> &'static str {
+pub(super) fn skip_label(reason: SkipReason) -> &'static str {
     match reason {
         SkipReason::NoScript => "no script",
         SkipReason::NoRunningScript => "no running script",

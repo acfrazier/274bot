@@ -1109,20 +1109,28 @@ fn preserves_walk_destination(kind: WalkActionErrorKind) -> bool {
 
 fn walk_action_applied(error: WalkActionError) -> super::commands::Applied {
     use super::commands::Applied;
+    // The host wrote the refusal's detail once (`WalkRequest::run`); the
+    // command book keeps the short line the front ends show.
+    let shown = || error.brief().publish(&crate::LogTarget::walk(None));
     match error.kind() {
         crate::walk_map::WalkActionErrorKind::NoSelection => {
-            Applied::Rejected(Rejection::NotStaged, Some(error.to_string()))
+            Applied::Rejected(Rejection::NotStaged, Some(shown()))
         }
-        crate::walk_map::WalkActionErrorKind::NoOrigin => Applied::Skipped(SkipReason::NotLoggedIn),
+        // No observed player: the bot is not logged in (or not in the game
+        // yet). A refusal, so the command boundary logs its one line and the
+        // front ends show the reason.
+        crate::walk_map::WalkActionErrorKind::NoOrigin => {
+            Applied::Rejected(Rejection::NotApplicable, Some("not logged in".to_owned()))
+        }
         crate::walk_map::WalkActionErrorKind::RunningScript => {
             Applied::Skipped(SkipReason::WalkExcluded)
         }
         crate::walk_map::WalkActionErrorKind::NoFocus
         | crate::walk_map::WalkActionErrorKind::Unauthorized
         | crate::walk_map::WalkActionErrorKind::WrongAction => {
-            Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
+            Applied::Rejected(Rejection::NotApplicable, Some(shown()))
         }
-        _ => Applied::Failed(FailureKind::JobFailed, Some(error.to_string())),
+        _ => Applied::Failed(FailureKind::JobFailed, Some(shown())),
     }
 }
 

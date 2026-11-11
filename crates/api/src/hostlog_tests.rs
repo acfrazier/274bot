@@ -227,3 +227,134 @@ fn a_failed_debug_write_is_dropped_instead_of_panicking() {
     write_line(&mut out, format_args!("[nav-trace slot] walk-send"));
     assert_eq!(out, b"[nav-trace slot] walk-send\n");
 }
+
+/// Strip the `[i/n] ` marker of `line`, checking it numbers line `index` of
+/// `count`.
+fn unmarked(line: &str, index: usize, count: usize) -> &str {
+    let marker = format!("[{}/{count}] ", index + 1);
+    line.strip_prefix(&marker)
+        .unwrap_or_else(|| panic!("line {index} of {count} starts with {marker:?}: {line:?}"))
+}
+
+#[test]
+fn pack_splits_on_char_boundaries_and_loses_nothing() {
+    // Each fixture puts one multibyte character across the 470-byte payload
+    // limit (480 bytes minus the widest marker): its first byte is at 469, so
+    // the limit falls inside the character.
+    for (name, wide) in [("2-byte", 'é'), ("3-byte", '日'), ("4-byte", '😀')] {
+        let mut text = "a".repeat(469);
+        text.push(wide);
+        text.push_str(&"b".repeat(500));
+        text.push(wide);
+        let lines = pack(&[text.as_str()]);
+        assert!(lines.len() > 1, "{name}: the text needs several lines");
+        let mut rejoined = String::new();
+        for (index, line) in lines.iter().enumerate() {
+            assert!(line.len() <= PACK_BYTES, "{name}: {} bytes", line.len());
+            assert!(!line.contains('\u{FFFD}'), "{name}: no replacement char");
+            rejoined.push_str(unmarked(line, index, lines.len()));
+        }
+        assert_eq!(rejoined, text, "{name}: nothing is lost or reordered");
+    }
+}
+
+#[test]
+fn pack_gives_one_unmarked_line_when_the_text_fits_and_nothing_for_no_items() {
+    assert_eq!(pack(&["alpha", "beta"]), ["alpha; beta"]);
+    assert_eq!(
+        pack(&["line one\nline two\ttab"]),
+        ["line one line two tab"]
+    );
+    assert!(pack::<&str>(&[]).is_empty());
+}
+
+#[test]
+fn pack_ends_a_line_after_an_item_so_items_stay_whole() {
+    // 60 items of 20 bytes join to 1,318 bytes: several lines, each cut at
+    // the last whole item that fits.
+    let items: Vec<String> = (0..60)
+        .map(|i| format!("item-{i:02}-xxxxxxxxxxxx"))
+        .collect();
+    let lines = pack(&items);
+    assert!(lines.len() > 1);
+    let mut rejoined = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        let payload = unmarked(line, index, lines.len());
+        assert!(
+            payload.ends_with("; ") || index + 1 == lines.len(),
+            "a line ends on an item boundary: {payload:?}"
+        );
+        rejoined.push_str(payload);
+    }
+    assert_eq!(rejoined, items.join("; "));
+    for item in &items {
+        assert_eq!(
+            lines.iter().filter(|l| l.contains(item.as_str())).count(),
+            1,
+            "{item} appears once"
+        );
+    }
+}
+
+#[test]
+fn emit_packed_writes_every_line_in_order_with_its_head_under_the_store_cap() {
+    install();
+    let items: Vec<String> = (0..99)
+        .map(|i| format!("ogre {i:02} at (2567,3046,0) [ogre@2567,3046,{i}]"))
+        .collect();
+    let head = "WalkTo detail ";
+    std::thread::spawn(move || {
+        emit_packed(
+            Emit {
+                category: Category::NavEvent,
+                level: Level::Info,
+                slot: Some("route-gus"),
+                always_stderr: false,
+            },
+            head,
+            &items,
+        );
+    })
+    .join()
+    .unwrap();
+    let lines: Vec<String> = lines_for("route-gus").into_iter().map(|c| c.4).collect();
+    assert!(
+        lines.len() > 1 && lines.len() <= 16,
+        "{} lines",
+        lines.len()
+    );
+    let mut rejoined = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        assert!(line.len() <= LINE_BYTES, "{} bytes", line.len());
+        let body = line
+            .strip_prefix(head)
+            .expect("every line starts with the head");
+        rejoined.push_str(unmarked(body, index, lines.len()));
+    }
+    let expected: Vec<String> = (0..99)
+        .map(|i| format!("ogre {i:02} at (2567,3046,0) [ogre@2567,3046,{i}]"))
+        .collect();
+    assert_eq!(rejoined, expected.join("; "));
+}
+
+#[test]
+fn the_in_app_log_check_follows_the_sink_and_the_allowlist_not_debug_or_files() {
+    install();
+    assert!(logged(Category::Lifecycle) && logged(Category::NavEvent));
+    assert!(
+        !logged(Category::NavTrace) && !logged(Category::Echo),
+        "stderr-only categories never reach the ring, even with debug on"
+    );
+}
+
+#[test]
+fn cut_chars_counts_characters_ends_with_an_ellipsis_and_borrows_when_it_fits() {
+    assert!(matches!(cut_chars("short", 100), Cow::Borrowed("short")));
+    assert!(matches!(cut_chars("abcde", 5), Cow::Borrowed("abcde")));
+    assert_eq!(cut_chars("abcdef", 5), "abcd…");
+    // A 4-byte character at the cut stays whole: 100 characters, not bytes.
+    let wide = "😀".repeat(150);
+    let cut = cut_chars(&wide, SUMMARY_CHARS);
+    assert_eq!(cut.chars().count(), SUMMARY_CHARS);
+    assert!(cut.ends_with('…') && cut.starts_with("😀"));
+}

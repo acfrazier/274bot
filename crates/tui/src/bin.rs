@@ -1821,28 +1821,20 @@ impl TuiSession {
                         )
                     })
                 });
-                let not_logged_in = report.is_some_and(|report| {
-                    report.members().iter().any(|member| {
-                        matches!(
-                            member.terminal(),
-                            Some(api::identity::Settlement::Completed(
-                                frontend_core::command::Completion::Skipped(
-                                    frontend_core::command::SkipReason::NotLoggedIn
-                                )
-                            ))
-                        )
-                    })
-                });
 
                 if let Some(error) = failure {
                     app.error = Some(error.to_string());
                 } else if applied {
                     app.walk_dest = self.map_desk.walk_dest();
                     app.error = None;
-                } else if not_logged_in {
-                    app.error = Some("map: no observed player".into());
                 } else {
-                    app.error = Some("map: WalkTo was not applied".into());
+                    // The member's own reason (`not logged in`), else the
+                    // generic text.
+                    app.error = Some(
+                        self.core
+                            .not_applied_reason(submitted.request(), "WalkTo")
+                            .unwrap_or_else(|| "map: WalkTo was not applied".into()),
+                    );
                 }
             }
             Err(error) => app.error = Some(error),
@@ -1885,7 +1877,11 @@ impl TuiSession {
                     if report.done_count() > 0 {
                         app.walk_dest = self.map_desk.walk_dest();
                     }
-                    app.error = Some(report.summary());
+                    app.error = Some(
+                        report
+                            .brief()
+                            .publish(&frontend_core::LogTarget::walk(None)),
+                    );
                 }
                 None => app.error = Some("map: GroupWalk produced no result".into()),
             },
@@ -3173,11 +3169,9 @@ impl TuiSession {
             Ok(_) => {
                 app.script_sel = self.scripts.browse_selection().map(ScriptChoice::duplicate);
                 app.browse_changed = true;
-                app.error = if self.scripts.load_failure_count() == 0 {
-                    None
-                } else {
-                    Some(self.scripts.named_failure_output())
-                };
+                // The banner gets the count and two names; every failure is
+                // in the log and in the Script tab's load-failure list.
+                app.error = self.scripts.publish_load_failures();
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
                     app.script_load_last_dir = self.script_load_last_dir.clone();
@@ -3185,7 +3179,7 @@ impl TuiSession {
             }
             Err(error) => {
                 app.error = if self.scripts.load_failure_count() > 1 {
-                    Some(self.scripts.named_failure_output())
+                    self.scripts.publish_load_failures()
                 } else {
                     Some(format!("script: {error}"))
                 };
@@ -3875,6 +3869,21 @@ impl TuiSession {
         self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
         app.script_cards = self.scripts.browse_cards().map(BrowseCard::from).collect();
+        #[cfg(feature = "js")]
+        if self.scripts.load_failure_count() > 0 || !app.script_failures.is_empty() {
+            app.script_failures = self
+                .scripts
+                .load_failures()
+                .map(crate::script_failures::LoadFailureRow::from_view)
+                .collect();
+            match app.script_failures.len().checked_sub(1) {
+                Some(last) => app.failure_sel = app.failure_sel.min(last),
+                None => {
+                    app.script_failures_open = false;
+                    app.failure_sel = 0;
+                }
+            }
+        }
         app.script_card_choices = self
             .scripts
             .browse_cards()
@@ -5442,13 +5451,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
             app.error = match session.import_rs2b0t_catalog(app, &root) {
-                Ok(_) => {
-                    if session.scripts.load_failure_count() == 0 {
-                        None
-                    } else {
-                        Some(session.scripts.named_failure_output())
-                    }
-                }
+                Ok(_) => session.scripts.publish_load_failures(),
                 Err(error) => Some(error),
             };
         }

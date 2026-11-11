@@ -34,6 +34,8 @@ pub mod overlay;
 pub mod palette;
 #[cfg(feature = "js")]
 pub mod profile_import;
+#[cfg(feature = "js")]
+pub mod script_failures;
 pub mod script_params;
 pub mod script_shape;
 pub mod settings;
@@ -42,6 +44,7 @@ pub mod status;
 pub(crate) mod stderr_capture;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub(crate) mod text;
 pub mod world_picker;
 
 pub use app::{AppAction, SettingFeedback, TuiApp};

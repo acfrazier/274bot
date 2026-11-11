@@ -1699,11 +1699,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 fn group_walk_reasons_label_stale_and_members_only_separately() {
     let reason = |error| WalkSlotOutcomeKind::Failed(error).reason();
     assert_eq!(
-        reason(ActionError::BlockedByZones { detail: None }),
+        reason(ActionError::BlockedByZones { zones: None }),
         Some("blocked by danger zones")
     );
     assert_eq!(
-        ActionError::BlockedByZones { detail: None }.to_string(),
+        ActionError::BlockedByZones { zones: None }.to_string(),
         "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
     );
     assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));
@@ -2131,4 +2131,211 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         .route
         .is_none());
     assert_eq!(play.script_state("alice"), script::RunState::Idle);
+}
+
+fn zone_items(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect()
+}
+
+/// Every `ActionError` variant, with the payload shapes that matter.
+fn every_action_error() -> Vec<ActionError> {
+    vec![
+        ActionError::NoSelection,
+        ActionError::Blocked,
+        ActionError::NoOrigin,
+        ActionError::OriginNotStandable,
+        ActionError::NoFocus,
+        ActionError::Stale,
+        ActionError::NoNavigation,
+        ActionError::NoPath,
+        ActionError::SearchIncomplete {
+            detail: "search_result=BudgetExhausted ".repeat(40),
+        },
+        ActionError::BlockedByZones { zones: None },
+        ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(zone_items(99))),
+        },
+        ActionError::InsufficientItems {
+            detail: "3 more Coins (need 3, carrying 0); ".repeat(30),
+        },
+        ActionError::RiskRefused {
+            refusal: script::native::WalkRefusal::NoRouteWithinBounds {
+                tried: 3,
+                last: None,
+            },
+            detail: format!("blocked by danger zones: {}", zone_items(99).join(", ")),
+        },
+        ActionError::MembersOnly,
+        ActionError::Unauthorized,
+        ActionError::WrongAction,
+        ActionError::InvalidCoordinates,
+        ActionError::RunningScript,
+    ]
+}
+
+#[test]
+fn action_error_summary_is_short_for_every_variant() {
+    for error in every_action_error() {
+        let summary = error.summary();
+        assert!(
+            summary.chars().count() <= api::hostlog::SUMMARY_CHARS,
+            "{}: {} characters: {summary}",
+            error.log_tag(),
+            summary.chars().count()
+        );
+        assert!(!summary.contains(['\n', '\r', '\t']), "{summary}");
+        assert!(!summary.is_empty(), "{}", error.log_tag());
+        // The tag is the variant name and nothing of its payload.
+        assert!(
+            error.log_tag().chars().all(|c| c.is_ascii_alphanumeric()),
+            "{}",
+            error.log_tag()
+        );
+        assert!(!error.log_tag().contains("ogre"), "{}", error.log_tag());
+    }
+    // `Display` is the script-facing text and does not change.
+    assert_eq!(
+        ActionError::NoPath.to_string(),
+        "No path to the selected destination with these routing options"
+    );
+    assert_eq!(
+        ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(vec!["Ogre [ogre@1,2,0]".into(), "Bear [bear@3,4,0]".into()])),
+        }
+        .to_string(),
+        "blocked by danger zones: Ogre [ogre@1,2,0], Bear [bear@3,4,0]; tick \"Route through danger zones\" to walk anyway"
+    );
+    assert_eq!(
+        ActionError::InsufficientItems {
+            detail: "1 more Coins".into()
+        }
+        .to_string(),
+        "Insufficient route supplies: 1 more Coins"
+    );
+}
+
+#[test]
+fn blocked_by_zones_summary_counts_zones_and_detail_keeps_every_key() {
+    let items = zone_items(99);
+    let error = ActionError::BlockedByZones {
+        zones: Some(BlockedZones::new(items.clone())),
+    };
+    let summary = error.summary();
+    assert!(
+        summary.starts_with("Blocked by 99 danger zones"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("ogre@"),
+        "no zone key in the summary: {summary}"
+    );
+    assert_eq!(error.detail_items(), items, "every key, in route order");
+    let one = ActionError::BlockedByZones {
+        zones: Some(BlockedZones::new(items[..1].to_vec())),
+    };
+    assert!(
+        one.summary().starts_with("Blocked by 1 danger zone;"),
+        "{}",
+        one.summary()
+    );
+    // A short typed detail the summary already shows is not logged again.
+    let incomplete = ActionError::SearchIncomplete {
+        detail: "search_result=BudgetExhausted".into(),
+    };
+    assert!(incomplete.detail_items().is_empty());
+    assert!(incomplete
+        .summary()
+        .ends_with("search_result=BudgetExhausted"));
+}
+
+#[test]
+fn walk_refusal_detail_is_logged_once_per_bot_per_event() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let items = zone_items(99);
+    let members = crate::WorldMembersFact::Unknown;
+    for slot in ["zone-alice", "zone-bob"] {
+        let run = |error: ActionError| {
+            let _ = WalkRequest {
+                slot: Some(slot),
+                origin: Some(t(2567, 3000, 0)),
+                destination: Some(t(3208, 3213, 0)),
+                options: FindOptions::default(),
+                map_members: false,
+                members: &members,
+            }
+            .run(|| Err(error));
+        };
+        run(ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(items.clone())),
+        });
+        // A refusal with nothing to add writes no detail line.
+        run(ActionError::NoPath);
+    }
+    let records = crate::walk_map::test_log::records_since(log_mark);
+    for slot in ["zone-alice", "zone-bob"] {
+        let lines: Vec<&str> = records
+            .iter()
+            .filter(|(record_slot, _)| record_slot == slot)
+            .map(|(_, message)| message.as_str())
+            .collect();
+        for key in &items {
+            let key = key.rsplit('[').next().unwrap().trim_end_matches(']');
+            assert_eq!(
+                lines.iter().filter(|line| line.contains(key)).count(),
+                1,
+                "{slot}: {key} is written once: {lines:#?}"
+            );
+        }
+        for line in &lines {
+            assert!(
+                line.len() <= api::hostlog::LINE_BYTES,
+                "{} bytes",
+                line.len()
+            );
+            if line.starts_with("WalkTo origin=") || line.starts_with("WalkTo outcome=") {
+                assert!(
+                    !line.contains("ogre@"),
+                    "receipts carry no zone key: {line}"
+                );
+            }
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refused=BlockedByZones")),
+            "{lines:#?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("WalkTo outcome=aborted")
+                    && line.contains("reason=BlockedByZones")),
+            "{lines:#?}"
+        );
+        let detail_lines: Vec<&&str> = lines
+            .iter()
+            .filter(|line| line.starts_with("WalkTo refused detail (BlockedByZones): "))
+            .collect();
+        assert!(
+            detail_lines.len() > 1 && detail_lines.len() <= 16,
+            "{} detail lines",
+            detail_lines.len()
+        );
+        assert_eq!(
+            detail_lines
+                .iter()
+                .filter(|line| line.contains("[1/"))
+                .count(),
+            1,
+            "one packed group per refusal"
+        );
+    }
 }

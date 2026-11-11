@@ -669,6 +669,18 @@ pub struct TuiApp {
     /// Highlight row in the catalog folder browser.
     #[cfg(feature = "js")]
     pub catalog_sel: usize,
+    /// The load-failure list is open (the Script tab's fourth popup).
+    #[cfg(feature = "js")]
+    pub script_failures_open: bool,
+    /// Script cards that failed to load, copied from the session each pump.
+    #[cfg(feature = "js")]
+    pub script_failures: Vec<crate::script_failures::LoadFailureRow>,
+    /// The failure the list has selected.
+    #[cfg(feature = "js")]
+    pub failure_sel: usize,
+    /// How far the selected failure's text is scrolled.
+    #[cfg(feature = "js")]
+    pub failure_scroll: u16,
     /// The Load file browser is open.
     #[cfg(feature = "js")]
     pub script_load_open: bool,
@@ -798,6 +810,14 @@ impl TuiApp {
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
             #[cfg(feature = "js")]
             catalog_sel: 0,
+            #[cfg(feature = "js")]
+            script_failures_open: false,
+            #[cfg(feature = "js")]
+            script_failures: Vec::new(),
+            #[cfg(feature = "js")]
+            failure_sel: 0,
+            #[cfg(feature = "js")]
+            failure_scroll: 0,
             #[cfg(feature = "js")]
             script_load_open: false,
             #[cfg(feature = "js")]
@@ -1097,6 +1117,16 @@ impl TuiApp {
         self.detail
             .as_ref()
             .filter(|detail| detail.row().name() == name)
+    }
+
+    /// The focused bot's script park or wait reason, whole: what the Status
+    /// and Script panes cut to one line.
+    pub fn focused_reason(&self) -> Option<frontend_core::ReasonLine<'_>> {
+        let detail = self.focused_detail()?;
+        detail
+            .native_status()
+            .and_then(frontend_core::views::script_status_reason)
+            .or_else(|| detail.script_phase().and_then(|phase| phase.reason()))
     }
 
     /// The focused slot's username.
@@ -1794,6 +1824,77 @@ impl TuiApp {
         }
     }
 
+    /// Keys while the load-failure list is open: Up/Down pick a failure,
+    /// PageUp/PageDown scroll its text, Esc or Enter close the list.
+    #[cfg(feature = "js")]
+    fn failures_on_key(&mut self, key: KeyEvent) -> AppAction {
+        let text_rows = self.failure_text_rows();
+        let page = text_rows.saturating_sub(1).max(1) as isize;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.step_failure(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.step_failure(1),
+            KeyCode::PageUp => self.scroll_failure_text(-page),
+            KeyCode::PageDown => self.scroll_failure_text(page),
+            KeyCode::Esc | KeyCode::Enter => self.script_failures_open = false,
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    /// The inner rectangle of the script pane, where the list draws.
+    #[cfg(feature = "js")]
+    fn failure_inner(&self) -> Rect {
+        Block::default()
+            .borders(Borders::ALL)
+            .inner(self.script_area)
+    }
+
+    /// Rows the selected failure's text has.
+    #[cfg(feature = "js")]
+    fn failure_text_rows(&self) -> u16 {
+        crate::script_failures::layout(self.failure_inner())
+            .text
+            .height
+    }
+
+    /// Select the failure `delta` rows away; the text starts at the top.
+    #[cfg(feature = "js")]
+    fn step_failure(&mut self, delta: isize) {
+        let last = self.script_failures.len().saturating_sub(1);
+        let next = self.failure_sel.saturating_add_signed(delta).min(last);
+        if next != self.failure_sel {
+            self.failure_sel = next;
+            self.failure_scroll = 0;
+        }
+    }
+
+    /// Scroll the selected failure's text by `delta` rows.
+    #[cfg(feature = "js")]
+    fn scroll_failure_text(&mut self, delta: isize) {
+        let text = crate::script_failures::layout(self.failure_inner()).text;
+        let max =
+            crate::script_failures::max_text_scroll(&self.script_failures, self.failure_sel, text);
+        self.failure_scroll = self
+            .failure_scroll
+            .saturating_add_signed(delta as i16)
+            .min(max);
+    }
+
+    /// A click in the load-failure list: a row picks that failure.
+    #[cfg(feature = "js")]
+    fn failures_click(&mut self, col: u16, row: u16) -> AppAction {
+        let parts = crate::script_failures::layout(self.failure_inner());
+        if crate::layout::contains(parts.list, col, row) {
+            let offset = crate::script_failures::list_offset(self.failure_sel, parts.list.height);
+            let index = offset + usize::from(row - parts.list.y);
+            if index < self.script_failures.len() && index != self.failure_sel {
+                self.failure_sel = index;
+                self.failure_scroll = 0;
+            }
+        }
+        AppAction::None
+    }
+
     /// Open the out-of-tree Load file browser.
     #[cfg(feature = "js")]
     pub fn open_script_load_browser(&mut self, last_dir: Option<&std::path::Path>) {
@@ -1919,7 +2020,10 @@ impl TuiApp {
     pub(crate) fn script_popup_open(&self) -> bool {
         #[cfg(feature = "js")]
         {
-            self.script_load_open || self.rs2b0t_catalog_open || self.script_browse_open
+            self.script_load_open
+                || self.rs2b0t_catalog_open
+                || self.script_browse_open
+                || self.script_failures_open
         }
         #[cfg(not(feature = "js"))]
         {
@@ -1936,6 +2040,9 @@ impl TuiApp {
             }
             if self.rs2b0t_catalog_open {
                 return Some(self.catalog_on_key(key));
+            }
+            if self.script_failures_open {
+                return Some(self.failures_on_key(key));
             }
         }
         if !self.script_browse_open {
@@ -1964,6 +2071,7 @@ impl TuiApp {
         if !self.rs2b0t_catalog_open {
             self.script_load_open = false;
             self.script_browse_open = false;
+            self.script_failures_open = false;
         }
         #[cfg(not(feature = "js"))]
         {
@@ -1981,6 +2089,8 @@ impl TuiApp {
         } else if self.rs2b0t_catalog_open {
             let last = self.catalog_entries().len().saturating_sub(1);
             self.catalog_sel = self.catalog_sel.saturating_add_signed(delta).min(last);
+        } else if self.script_failures_open {
+            self.step_failure(delta);
         } else if self.script_browse_open {
             self.move_script_sel(delta as i32);
         }
@@ -2006,6 +2116,8 @@ impl TuiApp {
             self.script_load_open,
             self.reload_confirm,
         );
+        #[cfg(feature = "js")]
+        let pane = pane.with_load_failures(self.script_failures.len());
         let view = self.quester_start_zones.as_deref().map(|view| match view {
             Ok(zones) => Ok(zones),
             Err(reason) => Err(reason.as_str()),
@@ -2059,6 +2171,9 @@ impl TuiApp {
             if self.rs2b0t_catalog_open {
                 return self.catalog_click(col, row);
             }
+            if self.script_failures_open {
+                return self.failures_click(col, row);
+            }
         }
         let pane = self.script_pane();
         match pane.on_click(self.script_area, col, row) {
@@ -2066,6 +2181,11 @@ impl TuiApp {
                 script_command(label).map_or(AppAction::None, |command| self.run_command(command))
             }
             ScriptClick::Params => self.run_command(Command::ScriptParams),
+            #[cfg(feature = "js")]
+            ScriptClick::Failures => self.run_command(Command::ScriptFailures),
+            #[cfg(not(feature = "js"))]
+            ScriptClick::Failures => AppAction::None,
+            ScriptClick::Reason => self.run_command(Command::ShowReason),
             #[cfg(feature = "js")]
             ScriptClick::ImportCatalog => self.run_command(Command::ImportCatalog),
             ScriptClick::Pick(idx) => {
@@ -2120,6 +2240,14 @@ impl TuiApp {
                 AppAction::None
             }
             Command::ScriptParams => AppAction::ScriptParams,
+            #[cfg(feature = "js")]
+            Command::ScriptFailures => {
+                self.script_browse_open = false;
+                self.script_failures_open = true;
+                self.failure_sel = 0;
+                self.failure_scroll = 0;
+                AppAction::None
+            }
             #[cfg(feature = "js")]
             Command::ScriptReload => AppAction::ScriptReload,
             #[cfg(feature = "js")]
@@ -2331,7 +2459,7 @@ impl TuiApp {
             zones,
             zone_hint,
             Line::from(if let Some(err) = &self.error {
-                format!("status: {err}")
+                format!("status: {}", frontend_core::notice_line(err))
             } else {
                 format!(
                     "status: {:?}  {}",
@@ -2402,6 +2530,8 @@ impl TuiApp {
             .unwrap_or_else(|| "—".into());
         let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem(), self.memory);
         let note = self.memory.filter(|n| n.differs()).map(|n| n.notice_text());
+        let reason = StatusPane::new(self.focused_detail(), &walk, &mem).reason_hit(area);
+        self.regions.reasons.extend(reason);
         let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
             .mem_notice(note)
             .resources(&self.resources)
@@ -2469,6 +2599,24 @@ impl TuiApp {
 
     pub(crate) fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
         #[cfg(feature = "js")]
+        if self.script_failures_open {
+            // The list owns the pane's whole inner rectangle, like the Load
+            // browser: 78 x 16 at 80x24, 82 x 28 at 120x40.
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("script — load failures");
+            let inner = block.inner(area);
+            block.render(area, frame.buffer_mut());
+            crate::script_failures::render(
+                frame.buffer_mut(),
+                inner,
+                &self.script_failures,
+                self.failure_sel,
+                self.failure_scroll,
+            );
+            return;
+        }
+        #[cfg(feature = "js")]
         if self.script_load_open {
             let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);
@@ -2527,12 +2675,21 @@ impl TuiApp {
                 .render(inner, frame.buffer_mut());
             return;
         }
+        let reason = {
+            let native = self
+                .focused_detail()
+                .and_then(|detail| detail.native_status());
+            self.script_pane()
+                .with_native_status(native)
+                .reason_hit(area)
+        };
+        self.regions.reasons.extend(reason);
+        let native = self
+            .focused_detail()
+            .and_then(|detail| detail.native_status());
         let pane = self
             .script_pane()
-            .with_native_status(
-                self.focused_detail()
-                    .and_then(|detail| detail.native_status()),
-            )
+            .with_native_status(native)
             .with_walk_risk(self.focused_detail().and_then(|detail| detail.walk_risk()));
         frame.render_widget(pane, area);
     }

@@ -12014,3 +12014,47 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
         "Alice's memory failure is not Bob's"
     );
 }
+
+/// With the focused bot logged out, WalkTo says why (`not logged in`), not
+/// the generic `map: WalkTo was not applied`, and the command boundary logs
+/// the one refusal line for it.
+#[test]
+fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut s = Session::new();
+    let world = open_world(20, 20);
+    let origin = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 17,
+        z: 18,
+        level: 0,
+    };
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
+    let name = "panel-walk-logged-out";
+    // Attached, but not connected and not in the game: no observed player.
+    push_session_slot(&mut s, name, origin, None, false, false);
+    s.statuses.refresh_from_play(&s.core);
+    s.core.play_mut_for_test().unwrap().focus(name);
+    s.set_focus_for_test(name);
+    s.select_picker_tile(&world, destination);
+    assert!(!s.confirm_picker_walk(&world));
+    assert_eq!(s.error.as_deref(), Some("not logged in"), "{:?}", s.error);
+
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
+    global().refresh(&mut process);
+    let lines: Vec<&str> = process
+        .rows()
+        .iter()
+        .map(|row| row.message())
+        // This fixture's bot has no vault profile, so the line names it by
+        // identity.
+        .filter(|message| message.ends_with("NotApplicable: not logged in"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].ends_with("not logged in"), "{}", lines[0]);
+}

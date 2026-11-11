@@ -864,7 +864,9 @@ impl SlotDetail {
             } else {
                 text_field(status, "action_state").or_else(|| text_field(status, "phase"))
             },
-            reason: park_reason(status).or_else(|| text_field(status, "waiting_for")),
+            reason: park_reason(status)
+                .or_else(|| text_field(status, "waiting_for"))
+                .map(ReasonLine::new),
         })
     }
 }
@@ -876,7 +878,7 @@ impl SlotDetail {
 pub struct ScriptPhase<'a> {
     label: &'static str,
     phase: Option<&'a str>,
-    reason: Option<&'a str>,
+    reason: Option<ReasonLine<'a>>,
 }
 
 impl<'a> ScriptPhase<'a> {
@@ -892,8 +894,42 @@ impl<'a> ScriptPhase<'a> {
     }
 
     /// Why the script is parked or waiting.
-    pub fn reason(&self) -> Option<&'a str> {
+    pub fn reason(&self) -> Option<ReasonLine<'a>> {
         self.reason
+    }
+}
+
+/// A script's park or wait reason as the panes show it: one short line, with
+/// the whole text kept for a detail view. A walk refusal that names 99 danger
+/// zones is one line of at most [`crate::SUMMARY_MAX`] characters here; its
+/// full text stays in the retained status and in the log. Both front ends
+/// read this one type, so they cannot drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReasonLine<'a> {
+    full: &'a str,
+}
+
+impl<'a> ReasonLine<'a> {
+    pub(crate) fn new(full: &'a str) -> Self {
+        Self { full }
+    }
+
+    /// The whole reason, as the script published it.
+    pub fn full(&self) -> &'a str {
+        self.full
+    }
+
+    /// The line a pane shows: the first line, at most [`crate::SUMMARY_MAX`]
+    /// characters, ending with `…` when it was cut. Borrowed (no allocation)
+    /// when the reason is already one short line, the normal case.
+    pub fn as_str(&self) -> std::borrow::Cow<'a, str> {
+        crate::brief::one_line(self.full, crate::SUMMARY_MAX)
+    }
+
+    /// Whether [`Self::as_str`] leaves text out, so a pane offers the whole
+    /// reason.
+    pub fn is_cut(&self) -> bool {
+        self.as_str() != self.full.trim_end_matches(['\n', '\r'])
     }
 }
 
@@ -1627,11 +1663,12 @@ pub fn script_status_label(state: RunState, status: Option<StatusView<'_>>) -> &
 }
 
 /// The current refusal or wait takes priority over a normal action caption.
-pub fn script_status_reason(status: StatusView<'_>) -> Option<&str> {
+pub fn script_status_reason(status: StatusView<'_>) -> Option<ReasonLine<'_>> {
     let status = status.status();
     park_reason(status)
         .or_else(|| text_field(status, "waiting_for"))
         .or_else(|| text_field(status, "action_state"))
+        .map(ReasonLine::new)
 }
 
 /// The park reason: the terminal failure, or while parked the script's own

@@ -276,35 +276,253 @@ fn group_confirmation_without_observed_snapshot_keeps_ordinary_walk_available() 
     assert_eq!(fixture.queued("alice"), Some(destination));
 }
 
+/// A zone refusal's report rows carry the host's short summary, never the
+/// zone list; the list is in each bot's log ring, once (written by
+/// `WalkRequest::run`). The shown line is the counts and the first bot.
 #[test]
-fn group_walk_reports_blocking_zone_names_for_each_failed_marked_bot() {
+fn group_walk_report_shows_counts_and_the_first_bot_name() {
+    let _ring = ring_guard();
     let mut world = world(12, &[]);
     world.graph.zones = Some(barrier_zone_table());
-    let mut f = fixture_with_world(
-        &["alice", "bob"],
-        &[slot("alice", t(1, 1, 0)), slot("bob", t(2, 10, 0))],
-        world,
-    );
-
-    let report = f.walk_to(&marks(&[1, 2]), t(10, 10, 0));
-    assert_eq!(report.failed_count(), 2);
-    let failures: Vec<_> = report
-        .rows()
+    // The fixture's first slot is `alice`. The first bot by name is another one,
+    // and its name is longer than the 16 characters a line gives it.
+    let first = "aardvark-with-a-very-long-name";
+    let names: [&'static str; 6] = ["alice", first, "bravo", "charlie", "delta", "echo"];
+    let slots: Vec<Slot> = names
         .iter()
-        .filter(|row| {
-            row.outcome().is_failed() && row.outcome().reason() == Some("walk risk refused")
-        })
+        .enumerate()
+        .map(|(i, name)| slot(name, t(1, 1 + i as i32, 0)))
         .collect();
-    assert_eq!(failures.len(), 2);
-    for row in failures {
+    let mut f = fixture_with_world(&names, &slots, world);
+
+    let base: Vec<usize> = names.iter().map(|name| slot_lines(name).len()).collect();
+    let report = f.walk_to(&marks(&[1, 2, 3, 4, 5, 6]), t(10, 10, 0));
+    assert_eq!(report.failed_count(), 6);
+    for row in report.rows() {
+        assert!(row.outcome().is_failed(), "{row:?}");
+        let detail = row.detail().expect("a refused row keeps the summary");
         assert!(
-            row.detail()
-                .is_some_and(|detail| detail.contains("Sentinel strip")),
-            "{row:?}"
+            detail.chars().count() <= crate::SUMMARY_MAX && !detail.contains("Sentinel strip"),
+            "{detail}"
         );
     }
-    let summary = report.summary();
-    assert_eq!(summary.matches("Sentinel strip").count(), 2, "{summary}");
+    let line = report.brief().publish(&crate::LogTarget::walk(None));
+    assert!(line.chars().count() <= crate::LINE_MAX, "{line}");
+    assert!(line.contains("failed 6"), "{line}");
+    assert!(
+        line.contains("aardvark-with-a…"),
+        "the first sorted name, cut to 16: {line}"
+    );
+    assert!(
+        !line.contains("alice") && !line.contains("bravo"),
+        "only the first bot is named: {line}"
+    );
+    assert!(
+        !line.contains("Sentinel strip") && !line.contains("test-barrier@"),
+        "{line}"
+    );
+    assert!(line.ends_with(crate::LOG_POINTER), "{line}");
+
+    // The zone is named in each bot's ring exactly once.
+    for (name, base) in names.into_iter().zip(base) {
+        let ring: Vec<String> = slot_lines(name).into_iter().skip(base).collect();
+        assert_eq!(
+            ring.iter().filter(|l| l.contains("Sentinel strip")).count(),
+            1,
+            "{name}: {ring:#?}"
+        );
+    }
+    // The summary keeps its older, fuller shape for callers that want it.
+    assert!(report.summary().contains("bravo"));
+}
+
+/// The fixture's first bot is always `alice`, and the log store is shared by
+/// every test in this binary: the tests that count `alice`'s ring lines take
+/// this lock.
+static RING_TESTS: Mutex<()> = Mutex::new(());
+
+fn ring_guard() -> std::sync::MutexGuard<'static, ()> {
+    RING_TESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Every message in `slot`'s ring, oldest first.
+fn slot_lines(slot: &str) -> Vec<String> {
+    use crate::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::slot(slot));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .collect()
+}
+
+/// 6 bots each refused for 60 zones in one confirm: each bot's ring holds one
+/// packed group with every zone once, and no ring or category holds a second
+/// copy (the host writes the detail; the report and the command book carry
+/// the short line).
+#[test]
+fn a_group_walk_logs_each_bots_detail_once() {
+    let _ring = ring_guard();
+    // The router names at most 63 blocking zones; 60 is well inside that.
+    let zones = 60;
+    let mut world = world(12, &[]);
+    world.graph.zones = Some(many_zone_table(zones));
+    let names: [&'static str; 6] = [
+        "alice",
+        "gw-once-b",
+        "gw-once-c",
+        "gw-once-d",
+        "gw-once-e",
+        "gw-once-f",
+    ];
+    let slots: Vec<Slot> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| slot(name, t(0, 1 + i as i32, 0)))
+        .collect();
+    let mut f = fixture_with_world(&names, &slots, world);
+    let base: Vec<usize> = names.iter().map(|name| slot_lines(name).len()).collect();
+    let report = f.walk_to(&marks(&[1, 2, 3, 4, 5, 6]), t(11, 10, 0));
+    assert_eq!(report.failed_count(), 6, "{}", report.summary());
+    for (name, base) in names.into_iter().zip(base) {
+        // Only what this confirm wrote: `alice` is shared with other tests.
+        let ring: Vec<String> = slot_lines(name).into_iter().skip(base).collect();
+        let packed: Vec<&String> = ring
+            .iter()
+            .filter(|line| line.contains("refused detail (RiskRefused)"))
+            .collect();
+        assert!(
+            packed.len() > 1 && packed.len() <= 16,
+            "{name}: {} detail lines: {ring:#?}",
+            packed.len()
+        );
+        assert_eq!(
+            packed.iter().filter(|line| line.contains("[1/")).count(),
+            1,
+            "{name}: one packed group: {ring:#?}"
+        );
+        for zone in 0..zones {
+            let key = format!("strip{zone:02}");
+            assert_eq!(
+                ring.iter().filter(|line| line.contains(&key)).count(),
+                1,
+                "{name}: {key} appears once in the whole ring"
+            );
+        }
+        for line in &ring {
+            assert!(
+                line.len() <= api::hostlog::LINE_BYTES,
+                "{} bytes",
+                line.len()
+            );
+        }
+    }
+    // No refusal line anywhere else holds a zone: the process ring (where a
+    // command refusal would log) and the report carry the short text only.
+    let mut process = crate::log::LogView::new(crate::log::LogScope::Process);
+    crate::log::global().refresh(&mut process);
+    assert!(
+        process
+            .rows()
+            .iter()
+            .all(|row| !row.message().contains("strip00")),
+        "the process ring holds no zone"
+    );
+    assert!(!report.summary().contains("strip00"));
+}
+
+/// A whole-command refusal (here a stale confirmation naming 99 zones) logs
+/// one packed group per bot too, and the report carries the summary.
+#[test]
+fn a_refused_group_walk_logs_one_group_per_bot() {
+    let _ring = ring_guard();
+    let names: [&'static str; 3] = ["alice", "gw-refuse-b", "gw-refuse-c"];
+    let slots: Vec<Slot> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| slot(name, t(1, 1 + i as i32, 0)))
+        .collect();
+    let f = fixture_with_world(&names, &slots, world(12, &[]));
+    let items: Vec<String> = (0..99)
+        .map(|i| format!("Refuse zone {i:02} [refusezone{i:02}@1,{i},0]"))
+        .collect();
+    let error = ActionError::BlockedByZones {
+        zones: Some(host_play::walk_map::BlockedZones::new(items)),
+    };
+    let walk = MarkedWalk {
+        prepared: Err(error),
+        destination: Some(t(10, 10, 0)),
+        options: FindOptions::default(),
+        arms: &f.arms,
+    };
+    let base: Vec<usize> = names.iter().map(|name| slot_lines(name).len()).collect();
+    let report = walk_marked(&marks(&[1, 2, 3]), &f.core, walk, empty_inputs);
+    assert_eq!(report.failed_count(), 3);
+    let line = report.brief().publish(&crate::LogTarget::walk(None));
+    assert!(line.chars().count() <= crate::LINE_MAX, "{line}");
+    assert!(line.contains("Blocked by 99 danger zones"), "{line}");
+    assert!(!line.contains("refusezone"), "{line}");
+    for (name, base) in names.into_iter().zip(base) {
+        let ring: Vec<String> = slot_lines(name).into_iter().skip(base).collect();
+        assert_eq!(
+            ring.iter()
+                .filter(|l| l.contains("refused detail (BlockedByZones)") && l.contains("[1/"))
+                .count(),
+            1,
+            "{name}: one group"
+        );
+        for i in 0..99 {
+            let key = format!("refusezone{i:02}@");
+            assert_eq!(
+                ring.iter().filter(|l| l.contains(&key)).count(),
+                1,
+                "{name}: {key}"
+            );
+        }
+    }
+}
+
+/// `zones` hazards over the same column of a 12 x 12 world, each its own kind
+/// (`strip00` ...), so a walk across it is refused for all of them.
+fn many_zone_table(zones: usize) -> ZoneTable {
+    let rect = AvoidRect {
+        min_x: 6,
+        max_x: 6,
+        min_z: 0,
+        max_z: 11,
+        level: Some(0),
+    };
+    ZoneTable::from_parts(
+        (0..zones)
+            .map(|kind| Zone::hazard(rect, 0, kind as u16))
+            .collect(),
+        (0..zones)
+            .map(|kind| {
+                ZoneKind::new(
+                    format!("strip{kind:02}"),
+                    format!("Strip {kind:02}"),
+                    -1,
+                    0,
+                    false,
+                    false,
+                )
+            })
+            .collect(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        12,
+        12,
+        &WildernessRules::default(),
+    )
+    .unwrap()
 }
 
 fn barrier_zone_table() -> ZoneTable {

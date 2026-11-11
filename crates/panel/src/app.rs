@@ -2109,11 +2109,13 @@ fn capacity_banner(ui: &Ui, session: &Session) {
 /// the notice says it once.
 fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
     let detail = session.core.fleet_view().detail();
+    // A shown line is one line of at most `LINE_MAX` characters: the whole
+    // text of anything longer is in the log (`frontend_core::notice_line`).
     if let Some(err) = &session.error {
-        ui.text_colored(ERROR, err);
+        ui.text_colored(ERROR, frontend_core::notice_line(err));
     }
     if let Some(notice) = detail.and_then(|detail| detail.row().login_notice()) {
-        ui.text_colored(ERROR, sentence_case(notice));
+        ui.text_colored(ERROR, sentence_case(&frontend_core::notice_line(notice)));
     }
     if session.error.is_some() {
         return;
@@ -2144,7 +2146,7 @@ fn slot_banner(ui: &Ui, detail: &frontend_core::SlotDetail) {
     if matches!(phase, Phase::Ready | Phase::Offline) {
         return;
     }
-    let text = sentence_case(detail.state());
+    let text = sentence_case(&frontend_core::notice_line(detail.state()));
     if phase.is_error() {
         ui.text_colored(ERROR, &text);
     } else if let Some(since) = detail.since() {
@@ -2834,14 +2836,19 @@ fn script_section(ui: &Ui, session: &mut Session) {
     if let Some(native) = native {
         kv_row(ui, "status", status);
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
-            ui.text_wrapped(reason);
+            ui.text_wrapped(reason.as_str());
+            full_reason(ui, reason, "script-reason");
         }
         for (label, value) in frontend_core::views::script_status_rows(native) {
             kv_row(ui, label, value);
         }
     } else {
         match session.focused_script_last_error() {
-            Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
+            Some(err) => kv_row(
+                ui,
+                "status",
+                &format!("{status}: {}", frontend_core::notice_line(&err)),
+            ),
             None => kv_row(ui, "status", status),
         }
     }
@@ -5029,6 +5036,25 @@ fn status_section(ui: &Ui, session: &mut Session) {
     status_detail_rows(ui, d, &walk, &mem);
 }
 
+/// The rest of a park or wait reason the pane's one line cut: a collapsed
+/// "Full reason" header (as the load-failure list has) holds the whole text
+/// and a Copy button. Nothing is drawn when the line shows the whole reason.
+fn full_reason(ui: &Ui, reason: frontend_core::ReasonLine<'_>, id: &str) {
+    if !reason.is_cut() {
+        return;
+    }
+    if ui.collapsing_header(format!("Full reason###{id}"), TreeNodeFlags::NONE) {
+        if ui.button(format!("Copy##{id}-copy")) {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                let _ = clip.set_text(reason.full());
+            }
+        }
+        ui.child_window(format!("##{id}-text"))
+            .size([0.0, scale_px(ui, 120.0)])
+            .build(ui, || ui.text_wrapped(reason.full()));
+    }
+}
+
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", d.state());
     if let Some(script) = d.script_phase() {
@@ -5037,7 +5063,8 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
             kv_row(ui, "phase", phase);
         }
         if let Some(reason) = script.reason() {
-            kv_row(ui, "reason", reason);
+            kv_row(ui, "reason", &reason.as_str());
+            full_reason(ui, reason, "status-reason");
         }
     }
     kv_row(

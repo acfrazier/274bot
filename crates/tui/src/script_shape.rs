@@ -34,7 +34,7 @@ pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 /// same commands the buttons emit, reachable when the pane is clipped.
 /// Pause also toggles Resume.
 #[cfg(feature = "js")]
-pub const SCRIPT_KEYS: [(&str, char); 10] = [
+pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
@@ -45,9 +45,10 @@ pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Cancel", 'C'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
+    ("Failures", 'F'),
 ];
 #[cfg(not(feature = "js"))]
-pub const SCRIPT_KEYS: [(&str, char); 7] = [
+pub const SCRIPT_KEYS: [(&str, char); 8] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
@@ -55,6 +56,7 @@ pub const SCRIPT_KEYS: [(&str, char); 7] = [
     ("Params", 'v'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
+    ("Failures", 'F'),
 ];
 
 /// The key associated with a script-pane button label.
@@ -62,6 +64,7 @@ pub fn script_key(label: &str) -> char {
     let command = match label {
         "Resume" => "Pause",
         "Confirm" => "Reload",
+        other if other.starts_with("Failed ") => "Failures",
         other => other,
     };
     SCRIPT_KEYS
@@ -81,6 +84,11 @@ pub fn script_command_for_key(key: char) -> Option<&'static str> {
 /// Columns a `[Label k]` button takes, without the gap after it.
 fn button_width(label: &str) -> u16 {
     label.len() as u16 + 4
+}
+
+/// The load-failure button's label: `Failed 7`.
+pub fn failures_label(count: usize) -> String {
+    format!("Failed {count}")
 }
 
 fn push_button(row: &mut String, label: &str) {
@@ -360,6 +368,10 @@ pub enum ScriptClick {
     ImportCatalog,
     /// `[Params]` row when the selected card has a settings schema.
     Params,
+    /// `[Failed N]`: open the load-failure list.
+    Failures,
+    /// The cut park reason row: show the whole reason.
+    Reason,
     /// A miss.
     None,
 }
@@ -379,13 +391,16 @@ pub struct ScriptPane<'a> {
     #[cfg(feature = "js")]
     pub reload_confirm: bool,
     pub native_status: Option<StatusView<'a>>,
+    /// How many script cards failed to load: `[Failed N F]` opens the list
+    /// while it is more than zero.
+    pub failure_count: usize,
     pub walk_risk: Option<&'a str>,
     pub start_zones: Option<&'a frontend_core::scripts::QuesterStartZones>,
     pub start_zones_error: Option<&'a str>,
     pub start_zone_scroll: u16,
 }
 
-fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
     let width = usize::from(width.max(1));
     lines
         .iter()
@@ -433,6 +448,7 @@ impl<'a> ScriptPane<'a> {
             #[cfg(feature = "js")]
             reload_confirm: false,
             native_status: None,
+            failure_count: 0,
             walk_risk: None,
             start_zones: None,
             start_zones_error: None,
@@ -455,6 +471,11 @@ impl<'a> ScriptPane<'a> {
 
     pub fn with_native_status(mut self, status: Option<StatusView<'a>>) -> Self {
         self.native_status = status;
+        self
+    }
+
+    pub fn with_load_failures(mut self, count: usize) -> Self {
+        self.failure_count = count;
         self
     }
 
@@ -559,6 +580,25 @@ impl<'a> ScriptPane<'a> {
         })
     }
 
+    /// Where the park reason's row sits in `area` when it is cut (a click
+    /// there opens the whole text), `None` when the pane shows it whole or
+    /// shows no reason.
+    pub fn reason_hit(&self, area: Rect) -> Option<Rect> {
+        if !self.bulk_row_shown() {
+            return None;
+        }
+        let reason = script_status_reason(self.native_status?)?;
+        if !reason.is_cut() {
+            return None;
+        }
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let lines = self.prefix_lines(inner.width);
+        // Everything before the reason line: state, buttons, bulk row.
+        let before = wrapped_line_count(&lines[..3], inner.width);
+        let y = inner.y.checked_add(u16::try_from(before).ok()?)?;
+        (y < inner.bottom()).then(|| Rect::new(inner.x, y, inner.width, 1))
+    }
+
     /// The click inside the pane. Buttons live on the second inner line;
     /// Browse picker rows follow the state + buttons lines when the
     /// picker is open.
@@ -587,6 +627,22 @@ impl<'a> ScriptPane<'a> {
                 Some(label) => return ScriptClick::Button(label),
                 None => {}
             }
+            if self.failure_count > 0 {
+                let before = params
+                    .into_iter()
+                    .chain(self.bulk_buttons())
+                    .map(|label| button_width(label) + 1)
+                    .sum::<u16>();
+                let start = inner.x + before;
+                if col >= start && col < start + button_width(&failures_label(self.failure_count)) {
+                    return ScriptClick::Failures;
+                }
+            }
+        }
+        if self.reason_hit(area).is_some_and(|rect| {
+            col >= rect.x && col < rect.right() && row >= rect.y && row < rect.bottom()
+        }) {
+            return ScriptClick::Reason;
         }
         if self.browse_open {
             let list_top = inner.y + 2;
@@ -619,7 +675,9 @@ impl<'a> ScriptPane<'a> {
         }
         ScriptClick::None
     }
-    fn prefix_lines(&self) -> Vec<Line<'a>> {
+    /// The lines above the picker or disclosure, for an inner width of
+    /// `width` cells (the park reason is cut to one row of it).
+    fn prefix_lines(&self, width: u16) -> Vec<Line<'a>> {
         let state = script_status_label(self.state, self.native_status);
         let selection = self.sel.map_or("—", ScriptChoice::label);
         let mut buttons = String::new();
@@ -638,10 +696,17 @@ impl<'a> ScriptPane<'a> {
             for label in self.bulk_buttons() {
                 push_button(&mut row, label);
             }
+            if self.failure_count > 0 {
+                push_button(&mut row, &failures_label(self.failure_count));
+            }
             lines.push(Line::from(row));
             if let Some(status) = self.native_status {
                 if let Some(reason) = script_status_reason(status) {
-                    lines.push(Line::from(reason));
+                    // One row: at most `SUMMARY_MAX` characters, then the
+                    // cells left. The whole text is one click away.
+                    lines.push(Line::from(
+                        crate::text::ellipsize(&reason.as_str(), usize::from(width)).into_owned(),
+                    ));
                 }
                 for (label, value) in script_status_rows(status) {
                     lines.push(Line::from(format!("{label}: {value}")));
@@ -709,8 +774,8 @@ impl<'a> ScriptPane<'a> {
         }
     }
 
-    fn content_lines(&self) -> Vec<Line<'a>> {
-        let mut lines = self.prefix_lines();
+    fn content_lines(&self, width: u16) -> Vec<Line<'a>> {
+        let mut lines = self.prefix_lines(width);
         if self.start_zone_disclosure_shown() {
             lines.extend(self.start_zone_lines());
         } else if self.browse_open {
@@ -750,7 +815,7 @@ impl<'a> ScriptPane<'a> {
             return 0;
         }
         let inner = Block::default().borders(Borders::ALL).inner(area);
-        let prefix_count = wrapped_line_count(&self.prefix_lines(), inner.width);
+        let prefix_count = wrapped_line_count(&self.prefix_lines(inner.width), inner.width);
         let available = usize::from(inner.height).saturating_sub(prefix_count);
         let content_count = wrapped_line_count(&self.start_zone_lines(), inner.width);
         content_count
@@ -779,7 +844,7 @@ impl Widget for ScriptPane<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
         if self.start_zone_disclosure_shown() {
-            let prefix_lines = self.prefix_lines();
+            let prefix_lines = self.prefix_lines(inner.width);
             let prefix_height = wrapped_line_count(&prefix_lines, inner.width)
                 .min(usize::from(inner.height)) as u16;
             let prefix_area = Rect::new(inner.x, inner.y, inner.width, prefix_height);
@@ -800,7 +865,7 @@ impl Widget for ScriptPane<'_> {
                 ))
                 .render(list_area, buf);
         } else {
-            Paragraph::new(self.content_lines())
+            Paragraph::new(self.content_lines(inner.width))
                 .wrap(Wrap { trim: false })
                 .render(inner, buf);
         }

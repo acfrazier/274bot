@@ -162,6 +162,9 @@ impl TuiApp {
             if self.rs2b0t_catalog_open {
                 return "Script: catalog folder";
             }
+            if self.script_failures_open {
+                return "Script: load failures";
+            }
         }
         if self.script_browse_open {
             return "Script: Browse";
@@ -213,6 +216,7 @@ impl TuiApp {
             #[cfg(feature = "js")]
             "Script: load file" => "Up/Down · Enter open · Esc close",
             #[cfg(feature = "js")]
+            "Script: load failures" => "Up/Down pick · PgUp/PgDn text · Esc or Enter close",
             "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
             "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
             "Overview" if self.memory.is_some_and(frontend_core::MemoryNotice::can_relog) =>
@@ -345,7 +349,26 @@ impl TuiApp {
                 self.mouse_capture = !self.mouse_capture;
                 return AppAction::MouseCapture(self.mouse_capture);
             }
-            Command::ShowMessage => self.open_modal(Modal::Message { scroll: 0 }),
+            Command::ShowMessage => {
+                // A snapshot: the text stays after the message line expires.
+                let text = self.error.clone().unwrap_or_default();
+                self.open_modal(Modal::Message {
+                    scroll: 0,
+                    title: "Message".into(),
+                    text,
+                });
+            }
+            Command::ShowReason => {
+                let text = self
+                    .focused_reason()
+                    .map(|reason| reason.full().to_owned())
+                    .unwrap_or_default();
+                self.open_modal(Modal::Message {
+                    scroll: 0,
+                    title: "Reason".into(),
+                    text,
+                });
+            }
             Command::FilterFleet => {
                 self.focus_pane(Pane::Fleet);
                 self.table.editing = true;
@@ -433,7 +456,7 @@ impl TuiApp {
                 return AppAction::batch(show, run);
             }
             #[cfg(feature = "js")]
-            Command::ScriptLoad | Command::ImportCatalog => {
+            Command::ScriptLoad | Command::ImportCatalog | Command::ScriptFailures => {
                 let show = if self.screen == Screen::Script {
                     AppAction::None
                 } else {
@@ -837,6 +860,14 @@ impl TuiApp {
         }
         if contains(self.regions.message, col, row) && self.error.is_some() {
             return self.run_command(Command::ShowMessage);
+        }
+        if self
+            .regions
+            .reasons
+            .iter()
+            .any(|rect| contains(*rect, col, row))
+        {
+            return self.run_command(Command::ShowReason);
         }
         if let Some(part) = self.regions.header_part_at(col, row) {
             return self.run_command(match part {

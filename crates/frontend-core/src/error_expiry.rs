@@ -88,7 +88,11 @@ impl<N> ErrorExpiry<N> {
             self.since = None;
             return false;
         };
-        if self.seen.as_deref() != Some(text) || refused_again {
+        let new_text = self.seen.as_deref() != Some(text);
+        if new_text || refused_again {
+            if new_text {
+                log_unshortened(text);
+            }
             match &mut self.seen {
                 Some(seen) => {
                     seen.clear();
@@ -115,6 +119,27 @@ impl<N> ErrorExpiry<N> {
     /// between frames. `None` while no message is shown.
     pub fn expires_at(&self) -> Option<Instant> {
         self.since.map(|since| since + ERROR_MESSAGE_TIMEOUT)
+    }
+}
+
+/// The last guard of the brief-notice rule: a direct write that is longer
+/// than one line (or has a line break) is shown cut by the front end
+/// ([`crate::notice_line`]), and its whole text goes to the log here, once,
+/// as packed lines. The stored string is not changed, so the front ends'
+/// equality checks on it keep working. A published [`crate::Brief`] is one
+/// short line and never reaches this.
+fn log_unshortened(text: &str) {
+    if text.contains(['\n', '\r']) || text.chars().nth(crate::LINE_MAX).is_some() {
+        api::hostlog::emit_packed(
+            api::hostlog::Emit {
+                category: api::hostlog::Category::Lifecycle,
+                level: api::hostlog::Level::Warn,
+                slot: None,
+                always_stderr: false,
+            },
+            "notice shortened: ",
+            &[text],
+        );
     }
 }
 
