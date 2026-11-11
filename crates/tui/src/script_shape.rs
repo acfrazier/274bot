@@ -820,9 +820,8 @@ impl<'a> ScriptPane<'a> {
             return (0, 1);
         }
         let inner = Block::default().borders(Borders::ALL).inner(area);
-        let prefix_count =
-            wrapped_line_count(&self.prefix_lines(inner.width), inner.width)
-                .min(usize::from(inner.height));
+        let prefix_count = wrapped_line_count(&self.prefix_lines(inner.width), inner.width)
+            .min(usize::from(inner.height));
         let available = usize::from(inner.height).saturating_sub(prefix_count);
         let content_count = wrapped_line_count(&self.start_zone_lines(), inner.width);
         let max_scroll = content_count
