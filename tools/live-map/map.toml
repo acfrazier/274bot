@@ -358,7 +358,7 @@ cells = [
 # session/fleet.rs routes the fleet-row commands (marks, filter, sort, the
 # saved-order reorder and fleet plans); the driver cell drives them all.
 [[cover]]
-globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs", "crates/frontend-core/src/session/world_switch.rs"]
+globs = ["crates/frontend-core/src/brief.rs", "crates/frontend-core/src/bulk.rs", "crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/marked.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs", "crates/frontend-core/src/session/world_switch.rs"]
 cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
   "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",
@@ -491,7 +491,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/tui/src/app.rs", "crates/tui/src/script_shape.rs"]
+globs = ["crates/tui/src/app.rs", "crates/tui/src/layout.rs", "crates/tui/src/script_failures.rs", "crates/tui/src/script_shape.rs", "crates/tui/src/text.rs"]
 cells = [
   "tui.app-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib app::tests::",
 ]
