@@ -412,17 +412,14 @@ pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {
 /// `AutoRelogin.ts:138-141`): started and not stopping. An offline slot's
 /// started script reads Paused.
 pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
-    script_state_is_active(
-        script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state())),
-    )
-}
-
-/// [`script_active`] for a run state already read.
-pub(super) fn script_state_is_active(state: Option<script::RunState>) -> bool {
-    matches!(
-        state,
-        Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
-    )
+    script_slot(scripts, name)
+        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+        .is_some_and(|state| {
+            matches!(
+                state,
+                script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+            )
+        })
 }
 
 /// Puzzle-board post tests: the production observe path

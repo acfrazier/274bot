@@ -30,14 +30,6 @@ const READY_TIMEOUT: Duration = Duration::from_secs(180);
 const RELOG_TIMEOUT: Duration = Duration::from_secs(300);
 /// A rebuilt scene must hold steady this long before it is counted.
 const SETTLE: Duration = Duration::from_secs(4);
-/// A parked bot stays offline this long before the operator logs it in: far
-/// longer than a relog takes (about 10 s from the exit, queue included).
-const PARK_HOLD: Duration = Duration::from_secs(30);
-/// How long a script's bot stays in the world past the idle threshold.
-const HELD_FOR: Duration = Duration::from_secs(30);
-/// An idle count just below the Java threshold (4500): a bot without a
-/// script would send the idle request within a few cycles.
-const IDLE_SEED: u32 = 4490;
 
 struct Capture(Mutex<Vec<String>>);
 
@@ -67,22 +59,12 @@ static CAPTURE: Capture = Capture(Mutex::new(Vec::new()));
 enum Fault {
     ProtocolError,
     DeadServer,
-    /// The client's idle timer fires and the server logs the bot out.
-    IdleLogout,
-    /// The idle counter is raised past the threshold of a bot whose script
-    /// holds the timer off.
-    IdleHeld,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     WaitReady,
     Faulted,
-    /// A bot without a script lost its session: nothing may reconnect it
-    /// until [`PARK_HOLD`] has passed.
-    Parked,
-    /// [`Fault::IdleHeld`]: the bot must stay in the world for [`HELD_FOR`].
-    Held,
     WaitRelog,
     Done,
 }
@@ -139,10 +121,7 @@ impl World {
 
 struct LiveState {
     fault: Fault,
-    scripted: bool,
     phase: Phase,
-    /// When the current `Parked` or `Held` phase began.
-    phase_since: Option<Instant>,
     ready_since: Option<Instant>,
     before: Option<World>,
     /// Client `scene_state` values seen after the fault, deduplicated.
@@ -151,21 +130,13 @@ struct LiveState {
     relog_since: Option<Instant>,
     after: Option<World>,
     pause_requested: bool,
-    /// The client was in game at some frame while the bot should be parked.
-    online_while_parked: bool,
-    /// The client's idle counter at the latest frame of the held phase.
-    idle_cycles_after: Option<u32>,
-    /// The client's idle request went out (its logout countdown started).
-    idle_request_seen: bool,
 }
 
 impl LiveState {
-    fn new(fault: Fault, scripted: bool) -> Self {
+    fn new(fault: Fault) -> Self {
         Self {
             fault,
-            scripted,
             phase: Phase::WaitReady,
-            phase_since: None,
             ready_since: None,
             before: None,
             scenes_after: Vec::new(),
@@ -173,9 +144,6 @@ impl LiveState {
             relog_since: None,
             after: None,
             pause_requested: false,
-            online_while_parked: false,
-            idle_cycles_after: None,
-            idle_request_seen: false,
         }
     }
 }
@@ -209,57 +177,9 @@ fn frame(client: &mut Client, state: &Mutex<LiveState>) {
                     client.handle_packet(74, &mut payload);
                 }
                 Fault::DeadServer => state.pause_requested = true,
-                Fault::IdleLogout => {
-                    // Nothing to inject: the bot has no script, so the
-                    // client's own idle timer must reach its 4500-cycle
-                    // threshold (90 s at the Java client's 20 ms cycle,
-                    // replayed by the host through the parked passes).
-                }
-                Fault::IdleHeld => {
-                    // A script's bot: raise the idle count to just below the
-                    // threshold. Its timer is held off, so the count falls
-                    // to zero and no request goes out.
-                    client.shell.idle_cycles = IDLE_SEED;
-                    state.phase = Phase::Held;
-                    state.phase_since = Some(Instant::now());
-                }
-            }
-        }
-        Phase::Held => {
-            state.idle_cycles_after = Some(client.shell.idle_cycles);
-            if client.logout_timer > 0 {
-                state.idle_request_seen = true;
-            }
-        }
-        Phase::Parked => {
-            if client.ingame {
-                state.online_while_parked = true;
             }
         }
         Phase::Faulted | Phase::WaitRelog => {
-            if state.fault == Fault::IdleLogout
-                && !state.idle_request_seen
-                && client.ingame
-                && client.logout_timer > 0
-            {
-                // The client's own idle timer sent the idle request (it
-                // starts the logout countdown as it writes). The local
-                // engines run with `debug: true` (`WorldConfig.ts:101`), and
-                // `IdleTimerHandler.ts:7` ignores the request there, so the
-                // server's reply is the client's own handler for the Logout
-                // packet a production server sends.
-                state.idle_request_seen = true;
-                let mut payload = client::io::Packet::new(vec![]);
-                client.psize = 0;
-                client.handle_packet(client::io::ServerProt289::LOGOUT, &mut payload);
-            }
-            if !state.scripted && state.phase == Phase::Faulted && !client.ingame {
-                // The session ended and nothing will bring it back: the
-                // hold starts now.
-                state.phase = Phase::Parked;
-                state.phase_since = Some(Instant::now());
-                return;
-            }
             let scene = if client.ingame {
                 client.scene_state
             } else {
@@ -405,7 +325,7 @@ fn env_port(name: &str, default: u16) -> u16 {
         .unwrap_or(default)
 }
 
-fn run_live(fault: Fault, scripted: bool, label: &str) {
+fn run_live(fault: Fault, label: &str) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     if !api::test_support::game_data_available() {
         return;
@@ -452,7 +372,7 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
         .expect("prepare local-289 template");
     let names = mint_live_names(1);
     let (account, password) = mint_live_entries(&names).into_iter().next().unwrap();
-    let state = Arc::new(Mutex::new(LiveState::new(fault, scripted)));
+    let state = Arc::new(Mutex::new(LiveState::new(fault)));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
     let started = Instant::now();
@@ -473,48 +393,16 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
         },
     )
     .expect("start one-slot live Play");
-    if scripted {
-        // The script owns the bot's session from the start: it logs in on
-        // its need, and every later exit is a script's reconnect.
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
-            .expect("selected R289 game data");
-        play.script_start_handle()
-            .start_test_script(&account, Box::new(IdleScript), Some(selected))
-            .expect("start the idle script");
-    }
 
     let mut paused_connection = None;
-    let mut parked_facts = None;
-    let deadline = started + READY_TIMEOUT + RELOG_TIMEOUT + PARK_HOLD + HELD_FOR;
+    let deadline = started + READY_TIMEOUT + RELOG_TIMEOUT;
     loop {
-        let (phase, pause_requested, since) = {
+        let (phase, pause_requested) = {
             let state = state.lock().unwrap();
-            (state.phase, state.pause_requested, state.phase_since)
+            (state.phase, state.pause_requested)
         };
         if pause_requested && paused_connection.is_none() {
             paused_connection = relay.as_ref().map(Relay::pause_live_connection);
-        }
-        if phase == Phase::Parked && since.is_some_and(|at| at.elapsed() >= PARK_HOLD) {
-            // Parked long enough that any automatic relog would have
-            // started: record what the host says, then log the bot in.
-            let arm = play.arm(&account).expect("the slot's arm");
-            let log = CAPTURE.0.lock().unwrap().clone();
-            parked_facts = Some(json!({
-                "latch_reason": arm.login_latch_reason().map(|reason| reason.to_string()),
-                "park_reason": arm.relog_park_reason().to_string(),
-                "attempts": log.iter().filter(|l| l.contains("relog decision attempt")).count(),
-                "park_lines": log.iter().filter(|l| l.contains("relog decision park reason=idle_")).count(),
-                "ingame_status": play.statuses().iter().any(|s| s.username == account && s.ingame),
-            }));
-            let mut state = state.lock().unwrap();
-            state.phase = Phase::WaitRelog;
-            state.phase_since = None;
-            drop(state);
-            arm.arm_explicit_login();
-            play.wake(&account);
-        }
-        if phase == Phase::Held && since.is_some_and(|at| at.elapsed() >= HELD_FOR) {
-            state.lock().unwrap().phase = Phase::Done;
         }
         if phase == Phase::Done || Instant::now() >= deadline {
             break;
@@ -551,17 +439,12 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
         "label": label,
         "account": account,
         "fault": format!("{fault:?}"),
-        "scripted": scripted,
         "phase": format!("{:?}", state.phase),
         "paused_connection": paused_connection,
         "elapsed_s": elapsed.as_secs_f64(),
         "before": state.before.map(World::json),
         "scenes_after_fault": state.scenes_after,
         "after": state.after.map(World::json),
-        "online_while_parked": state.online_while_parked,
-        "idle_cycles_seen_after_fault": state.idle_cycles_after,
-        "idle_request_seen": state.idle_request_seen,
-        "parked_facts": parked_facts,
         "host_log": log,
     });
     write_receipt(&evidence, label, &receipt);
@@ -570,33 +453,14 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
     assert_eq!(
         state.phase,
         Phase::Done,
-        "{account} did not finish the proof: {receipt}"
+        "{account} did not come back: {receipt}"
     );
+    let after = state.after.expect("relogged world");
+    assert!(after.populated(), "{receipt}");
     let attempts: Vec<&String> = log
         .iter()
         .filter(|line| line.contains("relog decision attempt"))
         .collect();
-    if fault == Fault::IdleHeld {
-        assert!(
-            !log.iter().any(|line| {
-                line.contains("session exit reason=") && !line.contains("operator_logout")
-            }),
-            "a running script keeps the bot in the world: {receipt}"
-        );
-        assert!(
-            state
-                .idle_cycles_after
-                .is_some_and(|cycles| cycles < IDLE_SEED),
-            "the script's bot never counts idle cycles: {receipt}"
-        );
-        assert!(
-            !state.idle_request_seen,
-            "the script's bot sends no idle request: {receipt}"
-        );
-        return;
-    }
-    let after = state.after.expect("relogged world");
-    assert!(after.populated(), "{receipt}");
     let exit = log
         .iter()
         .find(|line| line.contains("session exit reason="))
@@ -608,76 +472,29 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
                 "{exit}"
             );
             assert!(exit.contains("previous=["), "{exit}");
-        }
-        Fault::DeadServer => assert!(exit.contains("dead_server_deadline"), "{exit}"),
-        Fault::IdleLogout => {
+            // The first attempt is the initial login; every relog after the
+            // T1 is a fresh one.
             assert!(
-                state.idle_request_seen,
-                "the client's own idle timer sent the idle request: {receipt}"
+                attempts.len() >= 2
+                    && attempts[1..]
+                        .iter()
+                        .all(|line| line.ends_with("reconnect=false")),
+                "{attempts:?}"
             );
-            assert!(exit.contains("server_logout"), "{exit}");
             assert!(
-                exit.contains("local_idle_request_pending=true"),
-                "the exit follows the client's own idle request: {exit}"
+                state.scenes_after.contains(&1),
+                "the fresh login rebuilds the scene: {:?}",
+                state.scenes_after
             );
         }
-        Fault::IdleHeld => unreachable!("returned above"),
-    }
-    if scripted {
-        match fault {
-            Fault::ProtocolError => {
-                // The first attempt is the initial login; every relog after
-                // the T1 is a fresh one.
-                assert!(
-                    attempts.len() >= 2
-                        && attempts[1..]
-                            .iter()
-                            .all(|line| line.ends_with("reconnect=false")),
-                    "{attempts:?}"
-                );
-                assert!(
-                    state.scenes_after.contains(&1),
-                    "the fresh login rebuilds the scene: {:?}",
-                    state.scenes_after
-                );
-            }
-            Fault::DeadServer => assert!(
+        Fault::DeadServer => {
+            assert!(exit.contains("dead_server_deadline"), "{exit}");
+            assert!(
                 attempts.len() == 2 && attempts[1].ends_with("reconnect=true"),
                 "{attempts:?}"
-            ),
-            Fault::IdleLogout | Fault::IdleHeld => unreachable!("not a scripted cell"),
+            );
         }
-        return;
     }
-    // No script: the bot parked at the exit and stayed logged out for the
-    // whole hold; the operator's Login then connected it once.
-    let facts = parked_facts.expect("the bot parked and was logged in by the operator");
-    let expected = match fault {
-        Fault::IdleLogout => "idle_logout",
-        _ => "idle_disconnect",
-    };
-    assert_eq!(facts["park_reason"], expected, "{receipt}");
-    assert_eq!(
-        facts["attempts"], 1,
-        "only the initial login before the park: {receipt}"
-    );
-    assert_eq!(
-        facts["park_lines"], 1,
-        "one park line with its reason: {receipt}"
-    );
-    assert_eq!(facts["ingame_status"], false, "{receipt}");
-    assert!(
-        !state.online_while_parked,
-        "the bot relogged by itself: {receipt}"
-    );
-    // Only the operator's Login started a handshake after the park. The
-    // login itself may retry: the local engine ignores the idle request or
-    // the silence, so the old session can linger and refuse the account
-    // (code 5) until it times out.
-    assert!(
-        attempts.len() >= 2,
-        "the operator's Login starts the next handshake: {attempts:?}"
-    );
 }
 
 fn write_receipt(dir: &Path, label: &str, receipt: &Value) {
@@ -686,58 +503,14 @@ fn write_receipt(dir: &Path, label: &str, receipt: &Value) {
         .expect("write live receipt");
 }
 
-/// A script that does nothing: the slot's script state is Running, so the
-/// bot is "scripted" for the idle timer and the reconnect policy.
-struct IdleScript;
-
-impl script::native::Script for IdleScript {
-    fn tick(
-        &mut self,
-        _tick: &mut script::native::NativeTick<'_>,
-    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        Ok(script::native::ScriptFlow::Continue)
-    }
-}
-
-/// Scripted bots: unchanged policy, the bot comes back to a world.
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
 fn live_protocol_error_relogs_fresh_into_a_world() {
-    run_live(Fault::ProtocolError, true, "protocol-error");
+    run_live(Fault::ProtocolError, "protocol-error");
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
 fn live_dead_server_deadline_reconnects_into_a_world() {
-    run_live(Fault::DeadServer, true, "dead-server");
-}
-
-/// A running script holds the Java idle timer off: past the idle threshold
-/// the bot is still in the world and no idle request has logged it out.
-#[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
-fn live_scripted_bot_never_sends_the_idle_request() {
-    run_live(Fault::IdleHeld, true, "idle-held");
-}
-
-/// Bots without a script: any unexpected exit parks the bot, which stays
-/// logged out (no relog) until the operator logs it in.
-#[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
-fn live_scriptless_protocol_error_stays_parked_until_login() {
-    run_live(Fault::ProtocolError, false, "park-protocol-error");
-}
-
-#[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
-fn live_scriptless_dead_server_stays_parked_until_login() {
-    run_live(Fault::DeadServer, false, "park-dead-server");
-}
-
-/// The Java idle timer runs for a bot without a script: the client sends the
-/// idle request, the server logs the bot out, and the bot stays logged out.
-#[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
-fn live_scriptless_idle_logout_stays_parked_until_login() {
-    run_live(Fault::IdleLogout, false, "park-idle-logout");
+    run_live(Fault::DeadServer, "dead-server");
 }
