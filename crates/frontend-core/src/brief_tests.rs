@@ -181,12 +181,7 @@ fn the_pointer_is_shown_with_session_file_logging_off() {
     // the line makes no promise.
     let line = Brief::new("trace only")
         .with_detail(["x".to_owned()])
-        .publish(&LogTarget {
-            category: Category::NavTrace,
-            level: Level::Debug,
-            slot: Some(slot),
-            head: "",
-        });
+        .publish(&LogTarget::trace_only(Some(slot)));
     assert_eq!(line, "trace only");
     // A producer that logged the detail itself only points.
     let line = Brief::new("Blocked")

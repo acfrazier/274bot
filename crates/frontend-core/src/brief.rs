@@ -19,53 +19,94 @@ use std::borrow::Cow;
 
 use api::hostlog::{self, Category, Emit, Level};
 
-pub use api::hostlog::{LINE_CHARS as LINE_MAX, SUMMARY_CHARS as SUMMARY_MAX};
+/// The longest shown line, in characters ([`api::hostlog::LINE_CHARS`]).
+pub const LINE_MAX: usize = hostlog::LINE_CHARS;
+/// The longest summary, in characters ([`api::hostlog::SUMMARY_CHARS`]).
+pub const SUMMARY_MAX: usize = hostlog::SUMMARY_CHARS;
 
 /// The end of a shown line whose detail is in the log.
 pub const LOG_POINTER: &str = " (see log)";
 
+/// Which producer a detail belongs to. It fixes the routing category (which
+/// must be a slot-log category for the detail to reach the in-app ring), the
+/// severity of each packed line and the prefix of each packed line.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// A command refusal or failure (`Lifecycle`, `info`).
+    Command,
+    /// A walk refusal (`NavEvent`, `info`).
+    Walk,
+    /// Script load failures (`ScriptLifecycle`, `warn`).
+    ScriptLoad,
+    /// A script banner no other producer owns (`ScriptLifecycle`, `info`).
+    ScriptNotice,
+    /// A category outside the slot-log allowlist, for the tests.
+    #[cfg(test)]
+    TraceOnly,
+}
+
+impl Kind {
+    fn category(self) -> Category {
+        match self {
+            Self::Command => Category::Lifecycle,
+            Self::Walk => Category::NavEvent,
+            Self::ScriptLoad | Self::ScriptNotice => Category::ScriptLifecycle,
+            #[cfg(test)]
+            Self::TraceOnly => Category::NavTrace,
+        }
+    }
+
+    fn level(self) -> Level {
+        match self {
+            Self::Command | Self::Walk | Self::ScriptNotice => Level::Info,
+            Self::ScriptLoad => Level::Warn,
+            #[cfg(test)]
+            Self::TraceOnly => Level::Debug,
+        }
+    }
+
+    fn head(self) -> &'static str {
+        match self {
+            Self::Command => "detail: ",
+            Self::Walk => "walk detail: ",
+            Self::ScriptLoad => "load failure: ",
+            Self::ScriptNotice => "notice: ",
+            #[cfg(test)]
+            Self::TraceOnly => "",
+        }
+    }
+}
+
 /// Where a brief's detail is logged.
 #[derive(Debug, Clone, Copy)]
 pub struct LogTarget<'a> {
-    /// Routing category. It must be a slot-log category for the detail to
-    /// reach the in-app ring.
-    pub category: Category,
-    /// Severity of each packed line.
-    pub level: Level,
+    kind: Kind,
     /// The bot the detail belongs to, when it has one.
-    pub slot: Option<&'a str>,
-    /// Prefix of each packed line.
-    pub head: &'a str,
+    slot: Option<&'a str>,
 }
 
 impl<'a> LogTarget<'a> {
     /// A command refusal or failure for `slot` (`Lifecycle`, `info`).
     pub fn command(slot: Option<&'a str>) -> Self {
         Self {
-            category: Category::Lifecycle,
-            level: Level::Info,
+            kind: Kind::Command,
             slot,
-            head: "detail: ",
         }
     }
 
     /// A walk refusal (`NavEvent`, `info`).
     pub fn walk(slot: Option<&'a str>) -> Self {
         Self {
-            category: Category::NavEvent,
-            level: Level::Info,
+            kind: Kind::Walk,
             slot,
-            head: "walk detail: ",
         }
     }
 
     /// Script load failures (`ScriptLifecycle`, `warn`).
     pub fn script_load() -> Self {
         Self {
-            category: Category::ScriptLifecycle,
-            level: Level::Warn,
+            kind: Kind::ScriptLoad,
             slot: None,
-            head: "load failure: ",
         }
     }
 
@@ -73,17 +114,28 @@ impl<'a> LogTarget<'a> {
     /// the last guard of [`crate::Scripts`]'s `show`.
     pub fn script_notice() -> Self {
         Self {
-            category: Category::ScriptLifecycle,
-            level: Level::Info,
+            kind: Kind::ScriptNotice,
             slot: None,
-            head: "notice: ",
         }
+    }
+
+    /// A category outside the slot-log allowlist, for the tests.
+    #[cfg(test)]
+    pub(crate) fn trace_only(slot: Option<&'a str>) -> Self {
+        Self {
+            kind: Kind::TraceOnly,
+            slot,
+        }
+    }
+
+    fn category(&self) -> Category {
+        self.kind.category()
     }
 
     fn emit(&self) -> Emit<'a> {
         Emit {
-            category: self.category,
-            level: self.level,
+            category: self.kind.category(),
+            level: self.kind.level(),
             slot: self.slot,
             always_stderr: false,
         }
@@ -101,7 +153,7 @@ enum Detail {
 }
 
 /// A short line for the operator and, optionally, the detail behind it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Brief {
     summary: String,
     detail: Detail,
@@ -172,12 +224,12 @@ impl Brief {
         let pointed = match detail {
             Detail::None => false,
             Detail::Items(items) => {
-                hostlog::emit_packed(target.emit(), target.head, &items);
+                hostlog::emit_packed(target.emit(), target.kind.head(), &items);
                 true
             }
             Detail::LoggedByProducer => true,
         };
-        if pointed && hostlog::logged(target.category) {
+        if pointed && hostlog::logged(target.category()) {
             summary.push_str(LOG_POINTER);
         }
         summary
