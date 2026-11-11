@@ -62,7 +62,7 @@ Jobs run sequentially and share the runner's lock and build tree:
   do not use the operator's `~/.274bot/servers.json`.
 - **macOS, merlot:** the `local.274bot-nightly-mac` LaunchAgent starts a fresh
   clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
-  runs macOS 27.0.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk.
+  runs macOS 27.2.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk.
   The host stages the runner, catalog, fixtures and Engine A/Q source data.
   Shared inputs stay read-only. Private guest copies permit owner writes for
   dependency installation, engine state and Git mirrors.
@@ -74,6 +74,9 @@ Jobs run sequentially and share the runner's lock and build tree:
   `maxConnected=1`. Main connects to host Engine A through `mac_vm.py`'s
   loopback forward on `44594/1080`; quest starts private Engine Q in the guest.
   The runner and TUI run inside the clone; `panel-play` uses its Aqua session.
+  A hand run can set `NIGHTLY_MAC_JOBS`, `NIGHTLY_MAC_STEPS` and
+  `NIGHTLY_MAC_LANES`. Set them to `main`, `lanes` and `build` for one build
+  lane. Omit them for the scheduled run.
   The base includes the needed privacy grants. The host checks the 120 GiB
   free-space floor before and during the run. After stopping the clone, it
   verifies `SHA256SUMS` and publishes completed run folders to `NIGHTLY/`.
@@ -136,12 +139,15 @@ Preparation runs before `lanes`, so post-ADR test lanes use their tree's
 `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack` and adjacent
 `.navflags` for `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`. A missing
 generated output fails with the generator diagnostic; it never falls back to
-the v18 reference. Pre-ADR trees keep the configured `NIGHTLY_NAV_FIXTURE`.
+the v19 reference. Pre-ADR trees use the configured `NIGHTLY_NAV_FIXTURE`,
+which defaults to `274bot-289-v19.navpack`.
 
 The Mac guest installs locked npm dependencies for the staged Engine A and
 optional 274 engine roots, then uses Engine A's `tsx` executable as
 `BUN_EXECUTABLE`; the staged trees need not include `node_modules` or a global
 Bun.
+Linux and Windows use Bun 1.4.4 for local-data generation. Put Bun on `PATH` or
+set `BUN_EXECUTABLE` to its path.
 
 The cache lives at `NIGHTLY_ROOT/local-data-cache`. Its key includes both
 revisions' engine/content trees, the local-data and game-data generator
@@ -322,8 +328,8 @@ Edit [`branches.conf`](branches.conf) on `dev`, commit, and push. Nothing on
 the machines changes. At the start of a night each runner fetches origin and
 reads `tools/nightly/branches.conf` from `origin/dev`
 (`git show origin/dev:tools/nightly/branches.conf`). The first line is the
-fix line: when the fix line rolls over (for example `release/0.2.6` to
-`release/0.2.7`), change that line, commit to `dev`, and the next night tests
+fix line. When it rolls over (for example `release/0.2.8` to
+`release/0.2.9`), change that line, commit to `dev`, and the next night tests
 the new line on every host. Linux reads the list through `/srv/nightly/runner`,
 Mac through the stable copy in `~/.local/lib/274bot-nightly/runner`, Windows
 through `C:\274bot-nightly\runner`.
@@ -704,8 +710,9 @@ Every step runs as BotTest without the admin token, so the nightly keeps working
 BotTest is demoted to a standard user. Only the pull account (step 8) needs an
 administrator, once.
 
-1. Prerequisites already on the host: the Rust toolchain from `rust-toolchain.toml` in
-   `C:\Users\BotTest\.cargo`/`.rustup` with the MSVC build tools, Git for Windows,
+1. Prerequisites already on the host: Bun 1.4.4 in
+   `C:\Users\BotTest\.cargo\bin\bun.exe`, the Rust toolchain from `rust-toolchain.toml`
+   in `C:\Users\BotTest\.cargo`/`.rustup` with the MSVC build tools, Git for Windows,
    and CPython 3.14 in `C:\Program Files\Python314`. The host clock is set to
    Eastern time (the runner uses the host clock: Windows CPython has no tz
    database).
@@ -715,12 +722,13 @@ administrator, once.
 3. Read-only inputs (copied in once; refresh them when they change):
    `engine-pristine\{engine,content}` (the 289 engine and content, without
    `node_modules`, account database or player saves: the clients read its pack, config
-   and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
+   and content; it is never started), `inputs\274\{engine,content}` (the exact
+   revision-274 local-data inputs, also without `node_modules`, database or player
+   saves), `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
-   when it is missing or stale), `fixtures\274bot-289-v18.navpack` with its sidecars
-   (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`) for
-   pre-ADR test lanes. Post-ADR lanes use the tested tree's generated navpack;
-   `fixtures\inspect.fb` (the old inspection capture
+   when it is missing or stale), `fixtures\274bot-289-v19.navpack` with its
+   `.navflags` sidecar for pre-ADR test lanes. Post-ADR lanes use the tested
+   tree's generated navpack; `fixtures\inspect.fb` (the old inspection capture
    `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
@@ -923,9 +931,10 @@ and `python3 -B tools/nightly/test_nightly_mac_guest.py` for the Tart controller
 
 ## Windows nightly
 
-The Windows host runs `dev` (`NIGHTLY_BRANCHES` in `nightly.env`) as BotTest in
-BotTest's console session, which the GPU and the panel windows need. Nothing it does
-needs the admin token.
+The Windows host follows [`branches.conf`](branches.conf) (latest release branch
+first, then `dev`) as BotTest in BotTest's console session, which the GPU and
+panel windows need. Leave `NIGHTLY_BRANCHES` unset so it cannot pin the host to
+a stale branch list. Nothing it does needs the admin token.
 
 **Tasks.** `274bot-nightly` (daily 23:00, Interactive: runs only while BotTest is
 logged on, Limited, no stored password) starts `windows\nightly-launch.vbs`, which runs
@@ -968,7 +977,7 @@ error in it. If the task is stopped during that step, the missed night has no su
    `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
    Each test lane gets the Linux CI test inputs. Post-ADR trees set the three nav
    pack names to `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack`
-   and its `.navflags`; pre-ADR trees use the v18 reference fixture.
+   and its `.navflags`; pre-ADR trees use the v19 reference fixture.
    `ISOLATED_289_ENGINE_DIR` and `ISOLATED_289_CONTENT_DIR` use the exact
    revision-289 local-data inputs. `ENGINE_DIR` and `WORLD_ENGINE_DIR` use the
    pristine engine copy; `BOT_NAV_SNAPSHOT_ROOT` uses the decoded snapshot
