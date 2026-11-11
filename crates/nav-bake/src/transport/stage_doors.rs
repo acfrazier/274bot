@@ -1902,14 +1902,16 @@ pub(super) fn stage_door_edges(
                         };
                         if let Some(shadow) = shadow.as_deref_mut() {
                             shadow.run_candidate(
-                                id,
-                                p,
-                                "wall",
-                                Some(dir),
-                                Some(stand),
-                                stage_owned,
-                                &legacy_handler,
-                                baseline,
+                                super::nav_shadow::CandidateEntry {
+                                    loc_type: id,
+                                    placement: p,
+                                    role_name: "wall",
+                                    direction: Some(dir),
+                                    stand: Some(stand),
+                                    stage_owned,
+                                    legacy_handler: &legacy_handler,
+                                    baseline,
+                                },
                                 collision,
                                 observable,
                             );
@@ -1954,14 +1956,16 @@ pub(super) fn stage_door_edges(
                     };
                     if let Some(shadow) = shadow.as_deref_mut() {
                         shadow.run_candidate(
-                            id,
-                            p,
-                            "ladder",
-                            None,
-                            None,
-                            stage_owned,
-                            &legacy_handler,
-                            baseline,
+                            super::nav_shadow::CandidateEntry {
+                                loc_type: id,
+                                placement: p,
+                                role_name: "ladder",
+                                direction: None,
+                                stand: None,
+                                stage_owned,
+                                legacy_handler: &legacy_handler,
+                                baseline,
+                            },
                             collision,
                             observable,
                         );
@@ -1992,7 +1996,7 @@ pub(super) fn stage_door_edges(
         observable,
         audit,
     });
-    if let Some(shadow) = shadow.as_deref_mut() {
+    if let Some(shadow) = shadow {
         shadow.run_auxiliary_entries(content_root, collision, observable);
     }
 }

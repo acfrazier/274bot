@@ -145,8 +145,20 @@ Add `--nav-shadow REPORT_JSON` to write the optional interpreter report. The
 report records per-entry machine results, edge differences, and measured
 limits. It does not change the baked pack or its sidecars.
 
+Each covered candidate records its generalised conditions and the elapsed-tick
+range across all compatible rivals. A raw path retains its own tick range.
+The shadow keeps the producer's existing pack prices.
+
+The standalone `climb_ladder` entry has unknown arguments. It records the
+one-tick prefix, then stops as unsupported because its destination has no
+coordinate proof. A known valid destination can finish. The query does not
+assume that an unknown argument is a valid coordinate.
+
 Measure process peak resident bytes separately, with and without this option.
 The report's byte counts cover each machine entry, not the whole bake process.
+The entry limits are 2,048 paths, 65,536 dispatched instructions, and 16 MiB of
+cumulative allocation. Each is the next power of two at least four times the
+largest measured entry on 274 and 289. The per-site fork limit stays at 64.
 
 Each retained path has transfer evidence. A join adds the counts from the paths
 it represents. Aggregate counts record dispatcher events, so they need not match
@@ -155,6 +167,10 @@ the number of retained results.
 Loc effects record the resolved tile, shape, and angle. Created object ids are
 path-local, so equal ids alone cannot prove equal navigation effects. The shadow
 uses this geometry to bind an opened loc to the interaction target.
+The open leaf must be at one of the door helper's two diagonal tiles. A
+same-tile invisible wall or a leaf with the closed type is not the open leaf.
+Quest-signal bounds do not require journal colour authority. Journal completion
+still needs its separate proof.
 
 An NPC loop summary requires a stable population and a fresh iterator. An NPC add
 or delete instruction on a closed pass stops the path as unsupported at its

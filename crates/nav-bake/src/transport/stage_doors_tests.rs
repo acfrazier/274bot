@@ -91,7 +91,8 @@ fn derive_stage_with_quests(
     let entries: Vec<(i32, i32, i32)> = locs.iter().map(|&id| (id, 1, 1)).collect();
     let defs = loc_defs(&entries);
     let wc = bake_collision(fx, &defs, &locs.iter().copied().collect());
-    let graph = derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests), None, None).0;
+    let graph =
+        derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests), None, None).0;
     (graph, wc)
 }
 
@@ -437,8 +438,16 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
     }]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     with_authoritative_hero(|quests| {
-        let graph =
-            derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None, None).0;
+        let graph = derive_transports_with_audit(
+            fx.path(),
+            &defs,
+            &collision,
+            None,
+            Some(quests),
+            None,
+            None,
+        )
+        .0;
         let edges: Vec<_> = graph
             .edges
             .iter()
@@ -482,7 +491,15 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
     }]);
     let other_collision = bake_collision(&other_fx, &other_defs, &HashSet::new());
     with_authoritative_hero(|quests| {
-        let graph = derive_transports_with_audit(other_fx.path(), &other_defs, &other_collision, None, Some(quests), None, None)
+        let graph = derive_transports_with_audit(
+            other_fx.path(),
+            &other_defs,
+            &other_collision,
+            None,
+            Some(quests),
+            None,
+            None,
+        )
         .0;
         assert!(
             !graph.edges.iter().any(|edge| edge.loc_id == 900),
@@ -1909,7 +1926,8 @@ fn derive_entrance_fixture_with_quests(
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
     let graph =
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None, None).0;
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None, None)
+            .0;
     (graph, collision)
 }
 

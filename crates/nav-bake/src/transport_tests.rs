@@ -11135,8 +11135,16 @@ switch_coord (loc_coord) {
         let collision = bake_collision(&fx, &defs, &HashSet::new());
         let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
             .expect("R377 game data");
-        let graph =
-            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(&data), None).0;
+        let graph = derive_transports_with_audit(
+            fx.path(),
+            &defs,
+            &collision,
+            None,
+            None,
+            Some(&data),
+            None,
+        )
+        .0;
         assert!(
             graph.edges.iter().all(|edge| edge.loc_id != 1723),
             "unsupported stair body must not gain an unconditional edge: {body}"

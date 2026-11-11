@@ -191,7 +191,7 @@ const life = {};
     // LOC_FINDALLZONE's LocIterator calls getAllLocsSafe(true), not the default forward order.
     const order = [...World.gameMap.getZone(16303, 16300, 0).getAllLocsSafe(true)]
         .filter(loc => loc.x === 16303 && loc.z === 16300);
-    life.list_order = [selected_first, selected_second, order[0] === first && order[1] === second];
+    life.list_order = [selected_first, selected_second, order[0] === second && order[1] === first];
 }
 // Use the engine's real ground and loc decoders. No server services start,
 // and every relative runtime write stays in the isolated oracle directory.
@@ -466,7 +466,7 @@ fn overlay_outcomes(types: [i32; 3]) -> HashMap<String, Vec<bool>> {
         vec![
             first == rs2vm::world::LocObj::Placed(PlacedId(0)),
             second == rs2vm::world::LocObj::Placed(PlacedId(1)),
-            order == [first, second],
+            order == [second, first],
         ],
     );
     observed

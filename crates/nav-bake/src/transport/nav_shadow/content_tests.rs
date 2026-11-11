@@ -2,6 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use api::test_support::local_asset_path;
+use client::config::Cache;
+use client::io::JagFile;
+use rs2vm::machine::{
+    Effect, End, Entry, Limits, Machine, MoveKind, PlayerPos, Value as VmValue, View,
+};
+use rs2vm::world::{Tri, World};
+use rs2vm::{Coord, Ticks};
 use serde_json::Value;
 
 fn local_asset(revision: u16, kind: &str) -> Option<PathBuf> {
@@ -83,6 +90,76 @@ fn local_pack_shadow_paths_match_content_and_leave_bake_outputs_unchanged() {
     }
 }
 
+#[test]
+fn local_valid_coordinate_climb_helper_finishes() {
+    for revision in [289, 274] {
+        let Some(engine) = local_asset(revision, "ENGINE") else {
+            continue;
+        };
+        let Some(content) = local_asset(revision, "CONTENT") else {
+            continue;
+        };
+        let config = crate::bake::config_jag_for(revision, &engine.join("data/pack/client"))
+            .expect("selected config archive");
+        let jag = JagFile::new(std::fs::read(config).expect("real selected config bytes"));
+        let varbits = jag.read("varbit.dat").expect("real selected varbits");
+        let locs = Cache::unpack(&jag).locs;
+        let shadow = crate::transport::load_nav_shadow(
+            &engine,
+            &content,
+            &content.join("maps"),
+            &locs,
+            &varbits,
+            revision,
+        )
+        .expect("real selected program and world");
+        let script = shadow
+            .program
+            .scripts
+            .values()
+            .find(|script| script.name.eq_ignore_ascii_case("[proc,climb_ladder]"))
+            .expect("real climb_ladder procedure");
+        let target = shadow
+            .program
+            .packs
+            .locs
+            .keys()
+            .flat_map(|ty| shadow.world.placements(ty.0))
+            .map(|placed| {
+                let tile = &placed.placement;
+                Coord::new(tile.x, tile.level, tile.z)
+            })
+            .find(|tile| shadow.world.zone_alloc(*tile).on_free == Tri::Yes)
+            .expect("an actual placed tile allocated in both world modes");
+        for up in [0, 1] {
+            let mut entry = Entry::new(script.id);
+            entry.ints = vec![VmValue::Known(target.0), VmValue::Known(up)];
+            entry.stand = Some(target);
+            let run = Machine::new(&shadow.program, shadow.profile, &shadow.world)
+                .run(entry, View::ALL, Limits::default())
+                .expect("bounded real helper run");
+            assert_eq!(run.paths.len(), 1, "known inputs have one execution");
+            let path = &run.paths[0];
+            assert_eq!(path.end, End::Finished);
+            assert_eq!(path.ticks, Ticks { min: 1, max: 1 });
+            assert_eq!(path.player, PlayerPos::Tile(target));
+            assert!(path.effects.iter().any(|record| {
+                matches!(
+                    record.effect,
+                    Effect::Move {
+                        kind: MoveKind::Telejump,
+                        to: PlayerPos::Tile(tile)
+                    } if tile == target
+                )
+            }));
+            assert!(path
+                .effects
+                .iter()
+                .any(|record| { matches!(record.effect, Effect::Delay { min: 1, max: 1 }) }));
+        }
+    }
+}
+
 fn assert_report_limits(report: &Value) {
     for name in ["paths", "instructions", "bytes"] {
         let summary = &report["limits"][name];
@@ -120,9 +197,7 @@ fn assert_no_removed_edges(report: &Value, revision: u16) {
 fn assert_changed_fields_exact(report: &Value, revision: u16) {
     let diffs = report["diffs"].as_array().expect("edge diff list");
     for diff in diffs.iter().filter(|diff| diff["status"] == "changed") {
-        let baseline = diff["baseline"]
-            .as_object()
-            .expect("changed edge baseline");
+        let baseline = diff["baseline"].as_object().expect("changed edge baseline");
         let candidate = diff["candidate"]
             .as_object()
             .expect("changed edge candidate");
@@ -168,8 +243,7 @@ fn assert_transfer_audit(report: &Value, revision: u16) {
             continue;
         }
         assert_eq!(
-            entry["execution"]["transfer_assertions"]["all_hold"],
-            true,
+            entry["execution"]["transfer_assertions"]["all_hold"], true,
             "revision {revision}, entry {:?} has invalid transfer assertions",
             entry["handler_name"]
         );
@@ -497,7 +571,7 @@ fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
                 effect["effect"]
                     .as_str()
                     .is_some_and(|text| text.contains("chat: Some("))
-                    && site_names_npcchat(&effect["site"])
+                    && site_names_npc_chat(&effect["site"])
             }) else {
                 continue;
             };
@@ -531,11 +605,11 @@ fn assert_crafting_guild(report: &Value, loc_type: i32, revision: u16) {
     );
 }
 
-fn site_names_npcchat(site: &Value) -> bool {
+fn site_names_npc_chat(site: &Value) -> bool {
     ["script_name", "source"]
         .iter()
         .filter_map(|field| site[*field].as_str())
-        .any(|value| value.to_ascii_lowercase().contains("npcchat"))
+        .any(|value| value.to_ascii_lowercase().contains("chatnpc"))
 }
 
 fn assert_mourner_fence(report: &Value, loc_type: i32, revision: u16) {
@@ -580,8 +654,20 @@ fn assert_bkfortress_door(report: &Value, loc_type: i32, revision: u16) {
         "revision {revision} black-knight door has no paired stands"
     );
     for group in groups {
-        for entry in group {
+        for entry in &group {
             assert!(
+                paths(entry).iter().any(|path| {
+                    path_has_move(path)
+                        && candidates_for_path(entry, path)
+                            .iter()
+                            .any(|candidate| candidate["covered"] == true)
+                }),
+                "black-knight door stand has no covered crossing"
+            );
+        }
+        let summarized_stands = group
+            .iter()
+            .filter(|entry| {
                 paths(entry).iter().any(|path| {
                     path["transfer_audit"]["loop_summaries"]
                         .as_u64()
@@ -591,10 +677,13 @@ fn assert_bkfortress_door(report: &Value, loc_type: i32, revision: u16) {
                         && candidates_for_path(entry, path)
                             .iter()
                             .any(|candidate| candidate["covered"] == true)
-                }),
-                "black-knight crossing path has no summarized aggro loop"
-            );
-        }
+                })
+            })
+            .count();
+        assert_eq!(
+            summarized_stands, 1,
+            "only the inside branch runs the summarized black-knight aggro loop"
+        );
     }
 }
 
@@ -673,25 +762,21 @@ fn assert_ikov_open_type(report: &Value, loc_type: i32, revision: u16) {
                 .as_str()
                 .is_some_and(|name| name.contains("ikov_mendedleverdoorl"))
                 && paths(entry).iter().any(|path| {
-                    let covered_open_type = candidates_for_path(entry, path)
-                        .iter()
-                        .any(|candidate| {
+                    let covered_open_type =
+                        candidates_for_path(entry, path).iter().any(|candidate| {
                             candidate["covered"] == true
                                 && candidate["edge"]["open_loc_id"].as_i64() == Some(1_562)
                         });
-                    let sourced_open_leaf = path["effects"]
-                        .as_array()
-                        .is_some_and(|effects| {
-                            effects.iter().any(|effect| {
-                                effect["effect"].as_str().is_some_and(|description| {
-                                    description.starts_with(
-                                        "Loc { kind: Add, obj: Created(",
-                                    ) && description.contains("ty: LocTypeId(1562)")
-                                }) && effect["site"]["source"].as_str().is_some_and(|source| {
-                                    source.contains("scripts/doors/scripts/doubledoors.rs2:135")
-                                }) && effect["site"]["pc"].as_u64() == Some(34)
-                            })
-                        });
+                    let sourced_open_leaf = path["effects"].as_array().is_some_and(|effects| {
+                        effects.iter().any(|effect| {
+                            effect["effect"].as_str().is_some_and(|description| {
+                                description.starts_with("Loc { kind: Add, obj: Created(")
+                                    && description.contains("ty: LocTypeId(1562)")
+                            }) && effect["site"]["source"].as_str().is_some_and(|source| {
+                                source.contains("scripts/doors/scripts/doubledoors.rs2:135")
+                            }) && effect["site"]["pc"].as_u64() == Some(34)
+                        })
+                    });
                     covered_open_type && sourced_open_leaf
                 })
         }),
@@ -770,9 +855,9 @@ fn path_has_relation(path: &Value, constant: i32, relation: &str) -> bool {
             let truth = condition["truth"].as_bool().unwrap_or(false);
             if predicate.contains(&expected) {
                 truth
-            } else if relation == "Lt" && predicate.contains(&format!("Ge Known({constant})")) {
-                !truth
-            } else if relation == "Ge" && predicate.contains(&format!("Lt Known({constant})")) {
+            } else if (relation == "Lt" && predicate.contains(&format!("Ge Known({constant})")))
+                || (relation == "Ge" && predicate.contains(&format!("Lt Known({constant})")))
+            {
                 !truth
             } else {
                 false
@@ -785,10 +870,9 @@ fn assert_legends_gate(report: &Value, loc_type: i32, revision: u16) {
     assert!(
         entries_for_loc(report, loc_type).iter().any(|entry| {
             paths(entry).iter().any(|path| {
-                path["ticks"] == serde_json::json!([0, 2])
-                    && candidates_for_path(entry, path)
-                        .iter()
-                        .any(|candidate| candidate["covered"] == true)
+                candidates_for_path(entry, path).iter().any(|candidate| {
+                    candidate["covered"] == true && candidate["ticks"] == serde_json::json!([0, 2])
+                })
             })
         }),
         "revision {revision} Legends' Guild gate lacks a covered 0..2 tick path"
@@ -800,16 +884,23 @@ fn assert_misc_ulby(report: &Value, loc_type: i32) {
         entries_for_loc(report, loc_type).iter().any(|entry| {
             paths(entry).iter().any(|path| {
                 path_has_move(path)
-                    && path["conditions"].as_array().is_some_and(|conditions| {
-                        conditions.len() == 1
-                            && conditions.first().is_some_and(|condition| {
-                                let predicate = condition["predicate"].as_str().unwrap_or_default();
-                                let truth = condition["truth"].as_bool().unwrap_or_default();
-                                predicate.contains("Varp")
-                                    && predicate.contains("Known(0)")
-                                    && ((predicate.contains("Gt") && truth)
-                                        || (predicate.contains("Eq") && !truth))
-                            })
+                    && candidates_for_path(entry, path).iter().any(|candidate| {
+                        candidate["covered"] == true
+                            && candidate["conditions"]
+                                .as_array()
+                                .is_some_and(|conditions| {
+                                    conditions.len() == 1
+                                        && conditions.first().is_some_and(|condition| {
+                                            let predicate =
+                                                condition["predicate"].as_str().unwrap_or_default();
+                                            let truth =
+                                                condition["truth"].as_bool().unwrap_or_default();
+                                            predicate.contains("Varp")
+                                                && predicate.contains("Known(0)")
+                                                && ((predicate.contains("Gt") && truth)
+                                                    || (predicate.contains("Eq") && !truth))
+                                        })
+                                })
                     })
             })
         }),
@@ -823,57 +914,78 @@ fn assert_climb_ladder(report: &Value, revision: u16) {
         .find(|entry| {
             entry["handler_name"] == "[proc,climb_ladder]" && entry["role"] == "procedure"
         })
-        .unwrap_or_else(|| panic!("revision {revision} did not resolve the climb_ladder procedure"));
+        .unwrap_or_else(|| {
+            panic!("revision {revision} did not resolve the climb_ladder procedure")
+        });
     let source = entry["handler_source"]
         .as_str()
         .filter(|source| !source.is_empty())
         .unwrap_or_else(|| panic!("revision {revision} climb_ladder has no program source"));
     assert_ne!(
-        entry["execution"]["status"],
-        "script not found",
+        entry["execution"]["status"], "script not found",
         "revision {revision} silently skipped the climb_ladder procedure"
     );
-    assert!(
-        paths(entry).iter().any(|path| {
-            path["end"] == "Finished"
-                && path["at"]["source"]
-                    .as_str()
-                    .is_some_and(|site| site.starts_with(source))
-                && path["effects"].as_array().is_some_and(|effects| {
-                    effects.iter().any(|effect| {
-                        effect["effect"]
-                            .as_str()
-                            .is_some_and(|text| text.starts_with("Delay {"))
-                            && effect["ticks"] == serde_json::json!([1, 1])
-                    })
-                })
-        }),
-        "revision {revision} climb_ladder lacks a sourced finished one-tick path"
+    let prefixes = paths(entry);
+    assert_eq!(
+        prefixes.len(),
+        2,
+        "both unknown direction arms remain explicit"
     );
+    for path in prefixes {
+        assert!(
+            path["end"].as_str().is_some_and(|end| {
+                end.starts_with("Unsupported(")
+                    && end.contains("coordinate validation needs a proof")
+            }),
+            "revision {revision} unknown coordinate must fail closed"
+        );
+        assert!(
+            path["at"]["source"]
+                .as_str()
+                .is_some_and(|site| site.starts_with(source)),
+            "unknown-coordinate stop has no real source"
+        );
+        assert_eq!(path["ticks"], serde_json::json!([1, 1]));
+        assert!(!path_has_move(path), "unproved coordinate must not move");
+        assert!(
+            path["effects"].as_array().is_some_and(|effects| {
+                effects.iter().any(|effect| {
+                    effect["effect"]
+                        .as_str()
+                        .is_some_and(|text| text.starts_with("Delay {"))
+                        && effect["ticks"] == serde_json::json!([1, 1])
+                })
+            }),
+            "revision {revision} unknown helper lacks its one-tick prefix"
+        );
+    }
 }
 
 fn assert_mcannon_stage_window(report: &Value, revision: u16) {
     let candidate = entries(report).iter().find_map(|entry| {
         paths(entry).iter().find_map(|path| {
-            let has_mcannon_condition = path["conditions"]
-                .as_array()
-                .is_some_and(|conditions| {
-                    conditions.iter().any(|condition| {
-                        condition["site"]["source"]
-                            .as_str()
-                            .is_some_and(|source| source.contains("mcannon_ladders.rs2"))
-                    })
-                });
+            let has_mcannon_condition = path["conditions"].as_array().is_some_and(|conditions| {
+                conditions.iter().any(|condition| {
+                    condition["site"]["source"]
+                        .as_str()
+                        .is_some_and(|source| source.contains("mcannon_ladders.rs2"))
+                })
+            });
             if !has_mcannon_condition {
                 return None;
             }
-            candidates_for_path(entry, path).into_iter().find(|candidate| {
-                candidate["covered"] == true
-                    && candidate["edge"]["quest_gates"].as_str().is_some_and(|gates| {
-                        gates.contains("FactKey(\"mcannon\")")
-                            && gates.contains("InclusiveRange { min: Some(2), max: Some(11) }")
-                    })
-            })
+            candidates_for_path(entry, path)
+                .into_iter()
+                .find(|candidate| {
+                    candidate["covered"] == true
+                        && candidate["edge"]["quest_gates"]
+                            .as_str()
+                            .is_some_and(|gates| {
+                                gates.contains("FactKey(\"mcannon\")")
+                                    && gates
+                                        .contains("InclusiveRange { min: Some(2), max: Some(11) }")
+                            })
+                })
         })
     });
     assert!(

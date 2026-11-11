@@ -822,9 +822,8 @@ fn location_effects_resolve_placed_and_created_geometry() {
         let actual: Vec<_> = result.paths[0]
             .effects
             .iter()
-            .filter_map(|record| {
-                matches!(record.effect, Effect::Loc { .. }).then_some(record.effect.clone())
-            })
+            .filter(|record| matches!(record.effect, Effect::Loc { .. }))
+            .map(|record| record.effect.clone())
             .collect();
         assert_eq!(actual, expected, "created={created}");
     }

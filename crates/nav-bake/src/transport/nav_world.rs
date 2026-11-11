@@ -110,7 +110,7 @@ impl NavWorld {
                     .and_then(|id| loc_types.get(id))
                 else {
                     return Err(NavWorldError::InvalidLocType {
-                        path: path.clone(),
+                        path,
                         id: placement.id,
                     });
                 };
@@ -121,7 +121,7 @@ impl NavWorld {
                 let angle = u8::try_from(placement.angle).ok();
                 let (Some(shape), Some(angle)) = (shape, angle) else {
                     return Err(NavWorldError::InvalidLocInfo {
-                        path: path.clone(),
+                        path,
                         id: placement.id,
                         shape: placement.shape,
                         angle: placement.angle,
@@ -145,7 +145,7 @@ impl NavWorld {
                     .zones
                     .entry(ZoneKey::of(tile))
                     .or_default()
-                    .push(placed.clone());
+                    .push(placed);
                 world.placed.insert(id, placed);
                 world
                     .by_type
@@ -230,7 +230,7 @@ fn read_free_zones(content_root: &Path) -> Result<HashSet<ZoneKey>, NavWorldErro
         );
         let (Some(level), Some(mx), Some(mz), Some(lx), Some(lz)) = parsed else {
             return Err(NavWorldError::InvalidFreeMapRow {
-                path: path.clone(),
+                path,
                 line: index + 1,
                 value: row.to_owned(),
             });
@@ -241,21 +241,21 @@ fn read_free_zones(content_root: &Path) -> Result<HashSet<ZoneKey>, NavWorldErro
             || !(0..64).contains(&lz)
         {
             return Err(NavWorldError::InvalidFreeMapRow {
-                path: path.clone(),
+                path,
                 line: index + 1,
                 value: row.to_owned(),
             });
         }
         let Some(x) = mx.checked_mul(64).and_then(|base| base.checked_add(lx)) else {
             return Err(NavWorldError::InvalidFreeMapRow {
-                path: path.clone(),
+                path,
                 line: index + 1,
                 value: row.to_owned(),
             });
         };
         let Some(z) = mz.checked_mul(64).and_then(|base| base.checked_add(lz)) else {
             return Err(NavWorldError::InvalidFreeMapRow {
-                path: path.clone(),
+                path,
                 line: index + 1,
                 value: row.to_owned(),
             });

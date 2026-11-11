@@ -146,7 +146,16 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let facts = selected.quest_identity().expect("selected quest facts");
     let quests = QuestSource { facts };
-    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None, None).0
+    derive_transports_with_audit(
+        fx.path(),
+        &defs,
+        &collision,
+        None,
+        Some(&quests),
+        None,
+        None,
+    )
+    .0
 }
 
 struct ExactSignals(Vec<(&'static str, &'static str, i32)>, EvidenceStamp);

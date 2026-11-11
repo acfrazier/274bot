@@ -23,6 +23,27 @@ use super::{
     dir_delta, door_dir, edge_ticks, extra_ticks, in_world_box, opposite, straight_door_landing,
 };
 
+/// One placed entry and its legacy comparison inputs.
+#[derive(Clone, Copy)]
+pub(super) struct CandidateEntry<'a> {
+    /// Selected location type.
+    pub(super) loc_type: i32,
+    /// Actual map placement.
+    pub(super) placement: &'a Placement,
+    /// Wall or ladder projection.
+    pub(super) role_name: &'a str,
+    /// Crossing direction, when this is a wall.
+    pub(super) direction: Option<DoorDir>,
+    /// Player start tile, when fixed by the crossing.
+    pub(super) stand: Option<WorldTile>,
+    /// Whether the legacy stage-door producer owns this entry.
+    pub(super) stage_owned: bool,
+    /// Existing producer's handler description.
+    pub(super) legacy_handler: &'a str,
+    /// Existing edges for this entry.
+    pub(super) baseline: &'a [TransportEdge],
+}
+
 #[derive(Serialize)]
 pub(super) struct NavShadowReport {
     schema: u8,
@@ -165,6 +186,8 @@ struct CandidateSummary {
     landing: Option<TileSummary>,
     covered: bool,
     selected: bool,
+    conditions: Vec<ConditionSummary>,
+    ticks: Option<[u32; 2]>,
     edge: Option<EdgeSummary>,
     rejection: Option<String>,
     blocked_by: Vec<RivalSummary>,
@@ -345,35 +368,39 @@ impl NavShadow {
                             };
                             if !self.has_entry(loc_type, &placement, Some(stand)) {
                                 self.run_candidate(
-                                    loc_type,
-                                    &placement,
-                                    "wall",
-                                    Some(direction),
-                                    Some(stand),
-                                    false,
-                                    "machine-only scripted-door entry",
-                                    &[],
+                                    CandidateEntry {
+                                        loc_type,
+                                        placement: &placement,
+                                        role_name: "wall",
+                                        direction: Some(direction),
+                                        stand: Some(stand),
+                                        stage_owned: false,
+                                        legacy_handler: "machine-only scripted-door entry",
+                                        baseline: &[],
+                                    },
                                     collision,
                                     observable,
                                 );
                             }
                         }
                     }
-                    LocShape::CENTREPIECE_STRAIGHT | LocShape::CENTREPIECE_DIAGONAL => {
-                        if !self.has_entry(loc_type, &placement, None) {
-                            self.run_candidate(
+                    LocShape::CENTREPIECE_STRAIGHT | LocShape::CENTREPIECE_DIAGONAL
+                        if !self.has_entry(loc_type, &placement, None) =>
+                    {
+                        self.run_candidate(
+                            CandidateEntry {
                                 loc_type,
-                                &placement,
-                                "ladder",
-                                None,
-                                None,
-                                false,
-                                "machine-only scripted-door entry",
-                                &[],
-                                collision,
-                                observable,
-                            );
-                        }
+                                placement: &placement,
+                                role_name: "ladder",
+                                direction: None,
+                                stand: None,
+                                stage_owned: false,
+                                legacy_handler: "machine-only scripted-door entry",
+                                baseline: &[],
+                            },
+                            collision,
+                            observable,
+                        );
                     }
                     _ => {}
                 }
@@ -467,12 +494,7 @@ impl NavShadow {
                     "paths" => {
                         entry_report.execution.paths = failure.count;
                         self.peaks.paths.push(entry_measurement(
-                            &self.program,
-                            -1,
-                            0,
-                            "procedure",
-                            None,
-                            Some(script_id),
+                            &entry_report,
                             failure.count,
                             true,
                         ));
@@ -480,12 +502,7 @@ impl NavShadow {
                     "instructions" => {
                         entry_report.execution.instructions = failure.count;
                         self.peaks.instructions.push(entry_measurement(
-                            &self.program,
-                            -1,
-                            0,
-                            "procedure",
-                            None,
-                            Some(script_id),
+                            &entry_report,
                             failure.count,
                             true,
                         ));
@@ -493,12 +510,7 @@ impl NavShadow {
                     "bytes" => {
                         entry_report.execution.bytes = failure.count;
                         self.peaks.bytes.push(entry_measurement(
-                            &self.program,
-                            -1,
-                            0,
-                            "procedure",
-                            None,
-                            Some(script_id),
+                            &entry_report,
                             failure.count,
                             true,
                         ));
@@ -507,36 +519,17 @@ impl NavShadow {
                 }
             }
             Ok(run) => {
-                self.peaks.paths.push(entry_measurement(
-                    &self.program,
-                    -1,
-                    0,
-                    "procedure",
-                    None,
-                    Some(script_id),
-                    run.stats.paths,
-                    false,
-                ));
+                self.peaks
+                    .paths
+                    .push(entry_measurement(&entry_report, run.stats.paths, false));
                 self.peaks.instructions.push(entry_measurement(
-                    &self.program,
-                    -1,
-                    0,
-                    "procedure",
-                    None,
-                    Some(script_id),
+                    &entry_report,
                     run.stats.instructions,
                     false,
                 ));
-                self.peaks.bytes.push(entry_measurement(
-                    &self.program,
-                    -1,
-                    0,
-                    "procedure",
-                    None,
-                    Some(script_id),
-                    run.stats.bytes,
-                    false,
-                ));
+                self.peaks
+                    .bytes
+                    .push(entry_measurement(&entry_report, run.stats.bytes, false));
                 let transfer = transfer_summary(run.transfers);
                 let assertions = transfer_assertions(&run);
                 entry_report.execution = ExecutionReport {
@@ -567,17 +560,19 @@ impl NavShadow {
     /// Run one placed OPLOC1 entry and compare its projected candidates with the bake.
     pub(super) fn run_candidate(
         &mut self,
-        loc_type: i32,
-        placement: &Placement,
-        role_name: &str,
-        direction: Option<DoorDir>,
-        stand: Option<WorldTile>,
-        stage_owned: bool,
-        legacy_handler: &str,
-        baseline: &[TransportEdge],
+        candidate: CandidateEntry<'_>,
         collision: &WorldCollision,
         observable: &super::ObservableGates,
     ) {
+        let CandidateEntry {
+            loc_type,
+            placement,
+            role_name,
+            stand,
+            stage_owned,
+            legacy_handler,
+            ..
+        } = candidate;
         let Some(placed_id) = self
             .world
             .placements(loc_type)
@@ -615,7 +610,7 @@ impl NavShadow {
             return;
         };
         let Some(script_source) = entry_report.handler_source.as_deref() else {
-            entry_report.execution.status = "lookup returned a missing script".to_owned();
+            "lookup returned a missing script".clone_into(&mut entry_report.execution.status);
             self.report.entries.push(entry_report);
             return;
         };
@@ -635,89 +630,43 @@ impl NavShadow {
                 match failure.bound {
                     "paths" => {
                         entry_report.execution.paths = value;
-                        self.peaks.paths.push(entry_measurement(
-                            &self.program,
-                            loc_type,
-                            placed_id.0,
-                            role_name,
-                            stand,
-                            Some(script_id),
-                            value,
-                            true,
-                        ));
+                        self.peaks
+                            .paths
+                            .push(entry_measurement(&entry_report, value, true));
                     }
                     "instructions" => {
                         entry_report.execution.instructions = value;
-                        self.peaks.instructions.push(entry_measurement(
-                            &self.program,
-                            loc_type,
-                            placed_id.0,
-                            role_name,
-                            stand,
-                            Some(script_id),
-                            value,
-                            true,
-                        ));
+                        self.peaks
+                            .instructions
+                            .push(entry_measurement(&entry_report, value, true));
                     }
                     "bytes" => {
                         entry_report.execution.bytes = value;
-                        self.peaks.bytes.push(entry_measurement(
-                            &self.program,
-                            loc_type,
-                            placed_id.0,
-                            role_name,
-                            stand,
-                            Some(script_id),
-                            value,
-                            true,
-                        ));
+                        self.peaks
+                            .bytes
+                            .push(entry_measurement(&entry_report, value, true));
                     }
                     _ => {}
                 }
             }
             Ok(run) => {
-                self.peaks.paths.push(entry_measurement(
-                    &self.program,
-                    loc_type,
-                    placed_id.0,
-                    role_name,
-                    stand,
-                    Some(script_id),
-                    run.stats.paths,
-                    false,
-                ));
+                self.peaks
+                    .paths
+                    .push(entry_measurement(&entry_report, run.stats.paths, false));
                 self.peaks.instructions.push(entry_measurement(
-                    &self.program,
-                    loc_type,
-                    placed_id.0,
-                    role_name,
-                    stand,
-                    Some(script_id),
+                    &entry_report,
                     run.stats.instructions,
                     false,
                 ));
-                self.peaks.bytes.push(entry_measurement(
-                    &self.program,
-                    loc_type,
-                    placed_id.0,
-                    role_name,
-                    stand,
-                    Some(script_id),
-                    run.stats.bytes,
-                    false,
-                ));
+                self.peaks
+                    .bytes
+                    .push(entry_measurement(&entry_report, run.stats.bytes, false));
                 let transfer = transfer_summary(run.transfers);
                 let assertions = transfer_assertions(&run);
                 let candidates = self.candidates(
                     &run,
-                    loc_type,
-                    placement,
+                    candidate,
                     placed_id,
-                    role_name,
-                    direction,
-                    stand,
-                    stage_owned,
-                    baseline,
                     collision,
                     observable,
                     script_source,
@@ -750,18 +699,21 @@ impl NavShadow {
     fn candidates(
         &mut self,
         run: &Run,
-        loc_type: i32,
-        placement: &Placement,
+        candidate: CandidateEntry<'_>,
         placed_id: PlacedId,
-        role_name: &str,
-        direction: Option<DoorDir>,
-        stand: Option<WorldTile>,
-        stage_owned: bool,
-        baseline: &[TransportEdge],
         collision: &WorldCollision,
         observable: &super::ObservableGates,
         handler_source: &str,
     ) -> Vec<CandidateSummary> {
+        let CandidateEntry {
+            loc_type,
+            placement,
+            role_name,
+            direction,
+            stand,
+            stage_owned,
+            ..
+        } = candidate;
         let at = WorldTile {
             x: placement.x,
             z: placement.z,
@@ -784,6 +736,8 @@ impl NavShadow {
                 landing: landing.map(|(tile, _)| tile_summary(tile)),
                 covered: false,
                 selected: is_selected(run, path, &self.program, &self.worn_slots, observable),
+                conditions: Vec::new(),
+                ticks: None,
                 edge: None,
                 rejection: None,
                 blocked_by: Vec::new(),
@@ -851,15 +805,26 @@ impl NavShadow {
                 results.push(row);
                 continue;
             }
+            let generalized = run.generalise(index, same, |condition| {
+                condition_order(run, condition, &self.program, &self.worn_slots, observable)
+            });
+            row.conditions = generalized
+                .iter()
+                .map(|condition| condition_summary(condition, run, &self.program))
+                .collect();
+            row.ticks = Some(
+                run.rivals(&generalized)
+                    .iter()
+                    .fold([path.ticks.min, path.ticks.max], |range, rival| {
+                        [range[0].min(rival.ticks.min), range[1].max(rival.ticks.max)]
+                    }),
+            );
             if !row.selected {
                 row.rejection =
                     Some("candidate is not selected by the legacy threshold rule".to_owned());
                 results.push(row);
                 continue;
             }
-            let generalized = run.generalise(index, same, |condition| {
-                condition_order(run, condition, &self.program, &self.worn_slots, observable)
-            });
             let mut needs = Needs::default();
             let mut fields_complete = true;
             for condition in &generalized {
@@ -893,7 +858,7 @@ impl NavShadow {
             let mut edge = gated_edge(kind, loc_type, at, landing, needs.clone());
             if let Some(direction) = direction {
                 edge.dir = Some(direction);
-                edge.open_loc_id = opened_type(path, LocObj::Placed(placed_id), loc_type);
+                edge.open_loc_id = opened_type(&path.effects, LocObj::Placed(placed_id), loc_type);
             } else {
                 let relative_safe =
                     delta.is_some() && needs == Needs::default() && relative_effects_safe(path);
@@ -925,11 +890,8 @@ impl NavShadow {
         }
         if stage_owned {
             self.compare_stand_edges(
-                loc_type,
+                candidate,
                 placed_id,
-                stand,
-                direction,
-                baseline,
                 &projected_edges,
                 &results,
                 handler_source,
@@ -940,15 +902,19 @@ impl NavShadow {
 
     fn compare_stand_edges(
         &mut self,
-        loc_type: i32,
+        candidate: CandidateEntry<'_>,
         placed_id: PlacedId,
-        stand: Option<WorldTile>,
-        direction: Option<DoorDir>,
-        baseline: &[TransportEdge],
         candidates: &[(usize, TransportEdge)],
         results: &[CandidateSummary],
         handler_source: &str,
     ) {
+        let CandidateEntry {
+            loc_type,
+            stand,
+            direction,
+            baseline,
+            ..
+        } = candidate;
         let mut relevant: Vec<&TransportEdge> = baseline
             .iter()
             .filter(|edge| {
@@ -1043,11 +1009,6 @@ impl NavShadow {
         };
         serde_json::to_string_pretty(&self.report)
     }
-
-    #[cfg(test)]
-    pub(super) fn world(&self) -> &NavWorld {
-        &self.world
-    }
 }
 
 fn empty_execution(status: &str) -> ExecutionReport {
@@ -1064,26 +1025,16 @@ fn empty_execution(status: &str) -> ExecutionReport {
     }
 }
 
-fn entry_measurement(
-    program: &Program,
-    loc_type: i32,
-    placed_id: u32,
-    role: &str,
-    stand: Option<WorldTile>,
-    script_id: Option<rs2vm::ScriptId>,
-    value: u64,
-    bound_reached: bool,
-) -> EntryMeasurement {
-    let script = script_id.and_then(|id| program.script(id));
+fn entry_measurement(entry: &EntryReport, value: u64, bound_reached: bool) -> EntryMeasurement {
     EntryMeasurement {
         value,
-        loc_type,
-        placed_id,
-        handler_script: script_id.map(|id| id.0),
-        handler_name: script.map(|script| script.name.to_string()),
-        handler_source: script.map(|script| script.source.to_string()),
-        role: role.to_owned(),
-        stand: stand.map(tile_summary),
+        loc_type: entry.loc_type,
+        placed_id: entry.placed_id,
+        handler_script: entry.handler_script,
+        handler_name: entry.handler_name.clone(),
+        handler_source: entry.handler_source.clone(),
+        role: entry.role.clone(),
+        stand: entry.stand,
         bound_reached,
     }
 }
@@ -1101,18 +1052,20 @@ fn transfer_summary(audit: rs2vm::machine::TransferAudit) -> TransferSummary {
 
 fn transfer_assertions(run: &Run) -> TransferAssertions {
     let unsupported_prefix_count_matches = run.paths.iter().all(|path| {
-        (path.transfers.unsupported_prefixes > 0)
-            == matches!(path.end, End::Unsupported(_))
+        (path.transfers.unsupported_prefixes > 0) == matches!(path.end, End::Unsupported(_))
     });
-    let each_input_pause_was_cancelled = run.paths.iter().all(|path| {
-        (path.transfers.cancellations > 0) == matches!(path.end, End::AwaitingInput)
-    });
-    let each_loop_summary_has_pre_exit_allowance = run.paths.iter().all(|path| {
-        path.transfers.loop_allowance_before_exit >= path.transfers.loop_summaries
-    });
-    let automatic_closes_do_not_exceed_suspensions = run.paths.iter().all(|path| {
-        path.transfers.automatic_closes <= path.transfers.suspensions
-    });
+    let each_input_pause_was_cancelled = run
+        .paths
+        .iter()
+        .all(|path| (path.transfers.cancellations > 0) == matches!(path.end, End::AwaitingInput));
+    let each_loop_summary_has_pre_exit_allowance = run
+        .paths
+        .iter()
+        .all(|path| path.transfers.loop_allowance_before_exit >= path.transfers.loop_summaries);
+    let automatic_closes_do_not_exceed_suspensions = run
+        .paths
+        .iter()
+        .all(|path| path.transfers.automatic_closes <= path.transfers.suspensions);
     TransferAssertions {
         unsupported_prefix_count_matches,
         each_input_pause_was_cancelled,
@@ -1139,13 +1092,7 @@ fn path_summary(index: usize, path: &PathResult, run: &Run, program: &Program) -
         conditions: path
             .conds
             .iter()
-            .map(|condition| ConditionSummary {
-                predicate: predicate_summary(&condition.pred, run, program),
-                truth: condition.truth,
-                class: format!("{:?}", condition.class),
-                site: site_summary(condition.site, program),
-                choice: condition.choice,
-            })
+            .map(|condition| condition_summary(condition, run, program))
             .collect(),
         effects: path
             .effects
@@ -1172,6 +1119,16 @@ fn path_summary(index: usize, path: &PathResult, run: &Run, program: &Program) -
             .iter()
             .map(|value| format!("{value:?}"))
             .collect(),
+    }
+}
+
+fn condition_summary(condition: &Cond, run: &Run, program: &Program) -> ConditionSummary {
+    ConditionSummary {
+        predicate: predicate_summary(&condition.pred, run, program),
+        truth: condition.truth,
+        class: format!("{:?}", condition.class),
+        site: site_summary(condition.site, program),
+        choice: condition.choice,
     }
 }
 
@@ -1447,15 +1404,12 @@ fn condition_needs(
     let mut needs = Needs::default();
     match atom.kind {
         rs2vm::machine::AtomKind::Varp(id) => {
-            if let Some(window) = observable.stage_window(i32::from(id.0)) {
+            if let Some(window) = observable.signal_window(i32::from(id.0)) {
                 let window = stage_window_requirement(window, effective, constant)?;
                 needs.quests.push(api::selected::QuestGate::Window(window));
                 return Some(needs);
             }
-            let varp = program.packs.varps.get(&id)?;
-            if !varp.transmit {
-                return None;
-            }
+            program.packs.varps.get(&id)?;
             let minimum = lower_bound(effective, constant)?;
             if minimum > 0 {
                 needs.varps.push((i32::from(id.0), minimum));
@@ -1645,7 +1599,7 @@ fn selection_truth(
     use rs2vm::machine::{AtomKind, CmpOp};
     match atom.kind {
         AtomKind::Varp(id)
-            if observable.stage_window(i32::from(id.0)).is_some()
+            if observable.signal_window(i32::from(id.0)).is_some()
                 && operator == CmpOp::Eq
                 && constant != 0 =>
         {
@@ -1659,11 +1613,11 @@ fn selection_truth(
         AtomKind::Members if operator == CmpOp::Eq && constant == 0 => Some(false),
         AtomKind::InvSlot { inv, slot }
             if inventory_is_worn(program, inv)
-                && operator == CmpOp::Eq
+                && matches!(operator, CmpOp::Eq | CmpOp::Ne)
                 && constant > 0
                 && worn_slots.get(&constant) == Some(&slot) =>
         {
-            Some(true)
+            Some(operator == CmpOp::Eq)
         }
         _ => None,
     }
@@ -1692,47 +1646,66 @@ fn opened_type(
     target: LocObj,
     closed_id: i32,
 ) -> Option<i32> {
-    let closed = effects.iter().enumerate().rev().find_map(|(index, record)| {
-        match &record.effect {
+    let closed = effects
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, record)| match &record.effect {
             Effect::Loc {
-                kind: LocKind::Del,
+                kind: kind @ (LocKind::Del | LocKind::Change),
                 obj,
                 ty,
                 tile,
                 shape,
                 angle,
                 ..
-            } if *obj == target && ty.0 == closed_id => Some((index, *tile, *shape, *angle)),
+            } if *obj == target && (*kind == LocKind::Change || ty.0 == closed_id) => {
+                Some((index, *tile, *shape, *angle))
+            }
             _ => None,
-        }
-    });
-    if let Some((delete_index, target_coord, shape, angle)) = closed {
-        if let Some(open_coord) = open_leaf_coord(target_coord, shape, angle) {
-            let mut opened_type = None;
-            for record in &effects[delete_index + 1..] {
-                if let Effect::Loc {
-                    kind: LocKind::Add,
-                    obj: LocObj::Created(_),
-                    ty,
-                    tile,
-                    ..
-                } = &record.effect
-                {
-                    if *tile != open_coord || ty.0 == closed_id {
-                        continue;
-                    }
-                    match opened_type {
-                        Some(previous) if previous != ty.0 => return None,
-                        None => opened_type = Some(ty.0),
-                        Some(_) => {}
-                    }
+        });
+    if let Some((mutation_index, target_coord, shape, angle)) = closed {
+        let open_coord = open_leaf_coord(target_coord, shape, angle)?;
+        let mirrored_coord = mirrored_open_leaf_coord(target_coord, shape, angle);
+        let mut opened_type = None;
+        for record in &effects[mutation_index + 1..] {
+            if let Effect::Loc {
+                kind: LocKind::Add,
+                obj: LocObj::Created(_),
+                ty,
+                tile,
+                ..
+            } = &record.effect
+            {
+                if *tile != open_coord && Some(*tile) != mirrored_coord {
+                    continue;
+                }
+                if ty.0 == closed_id {
+                    return None;
+                }
+                match opened_type {
+                    Some(previous) if previous != ty.0 => return None,
+                    None => opened_type = Some(ty.0),
+                    Some(_) => {}
                 }
             }
-            if opened_type.is_some() {
-                return opened_type;
-            }
         }
-        return effects[delete_index + 1..]
+        if opened_type.is_some() {
+            return opened_type;
+        }
+        if effects[mutation_index + 1..].iter().any(|record| {
+            matches!(
+                record.effect,
+                Effect::Loc {
+                    kind: LocKind::Add,
+                    obj: LocObj::Created(_),
+                    ..
+                }
+            )
+        }) {
+            return None;
+        }
+        return effects[mutation_index..]
             .iter()
             .rev()
             .find_map(|record| match &record.effect {
@@ -1742,21 +1715,22 @@ fn opened_type(
                     ty,
                     tile,
                     ..
-                } if *obj == target && *tile == target_coord && ty.0 != closed_id => {
-                    Some(ty.0)
-                }
+                } if *obj == target && *tile == target_coord && ty.0 != closed_id => Some(ty.0),
                 _ => None,
             });
     }
-    effects.iter().rev().find_map(|record| match &record.effect {
-        Effect::Loc {
-            kind: LocKind::Add | LocKind::Change,
-            obj,
-            ty,
-            ..
-        } if *obj == target && ty.0 != closed_id => Some(ty.0),
-        _ => None,
-    })
+    effects
+        .iter()
+        .rev()
+        .find_map(|record| match &record.effect {
+            Effect::Loc {
+                kind: LocKind::Add | LocKind::Change,
+                obj,
+                ty,
+                ..
+            } if *obj == target && ty.0 != closed_id => Some(ty.0),
+            _ => None,
+        })
 }
 
 // `doubledoors.rs2:133-141` adds the inviswall at `loc_coord`, then the
@@ -1770,6 +1744,21 @@ fn open_leaf_coord(tile: Coord, shape: u8, angle: u8) -> Option<Coord> {
         _ => return None,
     };
     let (dx, dz) = dir_delta(direction);
+    Some(tile.offset(dx, 0, dz))
+}
+
+// `door_procs.rs2:41-47` supplies the mirrored metal-gate leaf offset.
+fn mirrored_open_leaf_coord(tile: Coord, shape: u8, angle: u8) -> Option<Coord> {
+    if i32::from(shape) != LocShape::WALL_STRAIGHT {
+        return None;
+    }
+    let (dx, dz) = match angle {
+        0 => (-1, -1),
+        1 => (-1, 1),
+        2 => (1, 1),
+        3 => (1, -1),
+        _ => return None,
+    };
     Some(tile.offset(dx, 0, dz))
 }
 
@@ -2089,8 +2078,22 @@ mod tests {
             ),
             loc_effect(LocKind::Del, right, 90, right_coord, straight, 2),
             loc_effect(LocKind::Add, right, 83, right_coord, straight, 2),
-            loc_effect(LocKind::Add, LocObj::Created(1), 1_562, left_open, straight, 3),
-            loc_effect(LocKind::Add, LocObj::Created(2), 1_563, right_open, straight, 1),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(1),
+                1_562,
+                left_open,
+                straight,
+                3,
+            ),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(2),
+                1_563,
+                right_open,
+                straight,
+                1,
+            ),
         ];
 
         assert_eq!(opened_type(&effects, left, 89), Some(1_562));
@@ -2102,22 +2105,73 @@ mod tests {
         ];
         assert_eq!(opened_type(&direct_change, left, 89), Some(1_562));
 
+        let changed_inviswall = vec![
+            loc_effect(LocKind::Change, left, 83, left_coord, straight, 0),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_562,
+                left_open,
+                straight,
+                3,
+            ),
+        ];
+        assert_eq!(opened_type(&changed_inviswall, left, 89), Some(1_562));
+
+        let mirrored = vec![
+            loc_effect(LocKind::Change, left, 83, left_coord, straight, 0),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_563,
+                left_coord.offset(-1, 0, -1),
+                straight,
+                1,
+            ),
+        ];
+        assert_eq!(opened_type(&mirrored, left, 89), Some(1_563));
+        let same_type_leaf = vec![
+            loc_effect(LocKind::Change, left, 83, left_coord, straight, 0),
+            loc_effect(LocKind::Add, LocObj::Created(0), 89, left_open, straight, 1),
+        ];
+        assert_eq!(opened_type(&same_type_leaf, left, 89), None);
+
         let ambiguous = vec![
             loc_effect(LocKind::Del, left, 89, left_coord, straight, 0),
             loc_effect(LocKind::Add, left, 83, left_coord, straight, 0),
-            loc_effect(LocKind::Add, LocObj::Created(0), 1_562, left_open, straight, 3),
-            loc_effect(LocKind::Add, LocObj::Created(1), 1_563, left_open, straight, 3),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_562,
+                left_open,
+                straight,
+                3,
+            ),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(1),
+                1_563,
+                left_open,
+                straight,
+                3,
+            ),
         ];
         assert_eq!(opened_type(&ambiguous, left, 89), None);
 
         let unsupported = vec![
             loc_effect(LocKind::Del, left, 89, left_coord, u8::MAX, 0),
             loc_effect(LocKind::Add, left, 83, left_coord, u8::MAX, 0),
-            loc_effect(LocKind::Add, LocObj::Created(0), 1_562, left_open, straight, 3),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_562,
+                left_open,
+                straight,
+                3,
+            ),
         ];
         assert_eq!(opened_type(&unsupported, left, 89), None);
     }
-
 
     #[test]
     fn typed_unknown_and_near_positions_are_rejected_as_landings() {
@@ -2151,7 +2205,7 @@ mod tests {
                 varp: "test_progress".to_owned(),
                 varp_id: 42,
                 complete: 10,
-                colour_authoritative: true,
+                colour_authoritative: false,
                 stage_domain: Some(InclusiveRange {
                     min: Some(0),
                     max: Some(20),
@@ -2178,6 +2232,8 @@ mod tests {
             Path::new("missing-nav-shadow-test-content"),
             Some(&source),
         );
+        assert!(observable.stage_window(42).is_none());
+        assert!(observable.signal_window(42).is_some());
         let site = Site {
             script: ScriptId(1),
             pc: 2,
@@ -2311,16 +2367,19 @@ mod tests {
             site,
             choice: 1,
         };
-        let needs_for = |condition: &Cond| {
-            condition_needs(&run, condition, &program, &worn_slots, &observable)
-        };
+        let needs_for =
+            |condition: &Cond| condition_needs(&run, condition, &program, &worn_slots, &observable);
 
-        assert!(needs_for(&condition_for(0, false))
-            .expect("members account takes the false arm of members == 0")
-            .members);
-        assert!(needs_for(&condition_for(1, true))
-            .expect("members account takes the true arm of members == 1")
-            .members);
+        assert!(
+            needs_for(&condition_for(0, false))
+                .expect("members account takes the false arm of members == 0")
+                .members
+        );
+        assert!(
+            needs_for(&condition_for(1, true))
+                .expect("members account takes the true arm of members == 1")
+                .members
+        );
         assert!(needs_for(&condition_for(0, true)).is_none());
         assert!(needs_for(&condition_for(1, false)).is_none());
     }
@@ -2331,6 +2390,52 @@ mod tests {
         assert_eq!(inventory_requirement(CmpOp::Ne, 5), Some((6, false)));
         assert_eq!(lower_bound(CmpOp::Ne, i32::MAX), None);
         assert_eq!(inventory_requirement(CmpOp::Ne, i32::MAX), None);
+    }
+
+    #[test]
+    fn worn_slot_not_equal_false_arm_projects_the_required_object() {
+        let site = Site::default();
+        let run = Run {
+            paths: Vec::new(),
+            arena: Arena {
+                atoms: vec![Atom {
+                    kind: AtomKind::InvSlot { inv: 7, slot: 3 },
+                    epoch: 0,
+                    nth: 0,
+                    site,
+                    class: CondClass::Requirement,
+                    bounds: (-1, i32::MAX),
+                }],
+                exprs: vec![Expr::Atom(AtomId(0))],
+                near: Vec::new(),
+            },
+            stats: RunStats::default(),
+            transfers: TransferAudit::default(),
+        };
+        let mut program = Program::default();
+        program.packs.invs.insert(7, "worn".into());
+        let worn_slots = HashMap::from([(1_139, 3)]);
+        let observable = super::super::ObservableGates::from_content(
+            Path::new("missing-nav-shadow-test-content"),
+            None,
+        );
+        let condition = Cond {
+            pred: Pred::Cmp {
+                lhs: Value::Sym(ExprId(0)),
+                op: CmpOp::Ne,
+                rhs: Value::Known(1_139),
+            },
+            truth: false,
+            class: CondClass::Requirement,
+            site,
+            choice: 0,
+        };
+        let needs = condition_needs(&run, &condition, &program, &worn_slots, &observable)
+            .expect("the false arm requires the configured worn object");
+        assert_eq!(needs.worn, vec![(1_139, 1)]);
+        assert!(
+            condition_needs(&run, &condition, &program, &HashMap::new(), &observable).is_none()
+        );
     }
 }
 #[cfg(test)]

@@ -664,9 +664,9 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            paths: 65_536,
-            instructions: 4_000_000,
-            bytes: 64 * 1024 * 1024,
+            paths: 2_048,
+            instructions: 65_536,
+            bytes: 16 * 1024 * 1024,
             forks_per_site: 64,
         }
     }

@@ -159,8 +159,7 @@ pub(crate) fn derive_transports_for_bake(
     content_root: &Path,
     loc_defs: &LocDefs,
     collision: &WorldCollision,
-    configured_door_ids: &HashSet<i32>,
-    parsed_door_configs: &[PathBuf],
+    door_configs: (&HashSet<i32>, &[PathBuf]),
     quests: Option<&QuestSource<'_>>,
     game_data: &api::game_data::SelectedGameData,
     shadow: Option<NavShadow>,
@@ -170,7 +169,7 @@ pub(crate) fn derive_transports_for_bake(
         content_root,
         loc_defs,
         collision,
-        Some((configured_door_ids, parsed_door_configs)),
+        Some(door_configs),
         quests,
         Some(game_data),
         shadow.as_mut(),
@@ -201,7 +200,7 @@ fn derive_transports_with_audit(
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
     game_data: Option<&api::game_data::SelectedGameData>,
-    mut shadow: Option<&mut NavShadow>,
+    shadow: Option<&mut NavShadow>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
@@ -351,7 +350,7 @@ fn derive_transports_with_audit(
         &gates,
         &mut audit,
         quests,
-        shadow.as_deref_mut(),
+        shadow,
     );
     scripted_climb_edges(
         content_root,
