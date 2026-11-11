@@ -51,8 +51,8 @@ fn run() -> Result<(), String> {
             let status = if is_catalog_dim(&card.name)
                 || card
                     .unloadable
-                    .as_deref()
-                    .is_some_and(|reason| reason.starts_with("dim:"))
+                    .as_ref()
+                    .is_some_and(|reason| !reason.is_import())
             {
                 dim += 1;
                 "dim"
@@ -96,7 +96,7 @@ fn run() -> Result<(), String> {
                 "imported_api_members": imported_api_members,
                 "foreign_helpers": foreign_helpers,
                 "status": status,
-                "block_reason": card.unloadable,
+                "block_reason": card.unloadable.as_ref().map(script_js::UnloadReason::line),
             })
         })
         .collect();

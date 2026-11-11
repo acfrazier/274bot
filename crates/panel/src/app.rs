@@ -3092,7 +3092,11 @@ fn browse_script_card(
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
+                if let Some(reason) = card.unloadable() {
+                    let color = if reason.is_import() { ERROR } else { WARN };
+                    let _color = ui.push_style_color(StyleColor::Text, color);
+                    ui.text_wrapped(reason.line());
+                } else if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
                     ui.text_colored(ERROR, format!("failed {}", failure.stage().as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
