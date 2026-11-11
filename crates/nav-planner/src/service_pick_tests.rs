@@ -507,6 +507,12 @@ fn reference_pack_routes_harpoon_to_harry_from_catherby_and_gerrant_from_port_sa
         let route = result.route().unwrap_or_else(|error| {
             panic!("no routed vendor from {label} {from:?} to {targets:?}: {error:?}")
         });
+        assert_eq!(
+            (route.ticks * 2.0).fract(),
+            0.0,
+            "{label}: a real route is a whole count of half ticks, got {} ticks",
+            route.ticks
+        );
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.access.contains(&route.dest))

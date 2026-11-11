@@ -3249,7 +3249,10 @@ mod bank_pick_capture {
             Some(script::native_bank::ServicePickOutcome::Routed {
                 index: 70,
                 access_tile: chosen,
-                cost: 2,
+                // Three run steps are 1.5 ticks. The old whole-tick cost rounded
+                // this to 2; the route is the same.
+                cost: api::service_pick::RouteCost::from_half_ticks(3),
+                unjudged: 0,
             }),
             "the cheapest route wins even when it is after the former 64-row page"
         );
@@ -3284,11 +3287,64 @@ mod bank_pick_capture {
             Some(script::native_bank::ServicePickOutcome::Routed {
                 index: 2,
                 access_tile: near_access,
-                cost: 2,
+                cost: api::service_pick::RouteCost::from_ticks(2),
+                unjudged: 0,
             }),
             "the closed one-tick quest gate cannot beat the nearer reachable keeper"
         );
         slot.stop();
+    }
+
+    #[test]
+    fn service_pick_cost_keeps_half_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::RouteCost;
+        let from = tile(2, 2);
+        // One run step is half a tick. The old whole-tick cost rounded 0.5 and
+        // 1.0 ticks to the same value, which made a shop and a spawn tie.
+        for (steps, half_ticks) in [(1, 1), (2, 2), (3, 3), (4, 4)] {
+            let access = tile(2, 2 + steps);
+            let facts = shop_facts_with_access([(tile(2, 3 + steps), vec![access])]);
+            let (mut slot, input) = native_service_input(shop_request(facts, vec![0], from));
+            let world = world(false);
+            let (_, worker) = service_worker(&world, input, WorldState::empty(), 1, None);
+            assert_eq!(
+                finish_service_worker(worker).service_outcome,
+                Some(script::native_bank::ServicePickOutcome::Routed {
+                    index: 0,
+                    access_tile: access,
+                    cost: RouteCost::from_half_ticks(half_ticks),
+                    unjudged: 0,
+                }),
+                "{steps} run steps cost {half_ticks} half ticks"
+            );
+            slot.stop();
+        }
+        assert_eq!(
+            super::super::route_cost_from_ticks(0.5),
+            Some(RouteCost::from_half_ticks(1))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(1.0),
+            Some(RouteCost::from_half_ticks(2))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(2.5),
+            Some(RouteCost::from_half_ticks(5))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(0.0),
+            Some(RouteCost::ZERO)
+        );
+        for refused in [f64::NAN, f64::INFINITY, -0.5, f64::from(u32::MAX)] {
+            assert_eq!(
+                super::super::route_cost_from_ticks(refused),
+                None,
+                "{refused} is not a route cost"
+            );
+        }
     }
 
     #[test]
@@ -3338,6 +3394,7 @@ mod bank_pick_capture {
         let result = finish_service_worker(worker);
         let Some(script::native_bank::ServicePickOutcome::NoPath {
             unresolved: Some(unresolved),
+            ..
         }) = result.service_outcome
         else {
             panic!("closed quest-gated route reports established NoPath with its diagnostic");
@@ -3384,7 +3441,10 @@ mod bank_pick_capture {
         ));
         assert_eq!(
             finish_service_worker(worker).service_outcome,
-            Some(script::native_bank::ServicePickOutcome::NoPath { unresolved: None })
+            Some(script::native_bank::ServicePickOutcome::NoPath {
+                unresolved: None,
+                unjudged: 0,
+            })
         );
         slot.stop();
     }

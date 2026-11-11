@@ -8,7 +8,7 @@ use super::{BlockReason, Looked, VendorOutcome, VendorTried};
 use crate::native::ActionError;
 use crate::native_bank::ServicePickOutcome;
 use api::game_data::SelectedGameData;
-use api::service_pick::{ResolvedShopKeeper, ShopKeeperFacts};
+use api::service_pick::{ResolvedShopKeeper, RouteCost, ShopKeeperFacts};
 use api::snapshot::WorldTile;
 use std::sync::Arc;
 
@@ -21,8 +21,8 @@ pub enum VendorDecision {
         index: u16,
         /// Nav's selected standable neighbour of the keeper footprint.
         access_tile: WorldTile,
-        /// The complete-domain route's accumulated tick cost.
-        cost: u32,
+        /// The complete-domain route's accumulated cost in half ticks.
+        cost: RouteCost,
     },
     /// Repeat the same eligible domain once; reachability is still undecided.
     Retry,
@@ -103,6 +103,7 @@ pub fn choose_vendor(
             index,
             access_tile,
             cost,
+            ..
         } => {
             let row = facts
                 .rows()
@@ -112,7 +113,9 @@ pub fn choose_vendor(
             record_vendor(
                 looked,
                 row.keeper.keeper_id,
-                VendorOutcome::Routed { cost: *cost },
+                VendorOutcome::Routed {
+                    cost: cost.ticks_ceil(),
+                },
             );
             VendorDecision::Go {
                 index: *index,
@@ -276,7 +279,8 @@ mod tests {
             &ServicePickOutcome::Routed {
                 index: 1,
                 access_tile: tile(19, 20),
-                cost: 7,
+                cost: RouteCost::from_half_ticks(13),
+                unjudged: 0,
             },
             &mut retry,
             &mut looked,
@@ -287,7 +291,7 @@ mod tests {
             VendorDecision::Go {
                 index: 1,
                 access_tile: tile(19, 20),
-                cost: 7
+                cost: RouteCost::from_half_ticks(13)
             }
         );
         assert_eq!(
@@ -298,7 +302,7 @@ mod tests {
         assert_eq!(
             looked.vendors[0].unwrap().outcome,
             VendorOutcome::Routed { cost: 7 },
-            "a winning First search proves nothing about unchosen vendors",
+            "a 6.5 tick route reads as 7 ticks in block text; a winning First search proves nothing about unchosen vendors",
         );
         assert!(!retry);
     }
@@ -322,7 +326,8 @@ mod tests {
                     &ServicePickOutcome::Routed {
                         index,
                         access_tile,
-                        cost: 1
+                        cost: RouteCost::from_ticks(1),
+                        unjudged: 0,
                     },
                     &mut false,
                     &mut looked,
@@ -357,7 +362,10 @@ mod tests {
                 choose_vendor(
                     &facts,
                     &[0, 1, 2],
-                    &ServicePickOutcome::NoPath { unresolved: None },
+                    &ServicePickOutcome::NoPath {
+                        unresolved: None,
+                        unjudged: 0
+                    },
                     &mut retry,
                     &mut looked
                 )
@@ -438,7 +446,10 @@ mod tests {
             choose_vendor(
                 &facts,
                 &[0, 1, 2, 3, 4],
-                &ServicePickOutcome::NoPath { unresolved: None },
+                &ServicePickOutcome::NoPath {
+                    unresolved: None,
+                    unjudged: 0,
+                },
                 &mut false,
                 &mut looked,
             )
