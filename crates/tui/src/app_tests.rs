@@ -887,6 +887,16 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     app.settings_state.open = true;
     app.settings_state.row = 8;
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(
+        app.nav.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert!(!app.nav.allow_danger_zones());
+    assert!(
+        app.map_route_through_zones,
+        "the held middle level keeps the Never-level one-shot control"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
     assert!(app.nav.allow_danger_zones());
     assert!(

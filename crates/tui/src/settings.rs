@@ -1532,8 +1532,11 @@ mod tests {
         assert!(nav.allow_teleports());
         assert!(nav.allow_wilderness());
         assert!(nav.allow_bank_fetch());
-        assert!(nav.allow_danger_zones());
-        assert_eq!(nav.danger_level(), frontend_core::DangerLevel::Always);
+        assert!(!nav.allow_danger_zones());
+        assert_eq!(
+            nav.danger_level(),
+            frontend_core::DangerLevel::WhenSurvivable
+        );
         assert!(
             !nav.allow_prereq_dialogue(),
             "the dialogue row toggles the default-on grant off"
