@@ -104,9 +104,11 @@ the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
 Duel rules retain their selected bit positions: an unproved button stays at
 the existing unavailable sentinel 0, which `rule_button` returns as `None`.
 
-Shared extraction retains the 0.2.9 source-join rules. It does not require
-frozen corpus row counts, item IDs, prayer button ranges or display names.
-Missing definitions, duplicate joins and malformed source shapes still fail.
+Shared extraction does not compare packed names or IDs with the decoded
+caches, authored values with source text, or source with copied bodies. It
+does not require frozen corpus row counts, item IDs, prayer button ranges or
+display names. Missing definitions, duplicate joins and malformed source
+shapes still fail.
 
 Regression fixtures must supply the selected facts their consumers require.
 Legacy navigation controls retain the selected revision's Entrana inventory
@@ -175,8 +177,9 @@ Version-1 rows require attack, defence, magic, the signed attack/defence bonus f
 ## Gathering tick facts
 
 Gathering schema 4 requires a `tick_arm` row for every method.
-The extractor checks the reviewed attempt-script families and classifies each
-method as continuing, ending, or not armable. It also records the roll signal,
+The extractor classifies each method as continuing, ending, or not armable.
+Fishing tick values are hand-authored per method ID and are not compared
+with the attempt scripts. It also records the roll signal,
 depletion and delay-drop behavior, the native arm delay, and the animation ids
 resolved from the selected sequence pack.
 Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
@@ -185,8 +188,7 @@ classifications, unknown kinds, and tool rows that are duplicate or incomplete.
 
 Revision 377 resolves woodcutting animations through the selected tool struct's
 `skill_anim` parameter. It separates incompatible mining handlers into distinct
-methods for the same resource. Named fishing entrypoints keep the same
-source-shape checks as the historical loops. Shop keepers come from the
+methods for the same resource. Shop keepers come from the
 selected unpacked NPC definitions. Shop inventories join their unique definitions
 in the selected content tree.
 The 377 run does not rewrite the tracked historical hidden-site catalogue.
@@ -199,8 +201,8 @@ do not enable tick manipulation or change gathering requests by themselves.
 
 The revision 289 core includes a generated `server_ordered` catalog.
 The extractor joins content aliases, decoded interface properties, and the selected engine paths.
-It refuses missing or ambiguous aliases, changed controls, and incorrect interface ancestry.
-The selected font and message animation must prove one banker player page for `bank_open_deposit`.
+It refuses missing or ambiguous aliases and unsupported structures.
+The parsed chat split and the selected message animation must give one banker player page for `bank_open_deposit`.
 If that page is unproved, only this recipe is unavailable.
 Unproved revisions do not inherit revision 289 facts.
 

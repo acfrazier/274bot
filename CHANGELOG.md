@@ -4,6 +4,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 
+## [Unreleased]
+
+### Breaking changes
+
+- 274bot no longer checks that game data, navigation packs and map files
+  match the game content they were built from. If you build from changed
+  game content, regenerate the data from that content; data built from other
+  content can make bots behave wrongly. Release builds still check that the
+  navigation and map files they ship are intact.
+- Map images and the map catalogue saved by 0.2.9 are not reused. Release
+  builds install the shipped map again; other builds rebuild the map images
+  and the catalogue once after you upgrade. This is the only saved data that
+  does not carry over; every other 0.2.9 saved format still loads.
+
 ## [0.2.9] — Unreleased
 
 ### Breaking changes

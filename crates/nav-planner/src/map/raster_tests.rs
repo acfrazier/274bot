@@ -229,7 +229,6 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     std::fs::create_dir_all(&root).unwrap();
     let identity = ImageIdentity {
         revision: 289,
-        content: Digest([0x11; 32]),
         policy: Digest([0x22; 32]),
     };
     write_checkpoint(&root, identity, BakeStage::BaseTerrain, 1, &[]).unwrap();
@@ -244,11 +243,10 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     let mut completed = Vec::new();
     let mut completed_keys = std::collections::BTreeSet::new();
     let mut completed_bytes = 0;
-    let mut sink = AtomicImageTileSink::new(&root, |_: TileKey| None);
-    let payload = sink.write_tile(key, &png).unwrap().unwrap();
+    let mut sink = AtomicImageTileSink::new(&root);
+    assert!(sink.write_tile(key, &png).unwrap());
     complete_tile(
         key,
-        payload,
         &png,
         &mut completed,
         &mut completed_keys,
@@ -261,8 +259,7 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
         initial_checkpoint
     );
 
-    let checkpoint =
-        Checkpoint::decode(&initial_checkpoint, ArtifactIdentity::Image(identity)).unwrap();
+    let checkpoint = Checkpoint::decode(&initial_checkpoint).unwrap();
     assert!(checkpoint.completed.as_slice().is_empty());
     let tile_path = root.join(key.relative_path().unwrap());
     std::fs::write(&tile_path, b"uncheckpointed").unwrap();
@@ -270,10 +267,9 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     let mut resumed = checkpoint.completed.as_slice().to_vec();
     let mut resumed_keys = std::collections::BTreeSet::new();
     let mut resumed_bytes = 0;
-    let payload = sink.write_tile(key, &png).unwrap().unwrap();
+    assert!(sink.write_tile(key, &png).unwrap());
     complete_tile(
         key,
-        payload,
         &png,
         &mut resumed,
         &mut resumed_keys,
@@ -282,11 +278,8 @@ fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
     .unwrap();
     assert_eq!(std::fs::read(&tile_path).unwrap(), png);
     write_checkpoint(&root, identity, BakeStage::BaseTerrain, 1, &resumed).unwrap();
-    let published = Checkpoint::decode(
-        &std::fs::read(root.join("checkpoint.json")).unwrap(),
-        ArtifactIdentity::Image(identity),
-    )
-    .unwrap();
+    let published =
+        Checkpoint::decode(&std::fs::read(root.join("checkpoint.json")).unwrap()).unwrap();
     assert_eq!(published.completed.as_slice(), resumed.as_slice());
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -306,9 +299,7 @@ fn cursor_to_image_plan<S: ImageTileSink<Error = MapError>>(
     clock: &SystemClock,
     cancellation: &SharedCancellation,
 ) -> ImageBakeCursor {
-    let identity = image_identity(input).unwrap();
-    let mut cursor =
-        ImageBakeCursor::new(input, Arc::new(directory.to_path_buf()), identity).unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(directory.to_path_buf())).unwrap();
     for _ in 0..50_000 {
         if cursor.plan().is_some() {
             return cursor;
@@ -364,12 +355,7 @@ fn resume_adopts_only_disk_tiles_that_fully_decode() {
     let cancellation = SharedCancellation::new();
 
     let output = snapshot.output("adopt");
-    let recorded = std::cell::Cell::new(None::<(TileKey, PayloadReceipt)>);
-    let mut sink = AtomicImageTileSink::new(&output, |key| {
-        recorded
-            .get()
-            .and_then(|(recorded_key, receipt)| (key == recorded_key).then_some(receipt))
-    });
+    let mut sink = AtomicImageTileSink::new(&output);
     let mut cursor =
         cursor_to_image_plan(snapshot.input(), &output, &mut sink, &clock, &cancellation);
     let keys: Vec<_> = cursor.plan().unwrap().tiles().collect();
@@ -379,7 +365,6 @@ fn resume_adopts_only_disk_tiles_that_fully_decode() {
         bytes: png.len() as u32,
         sha256: Digest::of(&png),
     };
-    recorded.set(Some((valid, expected)));
     write_existing_tile(&output, valid, &png);
     write_existing_tile(&output, truncated, &png[..png.len() / 2]);
     write_existing_tile(&output, crc, &crc_damaged);
@@ -393,31 +378,6 @@ fn resume_adopts_only_disk_tiles_that_fully_decode() {
         }]
     );
     assert_eq!(cursor.completed_bytes, png.len() as u64);
-
-    let mismatch_output = snapshot.output("adopt-mismatch");
-    let recorded = std::cell::Cell::new(None::<(TileKey, PayloadReceipt)>);
-    let mut sink = AtomicImageTileSink::new(&mismatch_output, |key| {
-        recorded
-            .get()
-            .and_then(|(recorded_key, receipt)| (key == recorded_key).then_some(receipt))
-    });
-    let mut cursor = cursor_to_image_plan(
-        snapshot.input(),
-        &mismatch_output,
-        &mut sink,
-        &clock,
-        &cancellation,
-    );
-    let keys: Vec<_> = cursor.plan().unwrap().tiles().collect();
-    let valid = keys[0];
-    recorded.set(Some((valid, expected)));
-    let other = encode_png(&vec![7u8; TILE_RGBA_BYTES]).unwrap();
-    write_existing_tile(&mismatch_output, valid, &other);
-    write_existing_tile(&mismatch_output, keys[1], b"not a png");
-    finish_cursor_adoption(&mut cursor, &mut sink, &clock, &cancellation);
-    assert!(cursor.completed.is_empty());
-    assert!(cursor.completed_keys.is_empty());
-    assert_eq!(cursor.completed_bytes, 0);
 }
 
 static NEXT_RASTER_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -476,7 +436,7 @@ impl RasterSnapshot {
     }
 
     fn input(&self) -> ClientMapInput<'_> {
-        ClientMapInput::new(289, Digest([0x31; 32]), &self.0, &self.0).unwrap()
+        ClientMapInput::new(289, &self.0, &self.0).unwrap()
     }
 
     fn output(&self, name: &str) -> PathBuf {
@@ -553,7 +513,7 @@ impl MonotonicClock for RasterStepClock {
 }
 
 fn terrain_cell_planner(snapshot: &RasterSnapshot) -> RasterPlanCursor {
-    let mut planner = RasterPlanCursor::new(snapshot.input(), None).unwrap();
+    let mut planner = RasterPlanCursor::new(snapshot.input()).unwrap();
     for _ in 0..10_000 {
         if matches!(planner.phase, RasterPlanPhase::TerrainCell) {
             return planner;
@@ -599,12 +559,7 @@ fn immutable_raster_capacity_cache_matches_exact_accounting() {
 
 fn parent_row_cursor(snapshot: &RasterSnapshot) -> ImageBakeCursor {
     let input = snapshot.input();
-    let mut cursor = ImageBakeCursor::new(
-        input,
-        Arc::new(snapshot.output("parent-rows")),
-        image_identity(input).unwrap(),
-    )
-    .unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(snapshot.output("parent-rows"))).unwrap();
     cursor.planner = None;
     cursor.phase = RasterBakePhase::RasterizeParentRow;
     cursor.rgba = vec![0; TILE_RGBA_BYTES];
@@ -719,15 +674,7 @@ fn image_bake_error_implements_std_error() {
 impl ImageTileSink for TestImageTileSink {
     type Error = TestSinkError;
 
-    fn checkpointed(&mut self, _key: TileKey) -> Option<PayloadReceipt> {
-        None
-    }
-
-    fn write_tile(
-        &mut self,
-        key: TileKey,
-        png: &[u8],
-    ) -> Result<Option<PayloadReceipt>, Self::Error> {
+    fn write_tile(&mut self, key: TileKey, png: &[u8]) -> Result<bool, Self::Error> {
         self.write_attempts += 1;
         if self.fail_once {
             self.fail_once = false;
@@ -735,7 +682,7 @@ impl ImageTileSink for TestImageTileSink {
         }
         if self.backpressure_once {
             self.backpressure_once = false;
-            return Ok(None);
+            return Ok(false);
         }
         let path = self.directory.join(
             key.relative_path()
@@ -743,10 +690,7 @@ impl ImageTileSink for TestImageTileSink {
         );
         atomic_write(&path, png).map_err(|_| TestSinkError::AtomicWrite)?;
         self.writes += 1;
-        Ok(Some(PayloadReceipt {
-            bytes: png.len() as u32,
-            sha256: Digest::of(png),
-        }))
+        Ok(true)
     }
 }
 
@@ -803,8 +747,7 @@ fn image_cursor_retries_tile_write_after_sink_backpressure() {
     let snapshot = RasterSnapshot::new();
     let output = snapshot.output("backpressure");
     let input = snapshot.input();
-    let identity = image_identity(input).unwrap();
-    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone()), identity).unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone())).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
     let mut sink = TestImageTileSink::new(output.clone());
@@ -844,8 +787,7 @@ fn image_cursor_retries_parent_write_after_sink_backpressure() {
     let snapshot = RasterSnapshot::new();
     let output = snapshot.output("parent-backpressure");
     let input = snapshot.input();
-    let identity = image_identity(input).unwrap();
-    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone()), identity).unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone())).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
     let mut sink = TestImageTileSink::new(output.clone());
@@ -886,8 +828,7 @@ fn image_cursor_preserves_typed_sink_error_without_writing_tile() {
     let snapshot = RasterSnapshot::new();
     let output = snapshot.output("sink-error");
     let input = snapshot.input();
-    let identity = image_identity(input).unwrap();
-    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone()), identity).unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone())).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
     let mut sink = TestImageTileSink::new(output.clone());
@@ -918,15 +859,14 @@ fn image_cursor_yields_without_repeating_and_matches_sync_tile_bytes() {
     let sync_dir = snapshot.output("sync");
     let cursor_dir = snapshot.output("cursor");
     let input = snapshot.input();
-    let expected = match bake_images_into(input, &sync_dir, |_| None, |_| true).unwrap() {
+    let expected = match bake_images_into(input, &sync_dir, |_| true).unwrap() {
         ImageBakeOutcome::Complete(report) => report,
         ImageBakeOutcome::Paused(_) => panic!("sync raster unexpectedly paused"),
     };
-    let identity = image_identity(input).unwrap();
-    let mut cursor = ImageBakeCursor::new(input, Arc::new(cursor_dir.clone()), identity).unwrap();
+    let mut cursor = ImageBakeCursor::new(input, Arc::new(cursor_dir.clone())).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
-    let mut sink = AtomicImageTileSink::new(&cursor_dir, |_: TileKey| None);
+    let mut sink = AtomicImageTileSink::new(&cursor_dir);
     let mut planned_yield = false;
     let mut completed_keys = Vec::new();
     let mut planning_squares_seen = false;
@@ -1029,11 +969,10 @@ fn image_cursor_cancels_at_each_progress_stage_and_before_publication() {
         let snapshot = RasterSnapshot::new();
         let output = snapshot.output("cancelled");
         let input = snapshot.input();
-        let identity = image_identity(input).unwrap();
-        let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone()), identity).unwrap();
+        let mut cursor = ImageBakeCursor::new(input, Arc::new(output.clone())).unwrap();
         let clock = SystemClock;
         let cancellation = SharedCancellation::new();
-        let mut sink = AtomicImageTileSink::new(&output, |_: TileKey| None);
+        let mut sink = AtomicImageTileSink::new(&output);
         let mut cancelled = false;
 
         for _ in 0..10_000 {
@@ -1193,13 +1132,7 @@ mod native_map_unit_qualification {
         }
 
         fn input(&self) -> ClientMapInput<'_> {
-            ClientMapInput::new(
-                self.revision,
-                Digest([self.revision as u8; 32]),
-                &self.jag_dir,
-                &self.snapshot_dir,
-            )
-            .unwrap()
+            ClientMapInput::new(self.revision, &self.jag_dir, &self.snapshot_dir).unwrap()
         }
     }
 
@@ -2318,7 +2251,7 @@ mod native_map_unit_qualification {
         maps.extend_from_slice(bytes);
         fs::write(snapshot_dir.join("maps.bin"), maps).unwrap();
 
-        let input = ClientMapInput::new(274, Digest([0; 32]), &jag_dir, &snapshot_dir).unwrap();
+        let input = ClientMapInput::new(274, &jag_dir, &snapshot_dir).unwrap();
         let reader = cache_reader_from_input(input);
         assert_eq!(reader.entries.len(), 1);
         assert_eq!(reader.entries[0].land_file, 0);

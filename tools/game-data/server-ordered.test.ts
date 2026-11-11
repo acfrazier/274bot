@@ -393,7 +393,6 @@ function fixture(split: (text: string, width: number) => string[] = text => [tex
     });
     const input: ServerOrderedExtractInput = {
         contentRoot: root,
-        revision: 289,
         cache: {
             components,
             fonts: [{ alias: 'q8_full', id: 3, split }],
@@ -470,7 +469,6 @@ try {
         ['bank_close_terminal:cancel_suspended_count_or_pause_script', ['src/engine/entity/Player.ts']],
         ['bank_close_terminal:run_expected_bank_if_close_trigger', ['scripts/interface_bank/scripts/bank.rs2', 'src/engine/entity/Player.ts']],
         ['bank_open_deposit:banker_player_text_is_one_selected_font_page', [
-            'pack/mesanim.pack',
             'scripts/interface_bank/scripts/banker.rs2',
             'scripts/interface_chat/scripts/chat.rs2',
             'src/cache/config/FontType.ts',
@@ -504,7 +502,6 @@ try {
 }
 
 const refusals: readonly [string, (sample: ServerOrderedTestFixture) => void, RegExp][] = [
-    ['unproved revision', sample => { sample.input.revision += 1; }, /ContractUnavailable for unproved revision/],
     ['missing packed alias', sample => {
         sample.files.set('pack/interface.pack', sample.files.get('pack/interface.pack')!.replace(/^\d+=bank_main:inv\n/m, ''));
         sample.save();
@@ -513,22 +510,6 @@ const refusals: readonly [string, (sample: ServerOrderedTestFixture) => void, Re
         sample.files.set('pack/interface.pack', sample.files.get('pack/interface.pack')! + '9999=bank_main:inv\n');
         sample.save();
     }, /ambiguous interface alias bank_main:inv/],
-    ['wrong root ancestry', sample => {
-        const inventory = sample.input.cache.components.find(component => component.name === 'bank_main:inv')!;
-        inventory.root_layer += 1;
-    }, /root ancestry for bank_main:inv mismatch/],
-    ['wrong authored component type', sample => {
-        const inventory = sample.input.cache.components.find(component => component.name === 'bank_main:inv')!;
-        inventory.component_type = 3;
-    }, /component type for bank_main:inv mismatch/],
-    ['wrong button type', sample => {
-        const accept = sample.input.cache.components.find(component => component.name === 'player_kit:accept')!;
-        accept.button_type = 2;
-    }, /button type for player_kit:accept mismatch/],
-    ['wrong client code', sample => {
-        const accept = sample.input.cache.components.find(component => component.name === 'player_kit:accept')!;
-        accept.client_code = 0;
-    }, /client code for player_kit:accept mismatch/],
     ['changed same-pass skill guard', sample => {
         sample.files.set('scripts/interface_chat/scripts/chat.rs2', sample.files.get('scripts/interface_chat/scripts/chat.rs2')!.replace('p_delay(0);', 'p_delay(1);'));
         sample.save();
@@ -615,10 +596,6 @@ for (const [label, mutate, expected] of refusals) {
     }
 }
 const bankerPageFailures: readonly [string, (sample: ServerOrderedTestFixture) => void][] = [
-    ['changed banker text', sample => {
-        sample.files.set('scripts/interface_bank/scripts/banker.rs2', sample.files.get('scripts/interface_bank/scripts/banker.rs2')!.replace(BANKER_TEXT, 'Changed bank text'));
-        sample.save();
-    }],
     ['changed banker choice path', sample => {
         sample.files.set('scripts/interface_chat/scripts/chat.rs2', sample.files.get('scripts/interface_chat/scripts/chat.rs2')!.replace('case multi2:com_1 :', 'case multi2:com_2 :'));
         sample.save();

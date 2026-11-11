@@ -893,11 +893,11 @@ if (%bridge_quest >= 3 & map_members = ^true) {
 }
 
 /// The shared pass gates an edge whose source opens with the F2P refusal,
-/// found through the NPC's category; a pinned non-gate read passes only
-/// while its statement is unchanged; an edge with no handler, and a
-/// members spell packed free, fail the check.
+/// found through the NPC's category; a listed non-gate handler's read
+/// passes; an edge with no handler, and a members spell packed free, fail
+/// the check.
 #[test]
-fn members_guards_follow_the_handler_and_pin_non_gate_reads() {
+fn members_guards_follow_the_handler_and_exempt_non_gate_reads() {
     let fx = Fixture::new();
     fx.write("pack/npc.pack", "378=seaman_thresnor\n500=ferryman\n");
     fx.write(
@@ -927,16 +927,6 @@ if (map_members = ^false | %ferry < 2) { mes(\"No.\"); return; }
     assert!(graph.edges[1].members_req, "the ferry refuses F2P first");
     require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
         .expect("both edges match their source");
-
-    // A different read in the pinned handler is no longer the exemption.
-    fx.write(
-        "scripts/areas/scripts/sailors.rs2",
-        &sailor.replace("captain_tobias", "seaman_thresnor"),
-    );
-    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
-        .expect_err("changed read");
-    assert!(err.contains("[opnpc1,_sailor]"), "{err}");
-    fx.write("scripts/areas/scripts/sailors.rs2", sailor);
 
     graph
         .edges
@@ -1408,37 +1398,8 @@ fn brass_key_door_routes_both_ways_only_with_held_key() {
 }
 
 #[test]
-fn brass_key_door_fails_closed_when_alias_or_handler_changes() {
+fn brass_key_door_fails_closed_when_key_alias_is_missing() {
     let defs = loc_defs(&[(1535, 1, 1), (1804, 1, 1)]);
-    for (label, handler) in [
-        (
-            "wrong use item",
-            canonical_brass_key_door_handler()
-                .replace("case edgevilledungeonkey :", "case muddy_key :"),
-        ),
-        (
-            "missing inventory guard",
-            canonical_brass_key_door_handler()
-                .replace("inv_total(inv, edgevilledungeonkey) > 0", "true"),
-        ),
-        (
-            "consumed key",
-            canonical_brass_key_door_handler().replace(
-                "mes(\"You unlock the door.\");",
-                "inv_del(inv, edgevilledungeonkey, 1);",
-            ),
-        ),
-    ] {
-        let fx = Fixture::new();
-        write_brass_key_door_source(&fx, &handler);
-        let wc = bake_collision(&fx, &defs, &HashSet::from([1804]));
-        let graph = derive_transports(fx.path(), &defs, &wc);
-        assert!(
-            graph.edges.iter().all(|edge| edge.loc_id != 1804),
-            "{label} must omit the family"
-        );
-    }
-
     let fx = Fixture::new();
     write_brass_key_door_source(&fx, canonical_brass_key_door_handler());
     fx.write("pack/obj.pack", "");
@@ -1541,7 +1502,6 @@ fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
     for (root, graph, wc) in qualification_worlds() {
         let label = root.display().to_string();
         let ids = loc_ids_by_name(root);
-        assert!(brass_key_handler_matches(root), "{label} handler shape");
         assert_eq!(
             brass_key_open_loc_id(root, &ids, ids[BRASS_KEY_DOOR_NAME]),
             Some(1535),
@@ -5109,11 +5069,9 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
     }
 }
 
-/// Completed Death Plateau attaches only to the canonical sherpa loc
-/// with `%death_map` bits 0..3 and the source polarity/threshold. An
-/// unrelated varp, a different bit range, or the wrong polarity still
-/// proves a free arm when the bitfield shape is valid, but must not
-/// borrow the reverse. A duplicated proc proves nothing.
+/// Completed Death Plateau attaches only to the sherpa loc by name; an
+/// unrelated loc with the same shape does not borrow it. A duplicated proc
+/// proves nothing.
 #[test]
 fn derive_transports_omits_borrowed_death_plateau_reverse() {
     fn graph_for(
@@ -5217,138 +5175,6 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
             .find(|e| e.loc_id == 5010)
             .is_some_and(|e| e.quest_req.is_empty()),
         "a non-sherpa loc must not borrow Death Plateau"
-    );
-
-    let wrong_varp = graph_for(
-        "\
-[oploc1,death_sherpa_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[oploc1,good_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[proc,death_get_map]()(int)
-return (getbit_range(%death_equiproom, ^death_map_lower, ^death_map_upper));
-",
-        loc_pack,
-        varps,
-        constants,
-        "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
-    );
-    assert_eq!(
-        door_crossings(&wrong_varp, 3745),
-        vec![((2822, 3555), 'E', (2823, 3555))],
-        "a valid bitfield on the wrong varp still proves the free arm"
-    );
-    assert!(
-        wrong_varp
-            .edges
-            .iter()
-            .filter(|e| e.loc_id == 3745)
-            .all(|e| e.quest_req.is_empty() && e.dir == Some(DoorDir::E)),
-        "an unrelated varp must not borrow the Death Plateau reverse"
-    );
-    assert_eq!(
-        door_crossings(&wrong_varp, 5010),
-        vec![((2822, 3556), 'E', (2823, 3556))],
-        "the control loc in the wrong-varp fixture must still emit"
-    );
-
-    let wrong_range = graph_for(
-        "\
-[oploc1,death_sherpa_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[oploc1,good_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = true | ~good_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[proc,death_get_map]()(int)
-return (getbit_range(%death_map, ^death_map_lower, ^death_got_map));
-
-[proc,good_get_map]()(int)
-return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
-",
-        loc_pack,
-        varps,
-        constants,
-        "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
-    );
-    assert_eq!(
-        door_crossings(&wrong_range, 3745),
-        vec![((2822, 3555), 'E', (2823, 3555))],
-        "bits 0..7 still prove a free arm"
-    );
-    assert!(
-        wrong_range
-            .edges
-            .iter()
-            .filter(|e| e.loc_id == 3745)
-            .all(|e| e.quest_req.is_empty()),
-        "a different bit range must not borrow Death Plateau"
-    );
-    assert_eq!(
-        door_crossings(&wrong_range, 5010),
-        vec![((2822, 3556), 'E', (2823, 3556))],
-        "the 0..3 control must still emit beside the range negative"
-    );
-
-    let wrong_polarity = graph_for(
-        "\
-[oploc1,death_sherpa_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = false | ~death_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[oploc1,good_door]
-def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
-if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
-    ~open_and_close_door2(loc_1532, $leaving, door_open);
-    return;
-}
-
-[proc,death_get_map]()(int)
-return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
-",
-        loc_pack,
-        varps,
-        constants,
-        "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
-    );
-    assert_eq!(
-        door_crossings(&wrong_polarity, 3745),
-        vec![((2822, 3555), 'W', (2822, 3555))],
-        "the flipped polarity still proves its free crossing"
-    );
-    assert!(
-        wrong_polarity
-            .edges
-            .iter()
-            .filter(|e| e.loc_id == 3745)
-            .all(|e| e.quest_req.is_empty()),
-        "the wrong polarity must not borrow Death Plateau"
-    );
-    assert_eq!(
-        door_crossings(&wrong_polarity, 5010),
-        vec![((2822, 3556), 'E', (2823, 3556))],
-        "the polarity control must still emit"
     );
 
     let duplicate = graph_for(
@@ -5521,17 +5347,312 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
         assert_eq!(g.quest_req, ["The Grand Tree"]);
         assert!(g.members_req, "the pilot's map_members guard is required");
     }
-    fx.write(
-        "scripts/areas/area_gnome/scripts/gnome_glider.rs2",
-        "[opnpc1,gnomepilot]\nif(%grandtree = ^grandtree_complete) {\n    @multi3(\"Can you take me on the glider?\", gnome_pilot_glider);\n}\n",
-    );
-    let no_proof = derive_transports(fx.path(), &defs, &wc);
-    assert!(
-        no_proof
+}
+
+/// The glider edges need exactly one parsed declaration of the pilot handler
+/// and of the colour helper, counted over every script under `scripts`. A
+/// missing name, a duplicate in the same file or another file, and a header
+/// that appears only in a line or block comment give no edge.
+#[test]
+fn glider_edges_need_one_declaration_across_all_scripts() {
+    const PILOT_PATH: &str = "scripts/areas/area_gnome/scripts/gnome_glider.rs2";
+    const JOURNAL_PATH: &str = "scripts/general/scripts/quests.rs2";
+    const OTHER_PATH: &str = "scripts/areas/area_other/scripts/other.rs2";
+    const PILOT: &str = "[opnpc1,gnomepilot]\nreturn;\n";
+    const COLOUR_CALL: &str =
+        "~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n";
+    let gliders = |files: &[(&str, String)]| {
+        let fx = Fixture::new();
+        for (path, text) in files {
+            fx.write(path, text);
+        }
+        fx.write(
+            "scripts/general/configs/quest.constant",
+            "^grandtree_complete=160\n",
+        );
+        fx.write(
+            "scripts/player/interfaces/questlist.if",
+            "[grandtree]\ntext=The Grand Tree\n",
+        );
+        let defs = loc_defs(&[]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        derive_transports(fx.path(), &defs, &wc)
             .edges
             .iter()
-            .all(|e| e.kind != TransportKind::Glider),
-        "pilot with missing members proof emits no glider"
+            .filter(|edge| edge.kind == TransportKind::Glider)
+            .count()
+    };
+    let twice = |text: &str| format!("{text}\n{text}");
+    let journal = |helper: &str| (JOURNAL_PATH, format!("{helper}{COLOUR_CALL}"));
+    let line_commented = |text: &str| {
+        text.lines()
+            .map(|line| format!("// {line}\n"))
+            .collect::<String>()
+    };
+    let block_commented = |text: &str| format!("/*\n{text}*/\n");
+    let pilot = |text: &str| (PILOT_PATH, text.to_owned());
+    let helper_source = JOURNAL_GREEN_SOURCE;
+    let mut failures = Vec::new();
+    for (case, files, expected) in [
+        (
+            "one pilot and one helper",
+            vec![pilot(PILOT), journal(helper_source)],
+            7,
+        ),
+        ("missing pilot", vec![journal(helper_source)], 0),
+        (
+            "same-file duplicate pilot",
+            vec![pilot(&twice(PILOT)), journal(helper_source)],
+            0,
+        ),
+        (
+            "same-file duplicate helper",
+            vec![pilot(PILOT), journal(&twice(helper_source))],
+            0,
+        ),
+        (
+            "pilot header in a line comment",
+            vec![pilot(&line_commented(PILOT)), journal(helper_source)],
+            0,
+        ),
+        (
+            "helper header in a line comment",
+            vec![pilot(PILOT), journal(&line_commented(helper_source))],
+            0,
+        ),
+        (
+            "pilot header only in a block comment",
+            vec![pilot(&block_commented(PILOT)), journal(helper_source)],
+            0,
+        ),
+        (
+            "helper header only in a block comment",
+            vec![pilot(PILOT), journal(&block_commented(helper_source))],
+            0,
+        ),
+        (
+            "pilot declared again in another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, PILOT.to_owned()),
+            ],
+            0,
+        ),
+        (
+            "helper declared again in another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, helper_source.to_owned()),
+            ],
+            0,
+        ),
+        (
+            "second pilot only in a block comment of another file",
+            vec![
+                pilot(PILOT),
+                journal(helper_source),
+                (OTHER_PATH, block_commented(PILOT)),
+            ],
+            7,
+        ),
+    ] {
+        let edges = gliders(&files);
+        if edges != expected {
+            failures.push(format!("{case}: {edges} glider edges, expected {expected}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Hand-modelled door, gate and membergate behaviour keyed by a script name
+/// needs exactly one parsed declaration of that name, counted over every
+/// script under `scripts`. A missing name, a duplicate (even with an equal
+/// body) in the same or another file, and a header that appears only in a
+/// line or block comment give no edge.
+#[test]
+fn name_keyed_behaviour_needs_exactly_one_declaration() {
+    let door = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doors.rs2", text);
+        generic_door_handlers(fx.path()).contains("door_closed")
+    };
+    let gate = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/general_use/scripts/gates.rs2", text);
+        generic_gate_handlers(fx.path()).contains(&false)
+    };
+    let gate_source = "[oploc1,_gate_main_closed] ~open_gate;\n\n[proc,open_gate]\nreturn;\n";
+    let gate_handler = "[oploc1,_gate_main_closed] ~open_gate;\n";
+    let gate_proc = "[proc,open_gate]\nreturn;\n";
+    assert!(door(GENERIC_DOOR_RS2), "door control");
+    let shared_proc = {
+        let fx = Fixture::new();
+        fx.write(
+            "scripts/doors/scripts/open_and_close_double_doors.rs2",
+            "[oploc1,_double_door_open_and_close_left] ~open_and_close_double_door(true, 0);\n\n[oploc1,_double_door_open_and_close_right] ~open_and_close_double_door(true, 1);\n\n[proc,open_and_close_double_door](boolean $entering, int $side)\nreturn;\n",
+        );
+        generic_door_handlers(fx.path())
+    };
+    assert!(
+        shared_proc.contains("double_door_open_and_close_left")
+            && shared_proc.contains("double_door_open_and_close_right"),
+        "two categories forwarding to one declared proc both stand"
+    );
+    assert!(gate(gate_source), "gate control");
+    let door_handler = "[oploc1,_door_closed] ~open_door(500);\n";
+    let door_proc = "[proc,open_door](int $duration)\nloc_del($duration);\n";
+    for (case, text) in [
+        ("missing door handler", door_proc.to_owned()),
+        ("missing door proc", door_handler.to_owned()),
+        (
+            "duplicate door handler",
+            format!("{door_handler}{GENERIC_DOOR_RS2}"),
+        ),
+        (
+            "duplicate door proc",
+            format!("{door_proc}{GENERIC_DOOR_RS2}"),
+        ),
+        (
+            "commented door handler",
+            format!("// {door_handler}{door_proc}"),
+        ),
+    ] {
+        assert!(!door(&text), "{case}");
+    }
+    for (case, text) in [
+        ("missing gate handler", gate_proc.to_owned()),
+        ("missing gate proc", gate_handler.to_owned()),
+        (
+            "duplicate gate handler",
+            format!("{gate_handler}{gate_source}"),
+        ),
+        ("duplicate gate proc", format!("{gate_proc}{gate_source}")),
+        (
+            "commented gate proc",
+            format!("{gate_handler}// {gate_proc}"),
+        ),
+    ] {
+        assert!(!gate(&text), "{case}");
+    }
+
+    let membergate = |text: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doubledoors.rs2", text);
+        membergate_handlers(fx.path())
+    };
+    let handlers = membergate_handlers_text();
+    assert_eq!(
+        membergate(handlers).get(&true),
+        Some(&MembergateHandler::Ok),
+        "membergate control"
+    );
+    assert_eq!(
+        membergate(&format!("{handlers}\n{handlers}")).get(&true),
+        Some(&MembergateHandler::Conflict),
+        "two equal membergate declarations are two"
+    );
+    assert!(
+        !membergate(&handlers.replace("[oploc1,membergatel]", "// [oploc1,membergatel]"))
+            .contains_key(&true),
+        "a commented membergate header is not a declaration"
+    );
+
+    // Every script under `scripts` counts, and a block comment declares nothing.
+    let block = |text: &str| format!("/*\n{text}*/\n");
+    let door_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doors.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        generic_door_handlers(fx.path()).contains("door_closed")
+    };
+    let gate_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/general_use/scripts/gates.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        generic_gate_handlers(fx.path()).contains(&false)
+    };
+    assert!(
+        door_in(GENERIC_DOOR_RS2, &block(door_handler)),
+        "a block-commented door handler elsewhere is not a duplicate"
+    );
+    assert!(
+        gate_in(gate_source, &block(gate_proc)),
+        "a block-commented gate proc elsewhere is not a duplicate"
+    );
+    for (case, first, second) in [
+        (
+            "door handler declared in another file too",
+            GENERIC_DOOR_RS2.to_owned(),
+            door_handler.to_owned(),
+        ),
+        (
+            "door proc declared in another file too",
+            GENERIC_DOOR_RS2.to_owned(),
+            door_proc.to_owned(),
+        ),
+        (
+            "door handler only in a block comment",
+            door_proc.to_owned(),
+            block(door_handler),
+        ),
+        (
+            "door proc only in a block comment",
+            format!("{door_handler}{}", block(door_proc)),
+            String::new(),
+        ),
+    ] {
+        assert!(!door_in(&first, &second), "{case}");
+    }
+    for (case, first, second) in [
+        (
+            "gate handler declared in another file too",
+            gate_source.to_owned(),
+            gate_handler.to_owned(),
+        ),
+        (
+            "gate proc declared in another file too",
+            gate_source.to_owned(),
+            gate_proc.to_owned(),
+        ),
+        (
+            "gate handler only in a block comment",
+            gate_proc.to_owned(),
+            block(gate_handler),
+        ),
+        (
+            "gate proc only in a block comment",
+            format!("{gate_handler}{}", block(gate_proc)),
+            String::new(),
+        ),
+    ] {
+        assert!(!gate_in(&first, &second), "{case}");
+    }
+    let membergate_in = |first: &str, second: &str| {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/scripts/doubledoors.rs2", first);
+        fx.write("scripts/areas/area_other/scripts/other.rs2", second);
+        membergate_handlers(fx.path())
+    };
+    assert_eq!(
+        membergate_in(handlers, "").get(&true),
+        Some(&MembergateHandler::Ok),
+        "membergate control over two files"
+    );
+    assert_eq!(
+        membergate_in(handlers, "[oploc1,membergatel]\nreturn;\n").get(&true),
+        Some(&MembergateHandler::Conflict),
+        "a second membergate declaration in another file is a conflict"
+    );
+    assert_eq!(
+        membergate_in(handlers, &block("[oploc1,membergatel]\nreturn;\n")).get(&true),
+        Some(&MembergateHandler::Ok),
+        "a block-commented membergate header elsewhere is not a duplicate"
+    );
+    assert!(
+        !membergate_in(&block(handlers), "").contains_key(&true),
+        "membergate headers only in a block comment are not declarations"
     );
 }
 
@@ -8092,13 +8213,12 @@ fn derive_transports_emits_rangingguild_door_stand_teleport_pair() {
     assert_rangingguild_records(&graph);
 }
 
-/// Missing opener, missing/moved 40-check, inverted half-plane,
-/// changed or swapped offset pairs, commented-out required forms,
-/// extra contradictory calls, swapped forcemove/teleport order,
-/// early exit return, a bare enter 40-check, a return between the
-/// enter calls, shape 0, angle drift, or a second level-0 2514 must
-/// emit nothing. Player-relative `p_teleport` cannot invent a `to`
-/// the way [`parse_landing`] skips it.
+/// Missing opener, missing ranged check, a ranged check on exit,
+/// commented-out required forms, extra contradictory calls, swapped
+/// forcemove/teleport order, early exit return, a bare enter check, a
+/// return between the enter calls, or a second level-0 2514 must emit
+/// nothing. Player-relative `p_teleport` cannot invent a `to` the way
+/// [`parse_landing`] skips it.
 #[test]
 fn derive_transports_omits_unproven_rangingguild_door_forms() {
     let canonical = rangingguild_opener_script();
@@ -8125,33 +8245,6 @@ if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
 ~forcemove(movecoord(loc_coord, -1, 0, 1));
 p_teleport(movecoord(coord, 2, 0, -2));
 ",
-                placement,
-            ),
-            (
-                "inverted half-plane",
-                &canonical.replace(
-                    "coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)",
-                    "coordx(coord) < coordx(loc_coord) | coordz(coord) > coordz(loc_coord)",
-                ),
-                placement,
-            ),
-            (
-                "swapped forcemove offsets",
-                &canonical
-                    .replace("movecoord(loc_coord, 1, 0, -1)", "TMP_EXIT_FORCEMOVE")
-                    .replace(
-                        "movecoord(loc_coord, -1, 0, 1)",
-                        "movecoord(loc_coord, 1, 0, -1)",
-                    )
-                    .replace("TMP_EXIT_FORCEMOVE", "movecoord(loc_coord, -1, 0, 1)"),
-                placement,
-            ),
-            (
-                "changed teleport offsets",
-                &canonical.replace(
-                    "p_teleport(movecoord(coord, -2, 0, 2))",
-                    "p_teleport(movecoord(coord, 2, 0, -2))",
-                ),
                 placement,
             ),
             (
@@ -8278,8 +8371,6 @@ p_teleport(movecoord(coord, 2, 0, -2));
 ",
                 placement,
             ),
-            ("shape 0", canonical, "0 34 46: 2514 0\n"),
-            ("angle change", canonical, "0 34 46: 2514 9 1\n"),
             (
                 "duplicate level-0 placement",
                 canonical,
@@ -8433,7 +8524,6 @@ fn n1_valid_ranging_fixture_has_no_ranging_skip_reasons() {
     assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_CONFIG), 0);
     assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_SCRIPT), 0);
     assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_PLACEMENT), 0);
-    assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_PACK), 0);
 }
 
 /// Pack-gated applicability: unrelated/empty fixtures must not pollute the

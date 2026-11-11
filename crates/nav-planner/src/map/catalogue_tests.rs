@@ -1,5 +1,4 @@
 use super::*;
-use crate::map::identity::Digest;
 use crate::map::producer::ProducerStep;
 use crate::map::producer::{derive_catalogue, ClientMapInput};
 use api::identity::{Cancellation, Deadline};
@@ -75,7 +74,7 @@ fn catalogue_charge_reserves_cold_initializer_for_both_revisions() {
         let peak_bound = game_data_initializer_peak_bound(source).unwrap();
         let jag = PathBuf::from("/verified/jag");
         let snapshot = PathBuf::from("/verified/snapshot");
-        let input = ClientMapInput::new(revision, Digest([0; 32]), &jag, &snapshot).unwrap();
+        let input = ClientMapInput::new(revision, &jag, &snapshot).unwrap();
         let charge = CatalogueCursor::work_charge(input).unwrap();
         assert!(charge.input_bytes() >= owner_bound);
         assert!(
@@ -144,7 +143,7 @@ impl Snapshot {
     }
 
     fn records(&self) -> Vec<PoiRecord> {
-        let input = ClientMapInput::new(289, Digest([7; 32]), &self.0, &self.0).unwrap();
+        let input = ClientMapInput::new(289, &self.0, &self.0).unwrap();
         let (pois, _) = derive_catalogue(input).unwrap();
         pois.records.as_slice().to_vec()
     }
@@ -347,7 +346,7 @@ fn catalogue_matching_fixture(candidate_limit: usize) -> Vec<u8> {
         maps.extend(payload);
     }
     std::fs::write(dir.join("maps.bin"), maps).unwrap();
-    let input = ClientMapInput::new(289, Digest([7; 32]), &dir, &dir).unwrap();
+    let input = ClientMapInput::new(289, &dir, &dir).unwrap();
     let mut cursor = CatalogueCursor::new(input).unwrap();
     cursor.retained_candidates = Some(Vec::with_capacity(candidate_limit));
     let clock = SystemClock;
@@ -533,7 +532,7 @@ fn test_context<'a>(
 }
 
 fn cursor_with_placement_batch(snapshot: &Snapshot) -> CatalogueCursor {
-    let input = ClientMapInput::new(289, Digest([7; 32]), &snapshot.0, &snapshot.0).unwrap();
+    let input = ClientMapInput::new(289, &snapshot.0, &snapshot.0).unwrap();
     let mut cursor = CatalogueCursor::new(input).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
@@ -614,7 +613,7 @@ fn catalogue_placement_batch_checks_the_deadline_between_operations() {
 #[test]
 fn catalogue_cursor_yields_after_one_unit_and_matches_sync_bytes() {
     let snapshot = Snapshot::new();
-    let input = ClientMapInput::new(289, Digest([7; 32]), &snapshot.0, &snapshot.0).unwrap();
+    let input = ClientMapInput::new(289, &snapshot.0, &snapshot.0).unwrap();
     let expected = derive_catalogue(input).unwrap().0.encode().unwrap();
     let mut cursor = CatalogueCursor::new(input).unwrap();
     let clock = SystemClock;
@@ -652,7 +651,7 @@ fn catalogue_cursor_observes_cancellation_in_every_reported_stage() {
         CatalogueStage::Finalizing,
     ] {
         let snapshot = Snapshot::new();
-        let input = ClientMapInput::new(289, Digest([7; 32]), &snapshot.0, &snapshot.0).unwrap();
+        let input = ClientMapInput::new(289, &snapshot.0, &snapshot.0).unwrap();
         let mut cursor = CatalogueCursor::new(input).unwrap();
         let clock = SystemClock;
         let cancellation = SharedCancellation::new();
@@ -686,7 +685,7 @@ fn catalogue_cursor_observes_cancellation_in_every_reported_stage() {
 #[test]
 fn catalogue_cursor_reopens_maps_after_each_index_yield() {
     let snapshot = Snapshot::new();
-    let input = ClientMapInput::new(289, Digest([7; 32]), &snapshot.0, &snapshot.0).unwrap();
+    let input = ClientMapInput::new(289, &snapshot.0, &snapshot.0).unwrap();
     let mut cursor = CatalogueCursor::new(input).unwrap();
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
@@ -733,11 +732,7 @@ fn catalogue_real_candidate_census() {
         let snapshot = PathBuf::from(
             std::env::var(format!("BOT_MAP_QUALIFY_R{revision}_SNAPSHOT_DIR")).unwrap(),
         );
-        let identity =
-            client::content_identity::compute_decoded_content_identity(revision, &jag, &snapshot)
-                .unwrap();
-        let content = Digest(identity.content_id);
-        let input = ClientMapInput::new(revision, content, &jag, &snapshot).unwrap();
+        let input = ClientMapInput::new(revision, &jag, &snapshot).unwrap();
         let mut cursor = CatalogueCursor::new(input).unwrap();
         while !matches!(cursor.phase, CataloguePhase::ReaderInit) {
             cursor.advance().unwrap();
@@ -782,7 +777,7 @@ fn catalogue_real_candidate_census() {
 #[test]
 fn catalogue_candidate_storage_is_fixed_and_fully_charged() {
     let snapshot = Snapshot::new();
-    let input = ClientMapInput::new(289, Digest([7; 32]), &snapshot.0, &snapshot.0).unwrap();
+    let input = ClientMapInput::new(289, &snapshot.0, &snapshot.0).unwrap();
     let charge = CatalogueCursor::work_charge(input).unwrap();
     let retained_bytes = MAX_RETAINED_CANDIDATES * std::mem::size_of::<RetainedCandidate>()
         + MAX_MAP_INDEX_ROWS * std::mem::size_of::<usize>();

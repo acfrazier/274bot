@@ -52,8 +52,8 @@ targets and skipped targets with their refusal reasons. Destructive commands
 require confirmation naming the targets. Public and Remote profiles cannot
 send cheats; production-only commands are hidden.
 The separate Debug catalog is loaded only while a Local session opens the tab
-and released when it closes. Its source verification is independent: drift in
-debug-only inputs disables Debug without withholding other generated facts.
+and released when it closes. A Debug catalog that does not decode disables
+Debug without withholding other generated facts.
 Headless builds do not embed the catalog unless explicitly built with the
 `debug-catalog` feature. Host logs record operator commands and each nearby
 chat/modal reply candidate once, listing the pending commands (temporal
@@ -769,11 +769,11 @@ in the footer) or a grid and `map imagery unavailable — cache not bound`
 until that cache is ready. Opening WalkTo starts the demand against
 `~/.274bot/map-cache` for the bound profile; closing it releases the
 demand and GPU/CPU pixels. Release packages ship the 289 terrain baked
-from the pinned client cache (`map/289/` beside `nav/289/`); when its
-image identity matches the bound client cache exactly, the first open
-installs it into the map cache (progress `installing shipped terrain`)
-instead of baking, without asking. When no ready or shipped terrain
-matches (a local bake would run), the map first
+from the pinned client cache (`map/289/` beside `nav/289/`); for the bound
+profile's revision, the first open installs it into the map cache (progress
+`installing shipped terrain`) instead of baking, without asking. The map
+cache is keyed by revision, not by the client cache's identity. When no ready
+or shipped terrain exists (a local bake would run), the map first
 shows the bake warning from `frontend_core` (CPU for about 15 s, up to
 ~15 MiB once) with **Bake now**, **Always bake** and **Not now**; it
 stays catalogue-only until the operator bakes (**Bake terrain** after Not

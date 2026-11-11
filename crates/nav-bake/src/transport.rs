@@ -424,23 +424,21 @@ const SKIP_FREE_ARM_GATE_CONFLICT: &str =
     "door reads as both a varp-gated door and a directional free arm (gate kept)";
 const SKIP_GATE_MEMBER_OVERRIDE: &str =
     "closed gate member has a loc-specific open script (named override wins)";
-const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no verified generic open handler";
+const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no generic open handler";
 const SKIP_GATE_MEMBER_SHAPE: &str = "closed gate member declares no Open op (unsupported shape)";
 const SKIP_DOOR_SHAPE: &str =
     "door placement shape has no ~door_open crossing (wall corner/L, or a non-generic diagonal)";
 const SKIP_DOOR_MEMBER_CONFLICT: &str = "closed door member is defined twice with different data";
 const SKIP_DOOR_MEMBER_SHAPE: &str = "closed door member declares no Open op";
-const SKIP_DOOR_MEMBER_HANDLER: &str = "closed door category has no verified generic open handler";
+const SKIP_DOOR_MEMBER_HANDLER: &str = "closed door category has no generic open handler";
 const SKIP_DOOR_MEMBER_OVERRIDE: &str =
     "closed door member has a loc-specific open script (named override wins)";
 const SKIP_DOOR_MEMBER_STAGE: &str = "closed door member's next_loc_stage open leaf is unresolved";
 const SKIP_SWAP_DOOR_BLOCKS: &str = "in-place swap door's open loc still blocks walk";
 const SKIP_SCRIPTED_DOOR_SOURCE: &str =
-    "scripted wall crossing opener is not the canonical form or its worn obj is unresolved";
+    "scripted wall crossing opener is missing or declared twice, or its worn obj is unresolved";
 const SKIP_STAGE_DOOR_PROCS: &str =
-    "no engine door open proc matches its pinned body (no stage doors)";
-const SKIP_STAGE_DOOR_PROC_DRIFT: &str =
-    "engine door/ladder proc differs from its pinned body (its crossings are not modelled)";
+    "no modelled engine door open proc is defined exactly once (no stage doors)";
 const SKIP_STAGE_DOOR_CONFLICT: &str =
     "named wall/ladder opener is declared more than once, unparsed, or split across aliases";
 const SKIP_STAGE_DOOR_UNPROVEN: &str =
@@ -449,15 +447,13 @@ const SKIP_STAGE_DOOR_UNOBSERVABLE: &str =
     "named wall/ladder opener moves the player only behind a varp with no transmission or unique journal proof";
 const SKIP_GATE_MEMBER_STAGE: &str =
     "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
-const SKIP_BRASS_KEY_SOURCE: &str =
-    "brass-key door aliases, config, or canonical item-use handler did not match";
+const SKIP_BRASS_KEY_SOURCE: &str = "brass-key door aliases, config, or handlers did not resolve";
 const SKIP_BRASS_KEY_SHAPE: &str = "brass-key door placement is not a level-0 straight wall";
 const SKIP_BRASS_KEY_ENDPOINT: &str = "brass-key door source teleport endpoint is not standable";
 const SKIP_GATE_MEMBER_PAIR: &str =
     "closed gate member has no adjacent paired open-stage placement";
 const SKIP_GATE_MEMBER_CONFLICT: &str = "closed gate member is defined twice with different data";
-const SKIP_MEMBERGATE_HANDLER: &str =
-    "membergate named handler is missing, extra-guarded, or not the canonical opener";
+const SKIP_MEMBERGATE_HANDLER: &str = "membergate named handler is missing";
 const SKIP_MEMBERGATE_CONFLICT: &str = "membergate is defined twice with different data";
 const SKIP_MEMBERGATE_STAGE: &str = "membergate open leaf is unresolved or mismatched";
 const SKIP_MEMBERGATE_PAIR: &str = "membergate has no complementary paired placement";
@@ -472,7 +468,6 @@ const SKIP_MAGICGUILD_SCRIPT: &str = "magic guild opener script did not load or 
 const SKIP_MAGICGUILD_CONFIG: &str = "magic guild door config did not admit named doors";
 const SKIP_MAGICGUILD_DOOR: &str = "magic guild door placement did not derive crossings";
 const SKIP_RANGINGGUILD_CONFIG: &str = "ranging guild ranging.loc did not load or admit Open";
-const SKIP_RANGINGGUILD_PACK: &str = "ranging guild door pack id does not match 2514";
 const SKIP_RANGINGGUILD_SCRIPT: &str = "ranging guild door opener did not parse";
 const SKIP_RANGINGGUILD_PLACEMENT: &str =
     "ranging guild door placement is not the expected single diagonal";

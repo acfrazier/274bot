@@ -1429,7 +1429,6 @@ pub struct QuestCoverageRecord {
     pub class: String,
     pub alias: String,
     pub on_revision: i32,
-    pub other_pin_id: i32,
     pub copied: bool,
     pub reason: String,
 }

@@ -17,15 +17,14 @@ impl JournalLinks {
         let interface =
             fs::read_to_string(content_root.join("scripts/player/interfaces/questlist.if"))
                 .unwrap_or_default();
-        // A green row must mean progress >= the call's completion argument.
-        // A renamed or different colour helper supplies no route proof.
-        let colour_rule = journal
-            .split_once("[proc,send_quest_progress_colour]")
-            .and_then(|(_, body)| body.split("\n[").next());
-        if !colour_rule.is_some_and(|body| {
-            body.contains("} else if ($progress >= $complete_progress) {")
-                && body.contains("if_setcolour($component, ^green_rgb);")
-        }) {
+        // A green row means progress >= the call's completion argument: the
+        // colour helper is modelled by name. Without exactly one declaration
+        // of it under `scripts` there is no proof.
+        let mut helpers = 0;
+        visit_rs2(&content_root.join("scripts"), &mut |text| {
+            helpers += proc_bodies(text, "send_quest_progress_colour").len();
+        });
+        if !declared_once("[proc,send_quest_progress_colour]", helpers) {
             return Self {
                 by_varp: HashMap::new(),
                 constants,

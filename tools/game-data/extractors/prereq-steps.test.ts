@@ -2,11 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { captureProgressWriterDomains, extractQuestIdentityFacts } from './quests.ts';
-import { assertPrereqJournalPins, assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
+import { extractQuestIdentityFacts } from './quests.ts';
+import { assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
 import { revisions } from '../generate.ts';
-import { parseBody } from './gathering-rs2.ts';
-import { boundedJournalRange } from './prereq-journal-proof.ts';
 
 assert.equal(PREREQ_STEPS_SCHEMA, 3);
 assert.deepEqual(extractPrereqStepsFacts(274), { rows: [], journals: [] });
@@ -14,7 +12,7 @@ assert.deepEqual(extractPrereqStepsFacts(274), { rows: [], journals: [] });
 const content = revisions.find((spec) => spec.revision === 289)!.content;
 const facts = extractPrereqStepsFacts(289);
 const quests = extractQuestIdentityFacts(content, 289);
-assertPrereqStepFacts(content, facts, quests.rows);
+assertPrereqStepFacts(facts);
 
 assert.deepEqual(facts.rows.map((row) => row.id), ['priestperil:drezel-advice', 'druidspirit:drezel-start']);
 assert.deepEqual(facts.journals.map((journal) => journal.id), [
@@ -98,72 +96,9 @@ assert.equal(doors.crossings.length, 4);
 assert.deepEqual(doors.crossings.map((entry) => entry.crossing.loc_id), [3507, 3506, 3507, 3506]);
 assert.deepEqual(doors.crossings.map((entry) => entry.delay.ticks), [2, 2, 0, 0]);
 
-// The generator refuses a changed source line before it can publish stale
-// prerequisite facts. Only the first cited file is needed for this failure.
-{
-    const mutatedContent = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-content-line-'));
-    const relative = 'scripts/areas/area_mausoleum/scripts/holy_barrier.rs2';
-    const original = fs.readFileSync(path.join(content, relative), 'utf8');
-    const pass = barrier.crossings[0].pass.message;
-    assert.ok(original.includes(pass));
-    try {
-        const target = path.join(mutatedContent, relative);
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, original.replace(pass, 'The content pass message changed.'));
-        assert.throws(() => assertPrereqStepFacts(mutatedContent, facts, quests.rows), /pass message is not pinned/);
-    } finally {
-        fs.rmSync(mutatedContent, { recursive: true, force: true });
-    }
-}
-{
-    const mutatedContent = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-journal-line-'));
-    const sources = [
-        'scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2',
-        'scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant',
-        'scripts/general/configs/quest.constant',
-    ];
-    try {
-        for (const relative of sources) {
-            const target = path.join(mutatedContent, relative);
-            fs.mkdirSync(path.dirname(target), { recursive: true });
-            fs.copyFileSync(path.join(content, relative), target);
-        }
-        const page = path.join(mutatedContent, sources[0]);
-        const original = fs.readFileSync(page, 'utf8');
-        const changed = original.replace('I searched the Phoenix Gang Headquarters and found', 'I searched a different place and found');
-        assert.notEqual(changed, original);
-        fs.writeFileSync(page, changed);
-        assert.throws(() => assertPrereqJournalPins(mutatedContent, [facts.journals[0]]), /needle is not pinned/);
-    } finally {
-        fs.rmSync(mutatedContent, { recursive: true, force: true });
-    }
-}
-
-const overstatedHeroJournal = structuredClone(facts.journals[1]);
-overstatedHeroJournal.rules[0].proves.max = 14;
-assert.throws(() => assertPrereqJournalPins(content, [overstatedHeroJournal]), /no source-pinned stage range/);
-
 const overstatedHeroEstablishment = structuredClone(facts.journals[1]);
 overstatedHeroEstablishment.establishes.values.max = 14;
-assert.throws(() => assertPrereqJournalPins(content, [overstatedHeroEstablishment]), /establishment window has no matching after rule/);
-
-// Delay facts must still agree with the cited p_delay lines. The A2 inward
-// count includes its door proc, while the outward branch has no such delay.
-for (const row of [0, 1]) {
-    const changedDelay = structuredClone(facts);
-    changedDelay.rows[row].crossings[0].delay.ticks += 1;
-    assert.throws(() => assertPrereqStepFacts(content, changedDelay, quests.rows), /differs from pinned p_delay count/);
-}
-
-// A parallel edge one tile west shares no anchor with the cited placement.
-const misplaced = structuredClone(facts);
-const shifted = misplaced.rows[1].crossings[0];
-shifted.crossing.at.x -= 1;
-shifted.crossing.takeoff.x -= 1;
-shifted.crossing.to.x -= 1;
-shifted.pass.landing.x -= 1;
-assert.throws(() => assertPrereqStepFacts(content, misplaced, quests.rows), /cited map tile/);
-
+assert.throws(() => assertPrereqStepFacts({ rows: [], journals: [overstatedHeroEstablishment] }), /establishment window has no matching after rule/);
 
 // Synthetic-projection checks below exercise the fail-closed projection joins
 // without content: templates bind to pack geometry, never to edited constants.
@@ -285,91 +220,3 @@ const stageWindow = (stage: number) => ({
     });
 }
 
-// A bounded complement is authority only after every production writer is known.
-// The proof itself does not borrow a quest colour or completion value.
-{
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-journal-domain-'));
-    try {
-        fs.mkdirSync(path.join(root, 'scripts'));
-        fs.writeFileSync(path.join(root, 'scripts/progress.varp'), '[progress]\nscope=perm\n');
-        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 61;\n');
-        const lines = [
-            'def_string $page;',
-            'if (%progress <= 8) {',
-            '    $page = "Earlier progress";',
-            '} else if (%progress >= 10 & %progress <= 59) {',
-            '    $page = "Bring more essence";',
-            '} else {',
-            '    $page = "Completed reward";',
-            '}',
-            '~quest_journal("Progress", $page);',
-        ];
-        const nodes = parseBody(lines.map((text, index) => ({ line: index + 1, text })));
-        const covered = new Set(lines.map((_, index) => index + 1));
-        const constants = new Map<string, number>();
-        const domain = captureProgressWriterDomains(root)('progress');
-        assert.deepEqual(domain, { min: 0, max: 61 });
-        assert.deepEqual(boundedJournalRange(nodes, 'progress', constants, domain, covered, ['completed reward']), { min: 9, max: 61 });
-
-        const pageFile = path.join(root, 'scripts/journal.rs2');
-        const journalLines = [
-            '[if_button,questlist:progress]',
-            '/* Commentary only: completed reward; unknown_call(); */',
-            ...lines,
-        ];
-        fs.writeFileSync(pageFile, journalLines.join('\n'));
-        const journal = {
-            id: 'progress:bounded-page',
-            quest: 'progress',
-            establishes: { quest: 'progress', signal: 'progress', values: { min: 9, max: 61 } },
-            after: [{ proves: { min: 9, max: 61 }, after: { min: 9, max: 61 } }],
-            reviewed_writes: [],
-            rules: [{
-                all: ['completed reward'],
-                proves: { min: 9, max: 61 },
-                source: `scripts/journal.rs2:1-${journalLines.length}`,
-            }],
-            source: 'scripts/journal.rs2:1',
-        };
-        assertPrereqJournalPins(root, [journal]);
-        fs.writeFileSync(pageFile, journalLines.map((line) =>
-            line === '    $page = "Completed reward";' ? '    $page = "Not earned yet";' : line).join('\n'));
-        assert.throws(() => assertPrereqJournalPins(root, [journal]), /no source-pinned stage range/, 'comment text is not emitted page evidence');
-        fs.writeFileSync(pageFile, journalLines.join('\n'));
-
-        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), '[proc,unbounded](int $value)()\n%progress = $value;\n');
-        const unknown = captureProgressWriterDomains(root)('progress');
-        assert.equal(unknown, null, 'one unbounded production writer removes the domain authority');
-        assert.equal(boundedJournalRange(nodes, 'progress', constants, unknown, covered, ['completed reward']), null);
-
-        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), [
-            '[proc,unbounded](int $left)()',
-            'if (%progress >= 61) { return; }',
-            'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
-        ].join('\n'));
-        assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an entry guard does not bound an arbitrary increment loop');
-        const counted = [
-            '[proc,counted]()()',
-            'def_int $needed = calc(60 - %progress);',
-            'def_int $held = inv_total(inv, essence);',
-            'def_int $left = min($needed, $held);',
-            'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
-        ].join('\n');
-        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 0;\n');
-        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), counted);
-        assert.deepEqual(captureProgressWriterDomains(root)('progress'), { min: 0, max: 60 }, 'the remaining-needed counter bounds every iteration');
-        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), `${counted} %progress = add(%progress, 1);\n`);
-        assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an extra same-line increment cannot hide behind the counted loop');
-        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 61;\n');
-
-        fs.rmSync(path.join(root, 'scripts/unbounded.rs2'));
-        fs.mkdirSync(path.join(root, 'scripts/_test'));
-        fs.writeFileSync(path.join(root, 'scripts/_test/debug.rs2'), '[proc,debug](int $value)()\n%progress = $value;\n');
-        assert.deepEqual(captureProgressWriterDomains(root)('progress'), domain, 'debug writers are excluded by the production census');
-        const incomplete = new Set(covered);
-        incomplete.delete(4);
-        assert.equal(boundedJournalRange(nodes, 'progress', constants, domain, incomplete, ['completed reward']), null, 'an uncited branch guard cannot authorize a complement');
-    } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-    }
-}

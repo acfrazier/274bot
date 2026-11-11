@@ -300,7 +300,7 @@ supplies nor equips these strict pieces; the Quester loadout handles
 equipping. A held `item_req` is never budgeted as spent.
 
 An explicitly selected revision-377 bake also runs `vertical_377.rs`.
-It prices the renamed `ladder_1755` from the canonical climb helper while
+It prices the renamed `ladder_1755` from the climb helper's literal delay while
 preserving its coordinate-specific landing and relative fallback. That return
 connects the Varrock sewer to the otherwise walled-in palace coin alcove.
 Renamed `scenery_*` stairs are priced from canonical coordinate-switch
@@ -377,7 +377,7 @@ Only the two Entrana board locs are modeled in this slice. Locs 2081, 2083,
 2085, and 2087 are omitted; their handler crosses before printing `board_message`.
 
 Direct ladder/stair ops are also scanned across area and quest scripts.
-Unconditional `p_telejump`, `p_teleport`, and the canonical `climb_ladder`
+Unconditional `p_telejump`, `p_teleport`, and the `climb_ladder`
 helper can derive fixed `movecoord(coord, dx, dlevel, dz)` landings, including
 horizontal offsets such as the Mage Arena bank cellar. Presentation and
 literal delays are allowed; branches, dialogs, queues, dynamic destinations,
@@ -388,6 +388,10 @@ New direct climbs price literal script/helper delays plus the interaction.
 Named quest/guild door and secret-wall openers are interpreted from their
 RuneScript control flow, requirements, and movement behavior. Crossings derive
 from the parsed content; no canonical source-body identity is required.
+Engine door, ladder and movement procs, the guild-door, brass-key, gate,
+member-gate and glider handlers, and the obstacle handlers below are modelled
+by name. The bake uses their known behaviour when the content defines them
+exactly once. It does not compare their bodies with copied source.
 Conjunctive worn checks become strict `worn_all_req` gates, including exact
 primary-slot `inv_getobj` checks; carrying the disguise does not authorize the
 crossing. Named doors use a unique completed-journal proof for an untransmitted
@@ -442,7 +446,7 @@ content tool selectors produce separate carried-tool and strictly-worn-tool
 variants with their source skill/use-level gates. The selected tool identity
 remains opaque, so priority-dependent tool choices cannot invent a trajectory.
 Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
-without a real requirement are refused. The reviewed obstacle rules below are
+without a real requirement are refused. The named obstacle handlers below are
 the only exceptions for ungated movement and random failure branches.
 
 The `agility_force_move` primitive shares this machine with exact
@@ -486,8 +490,8 @@ failure-risk field. This table records the source risk without changing the wire
 | Upper `_top` rocks | `stat_random(agility, 170, 253) = false` | The preceding exact move already reaches the destination. The player receives `floor(hitpoints * 5 / 100) + 1` damage. |
 | Upper `_bottom` rocks | `stat_random(agility, 170, 253) = false` | A reverse exact move returns the player two tiles to the origin. The player receives the same percentage damage. |
 
-These rules omit only those complete, reviewed failure branches. They do not
-admit other random tests or damage calls.
+These rules omit only the `stat_random` failure branches of the named rocks
+handlers. They do not admit random tests or damage calls in other handlers.
 Troll progress and the pre-completion ladder use typed `QuestGate::Window`
 conditions, not hidden snapshot varps or completed-quest substitutes.
 The ordinary runtime journal provider returns `Unknown` for windows.

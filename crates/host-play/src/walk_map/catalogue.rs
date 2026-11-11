@@ -117,7 +117,7 @@ impl Catalogue {
     ) -> Result<Self, MapError> {
         let catalogue_key = identity.key()?;
         if let Some(client) = &client {
-            client.validate(identity)?;
+            client.validate()?;
         }
         if let Some(services) = &services {
             services.validate()?;

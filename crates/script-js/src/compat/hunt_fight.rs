@@ -2501,10 +2501,6 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &hunt_combat_tables().unwrap()));
         let invalid: api::game_data::SelectedGameData = serde_json::from_value(json!({
             "schema_version": 5, "revision": 289,
-            "provenance": {
-                "cache_identity": { "cache_id": "test" },
-                "inputs": [], "content_inputs": [], "decoder_sources": []
-            },
             "items": [], "consumption": [], "pickpocket": [],
             "style_spotanims": [{ "spotanim_id": 9, "style": 0, "where": "projectile" }]
         }))
