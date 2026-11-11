@@ -393,16 +393,14 @@ fn harry_in_trade_range(snapshot: &GameSnapshot, stand: WorldTile, harry_id: i32
     let Ok(harry_type) = usize::try_from(harry_id) else {
         return false;
     };
-    snapshot.npcs().is_some_and(|npcs| {
-        npcs.value.iter().any(|npc| {
-            npc.r#type == Some(harry_type)
-                && (0..=1).contains(&npc.distance)
-                && npc
-                    .actions
-                    .iter()
-                    .flatten()
-                    .any(|action| action.eq_ignore_ascii_case("trade"))
-        })
+    snapshot.npcs().iter().any(|npc| {
+        npc.r#type == Some(harry_type)
+            && (0..=1).contains(&npc.distance)
+            && npc
+                .actions
+                .iter()
+                .flatten()
+                .any(|action| action.eq_ignore_ascii_case("trade"))
     })
 }
 
