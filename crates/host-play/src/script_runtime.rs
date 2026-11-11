@@ -35,8 +35,8 @@ pub(super) use script_nav::{
     resolve_route_exclusions, route_world_state, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
-    blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
-    ScriptWalkArm,
+    blocked_zone_detail, hold_script_nav, reset_script_nav, zone_witness_items, NavBot,
+    ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};

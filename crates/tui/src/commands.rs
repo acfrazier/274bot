@@ -25,6 +25,9 @@ pub enum Command {
     SelectPrevBot,
     ToggleMouse,
     ShowMessage,
+    /// Show the whole park or wait reason the Status and Script panes cut
+    /// to one line.
+    ShowReason,
     FilterFleet,
     /// Choose the card the fleet actions use (opens the card picker).
     PickFleetCard,
@@ -78,6 +81,9 @@ pub enum Command {
     ScriptReloadCancel,
     #[cfg(feature = "js")]
     ImportCatalog,
+    /// Open the list of script cards that failed to load (Script tab).
+    #[cfg(feature = "js")]
+    ScriptFailures,
     ToggleGameChat,
     MapSearch,
     MapRecenter,
@@ -167,6 +173,8 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Cancel" => Command::ScriptReloadCancel,
         "Start fleet" => Command::Fleet(FleetAction::Start),
         "Stop fleet" => Command::Fleet(FleetAction::Stop),
+        #[cfg(feature = "js")]
+        "Failures" => Command::ScriptFailures,
         _ => return None,
     })
 }
@@ -263,6 +271,8 @@ impl Command {
         Command::Fleet(FleetAction::CopySettings),
         #[cfg(feature = "js")]
         Command::ImportCatalog,
+        #[cfg(feature = "js")]
+        Command::ScriptFailures,
         Command::ToggleGameChat,
         Command::MapSearch,
         Command::MapRecenter,
@@ -273,6 +283,7 @@ impl Command {
         Command::LogSave,
         Command::LogSessionFile,
         Command::ShowMessage,
+        Command::ShowReason,
         Command::ToggleMouse,
         Command::Quit,
     ];
@@ -287,7 +298,8 @@ impl Command {
             | Command::FocusNext
             | Command::FocusPrev
             | Command::ToggleMouse
-            | Command::ShowMessage => Group::App,
+            | Command::ShowMessage
+            | Command::ShowReason => Group::App,
             Command::SelectNextBot
             | Command::SelectPrevBot
             | Command::FilterFleet
@@ -332,7 +344,8 @@ impl Command {
             Command::ScriptLoad
             | Command::ScriptReload
             | Command::ScriptReloadCancel
-            | Command::ImportCatalog => Group::Script,
+            | Command::ImportCatalog
+            | Command::ScriptFailures => Group::Script,
             Command::ToggleGameChat => Group::Chat,
             Command::MapSearch
             | Command::MapRecenter
@@ -358,6 +371,7 @@ impl Command {
             Command::ToggleMouse if app.mouse_capture => "Mouse capture off (terminal copy)",
             Command::ToggleMouse => "Mouse capture on",
             Command::ShowMessage => "Show full message",
+            Command::ShowReason => "Show full reason",
             Command::FilterFleet => "Filter fleet",
             Command::PickFleetCard => "Pick fleet card…",
             Command::CycleFleetSort => "Cycle fleet sort",
@@ -405,6 +419,8 @@ impl Command {
             Command::ScriptReloadCancel => "Cancel reload",
             #[cfg(feature = "js")]
             Command::ImportCatalog => "Import rs2b0t catalog",
+            #[cfg(feature = "js")]
+            Command::ScriptFailures => "Script: load failures",
             Command::ToggleGameChat => "Toggle game chat / script paint",
             Command::MapSearch => "Map: search",
             Command::MapRecenter => "Map: recenter",
@@ -431,6 +447,7 @@ impl Command {
             Command::MapGroup => "Group",
             Command::MapSearch => "Search",
             Command::ShowMessage => "Full message",
+            Command::ShowReason => "Full reason",
             other => other.label(app),
         }
     }
@@ -489,7 +506,9 @@ impl Command {
             Command::ImportProfiles => "vault".into(),
             Command::ScriptBrowse => "script library".into(),
             #[cfg(feature = "js")]
-            Command::ScriptLoad | Command::ImportCatalog => "script library".into(),
+            Command::ScriptLoad | Command::ImportCatalog | Command::ScriptFailures => {
+                "script library".into()
+            }
             _ => match self.group() {
                 Group::App => "app".into(),
                 Group::Logs => "log".into(),
@@ -518,6 +537,9 @@ impl Command {
         use Unavailable::*;
         let preconditions: &[Unavailable] = match self {
             Command::ShowMessage => &[NoMessage],
+            Command::ShowReason => &[NoReason],
+            #[cfg(feature = "js")]
+            Command::ScriptFailures => &[NoLoadFailures],
             Command::MarkAllShown | Command::InvertShown | Command::MarkWhere(_) => &[NoRowsShown],
             Command::UnmarkShown => &[NoShownRowMarked],
             Command::ClearMarks => &[NoRowsMarked],
@@ -605,6 +627,7 @@ impl Command {
             | Command::SelectPrevBot
             | Command::ToggleMouse
             | Command::ShowMessage
+            | Command::ShowReason
             | Command::FilterFleet
             | Command::PickFleetCard
             | Command::PickWorld
@@ -622,7 +645,10 @@ impl Command {
             | Command::MapWilderness
             | Command::LogSessionFile => return None,
             #[cfg(feature = "js")]
-            Command::ImportProfiles | Command::ScriptLoad | Command::ImportCatalog => return None,
+            Command::ImportProfiles
+            | Command::ScriptLoad
+            | Command::ImportCatalog
+            | Command::ScriptFailures => return None,
         })
     }
 
@@ -670,6 +696,11 @@ impl Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unavailable {
     NoMessage,
+    /// The focused bot's script has no park or wait reason to show.
+    NoReason,
+    /// No script card failed to load.
+    #[cfg(feature = "js")]
+    NoLoadFailures,
     NoRowsShown,
     NoShownRowMarked,
     NoRowsMarked,
@@ -708,6 +739,9 @@ impl Unavailable {
     pub fn text(self) -> &'static str {
         match self {
             Unavailable::NoMessage => "no message",
+            Unavailable::NoReason => "no script reason to show",
+            #[cfg(feature = "js")]
+            Unavailable::NoLoadFailures => "no script failed to load",
             Unavailable::NoRowsShown => "no rows shown",
             Unavailable::NoShownRowMarked => "no shown row is marked",
             Unavailable::NoRowsMarked => "no rows selected",
@@ -743,6 +777,9 @@ impl Unavailable {
     pub fn missing(self, app: &TuiApp) -> bool {
         match self {
             Unavailable::NoMessage => app.error.is_none(),
+            Unavailable::NoReason => app.focused_reason().is_none(),
+            #[cfg(feature = "js")]
+            Unavailable::NoLoadFailures => app.script_failures.is_empty(),
             Unavailable::NoRowsShown => app.fleet_model.shown().is_empty(),
             Unavailable::NoShownRowMarked => app.fleet_model.counts().shown_marked() == 0,
             Unavailable::NoRowsMarked | Unavailable::NoRowsMarkedToMove => {

@@ -3086,6 +3086,72 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     assert!(session.core.walk_route_armed("alice"));
 }
 
+/// With the focused bot logged out, the map walk says why (`not logged in`),
+/// not `map: WalkTo was not applied`, and the command boundary logs the one
+/// refusal line for it.
+#[test]
+fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    use frontend_core::log::{global, LogScope, LogView};
+
+    let name = "tui-walk-logged-out";
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    session.core.fleet_mut().add(name);
+    select(&mut session, name);
+    let mut play = fixture.play(origin);
+    play.attach_arm(name, SlotArm::new(1, false));
+    play.statuses.lock().unwrap().push(host_play::SlotStatus {
+        username: name.into(),
+        connected: false,
+        ingame: false,
+        tile_x: origin.x,
+        tile_z: origin.z,
+        tile_level: origin.level,
+        ..Default::default()
+    });
+    play.focus(name);
+    session.core.set_play(Some(play));
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec![name.into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.world = Some(Arc::clone(&world));
+    session.bind_map_context(&mut app);
+    let destination = Tile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    app.select_requested(destination);
+    session.arm_walk_on(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("not logged in"),
+        "{:?}",
+        app.error
+    );
+    assert!(!session.core.walk_route_armed(name));
+
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
+    global().refresh(&mut process);
+    let lines: Vec<&str> = process
+        .rows()
+        .iter()
+        .map(|row| row.message())
+        // This fixture's bot has no vault profile, so the line names it by
+        // identity.
+        .filter(|message| message.ends_with("NotApplicable: not logged in"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
 #[test]
 fn removing_a_walk_slot_twice_logs_one_cancellation() {
     use frontend_core::log::{global, LogScope, LogView};

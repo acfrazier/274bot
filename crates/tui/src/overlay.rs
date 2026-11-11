@@ -30,9 +30,13 @@ pub enum Modal {
     Palette(PaletteState),
     Confirm(Confirm),
     Context(ContextMenu),
-    /// The full text of the message line.
+    /// A full text the one-line views cut: the message line's, or a script's
+    /// park reason. It holds the text it was opened with, so the text is
+    /// still there after the message line's 15 s are up.
     Message {
         scroll: u16,
+        title: String,
+        text: String,
     },
     /// WASD walking is armed for the selected bot until Esc.
     Manual,
@@ -368,21 +372,36 @@ impl TuiApp {
                 }
             },
             Modal::Context(menu) => self.context_key(menu, key),
-            Modal::Message { scroll } => match key.code {
+            Modal::Message {
+                scroll,
+                title,
+                text,
+            } => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => (
                     Some(Modal::Message {
                         scroll: scroll.saturating_sub(1),
+                        title,
+                        text,
                     }),
                     AppAction::None,
                 ),
                 KeyCode::Down | KeyCode::Char('j') => (
                     Some(Modal::Message {
                         scroll: scroll.saturating_add(1),
+                        title,
+                        text,
                     }),
                     AppAction::None,
                 ),
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => (None, AppAction::None),
-                _ => (Some(Modal::Message { scroll }), AppAction::None),
+                _ => (
+                    Some(Modal::Message {
+                        scroll,
+                        title,
+                        text,
+                    }),
+                    AppAction::None,
+                ),
             },
             Modal::Manual => self.manual_key(key),
             #[cfg(feature = "js")]
@@ -626,7 +645,7 @@ impl TuiApp {
                     .saturating_add_signed(delta as isize)
                     .min(menu.items.len().saturating_sub(1));
             }
-            Some(Modal::Message { scroll }) => {
+            Some(Modal::Message { scroll, .. }) => {
                 *scroll = scroll.saturating_add_signed(delta as i16 * 3);
             }
             #[cfg(feature = "js")]
@@ -669,7 +688,11 @@ impl TuiApp {
             Modal::WorldPicker(picker) => {
                 self.regions.modal = picker.render(area, buf, &mut self.regions.modal_items);
             }
-            Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
+            Modal::Message {
+                scroll,
+                title,
+                text,
+            } => self.draw_message(*scroll, title, text, area, buf),
             Modal::Manual => self.draw_manual(area, buf),
             #[cfg(feature = "js")]
             Modal::ProfileImport(view) => self.regions.modal = view.render(area, buf),
@@ -771,7 +794,7 @@ impl TuiApp {
         }
     }
 
-    fn draw_message(&mut self, scroll: u16, area: Rect, buf: &mut Buffer) {
+    fn draw_message(&mut self, scroll: u16, title: &str, text: &str, area: Rect, buf: &mut Buffer) {
         let popup = centered(
             area,
             area.width.saturating_sub(8).max(20).min(area.width),
@@ -780,9 +803,8 @@ impl TuiApp {
         Clear.render(popup, buf);
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Message · Up/Down scroll · Esc close ");
-        let text = self.error.clone().unwrap_or_else(|| "no message".into());
-        Paragraph::new(text)
+            .title(format!(" {title} · Up/Down scroll · Esc close "));
+        Paragraph::new(text.to_owned())
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0))
             .block(block)

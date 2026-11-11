@@ -627,7 +627,7 @@ pub(crate) fn poll_pending_catalog_assignment<Io>(
                 scripts,
                 assignment,
             );
-            scripts.show(report.summary());
+            scripts.show(report.brief().publish(&crate::LogTarget::command(None)));
         }
         Ok(None) => {
             let _ = scripts.defer_pending_catalog_assignment(action);
@@ -661,7 +661,7 @@ fn fail_pending_catalog_assignment<Io>(
                 .map(|profile| BulkRow::new(profile, BulkOutcome::failed(reason))),
         );
         let report = BulkReport::new("Assign", "assigned", rows, Some(reason.to_string()));
-        scripts.show(report.summary());
+        scripts.show(report.brief().publish(&crate::LogTarget::command(None)));
     }
     let _ = core;
 }

@@ -156,14 +156,29 @@ impl WalkActionError {
         self.0.short()
     }
 
-    /// Host-supplied diagnostic detail for route refusals, if any.
+    /// Host-supplied diagnostic text for route refusals that carry one. A
+    /// zone refusal keeps its zones in typed form instead
+    /// ([`host_play::walk_map::BlockedZones`]), logged once by the host.
     pub fn detail(&self) -> Option<&str> {
         use host_play::walk_map::ActionError as E;
         match &self.0 {
-            E::BlockedByZones { detail } => detail.as_deref(),
-            E::SearchIncomplete { detail } => Some(detail),
-            E::InsufficientItems { detail } | E::RiskRefused { detail, .. } => Some(detail),
+            E::SearchIncomplete { detail }
+            | E::InsufficientItems { detail }
+            | E::RiskRefused { detail, .. } => Some(detail),
             _ => None,
+        }
+    }
+
+    /// The operator-facing brief: the host's short summary of the refusal.
+    /// A refusal with detail (the blocking zones, the whole route text) was
+    /// written to the log once by [`host_play::walk_map::WalkRequest::run`],
+    /// so the brief only points at it.
+    pub fn brief(&self) -> crate::Brief {
+        let brief = crate::Brief::new(self.0.summary());
+        if self.0.detail_items().is_empty() {
+            brief
+        } else {
+            brief.logged_by_producer()
         }
     }
 }

@@ -2397,7 +2397,10 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
         f.scripts.show_load_failures();
         f.scripts.take_notice().unwrap().apply(&mut banner);
-        assert!(banner.as_deref().unwrap_or("").contains("first-load"));
+        assert!(
+            banner.as_deref().unwrap_or("").contains("failed to load"),
+            "the banner names the failure: {banner:?}"
+        );
         if let Some(error) = newer {
             banner = Some(error.to_string());
         }
@@ -2419,6 +2422,86 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         assert_eq!(banner.as_deref(), newer, "newer banner {newer:?}");
         f.core.play().unwrap().script_stop("alice");
     }
+}
+
+/// 80 failed cards are one banner line of at most `LINE_MAX` characters (the
+/// count and two names), every failure is in the log, and showing the list
+/// again, or a second Refresh that fails the same cards, adds no log line.
+#[cfg(feature = "js")]
+#[test]
+fn load_failures_show_one_short_line_and_log_each_failure_once() {
+    use crate::log::{global, LogScope, LogView};
+    let mut f = fixture("load-failure-brief", &["alice"]);
+    let log_lines = || -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|message| message.starts_with("load failure: ") && message.contains("LfBrief"))
+            .collect()
+    };
+    for i in 0..80 {
+        let path = f.dir.join(format!("lfbrief{i:02}.ts"));
+        let failure = script_js::LoadFailure::capture(
+            script::ScriptSource::File,
+            &path,
+            &format!("LfBrief{i:02}"),
+            "Unexpected token at 3:7",
+            Some("export const x = ;"),
+            None,
+        );
+        f.scripts.js_mut().record_failure(failure);
+    }
+    assert_eq!(f.scripts.load_failure_count(), 80);
+    f.scripts.take_notice();
+    f.scripts.show_load_failures();
+    let line = f
+        .scripts
+        .take_notice()
+        .and_then(|notice| notice.text().map(str::to_owned))
+        .expect("the failures are shown");
+    assert!(line.chars().count() <= crate::LINE_MAX, "{line}");
+    assert!(!line.contains('\n'), "{line}");
+    assert_eq!(
+        line,
+        format!(
+            "80 scripts failed to load: LfBrief00, LfBrief01 +78 more{}",
+            crate::LOG_POINTER
+        )
+    );
+    assert_eq!(
+        f.scripts.load_failure_line().as_deref(),
+        Some(line.as_str())
+    );
+
+    // Every failure is in the log, under the store's cap, once.
+    let first = log_lines();
+    assert!(
+        first.len() > 1 && first.len() <= 80,
+        "{} lines",
+        first.len()
+    );
+    for entry in &first {
+        assert!(
+            entry.len() <= api::hostlog::LINE_BYTES,
+            "{} bytes",
+            entry.len()
+        );
+        assert!(!entry.ends_with('…'), "the store cut a line");
+    }
+    for i in 0..80 {
+        let name = format!("LfBrief{i:02} (");
+        assert_eq!(
+            first.iter().filter(|l| l.contains(&name)).count(),
+            1,
+            "{name} is logged once"
+        );
+    }
+    // The banner again, and a Refresh failing the same cards: no new line.
+    f.scripts.show_load_failures();
+    f.scripts.show_load_failures();
+    assert_eq!(log_lines(), first);
 }
 
 /// Each Start's operation id reaches its member's fleet row and slot log
