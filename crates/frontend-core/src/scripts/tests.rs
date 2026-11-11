@@ -2431,6 +2431,8 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
 #[test]
 fn load_failures_show_one_short_line_and_log_each_failure_once() {
     use crate::log::{global, LogScope, LogView};
+    // The sink must be installed before the failures are logged.
+    global();
     let mut f = fixture("load-failure-brief", &["alice"]);
     let log_lines = || -> Vec<String> {
         let mut view = LogView::new(LogScope::Process);

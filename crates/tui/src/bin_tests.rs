@@ -3103,6 +3103,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
 fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
     use frontend_core::log::{global, LogScope, LogView};
 
+    global();
     let name = "tui-walk-logged-out";
     let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
     let fixture = map_fixture::MapFixture::new(&world, "local-289");

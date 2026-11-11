@@ -132,6 +132,8 @@ fn rejoin(lines: &[String], head: &str) -> String {
 #[test]
 fn observe_logs_an_over_cap_multibyte_message_in_full_once_across_many_pumps() {
     use crate::log::LogScope;
+    // The sink must be installed before the first line is written.
+    crate::log::global();
     // 2-, 3- and 4-byte characters, 6,000 characters, one marker character
     // that no other test writes.
     let text: String = "ζ日😀 abc; ".chars().cycle().take(6_000).collect();
@@ -182,6 +184,7 @@ fn observe_logs_an_over_cap_multibyte_message_in_full_once_across_many_pumps() {
 
 #[test]
 fn a_one_line_message_in_the_cap_is_not_logged_by_the_guard() {
+    crate::log::global();
     let before = ring_lines(crate::log::LogScope::Process, 'η').len();
     let mut clock = Clock::default();
     let mut error = shown(&"η".repeat(crate::LINE_MAX));

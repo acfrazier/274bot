@@ -525,6 +525,8 @@ fn an_unknown_profile_write_is_rejected_with_the_owner_text() {
 #[test]
 fn a_refused_command_shows_the_brief_and_logs_its_detail_once() {
     use crate::log::{global, LogScope, LogView};
+    // The sink must be installed before the refusal writes its detail.
+    global();
     let mut d = driver("refused-brief", &["alice"]);
     // `ж` appears in no other test's log lines.
     let name = format!("ghost-{}", "ж".repeat(700));
