@@ -74,6 +74,15 @@ impl<'a> StatusPane<'a> {
     /// click there opens the whole text), `None` when it is whole or off the
     /// pane.
     pub fn reason_hit(&self, area: Rect) -> Option<Rect> {
+        // Most frames have no cut reason: say so before building any line.
+        let cut = self
+            .detail
+            .and_then(SlotDetail::script_phase)
+            .and_then(|script| script.reason())
+            .is_some_and(|reason| reason.is_cut());
+        if !cut {
+            return None;
+        }
         let inner = Block::default().borders(Borders::ALL).inner(area);
         let (lines, reason) = self.lines(inner.width);
         let reason = reason?;
