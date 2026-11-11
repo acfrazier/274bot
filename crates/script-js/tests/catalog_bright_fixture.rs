@@ -304,8 +304,8 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         let is_dim = script_js::is_catalog_dim(&card.name)
             || card
                 .unloadable
-                .as_deref()
-                .is_some_and(|reason| reason.starts_with("dim: "));
+                .as_ref()
+                .is_some_and(|reason| !reason.is_import());
         if is_dim {
             if card.unloadable.is_none() {
                 failures.insert(format!("{}: dim card has no unloadable reason", card.name));
@@ -315,7 +315,8 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             // The frozen baseline also rejects this exact import: there is no
             // served journal.js shim, while the pinned source contains journal.ts.
             if card.name == "AccountLeveler"
-                && reason == "../../api/ai/quests/defs/dragonslayer/journal.js"
+                && reason.is_import()
+                && reason.text() == "../../api/ai/quests/defs/dragonslayer/journal.js"
             {
                 preexisting_unresolved += 1;
             } else {

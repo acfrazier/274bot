@@ -13,7 +13,7 @@ use frontend_core::scripts::{
     CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState, StatusView,
 };
 #[cfg(feature = "js")]
-use frontend_core::scripts::{LoadStage, LoadedCard};
+use frontend_core::scripts::{LoadedCard, UnloadReason};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -138,7 +138,7 @@ pub struct BrowseCard {
     pub kind: CardRuntime,
     pub source: CardSource,
     #[cfg(feature = "js")]
-    pub unloadable: Option<String>,
+    pub unloadable: Option<UnloadReason>,
 }
 
 #[cfg(feature = "js")]
@@ -151,7 +151,7 @@ impl From<LoadedCard<'_>> for BrowseCard {
             tags: card.tags().to_owned(),
             kind: card.runtime(),
             source: card.source(),
-            unloadable: card.unloadable().map(str::to_owned),
+            unloadable: card.unloadable().cloned(),
         }
     }
 }
@@ -174,7 +174,7 @@ impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
             kind: card.kind(),
             source: card.source(),
             #[cfg(feature = "js")]
-            unloadable: card.unloadable().map(str::to_owned),
+            unloadable: card.unloadable().cloned(),
         }
     }
 }
@@ -291,16 +291,11 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
         )));
     }
     #[cfg(feature = "js")]
-    if let Some(spec) = card.unloadable.as_deref() {
-        // An `unloadable` card always fails import resolution with this
-        // diagnostic (`JsLibrary::note_card_outcome`), the same text the
-        // panel wraps on the selected card.
+    if let Some(reason) = &card.unloadable {
+        // One line in the operator's terms: an unresolved import is a failed
+        // import; a catalog policy hold is unavailable for another reason.
         out.push(Line::from(Span::styled(
-            format!("    failed {}", LoadStage::ImportResolution.as_str()),
-            style,
-        )));
-        out.push(Line::from(Span::styled(
-            format!("    unloadable import: {spec}"),
+            format!("    {}", reason.line()),
             style,
         )));
     }
@@ -818,6 +813,8 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::Terminal;
 
+    #[cfg(feature = "js")]
+    use frontend_core::scripts::UnloadReason;
     use frontend_core::scripts::{
         CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState,
     };
@@ -978,7 +975,9 @@ mod tests {
     #[test]
     fn unloadable_card_detail_lines_use_dim_style() {
         let mut card = sample_file_card();
-        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        card.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
         let lines = card_detail_lines(&card, false);
         assert!(
             lines.iter().all(|l| {
@@ -994,7 +993,9 @@ mod tests {
     #[test]
     fn unloadable_card_detail_lines_name_the_failing_specifier() {
         let mut card = sample_file_card();
-        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        card.unloadable = Some(UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into(),
+        ));
         // Selection must not change the rows: click mapping and section
         // height both count the unselected shape.
         for selected in [false, true] {
@@ -1009,14 +1010,41 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(
-                text.contains("failed import"),
-                "stage line (panel parity): {text:?}"
+                text.contains("failed import: ../../event/webwalk/Something.js"),
+                "one line names the specifier: {text:?}"
             );
             assert!(
-                text.contains("unloadable import: ../../event/webwalk/Something.js"),
-                "diagnostic names the specifier: {text:?}"
+                !text.contains("unavailable:"),
+                "an import failure is not a policy hold: {text:?}"
             );
         }
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn retired_card_detail_lines_explain_unavailability() {
+        let mut card = sample_file_card();
+        card.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
+        let text = card_detail_lines(&card, false)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("unavailable: replaced by the native Gatherer"),
+            "{text:?}"
+        );
+        assert!(
+            !text.contains("failed import"),
+            "a policy hold is not an import failure: {text:?}"
+        );
     }
 
     /// The bad-import error must survive the pane's wrap at the PTY sizes
@@ -1029,19 +1057,32 @@ mod tests {
         ghost.name = "K0DiscScriptGhost".into();
         ghost.description = String::new();
         ghost.tags = Vec::new();
-        ghost.unloadable = Some("../../event/webwalk/Something.js".into());
-        let cards = vec![ghost];
+        ghost.unloadable = Some(UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into(),
+        ));
+        let mut retired = sample_file_card();
+        retired.name = "Woodcutter".into();
+        retired.description = String::new();
+        retired.tags = Vec::new();
+        retired.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
+        let cards = vec![ghost, retired];
         let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
-        for (w, h) in [(120, 40), (80, 24), (40, 24)] {
+        for (w, h) in [(120, 40), (80, 24)] {
             let pane = ScriptPane::new(ScriptRunState::Idle, Some(&sel), &cards, &[], true, false);
             let text = render(pane, w, h);
             assert!(
-                text.contains("failed import"),
-                "{w}x{h}: stage line wraps into view"
+                text.contains("failed import: ../../event/webwalk/Something.js"),
+                "{w}x{h}: the import failure names its specifier"
             );
             assert!(
-                text.contains("../../event/webwalk/Something.js"),
-                "{w}x{h}: full specifier stays readable"
+                text.contains("unavailable: replaced by the native Gatherer"),
+                "{w}x{h}: the policy hold reads as unavailable"
+            );
+            assert!(
+                !text.contains("unavailable: ../../event/webwalk/Something.js"),
+                "{w}x{h}: an import failure is never a policy hold"
             );
         }
     }

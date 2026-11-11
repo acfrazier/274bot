@@ -238,8 +238,10 @@ fn duplicate_display_names_are_keyed_by_path() {
     assert!(js.load(&one).is_err());
     let imported = js.load(&two).expect("unloadable file still registers");
     assert_eq!(
-        imported.unloadable.as_deref(),
-        Some("../../event/webwalk/Something.js")
+        imported.unloadable,
+        Some(script_js::UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into()
+        ))
     );
 
     let failures = js.load_failures();

@@ -82,8 +82,8 @@ Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Tra
 _Avoid_: calling a coordinate table a world-port; calling `lightFire` (tinderbox use-on logs) a world-port
 
 **Unloadable**:
-A catalog card the picker will not Start: missing remap, or a locked dim name (GatheringBot rows Woodcutter/Miner/Fisher, AIOQuester, ArravSupplier, Barcrawl, RoguesPurse, MarketMaker). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
-_Avoid_: dimming because a mapped member throws `not impl`; keeping CookBot dim for lack of a `Firemaking.js` URL
+A loaded JS card the picker will not Start, for one of two reasons: an import that does not remap to a supplied shim (shown as `failed import: <specifier>`), or catalog policy that retires the card in favour of a native card or puts it outside supported scope (shown as `unavailable: <reason>`). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
+_Avoid_: calling a policy retirement a failed import; dimming because a mapped member throws `not impl`; keeping CookBot dim for lack of a `Firemaking.js` URL
 
 **`not impl`**:
 The honest miss prefix: `not impl: <throw reason>`. Unmapped: `not impl: Game.teleport`. Mapped close: `not impl: Game.setCombatStyle: combat_styles empty`. Better than a fake `true`. The throw list is the ledger for a later host-verb campaign.
