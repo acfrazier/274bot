@@ -25,6 +25,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
 
+### Panel and terminal app
+
+- The TUI keeps every Quester start-zone row reachable with PageUp and
+  PageDown. The unqualified-guide warning stays visible while the list scrolls.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes

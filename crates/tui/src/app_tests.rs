@@ -1974,6 +1974,16 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             .collect()
     }
 
+    fn flattened_text(shown: &str) -> String {
+        shown
+            .chars()
+            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     for (width, height) in [(120, 40), (80, 24)] {
@@ -2002,13 +2012,13 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         );
         // The disclosure wraps at the pane width: test its words, not its
         // line breaks or the pane border.
-        let flat = shown
-            .chars()
-            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let flat = flattened_text(&shown);
+        assert!(
+            flat.contains(
+                "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+            ),
+            "{width}x{height}: the unqualified-guide warning stays visible: {shown}"
+        );
         for sentence in [
             "The guide asks to cross these zones.",
             "The food guard is armed for the whole walk",
@@ -2051,9 +2061,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             page_index += 1;
             rows = draw(&mut app, width, height);
             shown = text(&rows);
+            let flat = flattened_text(&shown);
             assert!(
-                shown.contains("Start zone scope") && shown.contains("[Start t]"),
-                "{width}x{height}: controls stay visible while scrolling: {shown}"
+                shown.contains("Start zone scope")
+                    && shown.contains("[Start t]")
+                    && flat.contains(
+                        "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+                    ),
+                "{width}x{height}: controls and warning stay visible while scrolling: {shown}"
             );
             pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {

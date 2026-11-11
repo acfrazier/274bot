@@ -502,6 +502,11 @@ pub(crate) struct PendingSettings {
     pub(crate) load_order: bool,
 }
 
+pub(crate) enum ZoneScroll {
+    Rows(i32),
+    Page(i32),
+}
+
 /// Headless panel view model.
 pub struct TuiApp {
     title: String,
@@ -1995,7 +2000,7 @@ impl TuiApp {
         self.quester_start_zones = view;
     }
 
-    pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
+    pub(crate) fn scroll_quester_start_zones(&mut self, request: ZoneScroll) -> bool {
         let selected_quester = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
             == Some(frontend_core::scripts::CompiledCardId::QUESTER);
         #[cfg(feature = "js")]
@@ -2013,10 +2018,14 @@ impl TuiApp {
         {
             return false;
         }
-        let max = self.script_pane().max_vertical_scroll(self.script_area);
+        let (max, page_step) = self.script_pane().vertical_scroll_limits(self.script_area);
         if max == 0 {
             return false;
         }
+        let delta = match request {
+            ZoneScroll::Rows(delta) => delta,
+            ZoneScroll::Page(direction) => direction.saturating_mul(i32::from(page_step)),
+        };
         self.quester_start_zone_scroll = i32::from(self.quester_start_zone_scroll)
             .saturating_add(delta)
             .clamp(0, i32::from(max)) as u16;
