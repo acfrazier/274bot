@@ -481,6 +481,80 @@ pub(crate) fn eat_choice(
         &[],
     )
 }
+/// Which tier a bite is in at one HP observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BiteTier {
+    /// No bite: full HP, dead, above the eat line, or a known-zero danger.
+    None,
+    /// At or below the critical floor: the best-fitting food is eaten even
+    /// when it overheals.
+    Critical,
+    /// Above the critical floor and up to the eat line: only a food whose
+    /// heal fits the missing HP is eaten.
+    Caution,
+}
+
+/// The eat line: `2 * danger + 1` plus the next poison fire (half the maximum
+/// when the danger is unknown), raised to the caller's floor and to the
+/// critical floor.
+#[inline]
+pub(crate) fn eat_line(
+    danger: Option<i32>,
+    burst: Option<i32>,
+    hp_max: i32,
+    poison_fire: i32,
+    eat_floor: i32,
+) -> i32 {
+    select::lines(danger, hp_max)
+        .with_poison(poison_fire)
+        .eat
+        .max(eat_floor)
+        .max(critical_floor(danger, burst, hp_max, poison_fire))
+}
+
+/// The tier of one observation. This is the whole bite-or-not rule that
+/// [`eat_choice_excluding`] (the walk guard, the combat machine, the survival
+/// step), the route model's replay and the supply planner
+/// (`risk::guarded_bound`) all use, so they cannot drift. Only the choice of
+/// which food fills the tier stays with the callers that hold several foods.
+pub(crate) fn bite_tier(
+    hp: i32,
+    hp_max: i32,
+    danger: Option<i32>,
+    burst: Option<i32>,
+    poison_fire: i32,
+    eat_floor: i32,
+) -> BiteTier {
+    if hp <= 0
+        || hp >= hp_max
+        || (danger == Some(0) && poison_fire == 0 && eat_floor < select::lines(danger, hp_max).eat)
+        || hp > eat_line(danger, burst, hp_max, poison_fire, eat_floor)
+    {
+        BiteTier::None
+    } else if hp <= critical_floor(danger, burst, hp_max, poison_fire) {
+        BiteTier::Critical
+    } else {
+        BiteTier::Caution
+    }
+}
+
+/// Whether a single ordinary food of `heal` is eaten at `hp`: in the critical
+/// tier always, in the caution tier only when the heal fits the missing HP.
+pub(crate) fn eats_food(
+    hp: i32,
+    hp_max: i32,
+    heal: i32,
+    danger: Option<i32>,
+    burst: Option<i32>,
+    poison_fire: i32,
+    eat_floor: i32,
+) -> bool {
+    match bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor) {
+        BiteTier::None => false,
+        BiteTier::Critical => true,
+        BiteTier::Caution => hp.saturating_add(heal) <= hp_max,
+    }
+}
 /// Shared food selection for Combat, WalkGuard and runner survival checks.
 /// The caller owns admission and pending-operation policy; this function only
 /// evaluates the current observation. `poison_fire` is the next poison
@@ -515,17 +589,12 @@ pub(crate) fn eat_choice_excluding(
     } = inputs;
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
     let critical = critical_floor(danger, burst, hp_max, poison_fire);
-    let eat_line = lines.eat.max(eat_floor).max(critical);
-    if hp <= 0
-        || hp >= hp_max
-        || (danger == Some(0) && poison_fire == 0 && eat_floor < lines.eat)
-        || hp > eat_line
-    {
-        return None;
-    }
-
+    let fit_only = match bite_tier(hp, hp_max, danger, burst, poison_fire, eat_floor) {
+        BiteTier::None => return None,
+        BiteTier::Critical => false,
+        BiteTier::Caution => true,
+    };
     let basis = crate::survival::eat::Basis::new(critical, danger);
-    let fit_only = hp > critical;
     let ordinary = food_choice(
         hp,
         hp_max,
@@ -701,6 +770,45 @@ mod tests {
         assert_eq!(hits_before_bite(2), 1);
         assert_eq!(hits_before_bite(4), 1);
         assert_eq!(hits_before_bite(u8::MAX), 1);
+    }
+
+    #[test]
+    fn bite_tier_splits_critical_caution_and_none() {
+        use BiteTier::{Caution, Critical, None as No};
+        // Danger 6, burst 6: critical floor 7, eat line 13.
+        let tier = |hp, hp_max, fire, floor| bite_tier(hp, hp_max, Some(6), Some(6), fire, floor);
+        assert_eq!(tier(0, 40, 0, 0), No);
+        assert_eq!(tier(1, 40, 0, 0), Critical);
+        assert_eq!(tier(7, 40, 0, 0), Critical);
+        assert_eq!(tier(8, 40, 0, 0), Caution);
+        assert_eq!(tier(13, 40, 0, 0), Caution);
+        assert_eq!(tier(14, 40, 0, 0), No);
+        assert_eq!(tier(40, 40, 0, 0), No);
+        // The caller's floor lifts the line only; the floor stays critical.
+        assert_eq!(tier(20, 40, 0, 20), Caution);
+        assert_eq!(tier(21, 40, 0, 20), No);
+        // The poison fire lifts both.
+        assert_eq!(tier(10, 40, 3, 0), Critical);
+        assert_eq!(tier(16, 40, 3, 0), Caution);
+        // Known-zero danger bites only for a charged fire or a caller floor.
+        assert_eq!(bite_tier(1, 40, Some(0), Some(0), 0, 0), No);
+        assert_eq!(bite_tier(1, 40, Some(0), Some(0), 2, 0), Critical);
+        // Unknown danger: critical a quarter, line half.
+        assert_eq!(bite_tier(10, 40, None, None, 0, 0), Critical);
+        assert_eq!(bite_tier(11, 40, None, None, 0, 0), Caution);
+        assert_eq!(bite_tier(20, 40, None, None, 0, 0), Caution);
+        assert_eq!(bite_tier(21, 40, None, None, 0, 0), No);
+    }
+
+    #[test]
+    fn eats_food_overheals_only_in_the_critical_tier() {
+        // 20-point account, danger 6, burst 6, lobster 12.
+        let eats = |hp| eats_food(hp, 20, 12, Some(6), Some(6), 0, 0);
+        assert!(eats(7), "critical: overheals");
+        assert!(eats(8), "caution: 8 + 12 fits");
+        assert!(!eats(9), "caution: 9 + 12 overheals");
+        assert!(!eats(13));
+        assert!(!eats(14), "above the line");
     }
 
     #[test]

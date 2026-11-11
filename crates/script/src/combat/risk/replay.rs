@@ -670,6 +670,11 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
 
 /// Replays the shared picker against stack-only inventory/count overlays.
 /// The hook exposes applied hits and bites to independent test simulations.
+///
+/// Test model only: no production path calls it. Production admission is
+/// [`assess`] (the 1 % `timeline_bound` with the `guarded_bound` supply
+/// planner), so this replay's failure rule (HP at or below the route floor
+/// `estimated_floor`) is not a production gate.
 #[allow(clippy::too_many_arguments)]
 pub fn replay(
     path: RoutePath<'_>,
@@ -1094,14 +1099,24 @@ fn scheduled_bound(
         |tick| {
             let tick = i32::from(tick);
             let mut danger = 0i32;
+            let mut burst = 0i32;
             for row in &plan.intervals {
                 if exposure(path, row).is_ok_and(|(start, end)| tick >= start && tick < end) {
-                    danger = danger.saturating_add(i32::from(row.max_hit));
+                    let hit = i32::from(row.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst.saturating_add(if row.hazard() {
+                        hit
+                    } else {
+                        hit.saturating_mul(policy::hits_before_bite(row.rate))
+                    });
                 }
             }
             for live in input.live_iter() {
                 if origin_duration(live, context.combat).is_ok_and(|end| tick < end) {
-                    danger = danger.saturating_add(i32::from(live.max_hit));
+                    let hit = i32::from(live.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst
+                        .saturating_add(hit.saturating_mul(policy::hits_before_bite(live.rate)));
                 }
             }
             let point = (0..path.len())
@@ -1111,6 +1126,7 @@ fn scheduled_bound(
                 .last();
             super::GuardTick {
                 danger: Some(danger),
+                burst: Some(burst),
                 poison_fire: i32::from(poison_pulse_now(
                     input.poison,
                     context.risks.poison_unknown_v,

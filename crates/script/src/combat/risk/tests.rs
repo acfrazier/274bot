@@ -4558,3 +4558,163 @@ fn window_damage_counts_hits_inside_the_bite_delay() {
     assert_eq!(at(vec![row(10, 46, 8, 1, true)], start - 3), (0, 0));
     assert_eq!(at(vec![row(10, 46, 8, 1, true)], start), (0, 0));
 }
+
+fn ice_zones(tables: &CombatTables, spawns: &[i32], radius: u8) -> ZoneTable {
+    zone_table(
+        spawns
+            .iter()
+            .map(|spawn| Zone::npc(tile(*spawn), radius, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![known_kind(tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    )
+}
+
+/// The supply planner's bite at one observation: one lobster-sized food, one
+/// lethal hit at tick 3 that only a bite at tick 0 (healed at tick 2) can
+/// outlive. The guard's observation is the same on every tick, so the planner
+/// survives exactly when it bites.
+fn planner_bites(danger: i32, burst: i32, hp: i32, hp_max: i32, heal: u8, fire: i32) -> bool {
+    let events = [odds::Event {
+        tick: 3,
+        kind: odds::EventKind::Certain,
+        amount: u8::try_from(hp).unwrap(),
+        hit: odds::HitChance::ceil_from(0.0),
+    }];
+    guarded_bound(
+        &events,
+        u8::try_from(hp).unwrap(),
+        u8::try_from(hp_max).unwrap(),
+        Food {
+            item: 100,
+            heal,
+            count: 1,
+        },
+        |_| GuardTick {
+            danger: Some(danger),
+            burst: Some(burst),
+            poison_fire: fire,
+            input_locked: false,
+        },
+    )
+    .unwrap()
+    .bound
+        == 0.0
+}
+
+/// The supply planner's side of the cases the real eater and the route model
+/// decide (`guard.rs`, `the_route_model_decides_the_shared_cases`): the same
+/// table, the same bite-or-not answers, because all three use `policy::bite_tier`.
+#[test]
+fn the_supply_planner_decides_the_shared_cases() {
+    use crate::combat::policy::{self, shared_cases::CASES};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let lobster = tables
+        .food(tables.selected().item_by_alias("lobster").unwrap().id)
+        .unwrap();
+    let heal = u8::try_from(lobster.heal).unwrap();
+    for case in CASES {
+        let (mut danger, mut burst) = (0, 0);
+        for id in case.attackers {
+            let fact = tables.npc(*id).expect("a shared case names a content NPC");
+            let hit = i32::from(
+                crate::combat::select::facts::npc_max_hit(fact).expect("a known-damage attacker"),
+            );
+            danger += hit;
+            burst += hit * policy::hits_before_bite(tables.npc_rate(fact));
+        }
+        assert_eq!(
+            planner_bites(danger, burst, case.hp, case.hp_max, heal, 0),
+            case.bite,
+            "{}: danger {danger}, burst {burst}",
+            case.label
+        );
+    }
+}
+
+/// The planner's critical floor follows the burst, as the real eater's does:
+/// a rate-one attacker of 6 (burst 12) makes a 13/20 account critical, so the
+/// planner overheals; the same hit every fourth tick (burst 6) does not. The
+/// poison fire raises the floor too.
+#[test]
+fn the_supply_planner_critical_floor_follows_the_burst_and_the_fire() {
+    assert!(planner_bites(6, 12, 13, 20, 12, 0));
+    assert!(!planner_bites(6, 12, 14, 20, 12, 0));
+    assert!(!planner_bites(6, 6, 13, 20, 12, 0));
+    assert!(planner_bites(6, 6, 7, 20, 12, 0));
+    // A fire of 3 lifts the floor from 7 to 10 and the eat line from 13 to 16.
+    assert!(planner_bites(6, 6, 10, 20, 12, 3));
+    assert!(!planner_bites(6, 6, 11, 20, 12, 3));
+    // Caution tier: the heal fits at 8/20 (8 + 12), not at 9/20.
+    assert!(planner_bites(6, 6, 8, 20, 12, 0));
+    assert!(!planner_bites(6, 6, 9, 20, 12, 0));
+}
+
+/// Production admission of the ice corridor (two 20-tick crossings of one
+/// ice warrior, 6 every 4 ticks, the same exposure as the hand-built replay
+/// corridor), a 40-point account. The planner eats at the guard's own line
+/// (`2 * 6 + 1 = 13`); every HP from 1 to 13 fits a 12-point lobster at cap
+/// 40, so the two tiers change nothing here and the account is admitted
+/// with one lobster, as before. The replay's floor-30 failure rule is not a
+/// production gate (`replay()` has no production caller).
+#[test]
+fn production_admits_the_ice_corridor_with_one_lobster() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let risks = RiskTables::build(&tables);
+    let fx = Fixture::new(
+        ice_zones(&tables, &[100, 118], 6),
+        WildernessRules::default(),
+    );
+    let cx = context(&fx, &risks, &tables);
+    let walk = route(70, 160);
+    let at = |hp: u8, cap: u8, food: u8| {
+        let mut value = input(hp, cap, food, &tables);
+        value.pos = tile(70);
+        assess(fx.route(&walk), &cx, value)
+    };
+    let refused = at(40, 40, 0);
+    assert_eq!(refused.verdict, Verdict::Unsurvivable, "{}", refused.reason);
+    assert!(refused.bound > consts::DEATH_BOUND);
+    for food in [1, 2, 5, 12] {
+        let admitted = at(40, 40, food);
+        assert_eq!(admitted.verdict, Verdict::Survivable, "{}", admitted.reason);
+        assert!(admitted.bound < consts::DEATH_BOUND, "lobsters {food}");
+    }
+    // The planner asks for the least count that admits: one.
+    let ident = known_kind(&tables).npc_id;
+    let exposure = SupplyExposure {
+        ident,
+        kind: *risks.npc(ident).unwrap(),
+        ticks: 39,
+    };
+    let start = input(40, 40, 0, &tables);
+    let heal = tables.food(start.food_ids[0]).unwrap().heal as u8;
+    let least = (0..=28)
+        .find(|&count| {
+            supply_bound(
+                &[exposure],
+                &start,
+                &tables,
+                Food {
+                    item: start.food_ids[0],
+                    heal,
+                    count,
+                },
+            )
+            .unwrap()
+            .admits(consts::DEATH_BOUND)
+        })
+        .unwrap();
+    assert_eq!(least, 1);
+    // A 20-point start needs two (one is refused, 29 % death bound).
+    assert_eq!(at(20, 40, 1).verdict, Verdict::Unsurvivable);
+    assert_eq!(at(20, 40, 2).verdict, Verdict::Survivable);
+}
