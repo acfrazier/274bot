@@ -17,6 +17,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   builds install the shipped map again; other builds rebuild the map images
   and the catalogue once after you upgrade. This is the only saved data that
   does not carry over; every other 0.2.9 saved format still loads.
+- Direct navigation-pack builds now require `--engine` with the engine checkout
+  for the selected game revision. The local-data builder supplies it automatically.
 
 ### Developer tools
 
