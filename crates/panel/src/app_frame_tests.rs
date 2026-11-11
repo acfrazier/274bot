@@ -1825,16 +1825,21 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     rig.session().open_window(PanelWindow::NavConfig);
     super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
     super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
-    rig.frames_until("the active Nav config frame", |_| {
-        super::TEST_ROUTING_ITEM_BOUNDS.with_borrow(|items| items.len() > 9)
+    let mut previous_combo = None;
+    let mut stable_combo = None;
+    rig.frames_until("the settled Nav config combo", |_| {
+        let items = super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
+        let combo = items.get(9).copied();
+        let settled = combo.is_some() && combo == previous_combo;
+        previous_combo = combo;
+        if settled {
+            stable_combo = combo;
+        }
+        settled
     });
     assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Never);
 
-    let items = super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
-    let combo = items
-        .get(9)
-        .copied()
-        .expect("the real Nav config frame draws the Danger routing combo");
+    let combo = stable_combo.expect("the real Nav config frame draws the Danger routing combo");
     let center = |bounds: [f32; 4]| [(bounds[0] + bounds[2]) * 0.5, (bounds[1] + bounds[3]) * 0.5];
     let combo_center = center(combo);
     for pressed in [false, true, false] {
@@ -1852,7 +1857,8 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     assert_eq!(
         choices.len(),
         3,
-        "the actual popup displays every Danger routing level"
+        "the actual popup displays every Danger routing level at {combo:?}; frame:\n{}",
+        rig.text
     );
     assert_eq!(
         frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
