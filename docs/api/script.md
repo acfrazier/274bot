@@ -326,13 +326,18 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 Release builds accept only rows with `"status": "qualified"`. Currently, only
 The Restless Ghost is qualified. `quests` selects quest IDs. An empty list
 queues all qualified Paths in roster order. An explicit draft quest or
-priority pick refuses Start with the typed `unqualified-path` reason.
+priority pick refuses Start with the typed `unqualified-path` reason. The
+reason names every refused guide and the setting that allows them.
 `order_override` prioritizes selected IDs and `skip` excludes IDs.
 
-The former `include_draft_guides` setting is no longer offered. Saved values
-still load, but cannot enable drafts in a release build. Qualification tests
-can admit drafts through `host-play/test-support`, which enables
-`script/test-hooks`. Interactive quest pickers remain qualified-only.
+The `include_draft_guides` setting (label "Allow unqualified guides", off when
+absent, the key that 0.2.8 saved) lets Start run unqualified guides. With it
+on, explicit `quests` and `order_override` picks start, and an empty `quests`
+list queues every draft guide too. `prepare` then logs one `Warn` line that
+names the unqualified guides (`unqualified_warning`), and the pre-start
+disclosure shows the same text. The quest pickers offer draft rows while it is
+on. Qualification tests can also admit drafts through `host-play/test-support`,
+which enables `script/test-hooks`.
 
 `partner_account` and `gang` are per-account settings, not bulk-copy settings.
 Partner selection uses configured vault identities, including saved accounts
@@ -1661,7 +1666,11 @@ their exact-name lookup.
 
 Native settings use the same per-account map, under `compiled_identity_key`,
 with envelopes `{"schema_version":N,"values":{...}}` (N is the card's schema
-version: 3 for Quester, 4 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+version: 3 for Quester, 5 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+A card also reads the older versions it lists in `reads_schema_versions`: their
+values load unchanged, and a setting they lack takes its default. Gatherer
+reads 0.2.8's schema 4 this way (schema 5 added `buyTools`). The next save
+stamps the current version.
 Missing entries use current defaults; legacy empty native entries mean schema
 1. Malformed or unknown versions remain unavailable and are never overwritten
 with defaults. Merge precedence remains defaults → account overrides → explicit

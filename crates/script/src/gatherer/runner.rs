@@ -3502,9 +3502,11 @@ mod tests {
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
         );
+        // The stale-HP watch grew SurvivalStep from 192 B to 196 B; the
+        // ceiling keeps 64 B of headroom.
         assert!(
-            size_of::<crate::survival::SurvivalStep>() <= 192,
-            "SurvivalStep={} exceeds its 192 B bound",
+            size_of::<crate::survival::SurvivalStep>() <= 260,
+            "SurvivalStep={} exceeds its 260 B bound",
             size_of::<crate::survival::SurvivalStep>()
         );
         assert!(size_of::<GatherRetained>() <= 80);

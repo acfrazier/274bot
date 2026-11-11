@@ -1,19 +1,18 @@
 //! One startup probe and move-aside decision for saved files with a known
-//! pre-0.2.8 shape. The probe deliberately recognizes shapes, not writer
-//! releases or values that merely resemble an older default.
+//! shape older than the 0.2.8 format. The probe deliberately recognizes
+//! shapes, not writer releases or values that merely resemble an older
+//! default. A shape 0.2.8 read without asking the user is in the 0.2.8
+//! format, whichever release wrote it, and is never refused here.
 
 use std::fmt;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use api::loadout::loadouts_have_pre_0_2_8_shape;
-use serde::de::{Deserializer, IgnoredAny};
-use serde::Deserialize;
 use vault::{read_private_file, VaultError};
 
 pub use crate::local_state::StateRoot;
-use crate::local_state::{MAX_HINT_BYTES, MAX_LOADOUTS_BYTES};
+use crate::local_state::{hint_has_pre_0_2_8_shape, MAX_HINT_BYTES};
 
 /// Which response the frontend got to its single saved-data question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,11 +89,12 @@ pub struct SavedDataStartup {
 impl SavedDataStartup {
     /// Probe the stores beneath the already-resolved operator state root.
     ///
-    /// Preferences, script settings, and server profiles have no distinct
-    /// pre-0.2.8 shape to reject. They are opened here to make startup I/O
-    /// failures early; their current readers retain ordinary corruption and
-    /// schema handling. Loadouts, bank hints, and the retired worlds file have
-    /// identifiable old shapes and are collected as one refusal.
+    /// Preferences, script settings, loadouts, and server profiles have no
+    /// shape older than the 0.2.8 format to reject: 0.2.8 read every shape
+    /// they hold. They are opened here to make startup I/O failures early;
+    /// their current readers retain ordinary corruption and schema
+    /// handling. Bank hints from before schema 1 and the retired worlds file
+    /// have identifiable older shapes and are collected as one refusal.
     pub fn check(root: &StateRoot) -> Result<Self, SavedDataCheckError> {
         let mut refusal_paths = Vec::new();
         let mut first_error = None;
@@ -102,27 +102,11 @@ impl SavedDataStartup {
         for path in [
             root.preferences_file(),
             root.path().join("script-settings.json"),
+            root.loadouts_file(),
         ] {
             if let Err(error) = probe_readable_file(&path) {
                 remember_error(&mut first_error, error);
             }
-        }
-
-        let loadouts_path = root.loadouts_file();
-        match read_private_file(&loadouts_path, MAX_LOADOUTS_BYTES) {
-            Ok(bytes) => {
-                if loadouts_have_pre_0_2_8_shape(bytes.as_bytes()) {
-                    refusal_paths.push(loadouts_path);
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => remember_error(
-                &mut first_error,
-                SavedDataCheckError::Io {
-                    path: loadouts_path,
-                    source,
-                },
-            ),
         }
 
         scan_hints(root.path(), &mut refusal_paths, &mut first_error);
@@ -321,7 +305,7 @@ fn scan_hints(
             }
             match read_private_file(&path, MAX_HINT_BYTES) {
                 Ok(bytes) => {
-                    if hint_has_no_scope(&bytes) {
+                    if hint_has_pre_0_2_8_shape(&bytes) {
                         refusal_paths.push(path);
                     }
                 }
@@ -332,31 +316,6 @@ fn scan_hints(
             }
         }
     }
-}
-
-#[derive(Default)]
-struct Present(bool);
-
-impl<'de> Deserialize<'de> for Present {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        IgnoredAny::deserialize(deserializer)?;
-        Ok(Self(true))
-    }
-}
-
-#[derive(Deserialize)]
-struct HintScope {
-    #[serde(default)]
-    revision: Present,
-    #[serde(default)]
-    content: Present,
-}
-
-fn hint_has_no_scope(bytes: &str) -> bool {
-    serde_json::from_str::<HintScope>(bytes).is_ok_and(|hint| !hint.revision.0 && !hint.content.0)
 }
 
 /// The frontend declined the one saved-data prompt, or moving a refused file
@@ -492,27 +451,50 @@ mod tests {
         assert!(startup.refusal().is_none());
     }
 
+    /// Shapes older than what 0.2.8 wrote, which 0.2.8 still read without
+    /// asking the user: a schema 1 hint without a scope, and loadout rows
+    /// with an array `worn` or string `carry` entries. A 0.2.8 user can
+    /// still have them on disk, so the probe never offers to move them.
+    #[test]
+    fn older_shapes_0_2_8_read_as_its_own_are_not_refused() {
+        let dir = Scratch::new();
+        dir.write(
+            "loadouts.json",
+            br#"[{"name":"old","worn":["Helm"],"carry":["Shark"]},{"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]}]"#,
+        );
+        dir.write(
+            "bank-hints/local-289/alice.json",
+            br#"{"schema_version":1,"profile":"local-289","account":"alice","observed_at_unix":1,"rows":[[995,3]]}"#,
+        );
+        dir.write(
+            "bank-hints/local-274/bob.json",
+            br#"{"schema_version":1,"profile":"local-274","account":"bob","observed_at_unix":1,"rows":[]}"#,
+        );
+        dir.write(
+            "servers.json",
+            &serde_json::to_vec(&Servers::builtins()).unwrap(),
+        );
+
+        let startup = SavedDataStartup::check(&dir.root()).unwrap();
+        assert_eq!(startup.refusal(), None);
+    }
+
     #[test]
     fn keep_returns_the_complete_refusal_without_changing_any_file() {
         let dir = Scratch::new();
-        let loadouts = dir.write(
-            "loadouts.json",
-            br#"[{"name":"old","worn":["Helm"],"carry":[]}]"#,
-        );
         let hint = dir.write(
             "bank-hints/alice/alice.json",
-            br#"{"schema_version":1,"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#,
+            br#"{"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#,
         );
         let worlds = dir.write("worlds.json", br#"{"worlds":[]}"#);
         let originals = [
-            (loadouts.clone(), fs::read(&loadouts).unwrap()),
             (hint.clone(), fs::read(&hint).unwrap()),
             (worlds.clone(), fs::read(&worlds).unwrap()),
         ];
 
         let startup = SavedDataStartup::check(&dir.root()).unwrap();
         let refusal = startup.refusal().unwrap();
-        let mut expected = vec![loadouts.clone(), hint.clone(), worlds.clone()];
+        let mut expected = vec![hint.clone(), worlds.clone()];
         expected.sort();
         assert_eq!(refusal.paths(), expected.as_slice());
         let error = startup.resolve(SavedDataChoice::Keep).unwrap_err();
@@ -526,36 +508,29 @@ mod tests {
     #[test]
     fn rename_moves_every_refused_file_without_clobbering_collisions() {
         let dir = Scratch::new();
-        let loadouts = dir.write("loadouts.json", br#"[{"name":"old","worn":[],"carry":[]}]"#);
         let hint = dir.write(
             "bank-hints/alice/alice.json",
-            br#"{"schema_version":1,"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#,
+            br#"{"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#,
         );
         let worlds = dir.write("worlds.json", br#"{"worlds":[]}"#);
-        let old_loadouts = fs::read(&loadouts).unwrap();
         let old_hint = fs::read(&hint).unwrap();
         let old_worlds = fs::read(&worlds).unwrap();
-        let collision = dir.write("loadouts.json.pre-0.2.8", b"keep this existing file");
+        let collision = dir.write("worlds.json.pre-0.2.8", b"keep this existing file");
 
         SavedDataStartup::check(&dir.root())
             .unwrap()
             .resolve(SavedDataChoice::Rename)
             .unwrap();
 
-        assert!(!loadouts.exists());
-        assert_eq!(fs::read(collision).unwrap(), b"keep this existing file");
-        assert_eq!(
-            fs::read(dir.0.join("loadouts.json.pre-0.2.8.1")).unwrap(),
-            old_loadouts
-        );
         assert!(!hint.exists());
         assert_eq!(
             fs::read(dir.0.join("bank-hints/alice/alice.json.pre-0.2.8")).unwrap(),
             old_hint
         );
         assert!(!worlds.exists());
+        assert_eq!(fs::read(collision).unwrap(), b"keep this existing file");
         assert_eq!(
-            fs::read(dir.0.join("worlds.json.pre-0.2.8")).unwrap(),
+            fs::read(dir.0.join("worlds.json.pre-0.2.8.1")).unwrap(),
             old_worlds
         );
     }

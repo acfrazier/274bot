@@ -64,6 +64,8 @@ pub(crate) struct TickPlan {
     pub rows: [PlanRow; 5],
     pub len: u8,
     pub events: u8,
+    /// What the plan's bite was chosen on, for the survival log.
+    pub eat_basis: crate::survival::eat::Basis,
 }
 impl TickPlan {
     pub fn iter(&self) -> impl Iterator<Item = PlanRow> + '_ {

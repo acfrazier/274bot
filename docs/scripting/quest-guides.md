@@ -439,6 +439,25 @@ comment rather than declaring only one hit. Damage from an area or map timer
 is also not a step hazard. Cancelling a step does not stop that damage.
 Survival phase 2 owns those hazards. Underground Pass remains uncovered.
 
+### How a bite is chosen
+
+A bite spends no food it cannot use while the next hit cannot kill. Eating has
+two tiers. At or below the danger plus one, the next hit can kill. The live
+threats set the danger; it is a quarter of the maximum Hitpoints when unknown.
+Then the bite goes out at once. It takes the held food whose heal best fits the
+missing Hitpoints, even if it overheals.
+
+Above that, up to the eat line, the Quester bites only a food whose heal fits
+the missing Hitpoints. It waits when none fits. The eat line is twice the
+danger plus one. When the danger is unknown it is half the maximum. The step's
+hazard floor or the caller's floor can set it instead.
+
+After a bite, the next bite waits until the heal shows in Hitpoints. That is a
+rise, or a fall when a hit lands first. It also ends when the food's own delay
+has passed. Each bite writes one `survival eat` log line. The line gives the
+Hitpoints before, the maximum, the food and its heal, the danger, the critical
+line, and the Hitpoints seen afterwards.
+
 ## The members world fact
 
 - **Members world.** `{"Fact":{"kind":"members_world","version":1,"args":{}}}` is `True` on a members world, `False` on a free-to-play world and `Unknown` only when the profile has no bound server (for example a Direct connection).

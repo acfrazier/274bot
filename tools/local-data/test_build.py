@@ -61,6 +61,14 @@ class BuildWrapperTests(unittest.TestCase):
                 commands[2][0][commands[2][0].index("--cache") + 1],
                 str(engine_274 / "data/pack/client"),
             )
+            self.assertEqual(
+                commands[2][0][commands[2][0].index("--engine") + 1],
+                str(engine_274),
+            )
+            self.assertEqual(
+                commands[3][0][commands[3][0].index("--engine") + 1],
+                str(engine_289),
+            )
             export = commands[4][0]
             self.assertEqual(export[export.index("--export-crossings") + 1], str(
                 root / "target/local-data/nav/289/274bot.navpack"

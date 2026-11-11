@@ -64,11 +64,14 @@ command uses the local revision-289 content and client cache:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 289 \
+  --engine "$GAME_DATA_289_ENGINE" \
   --content "$GAME_DATA_289_CONTENT" \
   --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \
   --out target/local-data/nav/289/274bot.navpack
 ```
+
+`--engine` names the selected engine checkout and is required for each bake.
 
 `--cache` supplies the local client-cache directory. Revisions 289 and 377 read
 its `config`. Revision 274 reads the server `config` beside that directory.
@@ -90,6 +93,7 @@ Use the explicit server table when you rebake revision 377:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 377 \
+  --engine "$GAME_DATA_377_ENGINE" \
   --content "$GAME_DATA_377_CONTENT" \
   --cache "$GAME_DATA_377_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \

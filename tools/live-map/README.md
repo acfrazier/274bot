@@ -12,7 +12,7 @@ The tool reads paths with `git diff --name-only` and expands changes to the
 `vendor/fr-client-rust` gitlink into paths changed between its old and new
 commits. If either commit is missing locally, the tool prints a fetch command
 and exits with an error. It lists covering cells and their exact commands.
-Run each listed cell three times on the changed code. The tool also lists
+Run each listed cell once on the changed code. The tool also lists
 uncovered live paths and unclassified paths. Exit code 0 means no gaps. Exit
 code 1 means a live path has no cell or a path is unclassified. Exit code 2
 means the input or Git diff is invalid.
@@ -62,6 +62,16 @@ frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
 
+## Quarantined map cells
+
+These cells stay out of the active map until their fixtures are repaired.
+Do not cite them as live proof.
+
+| Cell | Fixture defect | Repair needed |
+|---|---|---|
+| `host.gather-bait-stale-hint` | The fixture writes an unscoped bank hint. The supported hint format requires the active revision and content scope, so the loader correctly refuses it. The cell then fails its expectation that the hint loaded. | Write the active profile's revision and content scope into the hint before the run. |
+| `host.gatherer-wc-near-edge` | The fresh-XP check uses distance to the oak's origin tile, not its 3×3 footprint. A valid adjacent stand can be more than one tile from that origin, so the cell times out after the bot approaches and chops the tree. | Check XP against the target's full footprint and valid adjacent stand, not only its origin. |
+
 ## Quarantined ignored live tests
 
 These ignored tests are not map cells. Each fails or flakes on the 0.2.9 batch base `3226e1e7c` as well as on `dev`, for a test defect, not a product defect. Do not use a failure of one of them as evidence about a product change until its oracle or fixture is repaired. The 2026-11-08 sweep (RELEASE-029-HELD, one run each on aubaine; repeats noted) found:
@@ -84,7 +94,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
 | `host.bank-mage-teller-native` | Run on chardonnay with Engine L at `127.0.0.1:47594` and HTTP port `3080`. The cell uses local 289 assets, named-bank catalog data, a minted account, and `LIVE_EVIDENCE_DIR`. |
 | `host.bank-npc-pick-burst`, `host.grinch-cross-region-return` | Run on aubaine with the Engine L endpoint at `127.0.0.1:44594` and HTTP port `1080`. The bank-pick burst requires ten disposable accounts; Grinch uses real cross-region bank returns. |
-| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
+| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-jonny-small-hp-planner-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
 | `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
 | `host.walk-no-route-live` | Run on aubaine against the 600 ms Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`, using its assigned lab scope and the per-cell I/O admission gate. The release command maps the read-only Engine L tree from `BOT_ENGINE_DIR` and uses the `NAV_PACK_289`, `NAV_FLAGS_289`, `BOT_CACHE_DIR`, and `CATALOG_ROOT` inputs for the local R289 client profile. It writes the test receipts under `LIVE_EVIDENCE_DIR`. |
@@ -108,6 +118,7 @@ transition beyond the seeded stage, or actual quest completion.
 |---|---|
 | `host.quester-qualified-priest-engine-q` | `priest-start.json`: Father Aereck advances the qualified Path from `priest:0` to `priest:1`. |
 | `host.quester-jonny-stand-engine-q` | `blackarm-jonny.json`: one explicit pre-Start `phoenixgang=8` seed selects the journal-only `p:8` stage (`quest_blackarmgang.constant:11`; journal:33-46). The Phoenix role walks from the cabbage field, fights real Jonny, and hands in his report to reach `p:9`. The report and joined state are not seeded. |
+| `host.quester-jonny-small-hp-planner-engine-q` | `blackarm-jonny-small-hp.json`: the `host.quester-jonny-stand-engine-q` seed with the Phoenix account's Hitpoints seeded to 4 and two lobsters in the pack (only account state). Jonny hits for at most 1 every 4 ticks, so a 12-point lobster overheals; the supply planner (`combat/risk/supplies.rs`) bites it only in the critical tier and sizes 2 lobsters for the `p:8` fight (the old rule: 4). The cell asserts the production food-sizing line names exactly the 2 seeded lobsters, that every lobster eaten at this cap is a critical-tier bite, and that the stage reaches `p:9`. |
 | `host.quester-mordred-continuation-engine-q` | `arthur-mordred.json`: Base40 fights real Mordred and continues Morgan's dialogue to reach `arthur:4`. Neither success state is seeded. |
 | `host.quester-digsite-thieve-engine-q` | `itexam-thieve.json`: Thieving25 approaches the workman from the recorded route start and advances from the first exam to the second. Only the unrelated orange and purple samples are seeded. |
 

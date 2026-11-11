@@ -51,7 +51,10 @@ impl Gatherer {
     }
 
     // Keep recovery's prepared-food bite separate so an unmet need cannot stop its supply trip.
-    fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+    // The bite rule is the shared one (`policy::eats_food`); only its trigger
+    // is the Gatherer's own: the user's `eatBelow` is the caller floor. Post-death
+    // recovery sees no threats, so the danger is zero and the floor is the line.
+    pub(super) fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let Some(food) = &self.prepared.supply.food else {
             return false;
         };
@@ -73,7 +76,24 @@ impl Gatherer {
             .filter(|row| row.def.id == food.id)
             .map(|row| row.count)
             .sum::<i32>();
-        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+        let Some(heal) = crate::combat::guard::shared_tables_ref()
+            .and_then(|tables| tables.food(food.id))
+            .map(|fact| fact.heal)
+        else {
+            return false;
+        };
+        if held == 0
+            || !crate::combat::policy::eats_food(
+                hp.effective,
+                hp.base,
+                heal,
+                Some(0),
+                Some(0),
+                0,
+                below,
+            )
+            || !self.fence.reserve(1)
+        {
             return false;
         }
         let args = OneOpArgs::eat(&food.name, food.id, held);

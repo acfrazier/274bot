@@ -78,6 +78,10 @@ pub struct BakeRequest<'a> {
     pub doors_dir: &'a Path,
     pub gates: &'a Path,
     pub config_jag: &'a Path,
+    /// Root of the matching Lost City engine checkout.
+    pub engine_dir: &'a Path,
+    /// Build an interpreter report without changing the baked graph or pack.
+    pub nav_shadow: bool,
     /// Explicit packed server location table for revision-377 collision LocDefs.
     /// Required for revision 377; ignored for other revisions.
     pub server_loc_dat_377: Option<&'a Path>,
@@ -107,6 +111,8 @@ pub struct BakedNav {
     pub summary: BakeSummary,
     /// Non-fatal notes the caller reports (skipped door configs).
     pub notes: Vec<String>,
+    /// Optional JSON report from the non-mutating interpreter shadow.
+    pub nav_shadow: Option<String>,
 }
 
 struct DerivedZones {
@@ -1055,17 +1061,17 @@ fn selected_game_data(
     let core_bytes = std::fs::read(&core_path).map_err(|source| {
         crate::GenerationError::SourceInput(crate::SourceInputError::Io {
             context: crate::SourceInputContext::GameData,
-            path: core_path,
+            path: core_path.clone(),
             source,
         })
     })?;
-    let game_data =
-        api::game_data::decode_game_data(&core_bytes, game_revision).map_err(|error| {
-            crate::GenerationError::SelectedGameDataUnavailable {
+    let game_data = api::game_data::decode_game_data(&core_bytes, game_revision, &core_path)
+        .map_err(
+            |error| crate::GenerationError::SelectedGameDataUnavailable {
                 revision: selected_revision,
                 detail: error.to_string(),
-            }
-        })?;
+            },
+        )?;
 
     let quests_path = game_data_dir
         .join(selected_revision.to_string())
@@ -1188,9 +1194,18 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
 
     // Client NPC/loc records continue to supply the navpois surface; 377
     // collision LocDefs use the engine's server-then-client LocType decode.
-    let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
+    let (loc_defs, npc_types, loc_types, client_varbits) = match std::fs::read(request.config_jag) {
         Ok(bytes) => {
             let jag = JagFile::new(bytes);
+            let client_varbits = if request.nav_shadow {
+                Some(jag.read("varbit.dat").ok_or_else(|| {
+                    crate::GenerationError::NavShadowVarbitsMissing {
+                        path: request.config_jag.to_path_buf(),
+                    }
+                })?)
+            } else {
+                None
+            };
             let mut engine_loc_defs = None;
             let (npcs, locs) = if let Some(server_loc_dat_path) = server_loc_dat_377 {
                 let cache =
@@ -1230,7 +1245,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
                 (cache.npcs, cache.locs)
             };
             let loc_defs = engine_loc_defs.unwrap_or_else(|| LocDefs::from_locs(&locs));
-            (loc_defs, npcs, locs)
+            (loc_defs, npcs, locs, client_varbits)
         }
         Err(e) => {
             return Err(crate::GenerationError::SourceInput(
@@ -1259,15 +1274,32 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     let quest_source = crate::transport::QuestSource {
         facts: &quest_facts,
     };
-    let (mut graph, audit) = derive_transports_for_bake(
+    let shadow = if request.nav_shadow {
+        let client_varbits = client_varbits.as_deref().ok_or_else(|| {
+            crate::GenerationError::NavShadowVarbitsMissing {
+                path: request.config_jag.to_path_buf(),
+            }
+        })?;
+        Some(crate::transport::load_nav_shadow(
+            request.engine_dir,
+            content_root,
+            request.maps_dir,
+            &loc_types,
+            client_varbits,
+            request.revision.unwrap_or(274),
+        )?)
+    } else {
+        None
+    };
+    let (mut graph, audit, nav_shadow) = derive_transports_for_bake(
         content_root,
         &loc_defs,
         &collision,
-        &door_ids,
-        &parsed_door_configs,
+        (&door_ids, &parsed_door_configs),
         Some(&quest_source),
         &game_data,
-    );
+        shadow,
+    )?;
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph).map_err(|detail| {
         crate::GenerationError::TransportValidation {
@@ -1406,6 +1438,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
             banks: banks.len(),
         },
         notes,
+        nav_shadow,
     })
 }
 

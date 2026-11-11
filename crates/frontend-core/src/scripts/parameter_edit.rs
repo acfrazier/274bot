@@ -285,9 +285,16 @@ fn resolve_parameter_options_with_registry(
     Ok(options)
 }
 
-fn qualified_path_row(row: &script::quester::registry::PathRow) -> bool {
+/// A row that can run, but live testing has not qualified it.
+fn unqualified_path_row(row: &script::quester::registry::PathRow) -> bool {
     row.unavailable.is_none()
-        && row.status == Some(script::quester::queue::ReleasePathStatus::Qualified)
+        && row.status != Some(script::quester::queue::ReleasePathStatus::Qualified)
+}
+
+/// A row the picker lets the user choose: a qualified guide, or an
+/// unqualified one when the "Allow unqualified guides" setting is on.
+fn selectable_path_row(row: &script::quester::registry::PathRow, allow_unqualified: bool) -> bool {
+    row.unavailable.is_none() && (!unqualified_path_row(row) || allow_unqualified)
 }
 
 fn resolve_released_path_options(
@@ -296,13 +303,17 @@ fn resolve_released_path_options(
     registry: &script::quester::registry::PathRegistry,
 ) -> ParameterOptions {
     let rows = registry.rows();
+    let allow_unqualified = bag
+        .get("include_draft_guides")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let source = def.options_from.as_deref().unwrap_or_default();
     let mut options = ParameterOptions::default();
 
     if source == "released-paths" {
         for row in rows {
             options.values.push(row.id.clone());
-            let label = if row.unavailable.is_none() && !qualified_path_row(row) {
+            let label = if unqualified_path_row(row) {
                 format!(
                     "{} — {}",
                     row.label,
@@ -316,7 +327,7 @@ fn resolve_released_path_options(
         move_unselectable_to_preserved(&mut options, |id| {
             rows.iter()
                 .find(|row| row.id == id)
-                .is_some_and(qualified_path_row)
+                .is_some_and(|row| selectable_path_row(row, allow_unqualified))
         });
         preserve_unknown_values(def, bag, &mut options);
         return options;
@@ -342,7 +353,7 @@ fn resolve_released_path_options(
             && rows
                 .iter()
                 .find(|row| row.id == *id)
-                .is_some_and(|row| !qualified_path_row(row))
+                .is_some_and(|row| !selectable_path_row(row, allow_unqualified))
         {
             ids.push(id.clone());
         }
@@ -370,7 +381,7 @@ fn resolve_released_path_options(
         } else {
             row.label.clone()
         };
-        if row.unavailable.is_none() && !qualified_path_row(row) {
+        if unqualified_path_row(row) {
             display.push_str(" — ");
             display.push_str(script::quester::queue::UNQUALIFIED_PATH_REASON);
         }
@@ -387,7 +398,7 @@ fn resolve_released_path_options(
     move_unselectable_to_preserved(&mut options, |id| {
         rows.iter()
             .find(|row| row.id == id)
-            .is_some_and(qualified_path_row)
+            .is_some_and(|row| selectable_path_row(row, allow_unqualified))
     });
     preserve_unknown_values(def, bag, &mut options);
     options

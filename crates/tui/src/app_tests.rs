@@ -1974,6 +1974,16 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             .collect()
     }
 
+    fn flattened_text(shown: &str) -> String {
+        shown
+            .chars()
+            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     for (width, height) in [(120, 40), (80, 24)] {
@@ -2002,13 +2012,13 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         );
         // The disclosure wraps at the pane width: test its words, not its
         // line breaks or the pane border.
-        let flat = shown
-            .chars()
-            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let flat = flattened_text(&shown);
+        assert!(
+            flat.contains(
+                "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+            ),
+            "{width}x{height}: the unqualified-guide warning stays visible: {shown}"
+        );
         for sentence in [
             "The guide asks to cross these zones.",
             "The food guard is armed for the whole walk",
@@ -2051,9 +2061,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             page_index += 1;
             rows = draw(&mut app, width, height);
             shown = text(&rows);
+            let flat = flattened_text(&shown);
             assert!(
-                shown.contains("Start zone scope") && shown.contains("[Start t]"),
-                "{width}x{height}: controls stay visible while scrolling: {shown}"
+                shown.contains("Start zone scope")
+                    && shown.contains("[Start t]")
+                    && flat.contains(
+                        "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+                    ),
+                "{width}x{height}: controls and warning stay visible while scrolling: {shown}"
             );
             pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {
@@ -2219,6 +2234,77 @@ fn mouse_browse_pick_discloses_quester_zones_before_start_120x40() {
 #[test]
 fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
     assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
+}
+
+fn assert_start_screen_warns_about_unqualified_guides_only_when_allowed(width: u16, height: u16) {
+    let evidence_root =
+        std::env::var_os("UNQUALIFIED_OPTIN_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    let flat = |shown: &str| shown.split_whitespace().collect::<Vec<_>>().join(" ");
+    for allowed in [false, true] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            (
+                "include_draft_guides".to_owned(),
+                serde_json::json!(allowed),
+            ),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-unqualified-warning"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Script), AppAction::None);
+
+        let shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height} allowed={allowed}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        let flat_shown = flat(&shown);
+        if allowed {
+            assert!(
+                flat_shown.contains("Warning: these guides are unqualified."),
+                "{width}x{height}: the warning is shown before Start: {shown}"
+            );
+            assert!(
+                flat_shown.contains("arthur"),
+                "{width}x{height}: the warning names the guide: {shown}"
+            );
+        } else {
+            assert!(
+                !flat_shown.contains("unqualified"),
+                "{width}x{height}: no warning while the setting is off: {shown}"
+            );
+        }
+        if let Some(root) = &evidence_root {
+            let directory = root.join("UNQUALIFIED-OPTIN");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!(
+                    "tui-start-{width}x{height}-allow-{}.txt",
+                    if allowed { "on" } else { "off" }
+                )),
+                &shown,
+            )
+            .expect("write TUI capture");
+        }
+    }
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_120x40() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(120, 40);
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_80x24() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(80, 24);
 }
 
 #[test]

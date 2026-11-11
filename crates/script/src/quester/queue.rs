@@ -19,8 +19,45 @@ pub enum ReleasePathStatus {
     Qualified,
 }
 
-/// Refusal shown when a Path has not passed live qualification.
+/// Label for a guide in a picker when live testing has not qualified it.
 pub const UNQUALIFIED_PATH_REASON: &str = "Path has not been qualified by live testing.";
+/// Label of the per-bot setting that lets unqualified guides run. Both
+/// front ends show this text, and the Start refusal names it.
+pub const ALLOW_UNQUALIFIED_LABEL: &str = "Allow unqualified guides";
+
+/// The most guide ids a message names before it counts the rest.
+const GUIDES_LISTED: usize = 8;
+
+fn guide_list(ids: &[&str]) -> String {
+    let mut text = ids
+        .iter()
+        .take(GUIDES_LISTED)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ids.len() > GUIDES_LISTED {
+        text.push_str(&format!(" and {} more", ids.len() - GUIDES_LISTED));
+    }
+    text
+}
+
+/// Whether policy lets an unqualified guide start: the user turned on
+/// "Allow unqualified guides", or this is a test build.
+pub(crate) fn policy_admits_unqualified(allow_unqualified_setting: bool) -> bool {
+    cfg!(feature = "test-hooks") || allow_unqualified_setting
+}
+
+/// The one warning a run shows when it includes unqualified guides. `None`
+/// when `ids` is empty.
+pub fn unqualified_warning(ids: &[&str]) -> Option<String> {
+    (!ids.is_empty()).then(|| {
+        format!(
+            "Warning: these guides are unqualified. Live testing has not shown that they work: {}.",
+            guide_list(ids)
+        )
+    })
+}
+
 /// One release roster row. A released row names its Path `file`. An
 /// unavailable row names the quest and an end-user reason instead; it is never
 /// compiled or started, and may keep a `file` so the authored Path stays
@@ -36,16 +73,16 @@ pub struct ReleasePath {
     pub name: Option<String>,
     #[serde(default)]
     pub unavailable: Option<String>,
-    /// Only Qualified rows enter release selection; test-hooks can admit drafts.
+    /// Release selection admits drafts only with the opt-in; test-hooks also admit them.
     #[serde(default)]
     pub status: Option<ReleasePathStatus>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueSettings {
-    /// Empty selects every available qualified row.
+    /// Empty selects every available qualified row, plus drafts when allowed.
     pub quests: Vec<String>,
-    /// Saved harness setting; release policy ignores it.
+    /// Saved per-bot opt-in for unqualified guides, including empty-list selection.
     pub include_draft_guides: bool,
     /// Explicit priority rows; remaining picked rows retain release-index order.
     pub order_override: Vec<String>,
@@ -134,11 +171,14 @@ impl QueueConfigError {
         }
     }
 
-    fn unqualified_path(field: &'static str) -> Self {
+    fn unqualified_path(field: &'static str, ids: &[&str]) -> Self {
         Self {
             kind: QueueConfigErrorKind::UnqualifiedPath,
             field,
-            message: Arc::from(UNQUALIFIED_PATH_REASON),
+            message: Arc::from(format!(
+                "Guides not qualified by live testing: {}. They run only when you turn on \"{ALLOW_UNQUALIFIED_LABEL}\" in the Quester settings.",
+                guide_list(ids)
+            )),
         }
     }
 }
@@ -164,7 +204,26 @@ impl Queue {
         source: PathRegistry,
         settings: QueueSettings,
     ) -> Result<Self, QueueConfigError> {
-        Self::from_registry_with_policy(source, settings, cfg!(feature = "test-hooks"))
+        let allow_unqualified = policy_admits_unqualified(settings.include_draft_guides);
+        Self::from_registry_with_policy(source, settings, allow_unqualified)
+    }
+
+    /// Ids of the guides this queue will run that live testing has not
+    /// qualified, in queue order. Under release policy there are none
+    /// unless the user turned on "Allow unqualified guides".
+    pub fn unqualified_guides(&self) -> Vec<&str> {
+        self.order
+            .iter()
+            .filter_map(|&position| {
+                let row = &self.rows[usize::from(position)];
+                let path = self.index.paths.get(usize::from(row.index))?;
+                (row.picked
+                    && !row.skipped
+                    && path.unavailable.is_none()
+                    && path.status != Some(ReleasePathStatus::Qualified))
+                .then_some(path.id.as_str())
+            })
+            .collect()
     }
 
     fn from_registry_with_policy(
@@ -194,7 +253,9 @@ impl Queue {
         }
 
         if !allow_unqualified {
-            for (field, ids) in [
+            let mut field = None;
+            let mut refused: Vec<&str> = Vec::new();
+            for (name, ids) in [
                 ("quests", settings.quests.as_slice()),
                 ("order_override", settings.order_override.as_slice()),
             ] {
@@ -203,9 +264,15 @@ impl Queue {
                     if path.unavailable.is_none()
                         && path.status != Some(ReleasePathStatus::Qualified)
                     {
-                        return Err(QueueConfigError::unqualified_path(field));
+                        field.get_or_insert(name);
+                        if !refused.contains(&id.as_str()) {
+                            refused.push(id);
+                        }
                     }
                 }
+            }
+            if let Some(field) = field {
+                return Err(QueueConfigError::unqualified_path(field, &refused));
             }
         }
 
@@ -569,7 +636,8 @@ mod tests {
         .unwrap_err();
         assert_eq!(explicit.kind, QueueConfigErrorKind::UnqualifiedPath);
         assert_eq!(explicit.field, "quests");
-        assert_eq!(explicit.message.as_ref(), UNQUALIFIED_PATH_REASON);
+        assert!(explicit.message.contains(&draft_id));
+        assert!(explicit.message.contains(ALLOW_UNQUALIFIED_LABEL));
 
         let prioritized = release_queue(QueueSettings {
             order_override: vec![draft_id.clone()],
@@ -608,6 +676,124 @@ mod tests {
         )
         .unwrap();
         assert_eq!(default.next_candidate(), None);
+    }
+
+    fn bundled_drafts(count: usize) -> (ReleaseIndex, Vec<String>) {
+        let index: ReleaseIndex =
+            serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
+        let drafts = index
+            .paths
+            .iter()
+            .filter(|path| {
+                path.unavailable.is_none() && path.status == Some(ReleasePathStatus::Draft)
+            })
+            .take(count)
+            .map(|path| path.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(drafts.len(), count, "the bundled index has enough drafts");
+        (index, drafts)
+    }
+
+    #[test]
+    fn refusal_names_every_unqualified_guide_once_and_says_how_to_allow_them() {
+        let (index, drafts) = bundled_drafts(2);
+        let error = Queue::from_registry_with_policy(
+            PathRegistry::from_index(index),
+            QueueSettings {
+                quests: vec!["priest".into(), drafts[0].clone(), drafts[1].clone()],
+                order_override: vec![drafts[0].clone()],
+                ..QueueSettings::default()
+            },
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, QueueConfigErrorKind::UnqualifiedPath);
+        assert_eq!(error.field, "quests");
+        assert_eq!(
+            error.message.as_ref(),
+            format!(
+                "Guides not qualified by live testing: {}, {}. They run only when you turn on \"Allow unqualified guides\" in the Quester settings.",
+                drafts[0], drafts[1]
+            )
+        );
+        assert!(!error.message.contains("priest"));
+    }
+
+    #[test]
+    fn a_long_guide_list_counts_the_rest() {
+        let ids = (0..10).map(|n| format!("g{n}")).collect::<Vec<_>>();
+        let ids = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            guide_list(&ids),
+            "g0, g1, g2, g3, g4, g5, g6, g7 and 2 more"
+        );
+        assert_eq!(guide_list(&ids[..2]), "g0, g1");
+    }
+
+    #[test]
+    fn allowed_policy_runs_picked_unqualified_guides_and_names_only_them() {
+        let (index, drafts) = bundled_drafts(2);
+        let queue = Queue::from_registry_with_policy(
+            PathRegistry::from_index(index.clone()),
+            QueueSettings {
+                quests: vec![drafts[1].clone(), "priest".into(), drafts[0].clone()],
+                skip: vec![drafts[0].clone()],
+                ..QueueSettings::default()
+            },
+            true,
+        )
+        .unwrap();
+        let unqualified = queue.unqualified_guides();
+        assert_eq!(
+            unqualified,
+            [drafts[1].as_str()],
+            "a skipped guide never runs"
+        );
+        let warning = unqualified_warning(&unqualified).unwrap();
+        assert!(warning.contains("unqualified"), "{warning}");
+        assert!(warning.contains(drafts[1].as_str()), "{warning}");
+        assert!(!warning.contains("priest"), "{warning}");
+        assert_eq!(unqualified_warning(&[]), None);
+
+        let default = Queue::from_registry_with_policy(
+            PathRegistry::from_index(index),
+            QueueSettings::default(),
+            true,
+        )
+        .unwrap();
+        assert!(
+            default.unqualified_guides().is_empty(),
+            "an empty selection stays qualified-only"
+        );
+    }
+
+    #[test]
+    fn allow_with_an_empty_list_queues_every_draft_guide_and_the_warning_counts_them() {
+        let (index, _) = bundled_drafts(1);
+        let queue = Queue::from_registry_with_policy(
+            PathRegistry::from_index(index.clone()),
+            QueueSettings {
+                include_draft_guides: true,
+                ..QueueSettings::default()
+            },
+            true,
+        )
+        .unwrap();
+        let drafts = index
+            .paths
+            .iter()
+            .filter(|path| {
+                path.unavailable.is_none() && path.status != Some(ReleasePathStatus::Qualified)
+            })
+            .count();
+        let unqualified = queue.unqualified_guides();
+        assert_eq!(unqualified.len(), drafts);
+        assert!(drafts > GUIDES_LISTED);
+        let warning = unqualified_warning(&unqualified).unwrap();
+        assert!(
+            warning.contains(&format!("and {} more", drafts - GUIDES_LISTED)),
+            "{warning}"
+        );
     }
 
     #[cfg(feature = "test-hooks")]

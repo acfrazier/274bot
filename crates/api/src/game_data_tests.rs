@@ -454,6 +454,46 @@ fn facts_old_data_is_refused_by_version() {
     }
 }
 #[test]
+fn stale_generated_data_names_the_file_and_the_rebuild_command() {
+    let document = minimal_json(r#", "quest_identity": {"rows": [], "operation_fingerprint": 1}"#);
+    let path = std::path::Path::new("crates/api/data/game-data/289.json");
+    let error = decode_game_data(document.as_bytes(), ClientRevision::R289, path)
+        .expect_err("an unknown field written by other tooling must be refused");
+    let display = error.to_string();
+    assert!(
+        display.contains("unknown field `operation_fingerprint`"),
+        "the serde detail stays in the message: {display}"
+    );
+    assert!(
+        display.contains("crates/api/data/game-data/289.json"),
+        "the message names the file that failed: {display}"
+    );
+    assert!(
+        display.contains("python3 tools/local-data/build.py"),
+        "the message says how to regenerate the file: {display}"
+    );
+}
+
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+#[test]
+fn embedded_decode_diagnostic_uses_a_workspace_relative_source() {
+    let error = embedded_decode_error(
+        ClientRevision::R289,
+        "generated game data decode: test".to_owned(),
+    );
+    let display = error.to_string();
+    assert!(
+        display
+            .contains("crates/api/data/game-data/289.json (embedded when this build was compiled)"),
+        "the embedded source is named relative to the workspace: {display}"
+    );
+    assert!(
+        !display.contains(env!("CARGO_MANIFEST_DIR")),
+        "the build machine's path stays out of the binary: {display}"
+    );
+}
+
+#[test]
 fn facts_negative_bonus_is_signed() {
     // generate.ts:3044-3047,3161-3178 publishes PvP V0 bonuses only on289.
     let Some(unavailable) = crate::game_data::test_data(ClientRevision::R274) else {

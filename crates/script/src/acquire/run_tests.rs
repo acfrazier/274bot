@@ -2842,7 +2842,9 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
     assert!(size_of::<WearStep>() <= 8);
     assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());
     assert_eq!(size_of::<BankReceipt>(), 8);
-    assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
+    // SurvivalStep measured 196 B with the stale-HP watch (192 B before);
+    // the ceiling keeps 64 B of headroom.
+    assert!(size_of::<crate::survival::SurvivalStep>() <= 260);
     // The composed Provisioner is 1160 B; the ceiling leaves 64 B.
     assert!(size_of::<crate::quester::provision::Provisioner>() <= 1224);
     assert!(size_of::<AcquireRequest>() <= 232);

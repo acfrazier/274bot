@@ -194,13 +194,15 @@ Every bundled guide is indexed and embedded three ways, and all three must agree
 2. Add the file to the `path_bytes` match in `crates/script/src/quester/compile.rs`. Raw draft bytes remain available to the qualification harness.
 3. Run `cargo test -p script bundled_paths_decode_and_compile`. This checks the indexed files and IDs. It does not qualify a Path for release. Compile errors carry the guide, step, code, and detail.
 
-Queue order follows the release index. Normal builds admit only qualified rows.
-An explicit draft quest or priority pick returns a typed refusal. A saved
-`include_draft_guides` value cannot bypass that rule.
+Queue order follows the release index. Normal builds admit only qualified rows
+unless the Quester setting `include_draft_guides` ("Allow unqualified guides")
+is on. Otherwise an explicit draft quest or priority pick returns a typed
+refusal that names the guides.
 
 The `host-play/test-support` feature enables `script/test-hooks` for draft
 qualification. The normal TUI's `live-harness` feature does not grant draft
-admission. Interactive pickers offer only qualified rows in every build.
+admission. Interactive pickers offer only qualified rows unless the setting is
+on.
 
 Terminal draft cells enable `frontend-core/test-support` explicitly. Use the
 exact mapped command in `tools/live-map/map.toml`.

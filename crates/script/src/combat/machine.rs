@@ -18,6 +18,7 @@ use crate::native::{
     WalkRequest, QUEST_WALK_MAX_ATTEMPTS,
 };
 use crate::survival::cure::{self, CureDecision, CureInputs};
+use crate::survival::eat;
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
 use std::num::NonZeroU64;
@@ -75,6 +76,26 @@ struct Counters {
     pvp_blocked: u8,
 }
 
+/// What a recovery bite is chosen on: the drink gate it must lift Hitpoints
+/// above, and the danger, burst and poison fire of the shared bite tier
+/// (`policy::bite_tier`), so a recovery bite follows the rule every eater does.
+#[derive(Clone, Copy)]
+struct Recovery {
+    gate: i32,
+    danger: Option<i32>,
+    burst: Option<i32>,
+    poison_fire: i32,
+}
+impl Recovery {
+    fn new(gate: i32, danger: Option<i32>, burst: Option<i32>, poison_fire: i32) -> Self {
+        Self {
+            gate,
+            danger,
+            burst,
+            poison_fire,
+        }
+    }
+}
 /// Server-effect identity survives the host's rotating dispatch-receipt ring.
 #[derive(Clone, Copy, Default)]
 struct PendingRow {
@@ -198,6 +219,10 @@ pub struct Combat {
     raised_prayers: RaisedPrayers,
     eat_ready: u16,
     food_total: u16,
+    // The Hitpoints and danger floor of the plan that last held a bite: the
+    // stale-HP rule and the survival log line read them.
+    eat_hp: i16,
+    eat_basis: eat::Basis,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
     // Bits 42–55 hold Prep-origin and skipped boost-family masks.
@@ -448,6 +473,8 @@ impl NativeMachine for Combat {
             raised_prayers: RaisedPrayers::default(),
             eat_ready: 0,
             food_total: 0,
+            eat_hp: 0,
+            eat_basis: eat::Basis::default(),
 
             prep_failures: 0,
             approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
@@ -2020,8 +2047,12 @@ impl Combat {
                 continue;
             }
             let kind = op_kind(row.kind);
+            let mut eat_outcome = None;
             let settled = match row.kind {
-                RowKind::Eat => arbiter::count(frame, row.id) < i32::from(pending.baseline),
+                RowKind::Eat => {
+                    eat_outcome = self.eat_verdict(frame, row.id, pending);
+                    eat_outcome.is_some()
+                }
                 RowKind::CureFruit => arbiter::count(frame, row.id) < i32::from(pending.baseline),
                 RowKind::Drink => {
                     arbiter::doses(frame, &self.tables, potion_kind(row.aux)) < pending.baseline
@@ -2065,7 +2096,12 @@ impl Combat {
             if settled {
                 self.pending[slot] = PendingRow::default();
                 match row.kind {
-                    RowKind::Eat => self.counters.food = self.counters.food.saturating_add(1),
+                    RowKind::Eat => {
+                        self.counters.food = self.counters.food.saturating_add(1);
+                        if let Some(outcome) = eat_outcome {
+                            self.log_eat(frame, row.id, outcome);
+                        }
+                    }
                     RowKind::Drink => match potion_kind(row.aux) {
                         PotionKind::Prayer => {
                             self.counters.prayer = self.counters.prayer.saturating_add(1)
@@ -2106,6 +2142,9 @@ impl Combat {
                     continue;
                 }
                 self.pending[slot] = PendingRow::default();
+                if row.kind == RowKind::Eat {
+                    self.log_eat(frame, row.id, eat::Outcome::NotRun);
+                }
                 if row.kind == RowKind::Prayer && row.aux != 0 {
                     if let Some(varp) = self.prayer_varp(row.id) {
                         if observation.is_off(varp) {
@@ -2154,6 +2193,49 @@ impl Combat {
                 }
             }
         }
+    }
+    /// The stale-HP rule for a pending bite: its count drop shows the server
+    /// ran it, and it settles only once Hitpoints rose (the heal), fell (a
+    /// hit landed first) or the food's own delay passed
+    /// ([`eat::heal`]). `None` means the bite is still waiting.
+    fn eat_verdict(&self, frame: &Frame<'_>, id: i32, pending: PendingRow) -> Option<eat::Outcome> {
+        if arbiter::count(frame, id) >= i32::from(pending.baseline) {
+            return None;
+        }
+        let Some(food) = self.tables.food(id) else {
+            return Some(eat::Outcome::NoHeal);
+        };
+        // A bite sent in tick T runs in T + 1 at the earliest, where its age
+        // is 0.
+        match eat::heal(
+            self.eat_hp,
+            arbiter::stat(frame, 3).0,
+            u16::from(pending.age),
+            food,
+        ) {
+            eat::Heal::Pending => None,
+            eat::Heal::Rose => Some(eat::Outcome::Healed),
+            eat::Heal::Fell => Some(eat::Outcome::Fell),
+            eat::Heal::Unseen => Some(eat::Outcome::NoHeal),
+        }
+    }
+    /// One survival log line for a finished bite.
+    fn log_eat(&self, frame: &Frame<'_>, id: i32, outcome: eat::Outcome) {
+        let Some(food) = self.tables.food(id) else {
+            return;
+        };
+        let (hp, hp_max) = arbiter::stat(frame, 3);
+        eat::Bite {
+            eater: eat::Eater::Combat,
+            outcome,
+            food_id: food.item_id,
+            heal: food.heal,
+            hp_before: i32::from(self.eat_hp),
+            hp_max,
+            basis: self.eat_basis,
+            hp_after: hp,
+        }
+        .log();
     }
     fn shield(&self, frame: &Frame<'_>) -> bool {
         self.tables
@@ -2294,26 +2376,71 @@ impl Combat {
         })
         .is_some()
     }
+    /// The recovery bite: the ordinary food of the shared bite tier
+    /// (`policy::food_for_tier`) that also lifts Hitpoints above the drink
+    /// gate. Outside a tier there is no bite, and in the caution tier only a
+    /// food that fits the missing Hitpoints is taken.
     fn plain_food(
         &self,
         frame: &Frame<'_>,
         tick: u16,
-        gate: Option<i32>,
+        recovery: Recovery,
         protected_items: &[super::FoodReserve],
     ) -> Option<i32> {
         if !self.request.allow.food || self.pending_row(RowKind::Eat) {
             return None;
         }
-        arbiter::food_by_excluding(frame, &self.tables, gate, protected_items, |food| {
-            food.eat_delay_arg.is_some() && self.schedule.food_ready(food, tick)
-        })
+        let (hp, max) = arbiter::stat(frame, 3);
+        let tier = policy::bite_tier(
+            hp,
+            max,
+            recovery.danger,
+            recovery.burst,
+            recovery.poison_fire,
+            0,
+        );
+        policy::food_for_tier(
+            tier,
+            &policy::FoodPick {
+                hp,
+                hp_max: max,
+                tables: &self.tables,
+                gate: Some(recovery.gate),
+                protected_items,
+            },
+            frame.inventory.iter().map(|row| (row.def.id, row.count)),
+            |food| food.eat_delay_arg.is_some() && self.schedule.food_ready(food, tick),
+        )
+    }
+    /// The critical tier never waits for a heal. A pending bite that already
+    /// ran (its count dropped) and is held only by the stale-Hitpoints rule
+    /// ends as `no-heal-seen` once the next-food clock allows another bite, so
+    /// the next bite can be planned.
+    fn release_stale_bite(&mut self, frame: &Frame<'_>, tick: u16) {
+        if !self.schedule.ready(OpKind::Eat, tick) {
+            return;
+        }
+        for slot in 0..self.pending.len() {
+            let pending = self.pending[slot];
+            if pending.row.kind != RowKind::Eat
+                || arbiter::count(frame, pending.row.id) >= i32::from(pending.baseline)
+            {
+                continue;
+            }
+            self.pending[slot] = PendingRow::default();
+            self.counters.food = self.counters.food.saturating_add(1);
+            self.log_eat(frame, pending.row.id, eat::Outcome::NoHeal);
+            if !self.pending_row(RowKind::Eat) {
+                self.schedule.settle(OpKind::Eat);
+            }
+        }
     }
     fn eat(
         &self,
         plan: &mut TickPlan,
         frame: &Frame<'_>,
         tick: u16,
-        danger: Option<i32>,
+        (danger, burst): (Option<i32>, Option<i32>),
         poison_fire: i32,
         protected_items: &[super::FoodReserve],
     ) {
@@ -2331,6 +2458,7 @@ impl Combat {
             &self.schedule,
             policy::EatInputs {
                 danger,
+                burst,
                 poison_fire,
                 hp,
                 hp_max: max,
@@ -2341,6 +2469,7 @@ impl Combat {
         ) else {
             return;
         };
+        plan.eat_basis = choice.basis;
         let ordinary = choice.ordinary;
         if let Some(id) = ordinary {
             if !self.push(plan, PlanRow::new(RowKind::Eat, id, 0)) {
@@ -2360,7 +2489,7 @@ impl Combat {
         kind: PotionKind,
         frame: &Frame<'_>,
         tick: u16,
-        gate: i32,
+        recovery: Recovery,
         protected_items: &[super::FoodReserve],
     ) {
         if plan.closed(&self.tables)
@@ -2386,14 +2515,14 @@ impl Combat {
         } else {
             hp
         };
-        if projected > gate {
+        if projected > recovery.gate {
             self.push(plan, PlanRow::new(RowKind::Drink, id, kind as u8));
             return;
         }
         if !matches!(kind, PotionKind::Prayer | PotionKind::Antifire) || eat.is_some() {
             return;
         }
-        if let Some(food) = self.plain_food(frame, tick, Some(gate), protected_items) {
+        if let Some(food) = self.plain_food(frame, tick, recovery, protected_items) {
             if self.push(plan, PlanRow::new(RowKind::Eat, food, 0)) && reached(tick, self.eat_ready)
             {
                 self.push(plan, PlanRow::new(RowKind::Drink, id, kind as u8));
@@ -2525,8 +2654,20 @@ impl Combat {
             self.shield(frame),
             self.antifire(tick),
         );
+        let mut burst = self.threats.burst(
+            frame,
+            &self.tables,
+            tick,
+            self.shield(frame),
+            self.antifire(tick),
+        );
         let poison_fire =
             crate::survival::math::poison_fire(cx.condition(), &self.threats, &self.tables, tick);
+        if policy::bite_tier(hp, hp_max, danger, burst, poison_fire, 0)
+            == policy::BiteTier::Critical
+        {
+            self.release_stale_bite(frame, tick);
+        }
         let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
         let food_available = self.emergency_food_available(frame, danger, cx.protected_items());
         self.safety_end(frame, tick, danger, lines.emergency, food_available);
@@ -2560,7 +2701,7 @@ impl Combat {
                     &mut plan,
                     frame,
                     tick,
-                    danger,
+                    (danger, burst),
                     poison_fire,
                     cx.protected_items(),
                 );
@@ -2596,7 +2737,7 @@ impl Combat {
                     &mut plan,
                     frame,
                     tick,
-                    danger,
+                    (danger, burst),
                     poison_fire,
                     cx.protected_items(),
                 );
@@ -2607,12 +2748,17 @@ impl Combat {
             return Ok(plan);
         }
         // Emergency uses the original danger, before free reducers project it.
-        if (danger != Some(0) || poison_fire > 0) && hp <= lines.emergency {
+        if (danger != Some(0) || poison_fire > 0)
+            && hp
+                <= lines
+                    .emergency
+                    .max(policy::critical_floor(danger, burst, hp_max, poison_fire))
+        {
             self.eat(
                 &mut plan,
                 frame,
                 tick,
-                danger,
+                (danger, burst),
                 poison_fire,
                 cx.protected_items(),
             );
@@ -2655,7 +2801,7 @@ impl Combat {
                     PotionKind::Prayer,
                     frame,
                     tick,
-                    lines.drink_gate,
+                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                     cx.protected_items(),
                 );
             }
@@ -2686,6 +2832,13 @@ impl Combat {
                     self.antifire(tick),
                     style,
                 );
+                burst = self.threats.burst_with(
+                    &self.tables,
+                    tick,
+                    self.shield(frame),
+                    self.antifire(tick),
+                    style,
+                );
                 lines = select::lines(danger, hp_max).with_poison(poison_fire);
             }
         }
@@ -2696,7 +2849,7 @@ impl Combat {
                 &mut plan,
                 frame,
                 tick,
-                danger,
+                (danger, burst),
                 poison_fire,
                 cx.protected_items(),
             );
@@ -2780,7 +2933,7 @@ impl Combat {
                     PotionKind::Antifire,
                     frame,
                     tick,
-                    lines.drink_gate,
+                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                     cx.protected_items(),
                 );
             }
@@ -2791,7 +2944,7 @@ impl Combat {
                         kind,
                         frame,
                         tick,
-                        lines.drink_gate,
+                        Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                         cx.protected_items(),
                     );
                 }
@@ -2861,7 +3014,7 @@ impl Combat {
                 PotionKind::Prayer,
                 frame,
                 tick,
-                lines.drink_gate,
+                Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                 cx.protected_items(),
             );
         }
@@ -2874,7 +3027,7 @@ impl Combat {
                     kind,
                     frame,
                     tick,
-                    lines.drink_gate,
+                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                     cx.protected_items(),
                 );
             }
@@ -2888,7 +3041,7 @@ impl Combat {
                 PotionKind::Antifire,
                 frame,
                 tick,
-                lines.drink_gate,
+                Recovery::new(lines.drink_gate, danger, burst, poison_fire),
                 cx.protected_items(),
             );
         }
@@ -3801,6 +3954,12 @@ impl Combat {
             let state = self.ranged_mut();
             state.sweep_attempts += 1;
             state.pickup_baseline = baseline;
+        }
+        if self.plan.contains(RowKind::Eat) {
+            self.eat_hp = arbiter::stat(frame, 3)
+                .0
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+            self.eat_basis = self.plan.eat_basis;
         }
         if self.phase == Phase::WindDown && self.plan.contains(RowKind::Eat) {
             self.flags |= TERMINAL_FOOD;

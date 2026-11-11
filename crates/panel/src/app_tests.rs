@@ -4666,6 +4666,74 @@ fn panel_parameter_rows_show_fact_errors_and_keep_saved_values() {
 }
 
 #[test]
+fn panel_quester_rows_show_allow_unqualified_guides_and_let_a_draft_be_picked_when_on() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::scripts::reset_quester_registry();
+    let mut session = crate::session::Session::new();
+    let schema = frontend_core::test_support::scripts::TestSchema::quester_card();
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let loadouts = frontend_core::scripts::Loadouts::default();
+    let quests_def = schema.schema_ref().get("quests").unwrap();
+    let draft = "druid";
+    let compact = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    for allowed in [false, true] {
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["priest", draft]));
+        bag.insert("include_draft_guides".into(), serde_json::json!(allowed));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(quests_def, &bag, &loadouts, None)
+                .unwrap();
+        assert_eq!(
+            options.selectable().iter().any(|value| value == draft),
+            allowed,
+            "a draft guide is pickable only while Allow unqualified guides is on"
+        );
+        assert!(
+            options
+                .label_for(draft)
+                .contains("Path has not been qualified by live testing."),
+            "the picker still says the guide is unqualified: {}",
+            options.label_for(draft)
+        );
+
+        let mut ctx = dock_host_context();
+        let drawn = DrawnText::default();
+        ctx.set_clipboard_backend(drawn.clone());
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 900.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("Allow unqualified guides row")
+                .size([420.0, 800.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    super::script_parameter_rows(
+                        ui,
+                        &mut session,
+                        &selection,
+                        None,
+                        schema.schema_ref(),
+                        bag.clone(),
+                    );
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+        let text = drawn.0.take();
+        assert!(
+            compact(&text).contains("Allowunqualifiedguides"),
+            "allowed={allowed}: the panel's Quester settings list the row: {text}"
+        );
+    }
+}
+
+#[test]
 fn discarding_invalid_script_parameter_removes_its_dock_banner() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut session = crate::session::Session::new();

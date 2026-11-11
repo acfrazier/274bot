@@ -1062,47 +1062,74 @@ fn a_hint_written_under_one_content_scope_is_refused_under_another() {
     assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
 }
 
-/// Unscoped hints and the earlier pre-schema envelope are refused whole.
+/// A schema 1 hint without a scope is in the 0.2.8 format: 0.2.8 read it
+/// under the scope that asks and stamped the scope on its next write. 0.2.9
+/// does the same.
 #[test]
-fn a_hint_without_scope_is_refused_and_kept() {
-    for (case, schema_version) in [
-        ("schema-1-unscoped", Some(HINT_SCHEMA_VERSION)),
-        ("pre-schema-unscoped", None),
-    ] {
-        let scratch = IsolatedEnv::enter(&format!("local-state-{case}"));
-        let root = StateRoot::new(scratch.home.join(".274bot"));
-        let path = root.bank_hint_file(PROFILE, "alice");
-        let mut document = serde_json::json!({
-            "profile": PROFILE,
-            "account": "alice",
-            "observed_at_unix": 3,
-            "rows": [[995, 3]],
-        });
-        if let Some(schema_version) = schema_version {
-            document["schema_version"] = serde_json::json!(schema_version);
-        }
-        let bytes = serde_json::to_vec(&document).unwrap();
-        write_private(&path, &bytes);
-        let service = service(&scratch, &[LocalStateDomain::BankHints]);
-        let alice = bank_identity("alice");
-        let refused = ErrorCode::Failed {
-            domain: LocalStateDomain::BankHints,
-            reason: FailureReason::UnsupportedSavedFormat,
-        };
+fn a_schema_1_hint_without_scope_is_read_then_stamped() {
+    let scratch = IsolatedEnv::enter("local-state-schema-1-unscoped-hint");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.bank_hint_file(PROFILE, "alice");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "schema_version": HINT_SCHEMA_VERSION,
+        "profile": PROFILE,
+        "account": "alice",
+        "observed_at_unix": 3,
+        "rows": [[995, 3]],
+    }))
+    .unwrap();
+    write_private(&path, &bytes);
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
 
-        assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
-        assert_eq!(service.lease(&alice), Err(refused));
-        assert_eq!(
-            service.submit(hint_edit(&alice, None, vec![(995, 4)], 4)),
-            SubmitReceipt::Refused(refused)
-        );
-        assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            bytes,
-            "{case}: original kept"
-        );
-    }
+    let lease = service.readback_lease(&alice, WAIT).unwrap().unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 3)]);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "a read changes nothing"
+    );
+    completed(
+        &service,
+        request(service.submit(hint_edit(&alice, None, vec![(995, 4)], 4))),
+    );
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written["revision"], serde_json::json!(289));
+    assert_eq!(written["content"], serde_json::json!(CONTENT));
+    assert_eq!(written["rows"], serde_json::json!([[995, 4]]));
+}
+
+/// The envelope from before schema 1 (no `schema_version`) is older than
+/// the 0.2.8 format, which could not read it: it is refused whole.
+#[test]
+fn a_hint_without_schema_version_is_refused_and_kept() {
+    let scratch = IsolatedEnv::enter("local-state-pre-schema-hint");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.bank_hint_file(PROFILE, "alice");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "profile": PROFILE,
+        "account": "alice",
+        "observed_at_unix": 3,
+        "rows": [[995, 3]],
+    }))
+    .unwrap();
+    write_private(&path, &bytes);
+    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let alice = bank_identity("alice");
+    let refused = ErrorCode::Failed {
+        domain: LocalStateDomain::BankHints,
+        reason: FailureReason::UnsupportedSavedFormat,
+    };
+
+    assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
+    assert_eq!(service.lease(&alice), Err(refused));
+    assert_eq!(
+        service.submit(hint_edit(&alice, None, vec![(995, 4)], 4)),
+        SubmitReceipt::Refused(refused)
+    );
+    assert_eq!(service.readback_lease(&alice, WAIT), Err(refused));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes, "original kept");
 }
 
 /// r2 item 1: a write whose directory entry cannot be flushed is not
@@ -3123,15 +3150,21 @@ fn assert_loadouts_refused_and_untouched(
     );
 }
 
+/// Loadout rows with an array `worn` or string `carry` entries are older
+/// than the shape 0.2.8 wrote, but 0.2.8 read them without asking the user
+/// and never rewrote them. 0.2.9 reads them the same way: the array items
+/// are unassigned gear, a string carry row is one of that item, and the
+/// file is read but never rewritten.
 #[test]
-fn pre_0_2_8_loadout_shapes_are_refused_and_kept() {
-    let cases: [(&str, &[u8]); 2] = [
+fn loadout_rows_in_shapes_0_2_8_read_are_read_but_never_rewritten() {
+    let cases: [(&str, &[u8], Loadout); 2] = [
         (
             "array-worn",
             br#"[
                 {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
                 {"name":"old","worn":["Rune scimitar"],"carry":[]}
             ]"#,
+            Loadout::new("old").with_slot("not-a-slot", "Rune scimitar"),
         ),
         (
             "string-carry",
@@ -3139,21 +3172,41 @@ fn pre_0_2_8_loadout_shapes_are_refused_and_kept() {
                 {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
                 {"name":"old","worn":{},"carry":["Shark"]}
             ]"#,
+            Loadout::new("old").with_carry("Shark", 1),
         ),
     ];
-    for (case, bytes) in cases {
+    for (case, bytes, old) in cases {
         let scratch = IsolatedEnv::enter(&format!("local-state-loadout-{case}"));
         let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
         write_private(&path, bytes);
-        let (service, notices) = loadouts_service_with_notices(&scratch);
+        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
 
-        assert_loadouts_refused_and_untouched(
-            &service,
-            &path,
+        let lease = service
+            .readback_lease(&loadouts_identity(), WAIT)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lease.snapshot().as_loadouts().unwrap(),
+            &[
+                Loadout::new("current")
+                    .with_slot("hat", "Helm")
+                    .with_carry("Shark", 2),
+                old,
+            ],
+            "{case}"
+        );
+        assert_eq!(
+            service.submit(loadout_edit(Some(lease.version()), Loadout::new("ranged"))),
+            SubmitReceipt::Refused(ErrorCode::Failed {
+                domain: LocalStateDomain::LoadoutsReferences,
+                reason: FailureReason::Schema,
+            }),
+            "{case}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
             bytes,
-            &notices,
-            FailureReason::UnsupportedSavedFormat,
-            "saved data is in a format from before 0.2.8",
+            "{case}: original kept"
         );
     }
 }
