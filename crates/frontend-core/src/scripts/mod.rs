@@ -2371,7 +2371,7 @@ impl Scripts {
                 let values = match settings.script_settings.get(&key) {
                     Some(entry) => {
                         let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
-                        if version != card.schema_version {
+                        if !card.reads_saved_schema(version) {
                             return None;
                         }
                         values.clone()
@@ -2447,7 +2447,7 @@ impl Scripts {
                 let overrides = match row.settings.script_settings.get(&identity) {
                     Some(entry) => {
                         let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
-                        if version != card.schema_version {
+                        if !card.reads_saved_schema(version) {
                             return None;
                         }
                         values.clone()

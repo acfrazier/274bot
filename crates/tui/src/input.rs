@@ -15,7 +15,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use frontend_core::MarkOp;
 
-use crate::app::{AppAction, ErrorNeed, Refusal, TuiApp};
+use crate::app::{AppAction, ErrorNeed, Refusal, TuiApp, ZoneScroll};
 use crate::commands::{
     script_key_command, Command, Group, Unavailable, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
@@ -672,16 +672,23 @@ impl TuiApp {
     /// The Script tab's letters (`SCRIPT_KEYS`) and the Quester disclosure's
     /// vertical scrolling. Browse and Load popups own their keys while open.
     fn script_pane_key(&mut self, key: KeyEvent) -> AppAction {
-        let page = i32::from(self.script_area.height.saturating_sub(12).max(1));
         match key.code {
-            KeyCode::Char('j') if is_text(&key) && self.scroll_quester_start_zones(1) => {
+            KeyCode::Char('j')
+                if is_text(&key) && self.scroll_quester_start_zones(ZoneScroll::Rows(1)) =>
+            {
                 AppAction::None
             }
-            KeyCode::Char('k') if is_text(&key) && self.scroll_quester_start_zones(-1) => {
+            KeyCode::Char('k')
+                if is_text(&key) && self.scroll_quester_start_zones(ZoneScroll::Rows(-1)) =>
+            {
                 AppAction::None
             }
-            KeyCode::PageDown if self.scroll_quester_start_zones(page) => AppAction::None,
-            KeyCode::PageUp if self.scroll_quester_start_zones(-page) => AppAction::None,
+            KeyCode::PageDown if self.scroll_quester_start_zones(ZoneScroll::Page(1)) => {
+                AppAction::None
+            }
+            KeyCode::PageUp if self.scroll_quester_start_zones(ZoneScroll::Page(-1)) => {
+                AppAction::None
+            }
             KeyCode::Char(c) if is_text(&key) => {
                 script_key_command(c).map_or(AppAction::None, |command| self.run_command(command))
             }

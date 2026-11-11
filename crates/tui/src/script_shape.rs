@@ -659,6 +659,12 @@ impl<'a> ScriptPane<'a> {
             lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
             match self.start_zones {
                 Some(zones) => {
+                    if let Some(warning) = zones.unqualified_warning() {
+                        lines.push(Line::styled(
+                            warning,
+                            Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                        ));
+                    }
                     lines.push(Line::from(zones.notice()));
                     if !zones.is_empty() {
                         lines.push(Line::from(
@@ -739,17 +745,25 @@ impl<'a> ScriptPane<'a> {
         lines
     }
 
-    pub fn max_vertical_scroll(&self, area: Rect) -> u16 {
+    /// Return the maximum offset and PageUp/PageDown step in rendered rows.
+    pub fn vertical_scroll_limits(&self, area: Rect) -> (u16, u16) {
         if !self.start_zone_disclosure_shown() {
-            return 0;
+            return (0, 1);
         }
         let inner = Block::default().borders(Borders::ALL).inner(area);
-        let prefix_count = wrapped_line_count(&self.prefix_lines(), inner.width);
+        let prefix_count =
+            wrapped_line_count(&self.prefix_lines(), inner.width).min(usize::from(inner.height));
         let available = usize::from(inner.height).saturating_sub(prefix_count);
         let content_count = wrapped_line_count(&self.start_zone_lines(), inner.width);
-        content_count
+        let max_scroll = content_count
             .saturating_sub(available)
-            .min(usize::from(u16::MAX)) as u16
+            .min(usize::from(u16::MAX)) as u16;
+        let page_step = available.saturating_sub(1).max(1) as u16;
+        (max_scroll, page_step)
+    }
+
+    pub fn max_vertical_scroll(&self, area: Rect) -> u16 {
+        self.vertical_scroll_limits(area).0
     }
 }
 

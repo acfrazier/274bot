@@ -559,6 +559,14 @@ class RunBranchLocalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             events = []
+            local_inputs = {}
+            for revision in ("274", "289"):
+                for kind in ("ENGINE", "CONTENT"):
+                    path = root / f"{revision}-{kind.lower()}"
+                    path.mkdir()
+                    local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind}"] = str(path)
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
 
             def fake_update_tree(_branch, tree, _build_log):
                 generator = tree / "tools" / "local-data" / "build.py"
@@ -583,6 +591,7 @@ class RunBranchLocalDataTests(unittest.TestCase):
                 return []
 
             patches = [
+                mock.patch.dict(os.environ, {**local_inputs, "BUN_EXECUTABLE": str(bun)}),
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "STEPS", ["lanes"]),
                 mock.patch.object(rn, "REVISION", "289"),
@@ -928,15 +937,17 @@ class LaneEnvironmentTests(unittest.TestCase):
             generator = tree / "tools" / "local-data" / "build.py"
             generator.parent.mkdir(parents=True)
             generator.write_text("# generator\n", encoding="utf-8")
-            engine_289 = root / "engine-289"
-            content_289 = root / "content-289"
-            engine_289.mkdir()
-            content_289.mkdir()
-            local_289_inputs = {
-                "NIGHTLY_GAME_DATA_289_ENGINE": str(engine_289),
-                "NIGHTLY_GAME_DATA_289_CONTENT": str(content_289),
-            }
-            with mock.patch.dict(os.environ, local_289_inputs):
+            roots = {}
+            local_inputs = {}
+            for revision in ("274", "289"):
+                for kind in ("engine", "content"):
+                    path = root / f"{kind}-{revision}"
+                    path.mkdir()
+                    roots[(revision, kind.upper())] = path.resolve()
+                    local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind.upper()}"] = str(path)
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {**local_inputs, "BUN_EXECUTABLE": str(bun)}):
                 for revision in ("289", "274"):
                     pack = tree / "target" / "local-data" / "nav" / revision / "274bot.navpack"
                     pack.parent.mkdir(parents=True)
@@ -950,13 +961,18 @@ class LaneEnvironmentTests(unittest.TestCase):
                                 for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
                                     self.assertEqual(extra[key], str(pack))
                                 self.assertEqual(
-                                    extra["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve())
-                                )
+                                    extra["ISOLATED_289_ENGINE_DIR"], str(roots[("289", "ENGINE")]))
                                 self.assertEqual(
-                                    extra["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve())
-                                )
+                                    extra["ISOLATED_289_CONTENT_DIR"], str(roots[("289", "CONTENT")]))
+                                self.assertEqual(extra["RS2VM_BUN"], str(bun.resolve()))
+                                for source_revision in ("274", "289"):
+                                    for kind in ("ENGINE", "CONTENT"):
+                                        self.assertEqual(
+                                            extra[f"RS2VM_{kind}_{source_revision}"],
+                                            str(roots[(source_revision, kind)]),
+                                        )
 
-    def test_post_adr_289_lanes_default_local_assets_to_pristine_engine(self):
+    def test_post_adr_289_lanes_default_289_assets_to_pristine_engine(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tree = root / "post-adr"
@@ -972,15 +988,26 @@ class LaneEnvironmentTests(unittest.TestCase):
             content_289 = pristine / "content"
             engine_289.mkdir(parents=True)
             content_289.mkdir()
+            engine_274 = root / "engine-274"
+            content_274 = root / "content-274"
+            engine_274.mkdir()
+            content_274.mkdir()
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "289"):
                 with mock.patch.object(rn, "ENGINE_PRISTINE", pristine):
                     with mock.patch.dict(os.environ, {
+                            "NIGHTLY_GAME_DATA_274_ENGINE": str(engine_274),
+                            "NIGHTLY_GAME_DATA_274_CONTENT": str(content_274),
                             "NIGHTLY_GAME_DATA_289_ENGINE": "",
                             "NIGHTLY_GAME_DATA_289_CONTENT": "",
+                            "BUN_EXECUTABLE": str(bun),
                     }):
                         env = rn.lane_asset_env(tree)
-        self.assertEqual(env["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve()))
-        self.assertEqual(env["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve()))
+        self.assertEqual(env["RS2VM_ENGINE_289"], str(engine_289.resolve()))
+        self.assertEqual(env["RS2VM_CONTENT_289"], str(content_289.resolve()))
+        self.assertEqual(env["RS2VM_ENGINE_274"], str(engine_274.resolve()))
+        self.assertEqual(env["RS2VM_CONTENT_274"], str(content_274.resolve()))
 
     def test_pre_adr_test_lanes_keep_the_reference_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -991,8 +1018,10 @@ class LaneEnvironmentTests(unittest.TestCase):
                 env = rn.lane_asset_env(tree)
         for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
             self.assertEqual(env[key], str(fixture))
-        self.assertNotIn("ISOLATED_289_ENGINE_DIR", env)
-        self.assertNotIn("ISOLATED_289_CONTENT_DIR", env)
+        for revision in ("274", "289"):
+            for kind in ("ENGINE", "CONTENT"):
+                self.assertNotIn(f"RS2VM_{kind}_{revision}", env)
+        self.assertNotIn("RS2VM_BUN", env)
 
     def test_post_adr_missing_pack_or_flags_uses_generator_diagnostic(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1013,6 +1042,33 @@ class LaneEnvironmentTests(unittest.TestCase):
                         RuntimeError,
                         f"local-data generator omitted required output: {flags}"):
                     rn.lane_asset_env(tree)
+
+    def test_post_adr_missing_exact_revision_root_uses_exact_root_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = root / "post-adr"
+            generator = tree / "tools" / "local-data" / "build.py"
+            generator.parent.mkdir(parents=True)
+            generator.write_text("# generator\n", encoding="utf-8")
+            pack = tree / "target" / "local-data" / "nav" / "274" / "274bot.navpack"
+            pack.parent.mkdir(parents=True)
+            pack.write_bytes(b"pack")
+            pack.with_suffix(".navflags").write_bytes(b"flags")
+            engine_274 = root / "engine-274"
+            content_274 = root / "content-274"
+            engine_274.mkdir()
+            content_274.mkdir()
+            with mock.patch.object(rn, "REVISION", "274"):
+                with mock.patch.object(rn, "ENGINE_PRISTINE", root / "unused-pristine"):
+                    with mock.patch.dict(os.environ, {
+                            "NIGHTLY_GAME_DATA_274_ENGINE": str(engine_274),
+                            "NIGHTLY_GAME_DATA_274_CONTENT": str(content_274),
+                            "NIGHTLY_GAME_DATA_289_ENGINE": "",
+                            "NIGHTLY_GAME_DATA_289_CONTENT": "",
+                    }):
+                        with self.assertRaisesRegex(
+                                RuntimeError, "missing local-data input GAME_DATA_289_ENGINE"):
+                            rn.lane_asset_env(tree)
 
 
 class SeedLaneHomeTests(unittest.TestCase):

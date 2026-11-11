@@ -98,6 +98,7 @@ To rebake navigation after a content change, use the generated game data:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 289 \
+  --engine "$GAME_DATA_289_ENGINE" \
   --content "$GAME_DATA_289_CONTENT" \
   --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \

@@ -41,11 +41,19 @@ pub struct QuesterStartZoneScope {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuesterStartZones {
     pub scopes: Vec<QuesterStartZoneScope>,
+    /// The one warning shown when the queue includes guides that live
+    /// testing has not qualified. Set only when the user allowed them.
+    unqualified_warning: Option<String>,
 }
 
 impl QuesterStartZones {
     pub fn is_empty(&self) -> bool {
         self.scopes.is_empty()
+    }
+
+    /// The shared warning for unqualified guides, when the user allowed them.
+    pub fn unqualified_warning(&self) -> Option<&str> {
+        self.unqualified_warning.as_deref()
     }
 
     /// The shared operator-facing explanation for this frozen disclosure.
@@ -60,6 +68,9 @@ impl QuesterStartZones {
     /// Append the shared per-profile disclosure used by plan and report text.
     pub fn append_plan_disclosure(&self, profile: &str, text: &mut String) {
         let _ = write!(text, "{profile}: {}", self.notice());
+        if let Some(warning) = &self.unqualified_warning {
+            let _ = write!(text, "\n  {warning}");
+        }
         for scope in &self.scopes {
             let _ = write!(text, "\n  {}", scope.display_label);
             for zone in &scope.zones {
@@ -202,9 +213,14 @@ pub(crate) fn resolve_selected_zones(
     bag: &Map<String, Value>,
 ) -> Result<QuesterStartZones, String> {
     let settings = queue_settings(bag)?;
+    let allow_unqualified = settings.include_draft_guides;
     let mut queue = Queue::from_registry(registry.clone(), settings)
         .map_err(|error| format!("Quester queue settings are unavailable: {error}"))?;
     let mut view = QuesterStartZones::default();
+    if allow_unqualified {
+        view.unqualified_warning =
+            script::quester::queue::unqualified_warning(&queue.unqualified_guides());
+    }
 
     while let Some(position) = queue.next_candidate() {
         let id = queue
@@ -805,6 +821,42 @@ mod tests {
             Some("fixture-progress-reader")
         );
         assert_eq!(reader.zones[0].reason, "Progress reader route reason.");
+    }
+
+    #[test]
+    fn one_warning_names_the_unqualified_guides_only_when_the_setting_is_on() {
+        let registry = PathRegistry::default();
+        let mut picks = bag(&["priest", "arthur"]);
+        let off = super::resolve_selected_zones(&registry, &picks).unwrap();
+        assert_eq!(off.unqualified_warning(), None, "no warning while off");
+
+        picks.insert("include_draft_guides".into(), json!(true));
+        let on = super::resolve_selected_zones(&registry, &picks).unwrap();
+        let warning = on.unqualified_warning().expect("warning while on");
+        assert!(warning.contains("unqualified"), "{warning}");
+        assert!(warning.contains("arthur"), "{warning}");
+        assert!(
+            !warning.contains("priest"),
+            "a qualified guide is not named: {warning}"
+        );
+        let mut text = String::new();
+        on.append_plan_disclosure("alice", &mut text);
+        assert!(
+            text.contains(warning),
+            "the fleet plan shows it too: {text}"
+        );
+
+        let qualified_only = super::resolve_selected_zones(&registry, &{
+            let mut only = bag(&["priest"]);
+            only.insert("include_draft_guides".into(), json!(true));
+            only
+        })
+        .unwrap();
+        assert_eq!(
+            qualified_only.unqualified_warning(),
+            None,
+            "nothing unqualified runs, so nothing to warn about"
+        );
     }
 
     #[test]
