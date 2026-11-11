@@ -12021,6 +12021,7 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
 #[test]
 fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
     use frontend_core::log::{global, LogScope, LogView};
+    global();
     let mut s = Session::new();
     let world = open_world(20, 20);
     let origin = Tile {

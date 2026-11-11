@@ -1,6 +1,13 @@
 use super::*;
 use crate::log::{global, LogScope, LogView};
 
+/// Install the process log store as the `api::hostlog` sink. Every test that
+/// publishes a brief calls this first: the pointer is shown only once a sink
+/// is installed, and tests run in any order.
+fn sink() -> &'static crate::log::LogStore {
+    global()
+}
+
 /// Every message in `slot`'s ring, oldest first.
 fn slot_lines(slot: &str) -> Vec<String> {
     let mut view = LogView::new(LogScope::slot(slot));
@@ -26,6 +33,7 @@ fn zone_items() -> Vec<String> {
 
 #[test]
 fn brief_summary_is_cut_by_characters_not_bytes() {
+    sink();
     // 100 three-byte characters, then a four-byte one at character 101.
     let text = format!("{}😀tail", "日".repeat(99));
     let brief = Brief::new(&text);
@@ -53,6 +61,7 @@ fn brief_summary_is_cut_by_characters_not_bytes() {
 
 #[test]
 fn brief_detail_is_packed_into_lines_under_the_log_cap_and_loses_nothing() {
+    sink();
     let slot = "brief-pack";
     let items = zone_items();
     let long = items.join("; ");
@@ -95,6 +104,7 @@ fn brief_detail_is_packed_into_lines_under_the_log_cap_and_loses_nothing() {
 
 #[test]
 fn brief_from_text_keeps_the_first_line_and_logs_the_rest_once() {
+    sink();
     let slot = "brief-from-text";
     let text = format!(
         "load failed: {}\nsecond line {}",
@@ -134,6 +144,7 @@ fn brief_from_text_keeps_the_first_line_and_logs_the_rest_once() {
 
 #[test]
 fn a_short_text_is_kept_and_has_no_pointer() {
+    sink();
     let slot = "brief-short";
     let line = Brief::from_text("Stop: no bot to act on").publish(&LogTarget::command(Some(slot)));
     assert_eq!(line, "Stop: no bot to act on");
@@ -156,6 +167,7 @@ fn a_short_text_is_kept_and_has_no_pointer() {
 /// logging off (the default) the detail is in the ring and the line says so.
 #[test]
 fn the_pointer_is_shown_with_session_file_logging_off() {
+    sink();
     let log = global();
     assert!(!log.file_open(), "no session file in this test");
     let slot = "brief-no-file";
@@ -208,6 +220,7 @@ fn notice_line_keeps_the_first_line_in_the_cap_and_borrows_when_short() {
 /// characters.
 #[test]
 fn every_notice_producer_fits_the_line_bound() {
+    sink();
     use host_play::walk_map::{ActionError, BlockedZones};
     let fits = |label: &str, line: &str| {
         assert!(
