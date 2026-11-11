@@ -7310,6 +7310,8 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
 /// Always in the open popup submits `SetDangerLevel(Always)`.
 #[test]
 fn nav_danger_routing_drop_down_offers_three_levels_and_always_submits_set_danger_level() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
     let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-three");
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();
