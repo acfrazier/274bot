@@ -145,6 +145,11 @@ Add `--nav-shadow REPORT_JSON` to write the optional interpreter report. The
 report records per-entry machine results, edge differences, and measured
 limits. It does not change the baked pack or its sidecars.
 
+`stage_elapsed_ns` sums constructor setup, stage-door candidate
+machine-and-projection spans, the full auxiliary-entry run, and report-limit
+preparation. It excludes legacy stage-door evaluation, other transport
+producers, and JSON serialization.
+
 Each covered candidate records its generalised conditions and the elapsed-tick
 range across all compatible rivals. A raw path retains its own tick range.
 The shadow keeps the producer's existing pack prices.
@@ -167,8 +172,13 @@ the number of retained results.
 Loc effects record the resolved tile, shape, and angle. Created object ids are
 path-local, so equal ids alone cannot prove equal navigation effects. The shadow
 uses this geometry to bind an opened loc to the interaction target.
-The open leaf must be at one of the door helper's two diagonal tiles. A
-same-tile invisible wall or a leaf with the closed type is not the open leaf.
+The active leaf type comes from a created loc at the interacted leaf's
+`door_open` tile. A double-door partner can have another type at the mirrored
+tile, so it cannot override the active leaf (`doubledoors.rs2:133-141`). Some
+metal-gate handlers explicitly use `door_open_mirrored`, so the mirrored tile
+is a fallback when the active tile has no created leaf
+(`open_and_close_doors.rs2:139-164`, `door_procs.rs2:41-47`). A same-tile
+invisible wall or a leaf with the closed type is not the open leaf.
 Quest-signal bounds do not require journal colour authority. Journal completion
 still needs its separate proof.
 

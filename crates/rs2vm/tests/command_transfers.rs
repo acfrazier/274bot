@@ -6,7 +6,7 @@ use rs2vm::machine::{
 };
 use rs2vm::profile::EngineProfile;
 use rs2vm::program::{
-    ConfigValue, Enum, Instruction, LocConfig, Operand, Param, Program, Script, Varp,
+    ConfigValue, Enum, Instruction, LocConfig, ObjConfig, Operand, Param, Program, Script, Varp,
 };
 use rs2vm::world::{Alloc, LocInfo, LocObj, PlacedId, PlacedLoc, Tri, World, ZoneKey};
 use rs2vm::{Coord, LocTypeId, ScriptId, VarpId};
@@ -52,6 +52,11 @@ const OPCODES: &[(&str, u16)] = &[
     ("npc_findall", 37),
     ("npc_findnext", 38),
     ("loc_change", 39),
+    ("obj_add", 40),
+    ("inv_del", 41),
+    ("split_get", 42),
+    ("split_getanim", 43),
+    ("POP_INT_DISCARD", 44),
 ];
 
 fn opcode(name: &str) -> u16 {
@@ -454,6 +459,213 @@ fn row_15_and_a4_layout_counts_start_positive_and_bad_inputs_fail_closed() {
     let invalid_page = run(&program, &world, entry(5));
     assert_eq!(invalid_page.paths.len(), 1);
     assert_engine_at(&invalid_page.paths[0], 6);
+}
+
+#[test]
+fn l3_split_reads_preserve_engine_undefined_and_no_mesanim_behavior() {
+    let split_get_out_of_range = script(
+        1,
+        vec![
+            text("PUSH_CONSTANT_STRING", "plain text"),
+            int("PUSH_CONSTANT_INT", 100),
+            int("PUSH_CONSTANT_INT", 4),
+            int("PUSH_CONSTANT_INT", 1),
+            int("split_init", 0),
+            int("PUSH_CONSTANT_INT", 0),
+            int("PUSH_CONSTANT_INT", 4),
+            int("split_get", 0),
+            int("RETURN", 0),
+        ],
+    );
+    let split_getanim_without_init = script(
+        2,
+        vec![
+            int("PUSH_CONSTANT_INT", 100),
+            int("split_getanim", 0),
+            int("RETURN", 0),
+        ],
+    );
+    let split_getanim_without_mesanim = script(
+        3,
+        vec![
+            text("PUSH_CONSTANT_STRING", "plain text"),
+            int("PUSH_CONSTANT_INT", 100),
+            int("PUSH_CONSTANT_INT", 4),
+            int("PUSH_CONSTANT_INT", 1),
+            int("split_init", 0),
+            int("PUSH_CONSTANT_INT", 100),
+            int("split_getanim", 0),
+            int("RETURN", 0),
+        ],
+    );
+    let split_getanim_unknown_mesanim = script(
+        4,
+        vec![
+            text("PUSH_CONSTANT_STRING", "<p,maybe>text"),
+            int("PUSH_CONSTANT_INT", 100),
+            int("PUSH_CONSTANT_INT", 4),
+            int("PUSH_CONSTANT_INT", 1),
+            int("split_init", 0),
+            int("PUSH_CONSTANT_INT", -1),
+            int("split_getanim", 0),
+            int("RETURN", 0),
+        ],
+    );
+    let program = program(vec![
+        split_get_out_of_range,
+        split_getanim_without_init,
+        split_getanim_without_mesanim,
+        split_getanim_unknown_mesanim,
+    ]);
+    let world = TestWorld::allocated();
+
+    let undefined_line = run(&program, &world, entry(1));
+    assert_eq!(undefined_line.paths.len(), 1);
+    assert_unsupported_at(&undefined_line.paths[0], 7);
+
+    for script_id in [2, 3] {
+        let no_mesanim = run(&program, &world, entry(script_id));
+        assert_eq!(no_mesanim.paths.len(), 1);
+        assert_eq!(no_mesanim.paths[0].end, End::Finished);
+        assert_eq!(no_mesanim.paths[0].ints, vec![Value::Known(-1)]);
+    }
+
+    let unknown_mesanim = run(&program, &world, entry(4));
+    assert_eq!(unknown_mesanim.paths.len(), 1);
+    assert_unsupported_at(&unknown_mesanim.paths[0], 6);
+}
+
+#[test]
+fn l1_obj_add_validates_dummy_items_and_stack_sentinels() {
+    let obj_add_script = |id, coord, object, count, duration| {
+        script(
+            id,
+            vec![
+                int("PUSH_CONSTANT_INT", coord),
+                int("PUSH_CONSTANT_INT", object),
+                int("PUSH_CONSTANT_INT", count),
+                int("PUSH_CONSTANT_INT", duration),
+                int("obj_add", 0),
+                int("RETURN", 0),
+            ],
+        )
+    };
+    let mut program = program(vec![
+        obj_add_script(1, -1, -1, 0, 0),
+        obj_add_script(2, -1, 99, -1, 0),
+        obj_add_script(3, tile(10, 10).0, 0, 1, 1),
+        obj_add_script(4, tile(10, 10).0, 1, i32::MAX, 1),
+        obj_add_script(5, tile(10, 10).0, 1, 0, 1),
+        obj_add_script(6, tile(10, 10).0, 99, 1, 1),
+    ]);
+    program.packs.objs.insert(0, ObjConfig { dummy_item: true });
+    program.packs.objs.insert(1, ObjConfig::default());
+    let world = TestWorld::allocated();
+
+    for script_id in [1, 2] {
+        let no_effect = run(&program, &world, entry(script_id));
+        assert_eq!(no_effect.paths.len(), 1);
+        assert_eq!(no_effect.paths[0].end, End::Finished);
+        assert!(no_effect.paths[0]
+            .effects
+            .iter()
+            .all(|record| !matches!(&record.effect, Effect::Obj { .. })));
+    }
+
+    let dummy = run(&program, &world, entry(3));
+    assert_engine_at(&dummy.paths[0], 4);
+    assert!(dummy.paths[0]
+        .effects
+        .iter()
+        .all(|record| !matches!(&record.effect, Effect::Obj { .. })));
+
+    let maximum_stack = run(&program, &world, entry(4));
+    assert_eq!(maximum_stack.paths[0].end, End::Finished);
+    assert!(maximum_stack.paths[0]
+        .effects
+        .iter()
+        .any(|record| matches!(&record.effect, Effect::Obj { command: "obj_add" })));
+
+    for script_id in [5, 6] {
+        let invalid = run(&program, &world, entry(script_id));
+        assert_engine_at(&invalid.paths[0], 4);
+    }
+}
+
+#[test]
+fn l2_inv_total_negative_objects_return_zero() {
+    let mut program = program(vec![
+        script(
+            1,
+            vec![
+                int("PUSH_CONSTANT_INT", 1),
+                int("PUSH_CONSTANT_INT", -1),
+                int("inv_total", 0),
+                int("RETURN", 0),
+            ],
+        ),
+        script(
+            2,
+            vec![
+                int("PUSH_CONSTANT_INT", 1),
+                int("PUSH_CONSTANT_INT", -2),
+                int("inv_total", 0),
+                int("RETURN", 0),
+            ],
+        ),
+    ]);
+    program.packs.invs.insert(1, "inventory".into());
+    let world = TestWorld::allocated();
+
+    for script_id in [1, 2] {
+        let result = run(&program, &world, entry(script_id));
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].end, End::Finished);
+        assert_eq!(result.paths[0].ints, vec![Value::Known(0)]);
+    }
+}
+
+#[test]
+fn l4_inv_del_refreshes_inventory_reads_without_aging_world_reads() {
+    let loc_tile = tile(10, 10);
+    let mut program = program(vec![script(
+        1,
+        vec![
+            int("PUSH_CONSTANT_INT", 1),
+            int("PUSH_CONSTANT_INT", 42),
+            int("inv_total", 0),
+            int("PUSH_CONSTANT_INT", 1),
+            int("PUSH_CONSTANT_INT", 42),
+            int("PUSH_CONSTANT_INT", 1),
+            int("inv_del", 0),
+            int("loc_type", 0),
+            int("POP_INT_DISCARD", 0),
+            int("PUSH_CONSTANT_INT", 1),
+            int("PUSH_CONSTANT_INT", 42),
+            int("inv_total", 0),
+            int("RETURN", 0),
+        ],
+    )]);
+    program.packs.invs.insert(1, "inventory".into());
+    let world = TestWorld::with_locs([placed(13, loc_tile, 10, 0)]);
+    let mut input = entry(1);
+    input.protected = true;
+    input.active_loc = Some(LocObj::Placed(PlacedId(13)));
+
+    let result = run(&program, &world, input);
+    assert_eq!(result.paths.len(), 1);
+    let path = &result.paths[0];
+    assert_eq!(path.end, End::Finished);
+    assert_eq!(path.world_reads_after_suspend, 0);
+    assert_eq!(path.ints.len(), 2);
+    assert_ne!(path.ints[0], path.ints[1]);
+    assert!(result
+        .atom_of(path.ints[1])
+        .is_some_and(|atom| matches!(&atom.kind, AtomKind::InvTotal { inv: 1, obj: 42 })));
+    assert!(path
+        .effects
+        .iter()
+        .any(|record| matches!(&record.effect, Effect::Inv { .. })));
 }
 
 fn inventory_after_suspension(id: u32, suspension: &str) -> Script {

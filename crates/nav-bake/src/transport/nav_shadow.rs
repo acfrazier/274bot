@@ -22,6 +22,12 @@ use super::stage_doors::{gated_edge, worn_slot_facts, Needs};
 use super::{
     dir_delta, door_dir, edge_ticks, extra_ticks, in_world_box, opposite, straight_door_landing,
 };
+pub(super) const MACHINE_ONLY_SCRIPTED_DOOR_NAMES: [&str; 4] = [
+    "chefdoor",
+    "crafting_guild_door",
+    "loc_2025",
+    "mournerstewfence",
+];
 
 /// One placed entry and its legacy comparison inputs.
 #[derive(Clone, Copy)]
@@ -269,7 +275,6 @@ pub(crate) struct NavShadow {
     profile: EngineProfile,
     worn_slots: HashMap<i32, i32>,
     report: NavShadowReport,
-    stage_started: Option<Instant>,
     peaks: RunPeaks,
 }
 
@@ -281,6 +286,7 @@ impl NavShadow {
         revision: u16,
         content_root: &Path,
     ) -> Self {
+        let setup_started = Instant::now();
         let objects = super::obj_ids_by_name(content_root);
         let constants = super::script_constants(content_root);
         let worn_slots = worn_slot_facts(content_root, &objects, &constants);
@@ -302,19 +308,16 @@ impl NavShadow {
                 bytes: BoundSummary::default(),
             },
         };
-        Self {
+        let mut shadow = Self {
             program,
             world,
             profile,
             worn_slots,
             report,
-            stage_started: None,
             peaks: RunPeaks::default(),
-        }
-    }
-
-    pub(super) fn begin_stage(&mut self) {
-        self.stage_started = Some(Instant::now());
+        };
+        shadow.record_stage_elapsed(setup_started);
+        shadow
     }
 
     /// Run the procedure and scripted-door entries that have no legacy stage edge owner.
@@ -324,14 +327,10 @@ impl NavShadow {
         collision: &WorldCollision,
         observable: &super::ObservableGates,
     ) {
+        let started = Instant::now();
         self.run_climb_helper();
         let ids = super::loc_ids_by_name(content_root);
-        for name in [
-            "chefdoor",
-            "crafting_guild_door",
-            "loc_2025",
-            "mournerstewfence",
-        ] {
+        for name in MACHINE_ONLY_SCRIPTED_DOOR_NAMES {
             let Some(loc_type) = ids
                 .iter()
                 .find_map(|(candidate, id)| candidate.eq_ignore_ascii_case(name).then_some(*id))
@@ -367,7 +366,7 @@ impl NavShadow {
                                 }
                             };
                             if !self.has_entry(loc_type, &placement, Some(stand)) {
-                                self.run_candidate(
+                                self.run_candidate_inner(
                                     CandidateEntry {
                                         loc_type,
                                         placement: &placement,
@@ -387,7 +386,7 @@ impl NavShadow {
                     LocShape::CENTREPIECE_STRAIGHT | LocShape::CENTREPIECE_DIAGONAL
                         if !self.has_entry(loc_type, &placement, None) =>
                     {
-                        self.run_candidate(
+                        self.run_candidate_inner(
                             CandidateEntry {
                                 loc_type,
                                 placement: &placement,
@@ -406,6 +405,7 @@ impl NavShadow {
                 }
             }
         }
+        self.record_stage_elapsed(started);
     }
 
     fn has_entry(&self, loc_type: i32, placement: &Placement, stand: Option<WorldTile>) -> bool {
@@ -559,6 +559,17 @@ impl NavShadow {
 
     /// Run one placed OPLOC1 entry and compare its projected candidates with the bake.
     pub(super) fn run_candidate(
+        &mut self,
+        candidate: CandidateEntry<'_>,
+        collision: &WorldCollision,
+        observable: &super::ObservableGates,
+    ) {
+        let started = Instant::now();
+        self.run_candidate_inner(candidate, collision, observable);
+        self.record_stage_elapsed(started);
+    }
+
+    fn run_candidate_inner(
         &mut self,
         candidate: CandidateEntry<'_>,
         collision: &WorldCollision,
@@ -997,16 +1008,18 @@ impl NavShadow {
         }
     }
 
+    fn record_stage_elapsed(&mut self, started: Instant) {
+        self.report.stage_elapsed_ns += started.elapsed().as_nanos();
+    }
+
     pub(super) fn finish(mut self) -> Result<String, serde_json::Error> {
-        self.report.stage_elapsed_ns = self
-            .stage_started
-            .take()
-            .map_or(0, |started| started.elapsed().as_nanos());
+        let finalization_started = Instant::now();
         self.report.limits = LimitSummary {
             paths: bound_summary(self.peaks.paths),
             instructions: bound_summary(self.peaks.instructions),
             bytes: bound_summary(self.peaks.bytes),
         };
+        self.report.stage_elapsed_ns += finalization_started.elapsed().as_nanos();
         serde_json::to_string_pretty(&self.report)
     }
 }
@@ -1667,7 +1680,12 @@ fn opened_type(
     if let Some((mutation_index, target_coord, shape, angle)) = closed {
         let open_coord = open_leaf_coord(target_coord, shape, angle)?;
         let mirrored_coord = mirrored_open_leaf_coord(target_coord, shape, angle);
-        let mut opened_type = None;
+        let mut open_type = None;
+        let mut open_conflict = false;
+        let mut open_is_closed = false;
+        let mut mirrored_type = None;
+        let mut mirrored_conflict = false;
+        let mut mirrored_is_closed = false;
         for record in &effects[mutation_index + 1..] {
             if let Effect::Loc {
                 kind: LocKind::Add,
@@ -1677,21 +1695,40 @@ fn opened_type(
                 ..
             } = &record.effect
             {
-                if *tile != open_coord && Some(*tile) != mirrored_coord {
+                let (leaf_type, conflict, is_closed) = if *tile == open_coord {
+                    (&mut open_type, &mut open_conflict, &mut open_is_closed)
+                } else if Some(*tile) == mirrored_coord {
+                    (
+                        &mut mirrored_type,
+                        &mut mirrored_conflict,
+                        &mut mirrored_is_closed,
+                    )
+                } else {
                     continue;
-                }
+                };
                 if ty.0 == closed_id {
-                    return None;
-                }
-                match opened_type {
-                    Some(previous) if previous != ty.0 => return None,
-                    None => opened_type = Some(ty.0),
-                    Some(_) => {}
+                    *is_closed = true;
+                } else if let Some(previous) = *leaf_type {
+                    *conflict |= previous != ty.0;
+                } else {
+                    *leaf_type = Some(ty.0);
                 }
             }
         }
-        if opened_type.is_some() {
-            return opened_type;
+        if open_is_closed || open_conflict {
+            return None;
+        }
+        // Double-door scripts put the active leaf at `door_open`; their partner
+        // can have another type on the mirrored tile.
+        if open_type.is_some() {
+            return open_type;
+        }
+        // Some metal-gate handlers explicitly use `door_open_mirrored`.
+        if mirrored_is_closed || mirrored_conflict {
+            return None;
+        }
+        if mirrored_type.is_some() {
+            return mirrored_type;
         }
         if effects[mutation_index + 1..].iter().any(|record| {
             matches!(
@@ -2171,6 +2208,41 @@ mod tests {
             ),
         ];
         assert_eq!(opened_type(&unsupported, left, 89), None);
+    }
+
+    #[test]
+    fn open_type_prefers_active_door_leaf_over_mirrored_partner() {
+        let target = LocObj::Placed(PlacedId(23_368));
+        let target_tile = Coord::new(2_661, 0, 9_803);
+        let straight = LocShape::WALL_STRAIGHT as u8;
+        let open_tile =
+            open_leaf_coord(target_tile, straight, 3).expect("straight door open offset");
+        let mirrored_tile =
+            mirrored_open_leaf_coord(target_tile, straight, 3).expect("mirrored door offset");
+        assert_eq!(open_tile, Coord::new(2_661, 0, 9_802));
+        assert_eq!(mirrored_tile, Coord::new(2_662, 0, 9_802));
+
+        let effects = vec![
+            loc_effect(LocKind::Del, target, 90, target_tile, straight, 3),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(0),
+                1_563,
+                open_tile,
+                straight,
+                0,
+            ),
+            loc_effect(
+                LocKind::Add,
+                LocObj::Created(1),
+                1_562,
+                mirrored_tile,
+                straight,
+                2,
+            ),
+        ];
+
+        assert_eq!(opened_type(&effects, target, 90), Some(1_563));
     }
 
     #[test]

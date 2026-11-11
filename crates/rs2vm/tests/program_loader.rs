@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rs2vm::program::{ConfigValue, LoadErrorKind, Operand, Program, Script};
+use rs2vm::program::{ConfigValue, LoadErrorKind, ObjConfig, Operand, Program, Script};
 use rs2vm::{LocTypeId, ScriptId, Site, VarpId};
 
 struct Fixture {
@@ -45,6 +45,7 @@ impl Fixture {
         write_file(&engine, "data/pack/server/vars.dat", &[0, 1, 1, b's', 0]);
         write_file(&engine, "data/pack/server/inv.dat", &inv_pack());
         write_file(&engine, "data/pack/server/enum.dat", &enum_pack());
+        write_file(&engine, "data/pack/server/obj.dat", &obj_pack());
         write_file(&engine, "data/pack/server/loc.dat", &loc_pack());
         Self {
             _tree: tree,
@@ -134,6 +135,11 @@ fn load_decodes_bytecode_triggers_signatures_and_all_server_packs() {
     assert_eq!(loc.category, Some(42));
     assert_eq!(loc.name.as_ref(), "door");
     assert_eq!(loc.params.get(&5), Some(&ConfigValue::Int(-7)));
+    assert_eq!(
+        program.packs.objs.get(&0),
+        Some(&ObjConfig { dummy_item: true })
+    );
+    assert_eq!(program.packs.objs.get(&1), Some(&ObjConfig::default()));
     assert_eq!(loc.params.get(&6), Some(&ConfigValue::Text("gate".into())));
 }
 
@@ -362,6 +368,18 @@ fn loc_pack() -> Vec<u8> {
     push_string(&mut bytes, "gate", 10);
     bytes.push(250);
     push_string(&mut bytes, "door", 10);
+    bytes.push(0);
+    bytes
+}
+
+fn obj_pack() -> Vec<u8> {
+    let mut bytes = vec![
+        0, 2, 13, 4, 14, 5, 15, 27, 6, 96, 1, 0, 75, 0xff, 0xfe, 94, 0, 42, 97, 0, 3, 249, 1, 0, 0,
+        5, 1,
+    ];
+    push_string(&mut bytes, "parameter", 10);
+    bytes.extend_from_slice(&[201, 0, 60, 250]);
+    push_string(&mut bytes, "plain item", 10);
     bytes.push(0);
     bytes
 }

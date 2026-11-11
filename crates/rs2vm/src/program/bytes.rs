@@ -175,6 +175,22 @@ impl<'a> Cursor<'a> {
         Ok(result.into_boxed_str())
     }
 
+    pub(super) fn skip_string(&mut self, terminator: u8) -> Result<(), LoadError> {
+        let start = self.position;
+        let Some(length) = self.bytes[start..]
+            .iter()
+            .position(|byte| *byte == terminator)
+        else {
+            return Err(LoadError::invalid(
+                self.path,
+                self.offset(),
+                "unterminated string",
+            ));
+        };
+        self.position = start + length + 1;
+        Ok(())
+    }
+
     pub(super) fn finish(self) -> Result<(), LoadError> {
         if self.remaining() == 0 {
             Ok(())

@@ -313,7 +313,7 @@ impl Exec<'_, '_> {
                     return Err(engine(st.at, "invalid inventory").into());
                 }
                 let key = self.required(st, args[1])?;
-                let value = if name == "inv_total" && key == -1 {
+                let value = if name == "inv_total" && key < 0 {
                     Value::Known(0)
                 } else {
                     if key < 0 {
@@ -324,10 +324,11 @@ impl Exec<'_, '_> {
                         "inv_totalcat" => AtomKind::InvCat { inv, category: key },
                         _ => AtomKind::InvSlot { inv, slot: key },
                     };
+                    let written = self.inventory_was_mutated(st, inv);
                     self.observe(
                         st,
                         kind,
-                        if st.epoch == 0 {
+                        if st.epoch == 0 && !written {
                             CondClass::Requirement
                         } else {
                             CondClass::Live
@@ -337,12 +338,12 @@ impl Exec<'_, '_> {
                         } else {
                             (0, i32::MAX)
                         },
-                        false,
+                        written,
                     )?
                 };
                 self.push(st, value)?;
             }
-            // InvOps.ts:129-141. Mutations must not leave pre-write inventory observations usable.
+            // InvOps.ts:129-141. Inventory writes refresh later reads without changing suspension age.
             "inv_del" => {
                 if !st.protected {
                     return Err(
@@ -357,14 +358,32 @@ impl Exec<'_, '_> {
                 self.not_null(st, args[1])?;
                 self.positive(st, args[2], true)?;
                 self.effect(st, Effect::Inv { args })?;
-                st.epoch = st.epoch.saturating_add(1);
             }
             "obj_add" => {
                 let args = pop_array::<4>(st)?;
-                self.validate_coord(st, args[0])?;
-                self.not_null(st, args[1])?;
-                self.positive(st, args[2], true)?;
+                let object_id = known(st, &self.arena, args[1]);
+                let count = known(st, &self.arena, args[2]);
+                if object_id == Some(-1) || count == Some(-1) {
+                    return Ok(Step::Next);
+                }
+                let object_id =
+                    object_id.ok_or_else(|| unsupported(st.at, "object id is not known"))?;
+                let dummy_item = self
+                    .machine
+                    .program
+                    .packs
+                    .objs
+                    .get(&object_id)
+                    .ok_or_else(|| engine(st.at, "invalid object"))?
+                    .dummy_item;
                 self.positive(st, args[3], true)?;
+                self.validate_coord(st, args[0])?;
+                let count = count.ok_or_else(|| unsupported(st.at, "object count is not known"))?;
+                self.positive(st, Value::Known(count), true)?;
+                // Script integers are ToInt32 values, so i32::MAX is the engine stack ceiling.
+                if dummy_item {
+                    return Err(engine(st.at, "attempted to add dummy item").into());
+                }
                 self.effect(st, Effect::Obj { command: name })?;
             }
             "loc_add" | "loc_change" | "loc_del" | "loc_coord" | "loc_type" | "loc_angle"
@@ -427,6 +446,14 @@ impl Exec<'_, '_> {
         } else {
             Ok(n)
         }
+    }
+    fn inventory_was_mutated(&self, st: &State, inv: i32) -> bool {
+        st.effects.iter().any(|record| {
+            matches!(
+                &record.effect,
+                Effect::Inv { args } if known(st, &self.arena, args[0]) == Some(inv)
+            )
+        })
     }
     pub(super) fn position(&mut self, st: &State) -> ExecResult<Value> {
         Ok(match st.player {

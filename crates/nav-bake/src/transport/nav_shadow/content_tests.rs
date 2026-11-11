@@ -85,6 +85,7 @@ fn local_pack_shadow_paths_match_content_and_leave_bake_outputs_unchanged() {
         assert_report_limits(&report);
         assert_no_removed_edges(&report, revision);
         assert_changed_fields_exact(&report, revision);
+        assert_no_open_loc_id_changes(&report, revision);
         assert_transfer_audit(&report, revision);
         assert_content_cases(&report, &content_root, revision);
     }
@@ -236,6 +237,27 @@ fn assert_changed_fields_exact(report: &Value, revision: u16) {
     }
 }
 
+fn assert_no_open_loc_id_changes(report: &Value, revision: u16) {
+    let open_loc_mismatches = report["diffs"]
+        .as_array()
+        .expect("edge diff list")
+        .iter()
+        .filter(|diff| {
+            let baseline = diff["baseline"]
+                .as_object()
+                .and_then(|edge| edge.get("open_loc_id"));
+            let candidate = diff["candidate"]
+                .as_object()
+                .and_then(|edge| edge.get("open_loc_id"));
+            matches!((baseline, candidate), (Some(before), Some(after)) if before != after)
+        })
+        .count();
+    assert_eq!(
+        open_loc_mismatches, 0,
+        "revision {revision} has mismatched projected open loc types"
+    );
+}
+
 fn assert_transfer_audit(report: &Value, revision: u16) {
     for entry in entries(report) {
         let path_results = paths(entry);
@@ -296,13 +318,7 @@ fn assert_transfer_audit(report: &Value, revision: u16) {
 
 fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
     let names = crate::transport::loc_ids_by_name(content_root);
-    let required_machine_only = [
-        "chefdoor",
-        "crafting_guild_door",
-        "loc_2025",
-        "mournerstewfence",
-    ];
-    for name in required_machine_only {
+    for name in super::MACHINE_ONLY_SCRIPTED_DOOR_NAMES {
         let id = loc_id(&names, name).unwrap_or_else(|| panic!("{name} loc id is absent"));
         let placed = entries_for_loc(report, id);
         assert!(
@@ -347,6 +363,11 @@ fn assert_content_cases(report: &Value, content_root: &Path, revision: u16) {
             revision,
         );
     }
+    assert_ikov_active_open_leaf(
+        report,
+        loc_id(&names, "ikov_mendedleverdoorr").expect("Ikov right door loc id"),
+        revision,
+    );
     assert_watch_ladder(
         report,
         loc_id(&names, "watchladderup").expect("watch ladder loc id"),
@@ -782,6 +803,49 @@ fn assert_ikov_open_type(report: &Value, loc_type: i32, revision: u16) {
         }),
         "revision {revision} Ikov opened door lacks the sourced leaf type 1562"
     );
+}
+
+fn assert_ikov_active_open_leaf(report: &Value, loc_type: i32, revision: u16) {
+    let entry = entries_for_loc(report, loc_type)
+        .into_iter()
+        .find(|entry| {
+            entry["placement"] == serde_json::json!({"x": 2661, "z": 9803, "level": 0})
+                && entry["handler_name"].as_str() == Some("[oploc1,ikov_mendedleverdoorr]")
+                && entry["stand"] == serde_json::json!({"x": 2661, "z": 9802, "level": 0})
+        })
+        .unwrap_or_else(|| panic!("revision {revision} Ikov right-door stand is absent"));
+    let (path, candidate) = paths(entry)
+        .iter()
+        .find_map(|path| {
+            candidates_for_path(entry, path)
+                .into_iter()
+                .find(|candidate| candidate["covered"] == true)
+                .map(|candidate| (path, candidate))
+        })
+        .unwrap_or_else(|| panic!("revision {revision} Ikov right-door path is not covered"));
+    assert_eq!(
+        candidate["edge"]["open_loc_id"].as_i64(),
+        Some(1_563),
+        "revision {revision} active door leaf lost its open loc type"
+    );
+    let effects = path["effects"].as_array().expect("Ikov path effects");
+    for (loc_type, tile) in [
+        (1_563, Coord::new(2_661, 0, 9_802)),
+        (1_562, Coord::new(2_662, 0, 9_802)),
+    ] {
+        let expected_type = format!("ty: LocTypeId({loc_type})");
+        let expected_tile = format!("tile: {tile:?}");
+        assert!(
+            effects.iter().any(|effect| {
+                effect["effect"].as_str().is_some_and(|description| {
+                    description.starts_with("Loc { kind: Add, obj: Created(")
+                        && description.contains(&expected_type)
+                        && description.contains(&expected_tile)
+                })
+            }),
+            "revision {revision} Ikov path lacks type {loc_type} at {tile:?}"
+        );
+    }
 }
 
 fn loc_type_for(effects: &[Value], kind: &str, placed_id: u64) -> Option<String> {

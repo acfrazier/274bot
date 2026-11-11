@@ -349,13 +349,6 @@ impl Exec<'_, '_> {
                 Some(Expr::Atom(atom)) => self.arena.atom(*atom).is_some_and(|a| match &a.kind {
                     AtomKind::Stand => true,
                     AtomKind::Live(n) => *n == "npc_coord",
-                    // ScriptVarType.ts:4,12: string parameters have no integer local slot.
-                    AtomKind::Arg(n) => self
-                        .machine
-                        .program
-                        .script(a.site.script)
-                        .and_then(|s| s.params.iter().filter(|ty| **ty != b's').nth(*n as usize))
-                        .is_some_and(|ty| *ty == b'c'),
                     _ => false,
                 }),
                 _ => false,

@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+enum OutsideLayoutIndex {
+    EngineError,
+    Unsupported(&'static str),
+}
+
 impl Exec<'_, '_> {
     pub(super) fn layout(&mut self, st: &mut State, name: &str) -> ExecResult<Step> {
         match name {
@@ -29,7 +35,7 @@ impl Exec<'_, '_> {
             }
             // StringOps.ts:76-96 and FontType.ts:125-139. Empty text still has one line.
             "split_init" => {
-                pop_text(st)?;
+                let text = pop_text(st)?;
                 let args = pop_array::<3>(st)?;
                 self.not_null(st, args[2])?;
                 let lines = self.required(st, args[1])?;
@@ -53,6 +59,10 @@ impl Exec<'_, '_> {
                 )?;
                 st.layout.lines_per_page = Some(lines);
                 st.layout.pages = Some(pages);
+                st.layout.mesanim_may_exist = match text {
+                    Text::Lit(text) => text.starts_with("<p,") && text.find('>').is_some(),
+                    Text::Unknown(_) => true,
+                };
             }
             // ScriptState.ts initializes splitPages to []: the positive domain starts only at init.
             "split_pagecount" => {
@@ -69,12 +79,29 @@ impl Exec<'_, '_> {
                 let args = pop_array::<2>(st)?;
                 self.layout_page(st, args[0])?;
                 let lines = self.layout_lines(st, args[0])?;
-                self.layout_index(st, args[1], lines)?;
+                self.layout_index(
+                    st,
+                    args[1],
+                    lines,
+                    OutsideLayoutIndex::Unsupported(
+                        "split_get line yields an unmodeled undefined string",
+                    ),
+                )?;
                 self.push_text(st, Text::Unknown(st.at))?;
             }
             "split_getanim" => {
                 let page = pop(st)?;
-                self.layout_page(st, page)?;
+                if !st.layout.mesanim_may_exist {
+                    self.push(st, Value::Known(-1))?;
+                    return Ok(Step::Next);
+                }
+                let pages = st.layout.pages.unwrap_or(Value::Known(0));
+                self.layout_index(
+                    st,
+                    page,
+                    pages,
+                    OutsideLayoutIndex::Unsupported("split_getanim needs an unproven page"),
+                )?;
                 self.push(st, Value::Opaque(st.at))?;
             }
             _ => return Err(unsupported(st.at, "unsupported layout row").into()),
@@ -82,9 +109,20 @@ impl Exec<'_, '_> {
         Ok(Step::Next)
     }
     fn layout_page(&self, st: &State, page: Value) -> Result<(), End> {
-        self.layout_index(st, page, st.layout.pages.unwrap_or(Value::Known(0)))
+        self.layout_index(
+            st,
+            page,
+            st.layout.pages.unwrap_or(Value::Known(0)),
+            OutsideLayoutIndex::EngineError,
+        )
     }
-    fn layout_index(&self, st: &State, index: Value, count: Value) -> Result<(), End> {
+    fn layout_index(
+        &self,
+        st: &State,
+        index: Value,
+        count: Value,
+        outside: OutsideLayoutIndex,
+    ) -> Result<(), End> {
         let (min, max) = domains::bounds(&self.arena, &st.domains, index);
         let (least, greatest) = domains::bounds(&self.arena, &st.domains, count);
         if min >= 0 && max < least {
@@ -111,7 +149,10 @@ impl Exec<'_, '_> {
             return Ok(());
         }
         if max < 0 || min >= greatest {
-            return Err(engine(st.at, "split index outside layout"));
+            return Err(match outside {
+                OutsideLayoutIndex::EngineError => engine(st.at, "split index outside layout"),
+                OutsideLayoutIndex::Unsupported(reason) => unsupported(st.at, reason),
+            });
         }
         Err(unsupported(st.at, "split index needs a range proof"))
     }

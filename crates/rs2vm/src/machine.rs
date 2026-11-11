@@ -814,6 +814,7 @@ struct Layout {
     generation: u32,
     lines_per_page: Option<i32>,
     pages: Option<Value>,
+    mesanim_may_exist: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct State {

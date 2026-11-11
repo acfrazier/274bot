@@ -163,6 +163,13 @@ pub struct LocConfig {
     pub name: Box<str>,
 }
 
+/// Server-side object facts used by command rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ObjConfig {
+    /// Whether the object is a dummy item that `obj_add` rejects.
+    pub dummy_item: bool,
+}
+
 /// Decoded server configuration packs used by the interpreter.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Packs {
@@ -178,6 +185,8 @@ pub struct Packs {
     pub varss: BTreeMap<u16, bool>,
     /// Inventory debug names, indexed by id.
     pub invs: BTreeMap<i32, Box<str>>,
+    /// Object configurations indexed by object id.
+    pub objs: BTreeMap<i32, ObjConfig>,
     /// Enum configs indexed by id.
     pub enums: BTreeMap<i32, Enum>,
     /// Loc configs indexed by id.

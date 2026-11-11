@@ -59,6 +59,7 @@ const OPCODES: &[(&str, u16)] = &[
     ("cam_reset", 45),
     ("outside_slice_command", 46),
     ("loc_add", 47),
+    ("p_telejump", 48),
 ];
 
 #[derive(Default)]
@@ -186,6 +187,56 @@ fn large_entry_limits() -> Limits {
         instructions: 2_000_000,
         ..Limits::default()
     }
+}
+
+#[test]
+fn unknown_coord_typed_argument_needs_a_validity_proof() {
+    let mut helper = script(
+        0,
+        vec![
+            int("PUSH_INT_LOCAL", 0),
+            command("p_telejump"),
+            command("RETURN"),
+        ],
+        1,
+        1,
+    );
+    helper.params = vec![b'c'];
+    let program = program([helper]);
+
+    let result = run(&program, Entry::new(ScriptId(0)), View::NAV);
+    assert_eq!(result.paths.len(), 1);
+    let path = &result.paths[0];
+    assert!(
+        matches!(
+            &path.end,
+            End::Unsupported(fault)
+                if fault.at == Site { script: ScriptId(0), pc: 1 }
+                    && fault.reason == "coordinate validation needs a proof"
+        ),
+        "a coord type does not exclude null: {:?}",
+        path.end
+    );
+    assert!(!path
+        .effects
+        .iter()
+        .any(|record| matches!(record.effect, Effect::Move { .. })));
+
+    let mut null_entry = Entry::new(ScriptId(0));
+    null_entry.ints = vec![Value::Known(-1)];
+    let null_result = run(&program, null_entry, View::NAV);
+    assert!(matches!(
+        &null_result.paths[0].end,
+        End::EngineError(fault)
+            if fault.at == Site { script: ScriptId(0), pc: 1 }
+    ));
+
+    let destination = Coord::new(3200, 0, 3200);
+    let mut known_entry = Entry::new(ScriptId(0));
+    known_entry.ints = vec![Value::Known(destination.0)];
+    let known_result = run(&program, known_entry, View::NAV);
+    assert_eq!(known_result.paths.len(), 1);
+    assert!(same_landing(&known_result.paths[0], destination));
 }
 
 #[test]

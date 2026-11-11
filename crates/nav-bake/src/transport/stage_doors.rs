@@ -1718,9 +1718,6 @@ pub(super) fn stage_door_edges(
     quests: Option<&QuestSource<'_>>,
     mut shadow: Option<&mut super::nav_shadow::NavShadow>,
 ) {
-    if let Some(shadow) = shadow.as_deref_mut() {
-        shadow.begin_stage();
-    }
     let src = Sources::read(content_root, ids, quests);
     let motion_facts = forced::forced_move_edges(
         content_root,
@@ -1781,14 +1778,9 @@ pub(super) fn stage_door_edges(
     for id in loc_ids {
         let machine_only = names.get(&id).is_some_and(|loc_names| {
             loc_names.iter().any(|name| {
-                [
-                    "chefdoor",
-                    "crafting_guild_door",
-                    "loc_2025",
-                    "mournerstewfence",
-                ]
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                super::nav_shadow::MACHINE_ONLY_SCRIPTED_DOOR_NAMES
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate))
             })
         });
         let stage_owned = !covered.contains(&id)
@@ -1829,10 +1821,12 @@ pub(super) fn stage_door_edges(
         let member_path = src.has_member_reads(handler);
         let emitted = graph.edges.len();
         let mut proven = false;
-        let legacy_handler = format!(
-            "stage-door text evaluator ({} statements)",
-            handler.body.len()
-        );
+        let legacy_handler = shadow.as_ref().map(|_| {
+            format!(
+                "stage-door text evaluator ({} statements)",
+                handler.body.len()
+            )
+        });
         for p in placements {
             let at = WorldTile {
                 x: p.x,
@@ -1909,7 +1903,9 @@ pub(super) fn stage_door_edges(
                                     direction: Some(dir),
                                     stand: Some(stand),
                                     stage_owned,
-                                    legacy_handler: &legacy_handler,
+                                    legacy_handler: legacy_handler
+                                        .as_deref()
+                                        .expect("shadow handler label is initialized"),
                                     baseline,
                                 },
                                 collision,
@@ -1963,7 +1959,9 @@ pub(super) fn stage_door_edges(
                                 direction: None,
                                 stand: None,
                                 stage_owned,
-                                legacy_handler: &legacy_handler,
+                                legacy_handler: legacy_handler
+                                    .as_deref()
+                                    .expect("shadow handler label is initialized"),
                                 baseline,
                             },
                             collision,

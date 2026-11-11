@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::{LocTypeId, VarpId};
 
 use super::bytes::{self, Cursor};
-use super::{ConfigValue, Enum, LoadError, LocConfig, Packs, Param, Varbit, Varp};
+use super::{ConfigValue, Enum, LoadError, LocConfig, ObjConfig, Packs, Param, Varbit, Varp};
 
 const INT_TYPE: u8 = b'i';
 const STRING_TYPE: u8 = b's';
@@ -20,6 +20,7 @@ pub(super) fn load(server_dir: &Path, client_varbits: &[u8]) -> Result<Packs, Lo
         decode_var_string(cursor, "vars")
     })?;
     let invs = decode_file(server_dir, "inv.dat", decode_inv)?;
+    let objs = decode_file(server_dir, "obj.dat", decode_obj)?;
     let enums = decode_file(server_dir, "enum.dat", decode_enum)?;
     let locs = decode_file(server_dir, "loc.dat", decode_loc)?;
 
@@ -46,6 +47,7 @@ pub(super) fn load(server_dir: &Path, client_varbits: &[u8]) -> Result<Packs, Lo
             .map(|(id, value)| (id as u16, value))
             .collect(),
         invs: index_i32(invs),
+        objs: index_i32(objs),
         enums: index_i32(enums),
         locs: locs
             .into_iter()
@@ -272,6 +274,38 @@ fn decode_inv(cursor: &mut Cursor<'_>) -> Result<Box<str>, LoadError> {
             code => return Err(cursor.unsupported_code("inv", code, code_offset)),
         }
     }
+}
+
+// ObjType.ts:185-290; tools/pack/config/ObjConfig.ts:304-419,441-488.
+// Retain only the server dummyitem fact and skip the other server fields.
+fn decode_obj(cursor: &mut Cursor<'_>) -> Result<ObjConfig, LoadError> {
+    let mut dummy_item = false;
+    loop {
+        let code_offset = cursor.offset();
+        match cursor.u8()? {
+            0 => return Ok(ObjConfig { dummy_item }),
+            13 | 14 | 27 => cursor.skip(1)?,
+            15 => {}
+            75 | 94 | 97 | 201 => cursor.skip(2)?,
+            96 => dummy_item = cursor.u8()? != 0,
+            249 => skip_obj_params(cursor)?,
+            250 => cursor.skip_string(10)?,
+            code => return Err(cursor.unsupported_code("obj", code, code_offset)),
+        }
+    }
+}
+
+fn skip_obj_params(cursor: &mut Cursor<'_>) -> Result<(), LoadError> {
+    let count = cursor.u8()?;
+    for _ in 0..count {
+        cursor.u24()?;
+        if cursor.u8()? == 1 {
+            cursor.skip_string(10)?;
+        } else {
+            cursor.skip(4)?;
+        }
+    }
+    Ok(())
 }
 
 // Field layout mirrors src/cache/config/EnumType.ts:68-94.
