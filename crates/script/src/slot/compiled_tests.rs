@@ -4283,7 +4283,7 @@ fn a_script_park_reason_is_logged_in_full_once_per_change() {
     );
     let cut: String = reason
         .chars()
-        .take(api::hostlog::SUMMARY_CHARS - 1)
+        .take(api::notice::SUMMARY_CHARS - 1)
         .collect();
     assert!(
         head.contains(&format!("block_reason={cut}…")),

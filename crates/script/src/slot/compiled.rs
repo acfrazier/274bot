@@ -415,7 +415,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
     // cut to `SUMMARY_CHARS` characters (a tighter cut when even that
     // overflows); the whole of each cut field follows as packed lines, once,
     // so the log store never cuts it. This runs on a change of status only.
-    details.cut = Some(api::hostlog::SUMMARY_CHARS);
+    details.cut = Some(api::notice::SUMMARY_CHARS);
     let mut head = line(&details);
     if head.len() > api::hostlog::LINE_BYTES {
         details.cut = Some(40);

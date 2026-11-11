@@ -229,12 +229,13 @@ impl ActionError {
     }
 
     /// The operator-facing text: the cause and the count, at most
-    /// [`api::hostlog::SUMMARY_CHARS`] characters, on one line. [`Display`]
+    /// [`api::notice::SUMMARY_CHARS`] characters, on one line. [`Display`]
     /// stays the whole text (scripts read it); this is what a front end shows.
     ///
     /// [`Display`]: fmt::Display
     pub fn summary(&self) -> Cow<'static, str> {
-        use api::hostlog::{cut_chars, SUMMARY_CHARS};
+        use api::hostlog::cut_chars;
+        use api::notice::SUMMARY_CHARS;
         if let Some(text) = self.fixed_text() {
             return Cow::Borrowed(text);
         }

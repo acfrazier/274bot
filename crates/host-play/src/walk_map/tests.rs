@@ -2229,7 +2229,7 @@ fn action_error_summary_is_short_for_every_variant() {
     for error in every_action_error() {
         let summary = error.summary();
         assert!(
-            summary.chars().count() <= api::hostlog::SUMMARY_CHARS,
+            summary.chars().count() <= api::notice::SUMMARY_CHARS,
             "{}: {} characters: {summary}",
             error.log_tag(),
             summary.chars().count()

@@ -1,4 +1,5 @@
 use super::*;
+use crate::notice::SUMMARY_CHARS;
 use std::borrow::Cow;
 use std::sync::Mutex;
 

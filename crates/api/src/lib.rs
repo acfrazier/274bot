@@ -32,6 +32,7 @@ pub mod loadout;
 pub mod local_state;
 pub mod named_banks;
 pub mod native_input;
+pub mod notice;
 pub mod obj_names;
 pub mod prayer;
 pub mod prereq_knowledge;

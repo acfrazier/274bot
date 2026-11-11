@@ -314,15 +314,6 @@ pub fn logged(category: Category) -> bool {
     category.slot_log() && SINK.get().is_some()
 }
 
-/// Longest summary a front end shows for a notice, in characters. The cause
-/// and the count fit before the cut.
-pub const SUMMARY_CHARS: usize = 100;
-
-/// Longest notice line a front end shows, in characters: a summary, the
-/// ` (see log)` pointer and a margin. At four bytes a character this is 448
-/// bytes, which one packed log line holds.
-pub const LINE_CHARS: usize = 112;
-
 /// `text` cut to at most `max` characters, ending with `…` when it was cut.
 /// Never splits a code point. Borrowed when the text already fits.
 pub fn cut_chars(text: &str, max: usize) -> Cow<'_, str> {
