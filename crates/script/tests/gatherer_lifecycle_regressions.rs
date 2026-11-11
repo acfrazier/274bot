@@ -3622,7 +3622,9 @@ fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
     }
     let selected = selected();
     let mut frame = depleted_snapshot(&selected);
-    lifecycle_hitpoints(&mut frame, 6, 10);
+    // A 40-point account: the lobster's 12-point heal fits the missing
+    // hitpoints, which a bite above the danger line requires.
+    lifecycle_hitpoints(&mut frame, 6, 40);
     frame.seed_chat_lines(Vec::new());
     let anchor = frame.local_player().unwrap().player.actor.tile;
     let bank_tile = WorldTile {
@@ -3646,7 +3648,7 @@ fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
         !slot.has_native_actions(),
         "HP above eatBelow does not consume food"
     );
-    lifecycle_hitpoints(&mut frame, 5, 10);
+    lifecycle_hitpoints(&mut frame, 5, 40);
     tick(&mut slot, &frame, 2);
     let eat = slot
         .take_native_action()
@@ -3667,7 +3669,7 @@ fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
     tick(&mut slot, &frame, 3);
     assert!(!slot.has_native_actions());
     frame.seed_inventory(Vec::new(), 28);
-    lifecycle_hitpoints(&mut frame, 7, 10);
+    lifecycle_hitpoints(&mut frame, 7, 40);
     let mut now = 3;
     tick(&mut slot, &frame, 4);
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);

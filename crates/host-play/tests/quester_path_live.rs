@@ -240,12 +240,9 @@ fn arrav_smoke_pair(
     })
 }
 
-#[test]
-#[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
-fn live_quester_path_smoke() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
+/// Run the smoke the environment selects (`QUESTER_PATH`, `QUESTER_SEEDS`) and
+/// return the seeds with the result, so a cell can assert on both.
+fn run_path_smoke() -> (QuesterPathSeeds, Result<serde_json::Value, String>) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let quest = std::env::var("QUESTER_PATH").expect("QUESTER_PATH names the Path");
     let seeds_path = PathBuf::from(std::env::var_os("QUESTER_SEEDS").expect("QUESTER_SEEDS"));
@@ -272,6 +269,127 @@ fn live_quester_path_smoke() {
     };
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
+    (seeds, result)
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
+fn live_quester_path_smoke() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    run_path_smoke().1.unwrap();
+}
+
+/// Session lines kept for the small-Hitpoints planner cell.
+static PLANNER_LOGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+struct PlannerLogSink;
+static PLANNER_LOG_SINK: PlannerLogSink = PlannerLogSink;
+
+impl api::hostlog::Sink for PlannerLogSink {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        PLANNER_LOGS.lock().unwrap().push(format!(
+            "{} {}",
+            record.slot.unwrap_or("-"),
+            record.message
+        ));
+    }
+}
+
+/// The Hitpoints cap of the small-account Jonny seed (`blackarm-jonny-small-hp.json`).
+const SMALL_HP_CAP: i32 = 4;
+
+/// Small-Hitpoints planner cell. The Phoenix account's Hitpoints are seeded
+/// to [`SMALL_HP_CAP`] and it carries exactly the lobsters the production food
+/// sizing needs for the `p:8` fight: the cell asserts that sizing's answer
+/// (one line in the session log) equals the seeded count, so the Quester needs
+/// no supply trip, and that the quest then reaches `p:9`. Jonny hits at most 1
+/// every 4 ticks, so a 12-point lobster overheals on this account: the planner
+/// bites it only in the critical tier (`policy::bite_tier`), which is the
+/// decision under test. At 4 Hitpoints the planner asks for 2 lobsters; with
+/// the planner on the old rule (a bite at every Hitpoints value up to the eat
+/// line) it asks for 4.
+#[test]
+#[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
+fn live_quester_jonny_small_hp_planner_engine_q() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    assert!(
+        std::env::var_os("QUESTER_TICK_MS").is_none(),
+        "the cell runs at Engine Q's own tick speed"
+    );
+    assert!(
+        api::hostlog::install_sink(&PLANNER_LOG_SINK),
+        "the cell needs its own session log sink"
+    );
+    let (seeds, result) = run_path_smoke();
+    let logs = std::mem::take(&mut *PLANNER_LOGS.lock().unwrap());
+    let hitpoints = seeds
+        .skills
+        .iter()
+        .find(|(skill, _)| skill.eq_ignore_ascii_case("hitpoints"))
+        .map(|(_, level)| *level);
+    assert_eq!(
+        hitpoints,
+        Some(SMALL_HP_CAP),
+        "the seed names the small cap"
+    );
+    let seeded = seeds
+        .extra_items
+        .iter()
+        .find(|(item, _)| item == "lobster")
+        .map(|(_, count)| *count)
+        .expect("the seed carries the lobsters");
+    // The production food sizing for the Phoenix `p:8` stage.
+    let sized: Vec<&String> = logs
+        .iter()
+        .filter(|line| line.contains("[stage p:8; Jonny the beard] computed food count"))
+        .collect();
+    assert!(
+        !sized.is_empty(),
+        "no food sizing line for the Jonny stage in {} session lines (run: {:?})",
+        logs.len(),
+        result.as_ref().err()
+    );
+    for line in &sized {
+        let after = line
+            .split("computed food count ")
+            .nth(1)
+            .expect("the line names the count");
+        assert!(
+            after.starts_with(&format!("{seeded} (Lobster,")),
+            "the small-cap planner sizes {seeded} lobsters, not: {line} (run: {:?})",
+            result.as_ref().err()
+        );
+    }
+    // The seeded lobsters meet the target, so provisioning reports no food shortfall.
+    let short: Vec<&String> = logs
+        .iter()
+        .filter(|line| line.contains("need unmet: Lobster"))
+        .collect();
+    assert!(
+        short.is_empty(),
+        "the seeded lobsters should meet the target: {short:?}"
+    );
+    // Every lobster the account eats at this cap is a critical-tier bite.
+    for line in logs.iter().filter(|line| {
+        line.contains("survival eat owner=")
+            && line.contains("heal=12 ")
+            && line.contains(&format!("hp_max={SMALL_HP_CAP} "))
+    }) {
+        let field = |name: &str| -> i32 {
+            line.split(&format!("{name}="))
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| panic!("no {name} in {line}"))
+        };
+        assert!(
+            field("hp_before") <= field("critical_floor"),
+            "an overhealing lobster outside the critical tier: {line}"
+        );
+    }
     result.unwrap();
 }
 

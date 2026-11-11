@@ -11,16 +11,19 @@
 //! message-delay input lock remains caller-supplied through `GuardTick`
 //! (`consume.rs2:114-134`; `schedule.rs:153-161`).
 //!
-//! The guard threshold mirrors `select::lines(...).with_poison(...)` and the
-//! shared food policy's known-zero danger gate (`select.rs:225-243`,
-//! `policy.rs:343-359`, `guard.rs:490-493`). This model has no prayer,
-//! regeneration or escape credit. Damage events at a tick are applied in
+//! The guard's bite rule is the shared one, `policy::eats_food` (the same
+//! `policy::bite_tier` the walk guard, the combat machine, the survival step
+//! and the route replay use): critical at or below `burst + 1` plus the
+//! poison fire, where any bite is taken; caution up to `2 * danger + 1` plus
+//! the fire, where only a bite that does not overheal is taken; and the
+//! known-zero danger gate. This model has no prayer, regeneration or escape
+//! credit. Damage events at a tick are applied in
 //! canonical order before a due heal and before the guard can admit food.
 
 use super::consts::MAX_EVENTS;
 use super::odds::{death_bound, DeathBound, Event, EventKind, HitChance};
 use super::UnknownWhy;
-use crate::combat::select;
+use crate::combat::policy;
 use std::cell::RefCell;
 
 const HP_STATES: usize = 128;
@@ -54,6 +57,11 @@ pub struct Food {
 pub struct GuardTick {
     /// Charged incoming danger, or `None` for the selector's conservative line.
     pub danger: Option<i32>,
+    /// The most damage that can land before a bite takes effect (each
+    /// attacker's maximum hit once per attack it can make in the bite delay,
+    /// `policy::hits_before_bite`); `None` when `danger` is `None`. It sets
+    /// the critical floor.
+    pub burst: Option<i32>,
     /// Poison damage charged into the selector's bite threshold.
     pub poison_fire: i32,
     /// Whether the guard cannot admit any action on this tick.
@@ -288,7 +296,7 @@ fn admit_food(
     next: &mut [f64],
     hp_max: u8,
     max_food: u8,
-    eat_line: i32,
+    bites_at: impl Fn(i32) -> bool,
     visits: &mut u32,
 ) -> Result<(u8, bool), UnknownWhy> {
     next.fill(0.0);
@@ -305,7 +313,7 @@ fn admit_food(
                     && hp < usize::from(hp_max)
                     && food > 0
                     && phase == 0
-                    && i32::try_from(hp).is_ok_and(|hp| hp <= eat_line);
+                    && i32::try_from(hp).is_ok_and(&bites_at);
                 let (target_hp, target_food, target_phase) = if should_eat {
                     ate = true;
                     (hp, food - 1, PHASE_COOLDOWN_3)
@@ -438,16 +446,32 @@ pub fn guarded_bound(
                 && !observation.input_locked
                 && ready_min != 0;
             if can_eat {
-                let eat_line = select::lines(observation.danger, i32::from(hp_max))
-                    .with_poison(observation.poison_fire)
-                    .eat;
-                if i32::from(ready_min) <= eat_line {
+                let hp_cap = i32::from(hp_max);
+                let heal = i32::from(food.heal);
+                let line = policy::eat_line(
+                    observation.danger,
+                    observation.burst,
+                    hp_cap,
+                    observation.poison_fire,
+                    0,
+                );
+                if i32::from(ready_min) <= line {
                     let (new_ready_min, ate) = admit_food(
                         &scratch.current,
                         &mut scratch.next,
                         hp_max,
                         max_food,
-                        eat_line,
+                        |hp| {
+                            policy::eats_food(
+                                hp,
+                                hp_cap,
+                                heal,
+                                observation.danger,
+                                observation.burst,
+                                observation.poison_fire,
+                                0,
+                            )
+                        },
                         &mut visits,
                     )?;
                     std::mem::swap(&mut scratch.current, &mut scratch.next);
@@ -497,6 +521,7 @@ mod tests {
     fn ordinary_guard(_: u16) -> GuardTick {
         GuardTick {
             danger: Some(1),
+            burst: Some(1),
             poison_fire: 0,
             input_locked: false,
         }
@@ -505,6 +530,7 @@ mod tests {
     fn locked_guard(_: u16) -> GuardTick {
         GuardTick {
             danger: Some(1),
+            burst: Some(1),
             poison_fire: 0,
             input_locked: true,
         }
@@ -595,11 +621,13 @@ mod tests {
         let events = [certain(3, 2)];
         let no_charge = |_: u16| GuardTick {
             danger: Some(0),
+            burst: Some(0),
             poison_fire: 0,
             input_locked: false,
         };
         let charged = |_: u16| GuardTick {
             danger: Some(0),
+            burst: Some(0),
             poison_fire: 1,
             input_locked: false,
         };
@@ -627,6 +655,6 @@ mod tests {
             std::mem::size_of::<Scratch>(),
             3 * std::mem::size_of::<Box<[f64]>>()
         );
-        assert_eq!(std::mem::size_of::<GuardTick>(), 16);
+        assert_eq!(std::mem::size_of::<GuardTick>(), 24);
     }
 }

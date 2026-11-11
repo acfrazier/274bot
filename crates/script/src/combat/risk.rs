@@ -423,8 +423,16 @@ pub fn supply_bound(
             for exposure in exposures {
                 let end = start.saturating_add(exposure.ticks);
                 if tick < end {
+                    let hit = i32::from(exposure.kind.max_hit);
                     return GuardTick {
-                        danger: Some(i32::from(exposure.kind.max_hit)),
+                        danger: Some(hit),
+                        burst: Some(if exposure.kind.hazard() {
+                            hit
+                        } else {
+                            hit.saturating_mul(crate::combat::policy::hits_before_bite(
+                                exposure.kind.rate,
+                            ))
+                        }),
                         poison_fire: i32::from(poison),
                         input_locked: false,
                     };
@@ -433,6 +441,7 @@ pub fn supply_bound(
             }
             GuardTick {
                 danger: Some(0),
+                burst: Some(0),
                 poison_fire: i32::from(poison),
                 input_locked: false,
             }

@@ -647,6 +647,53 @@ impl ThreatSet {
         protect: Option<StyleObs>,
         corpse: Option<ActorRef>,
     ) -> Option<i32> {
+        self.total_except(tables, tick, (shield, antifire), protect, corpse, |_| 1)
+    }
+
+    /// The most damage that can land before a bite sent now takes effect:
+    /// each live attacker's residual hit once per attack it can make inside
+    /// the bite delay ([`policy::hits_before_bite`]). It is never below
+    /// [`Self::danger`] and is `None` when the danger is unknown.
+    pub fn burst(
+        &self,
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        tick: u16,
+        shield: bool,
+        antifire: bool,
+    ) -> Option<i32> {
+        self.burst_with(
+            tables,
+            tick,
+            shield,
+            antifire,
+            select::active_protect(frame, tables),
+        )
+    }
+
+    /// [`Self::burst`] under a planned protection.
+    pub(crate) fn burst_with(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        shield: bool,
+        antifire: bool,
+        protect: Option<StyleObs>,
+    ) -> Option<i32> {
+        self.total_except(tables, tick, (shield, antifire), protect, None, |threat| {
+            super::policy::hits_before_bite(threat.rate)
+        })
+    }
+
+    fn total_except(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        (shield, antifire): (bool, bool),
+        protect: Option<StyleObs>,
+        corpse: Option<ActorRef>,
+        hits: impl Fn(&Threat) -> i32,
+    ) -> Option<i32> {
         if self.has_unknown(tick) {
             return None;
         }
@@ -661,7 +708,7 @@ impl ThreatSet {
                 threat.style
             };
             let residual = select::residual(threat, style, protect, tables, shield, antifire)?;
-            total = total.saturating_add(residual);
+            total = total.saturating_add(residual.saturating_mul(hits(threat)));
         }
         Some(total)
     }
