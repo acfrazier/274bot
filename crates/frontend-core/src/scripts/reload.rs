@@ -1299,7 +1299,9 @@ impl Scripts {
                 }
             }
             Ok(Ok(script_js::CardPreparationOutcome::Failed { error, failure })) => {
-                self.js.record_failure(failure);
+                if let Some(failure) = failure {
+                    self.js.record_failure(failure);
+                }
                 Err(TranspileError(TranspileFault::Preparation(error)))
             }
             Ok(Ok(script_js::CardPreparationOutcome::Confirmed)) => {
@@ -1584,7 +1586,9 @@ impl Scripts {
                         Err("forced Start preparation returned unchanged".into())
                     }
                     Ok(Ok(script_js::CardPreparationOutcome::Failed { error, failure })) => {
-                        self.js.record_failure(failure);
+                        if let Some(failure) = failure {
+                            self.js.record_failure(failure);
+                        }
                         Err(error)
                     }
                     Ok(Ok(script_js::CardPreparationOutcome::Confirmed)) => {
@@ -2150,7 +2154,9 @@ impl Scripts {
                 }
             }
             script_js::CardPreparationOutcome::Failed { error, failure } => {
-                self.js.record_failure(failure);
+                if let Some(failure) = failure {
+                    self.js.record_failure(failure);
+                }
                 if confirming {
                     self.reload.clear_pending();
                 }

@@ -1145,7 +1145,7 @@ impl std::fmt::Display for UnloadReason {
 fn catalog_policy(name: &str) -> Option<&'static str> {
     Some(match name {
         "EssMiner" => {
-            "replaced by the native Gatherer: choose Mining and the rune essence resource"
+            "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location"
         }
         // The broker, the fixture and the script_jive_kq_four witness stay
         // for Beta 1; the live harness Starts it past this hold.
@@ -1413,7 +1413,7 @@ export const target = resolveDestination('Lumbridge');"#;
         for (name, text) in [
             (
                 "EssMiner",
-                "replaced by the native Gatherer: choose Mining and the rune essence resource",
+                "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location",
             ),
             ("JiveKQ", "four-player qualification incomplete"),
             ("AIOQuester", "replaced by the native Quester card"),

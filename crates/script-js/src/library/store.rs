@@ -995,7 +995,28 @@ pub enum CardPreparationOutcome {
     Unchanged,
     Confirmed,
     Prepared(PreparedCard),
-    Failed { error: String, failure: LoadFailure },
+    /// The card cannot be prepared. `failure` is present only for a load
+    /// failure: an unresolved import. A catalog policy hold refuses Start
+    /// without recording one.
+    Failed {
+        error: String,
+        failure: Option<LoadFailure>,
+    },
+}
+
+/// Why a preparation stopped before it produced a card. The `allow_unloadable:
+/// false` gate returns [`PrepareRejection::Refused`] so the caller keeps a
+/// policy hold out of the load-failure log while an unresolved import records.
+#[derive(Debug)]
+enum PrepareRejection {
+    Failed(String),
+    Refused(UnloadReason),
+}
+
+impl From<String> for PrepareRejection {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
 }
 
 // `Clone` is needed: `catalog.rs` clones the retained template out of the
@@ -1230,9 +1251,30 @@ impl CardPreparationSnapshot {
         }
         match self.prepare_candidate(origin, source_limit) {
             Ok(prepared) => Ok(CardPreparationOutcome::Prepared(prepared)),
-            Err((error, origin, family)) => {
+            Err((PrepareRejection::Failed(error), origin, family)) => {
                 Ok(self.failed_outcome(error, Some(&origin), family, source_limit))
             }
+            Err((PrepareRejection::Refused(reason), origin, family)) => {
+                Ok(self.refused_outcome(reason, Some(&origin), family, source_limit))
+            }
+        }
+    }
+
+    /// An `allow_unloadable: false` refusal. Only an unresolved import is a
+    /// load failure; a catalog policy hold refuses Start alone.
+    fn refused_outcome(
+        &self,
+        reason: UnloadReason,
+        origin: Option<&str>,
+        family: Option<ApiFamily>,
+        source_limit: usize,
+    ) -> CardPreparationOutcome {
+        match reason.failure_diagnostic() {
+            Some(diagnostic) => self.failed_outcome(diagnostic, origin, family, source_limit),
+            None => CardPreparationOutcome::Failed {
+                error: reason.line(),
+                failure: None,
+            },
         }
     }
 
@@ -1263,7 +1305,10 @@ impl CardPreparationSnapshot {
                 family,
             )
         };
-        CardPreparationOutcome::Failed { error, failure }
+        CardPreparationOutcome::Failed {
+            error,
+            failure: Some(failure),
+        }
     }
 
     fn read_origin(&self, source_limit: usize) -> Result<String, String> {
@@ -1276,7 +1321,7 @@ impl CardPreparationSnapshot {
         &self,
         origin: String,
         source_limit: usize,
-    ) -> Result<PreparedCard, (String, String, Option<ApiFamily>)> {
+    ) -> Result<PreparedCard, (PrepareRejection, String, Option<ApiFamily>)> {
         let fallback_family = self.template.api_family;
         let prepared = self.prepare_candidate_inner(&origin, source_limit);
         match prepared {
@@ -1295,7 +1340,7 @@ impl CardPreparationSnapshot {
         &self,
         origin: &str,
         source_limit: usize,
-    ) -> Result<PreparedCard, String> {
+    ) -> Result<PreparedCard, PrepareRejection> {
         let settings_schema = if let Some(schema) = &self.catalog_settings_schema {
             schema.clone()
         } else {
@@ -1316,7 +1361,7 @@ impl CardPreparationSnapshot {
         let (shape, api_family) = resolve_api_family(origin)
             .map_err(|error| format!("{}: {error}", self.template.name))?;
         if shape == LoadShape::Reject {
-            return Err(format!("not a bot shape: {}", self.template.name));
+            return Err(format!("not a bot shape: {}", self.template.name).into());
         }
         let cache = JsCache::new(self.cache_root.clone());
         let meta = cache_meta(shape, self.template.source, api_family);
@@ -1324,7 +1369,9 @@ impl CardPreparationSnapshot {
         if std::fs::metadata(&object)
             .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
         {
-            return Err("cached JavaScript exceeds the 16 MiB result limit".into());
+            return Err(PrepareRejection::Failed(
+                "cached JavaScript exceeds the 16 MiB result limit".into(),
+            ));
         }
         let cached = cache
             .get_or_transpile(&self.template.path, origin.as_bytes(), meta.clone())
@@ -1340,7 +1387,9 @@ impl CardPreparationSnapshot {
                 .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         }
         if result_bytes > MAX_PREPARATION_RESULT_BYTES {
-            return Err("prepared card exceeds the 16 MiB result limit".into());
+            return Err(PrepareRejection::Failed(
+                "prepared card exceeds the 16 MiB result limit".into(),
+            ));
         }
         let first_unloadable =
             first_unloadable_for_card_bounded(origin, &self.template.path, source_limit)?;
@@ -1353,7 +1402,7 @@ impl CardPreparationSnapshot {
         );
         if !self.allow_unloadable {
             if let Some(reason) = &unloadable {
-                return Err(reason.failure_diagnostic().unwrap_or_else(|| reason.line()));
+                return Err(PrepareRejection::Refused(reason.clone()));
             }
         }
         let siblings = resolve_sibling_modules_bounded(
@@ -1370,7 +1419,9 @@ impl CardPreparationSnapshot {
             .checked_add(fingerprint.capacity())
             .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         if result_bytes > MAX_PREPARATION_RESULT_BYTES {
-            return Err("prepared card exceeds the 16 MiB result limit".into());
+            return Err(PrepareRejection::Failed(
+                "prepared card exceeds the 16 MiB result limit".into(),
+            ));
         }
         let card = self.template.build(
             origin.to_string(),
@@ -1753,9 +1804,7 @@ impl CardPreparationTask {
                 );
                 if !self.snapshot.allow_unloadable {
                     if let Some(reason) = &unloadable {
-                        let diagnostic =
-                            reason.failure_diagnostic().unwrap_or_else(|| reason.line());
-                        return self.begin_failure(diagnostic, self.api_family);
+                        return self.begin_refusal(reason.clone(), self.api_family);
                     }
                 }
                 self.unloadable = unloadable;
@@ -1940,6 +1989,26 @@ impl CardPreparationTask {
         }
     }
 
+    /// The `allow_unloadable: false` gate on the cooperative path. An
+    /// unresolved import keeps the diagnostic and its fingerprint; a catalog
+    /// policy hold stops here without a load-failure record.
+    fn begin_refusal(
+        &mut self,
+        reason: UnloadReason,
+        family: Option<ApiFamily>,
+    ) -> Result<Option<CardPreparationOutcome>, String> {
+        match reason.failure_diagnostic() {
+            Some(diagnostic) => self.begin_failure(diagnostic, family),
+            None => {
+                self.phase = CardPreparationPhase::Complete;
+                Ok(Some(CardPreparationOutcome::Failed {
+                    error: reason.line(),
+                    failure: None,
+                }))
+            }
+        }
+    }
+
     fn finish_failure(
         &mut self,
         error: String,
@@ -1955,7 +2024,10 @@ impl CardPreparationTask {
             family,
         );
         self.phase = CardPreparationPhase::Complete;
-        CardPreparationOutcome::Failed { error, failure }
+        CardPreparationOutcome::Failed {
+            error,
+            failure: Some(failure),
+        }
     }
 }
 

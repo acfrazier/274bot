@@ -43,10 +43,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   a script's import is unsupported, and **unavailable: <reason>** when the
   card is retired or outside supported scope. Retirement messages now name
   the native replacement or the unsupported feature: the Gatherer for
-  Woodcutter, Miner and Fisher; the Gatherer's Mining and rune essence
-  resource for EssMiner; and the Quester for AIOQuester and Barcrawl (as part
-  of Scorpion Catcher). ArravSupplier, RoguesPurse and MarketMaker say which
-  unsupported training or trading loop keeps them unavailable.
+  Woodcutter, Miner and Fisher; the Gatherer's Mining and Rune essence
+  resource with a Custom location for EssMiner; and the Quester for AIOQuester
+  and Barcrawl (as part of Scorpion Catcher). ArravSupplier, RoguesPurse and
+  MarketMaker say which unsupported training or trading loop keeps them
+  unavailable. A retired card is not a failed script: a catalog refresh
+  neither records nor counts a load failure for it, even when its source
+  changed.
 - The panel wraps the global danger warning at the docked Nav window width.
 - Profiles and Fleet now share one saved order. The **Profiles** window
   lists your profiles in your saved Load order (not alphabetically), and
