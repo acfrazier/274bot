@@ -1810,17 +1810,7 @@ impl TuiSession {
         match result {
             Ok(submitted) => {
                 let failure = self.core.command_failure(submitted.request());
-                let report = self.core.commands().report(submitted.request());
-                let applied = report.is_some_and(|report| {
-                    report.members().iter().any(|member| {
-                        matches!(
-                            member.terminal(),
-                            Some(api::identity::Settlement::Completed(
-                                frontend_core::command::Completion::Done
-                            ))
-                        )
-                    })
-                });
+                let applied = self.request_applied(submitted.request());
 
                 if let Some(error) = failure {
                     app.error = Some(error.to_string());
@@ -1852,13 +1842,38 @@ impl TuiSession {
         let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
         let result = self.submit(OperatorCommand::Teleport, targets);
         app.clear_consumed_map_selection();
-        app.error = match result {
-            Err(error) => Some(error),
-            Ok(submitted) => self
-                .core
-                .command_failure(submitted.request())
-                .map(|error| error.to_string()),
-        };
+        match result {
+            Err(error) => app.error = Some(error),
+            Ok(submitted) => {
+                if let Some(error) = self.core.command_failure(submitted.request()) {
+                    app.error = Some(error.to_string());
+                } else if self.request_applied(submitted.request()) {
+                    app.error = None;
+                } else {
+                    // The member's own reason, else the generic text; the
+                    // line is never cleared on a Teleport that did not apply.
+                    app.error = Some(
+                        self.core
+                            .not_applied_reason(submitted.request(), "Teleport")
+                            .unwrap_or_else(|| "map: Teleport was not applied".into()),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether any member of `request` completed it.
+    fn request_applied(&self, request: api::identity::RequestId) -> bool {
+        self.core.commands().report(request).is_some_and(|report| {
+            report.members().iter().any(|member| {
+                matches!(
+                    member.terminal(),
+                    Some(api::identity::Settlement::Completed(
+                        frontend_core::command::Completion::Done
+                    ))
+                )
+            })
+        })
     }
 
     /// Walk every marked bot through the shared operator-session operation.

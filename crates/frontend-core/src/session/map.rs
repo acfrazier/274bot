@@ -48,6 +48,15 @@ impl<Io> OperatorSession<Io> {
             .unwrap_or_else(|| WalkSlotStatus::excluded(WalkExclude::NotLoggedIn))
     }
 
+    /// Why a slot has no observed tile: the host's reason `not logged in`
+    /// when the slot is logged out, else `no position yet`.
+    fn no_origin_reason(&self, name: Option<&str>) -> WalkExclude {
+        match name.map(|name| self.walk_slot_status(name).exclusion()) {
+            Some(Some(WalkExclude::NotLoggedIn)) | None => WalkExclude::NotLoggedIn,
+            Some(_) => WalkExclude::NoPosition,
+        }
+    }
+
     /// Whether the bound target allows Debug Teleport.
     pub fn walk_teleport_authorized(&self) -> bool {
         self.play
@@ -766,7 +775,7 @@ impl<Io> OperatorSession<Io> {
                 if name.is_none() {
                     Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
                 } else {
-                    walk_action_applied(error)
+                    walk_action_applied(error, self.no_origin_reason(name))
                 }
             }
         }
@@ -848,8 +857,10 @@ impl<Io> OperatorSession<Io> {
         let Some(staged) = desk.teleport.take() else {
             return Applied::Rejected(Rejection::NotStaged, None);
         };
-        self.confirm_teleport(staged, &names[0])
-            .map_or_else(walk_action_applied, |_| Applied::Done)
+        self.confirm_teleport(staged, &names[0]).map_or_else(
+            |error| walk_action_applied(error, self.no_origin_reason(Some(&names[0]))),
+            |_| Applied::Done,
+        )
     }
 
     fn game_input(
@@ -1107,7 +1118,9 @@ fn preserves_walk_destination(kind: WalkActionErrorKind) -> bool {
     )
 }
 
-fn walk_action_applied(error: WalkActionError) -> super::commands::Applied {
+/// A refused map action's settlement. `no_origin` is the host's reason for a
+/// slot with no observed tile (see `OperatorSession::walk_slot_status`).
+fn walk_action_applied(error: WalkActionError, no_origin: WalkExclude) -> super::commands::Applied {
     use super::commands::Applied;
     // The host wrote the refusal's detail once (`WalkRequest::run`); the
     // command book keeps the short line the front ends show.
@@ -1116,15 +1129,17 @@ fn walk_action_applied(error: WalkActionError) -> super::commands::Applied {
         crate::walk_map::WalkActionErrorKind::NoSelection => {
             Applied::Rejected(Rejection::NotStaged, Some(shown()))
         }
-        // No observed player: the bot is not logged in (or not in the game
-        // yet). A refusal, so the command boundary logs its one line and the
-        // front ends show the reason.
-        crate::walk_map::WalkActionErrorKind::NoOrigin => {
-            Applied::Rejected(Rejection::NotApplicable, Some("not logged in".to_owned()))
-        }
+        // A running script stays a skip.
         crate::walk_map::WalkActionErrorKind::RunningScript => {
             Applied::Skipped(SkipReason::WalkExcluded)
         }
+        // No observed tile. The host's own reason: `not logged in` when the
+        // slot is logged out, `no position yet` when it is in the game
+        // without a tile. The command boundary logs its one line.
+        crate::walk_map::WalkActionErrorKind::NoOrigin => Applied::Rejected(
+            Rejection::NotApplicable,
+            Some(no_origin.as_str().to_owned()),
+        ),
         crate::walk_map::WalkActionErrorKind::NoFocus
         | crate::walk_map::WalkActionErrorKind::Unauthorized
         | crate::walk_map::WalkActionErrorKind::WrongAction => {

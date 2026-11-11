@@ -75,7 +75,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   written as numbered lines that join to the whole text.
 - When you walk a bot that is logged out, the panel and the terminal app now
   say "not logged in" instead of "map: WalkTo was not applied", and the Logs
-  record the refusal.
+  record the refusal. A bot that is in the game but has no position yet shows
+  "no position yet". When a Teleport does not apply, the terminal app now
+  shows the same reason as the panel, and no longer clears the message line.
 - Profiles and Fleet now share one saved order. The **Profiles** window
   lists your profiles in your saved Load order (not alphabetically), and
   dragging a row there changes the same order as a Fleet drag in the panel
