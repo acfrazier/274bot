@@ -94,6 +94,7 @@ pub const CARD: CompiledCard = CompiledCard {
     description: "Rust-native clue trail solver — waits for a clue and solves it.",
     category: "Treasure Trails",
     schema_version: 1,
+    reads_schema_versions: &[],
     schema: settings_schema,
     per_account_settings: &[],
     prepare,
