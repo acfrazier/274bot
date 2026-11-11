@@ -1055,17 +1055,17 @@ fn selected_game_data(
     let core_bytes = std::fs::read(&core_path).map_err(|source| {
         crate::GenerationError::SourceInput(crate::SourceInputError::Io {
             context: crate::SourceInputContext::GameData,
-            path: core_path,
+            path: core_path.clone(),
             source,
         })
     })?;
-    let game_data =
-        api::game_data::decode_game_data(&core_bytes, game_revision).map_err(|error| {
-            crate::GenerationError::SelectedGameDataUnavailable {
+    let game_data = api::game_data::decode_game_data(&core_bytes, game_revision, &core_path)
+        .map_err(
+            |error| crate::GenerationError::SelectedGameDataUnavailable {
                 revision: selected_revision,
                 detail: error.to_string(),
-            }
-        })?;
+            },
+        )?;
 
     let quests_path = game_data_dir
         .join(selected_revision.to_string())

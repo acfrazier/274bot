@@ -18,6 +18,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   and the catalogue once after you upgrade. This is the only saved data that
   does not carry over; every other 0.2.9 saved format still loads.
 
+### Developer tools
+
+- A generated game data file that fails to decode now names the file and says
+  to regenerate it with `python3 tools/local-data/build.py`.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
