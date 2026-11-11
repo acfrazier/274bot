@@ -128,6 +128,8 @@ globs = [
   "docs/**",
   ".github/**",
   "tools/**",
+  # Release-time check program, not a live path. It reads staged package data.
+  "crates/host-play/examples/release_map_catalogue.rs",
   # Offline audit, toolchain and vendor dependency metadata. Full CI still
   # checks these inputs; they do not select a gameplay route.
   ".cargo/audit.toml",
