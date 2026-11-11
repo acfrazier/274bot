@@ -70,12 +70,8 @@ pub enum LoginLatchReason {
         count: u8,
         window_seconds: u64,
     },
-    /// The server logged out a bot with no script after the client's own
-    /// idle request (the idle logout).
+    /// The server logged out a bot with no script (the idle logout).
     IdleLogout,
-    /// The server logged out a bot with no script and no idle request was
-    /// pending.
-    ServerLogout,
     /// A bot with no script lost its connection.
     IdleDisconnect,
 }
@@ -92,8 +88,7 @@ impl std::fmt::Display for LoginLatchReason {
                 f,
                 "repeat guard: {count} unexpected logouts in {window_seconds}s"
             ),
-            Self::IdleLogout => f.write_str("idle logout by the server"),
-            Self::ServerLogout => f.write_str("logged out by the server"),
+            Self::IdleLogout => f.write_str("logged out by the server while idle"),
             Self::IdleDisconnect => f.write_str("disconnected while idle"),
         }
     }
@@ -113,7 +108,6 @@ pub(super) enum RelogParkReason {
     RepeatGuard,
     WorldError,
     IdleLogout,
-    ServerLogout,
     IdleDisconnect,
 }
 
@@ -126,7 +120,6 @@ impl std::fmt::Display for RelogParkReason {
             Self::RepeatGuard => "repeat_guard",
             Self::WorldError => "world_error",
             Self::IdleLogout => "idle_logout",
-            Self::ServerLogout => "server_logout",
             Self::IdleDisconnect => "idle_disconnect",
         })
     }
@@ -227,7 +220,6 @@ impl SlotLifecycle {
             .observe(LifecycleFact::SessionExited {
                 clean: cause.is_clean(),
                 resumable,
-                idle_request_pending: cause == SessionEndCause::IdleLogout,
             })
             .expect("slot session exit generation exhausted");
     }
@@ -678,8 +670,7 @@ impl SlotArm {
                 window_seconds,
             }),
             None => snapshot.idle_park().map(|park| match park {
-                IdlePark::IdleLogout => LoginLatchReason::IdleLogout,
-                IdlePark::ServerLogout => LoginLatchReason::ServerLogout,
+                IdlePark::Logout => LoginLatchReason::IdleLogout,
                 IdlePark::Disconnect => LoginLatchReason::IdleDisconnect,
             }),
         }
@@ -867,7 +858,6 @@ impl SlotArm {
                 .observe(LifecycleFact::SessionExited {
                     clean: false,
                     resumable: false,
-                    idle_request_pending: false,
                 })
                 .expect("slot fallback exit generation exhausted");
         }
@@ -886,7 +876,6 @@ impl SlotArm {
             Some(ParkReason::RepeatGuard) => RelogParkReason::RepeatGuard,
             Some(ParkReason::WorldError) => RelogParkReason::WorldError,
             Some(ParkReason::IdleLogout) => RelogParkReason::IdleLogout,
-            Some(ParkReason::ServerLogout) => RelogParkReason::ServerLogout,
             Some(ParkReason::IdleDisconnect) => RelogParkReason::IdleDisconnect,
             Some(ParkReason::NoIntent) | None => RelogParkReason::NoIntent,
         }
@@ -1660,20 +1649,6 @@ impl SlotArm {
     /// when the connection is lost: the bot parks (disconnected while idle).
     pub fn exit_while_idle_for_test(&self) {
         self.observe_session_exit(SessionEndCause::ConnectionLost, false);
-    }
-
-    /// The session of a bot with no script ends by a server logout nobody
-    /// asked for: with `idle_request` the client's own idle request was
-    /// pending (the idle logout), without it the server explains nothing.
-    pub fn exit_by_server_logout_for_test(&self, idle_request: bool) {
-        self.observe_session_exit(
-            if idle_request {
-                SessionEndCause::IdleLogout
-            } else {
-                SessionEndCause::ServerLogout
-            },
-            false,
-        );
     }
 }
 

@@ -354,7 +354,6 @@ fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled()
         .observe(LifecycleFact::SessionExited {
             clean: false,
             resumable: false,
-            idle_request_pending: false,
         })
         .unwrap();
     assert!(!logout.snapshot().logout_wanted(), "the Logout is complete");
@@ -391,7 +390,6 @@ fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled()
         .observe(LifecycleFact::SessionExited {
             clean: false,
             resumable: false,
-            idle_request_pending: false,
         })
         .unwrap();
     assert!(wanted.relogs_after_drop(), "the intent is preserved");
@@ -502,7 +500,6 @@ fn a_live_session_losing_its_reactor_projects_the_condition_not_readiness() {
         .observe(LifecycleFact::SessionExited {
             clean: false,
             resumable: false,
-            idle_request_pending: false,
         })
         .unwrap();
     assert!(!mailbox.reconnects(), "a fresh login, never a reconnect");
@@ -833,7 +830,6 @@ fn an_intent_and_an_outage_select_one_terminal_in_either_order() {
                 .observe(LifecycleFact::SessionExited {
                     clean: false,
                     resumable: false,
-                    idle_request_pending: false,
                 })
                 .unwrap();
             assert!(

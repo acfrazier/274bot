@@ -9972,30 +9972,6 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
 /// frames are written to `<dir>/idle-park` by the capture harness.
 #[test]
 fn an_idle_park_says_why_the_bot_is_logged_out_at_both_sizes() {
-    tui_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "logged out: disconnected while idle (Log in to connect)",
-        "logged-out-while-idle",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server, as in the panel.
-#[test]
-fn the_tui_calls_only_a_requested_logout_an_idle_logout() {
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "logged out: idle logout by the server (Log in to connect)",
-        "logged-out-idle-logout",
-    );
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "logged out by the server (Log in to connect)",
-        "logged-out-by-the-server",
-    );
-}
-
-fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_name: &str) {
     let iso = IsolatedStores::enter("tui-idle-park");
     let (mut session, mut app) = tui_with_profiles(&iso, &["bob"]);
     let dir = std::env::var_os("TUI_CAPTURE_DIR")
@@ -10012,7 +9988,7 @@ fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_n
         .and_then(|play| play.arm("bob"))
         .expect("bob's arm");
     arm.complete_login_for_test();
-    exit(&arm);
+    arm.exit_while_idle_for_test();
     publish_status(&session, "bob", |row| {
         row.connected = false;
         row.ingame = false;
@@ -10022,6 +9998,7 @@ fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_n
         row.startup_phase_started = Instant::now();
     });
     session.pump(&mut app);
+    let state = "logged out: disconnected while idle (Log in to connect)";
     for (cols, rows) in [(120, 40), (80, 24)] {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
@@ -10046,7 +10023,7 @@ fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_n
                 rows,
                 dir,
                 &format!("{cols}x{rows}"),
-                capture_name,
+                "logged-out-while-idle",
                 &proof,
             )
             .unwrap();

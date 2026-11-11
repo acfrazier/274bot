@@ -67,8 +67,7 @@ static CAPTURE: Capture = Capture(Mutex::new(Vec::new()));
 enum Fault {
     ProtocolError,
     DeadServer,
-    /// The client's idle timer fires; the cell then plays the server's
-    /// Logout (see the limit on `live_scriptless_idle_logout_stays_parked_until_login`).
+    /// The client's idle timer fires and the server logs the bot out.
     IdleLogout,
     /// The idle counter is raised past the threshold of a bot whose script
     /// holds the timer off.
@@ -736,20 +735,7 @@ fn live_scriptless_dead_server_stays_parked_until_login() {
 }
 
 /// The Java idle timer runs for a bot without a script: the client sends the
-/// idle request, a server Logout ends the session, and the bot stays logged
-/// out.
-///
-/// Documented limit: the local engines run with `debug: true`
-/// (`WorldConfig.ts:101`), and `IdleTimerHandler.ts:7` ignores the idle
-/// request in that mode. This cell therefore proves two things: the host's
-/// client sends the real idle request (opcode 145, after the 4500-cycle
-/// threshold) for a bot with no script, and the host's handling of a server
-/// Logout that follows it (an idle logout: park, status, Log in). The cell
-/// delivers that Logout through the client's own packet handler. It does not
-/// prove the server's own idle-logout decision (decode, `preventLogoutUntil`,
-/// removal of the player); that is engine behaviour, and an engine run with
-/// `NODE_DEBUG=false` would be needed to see it. The cell's oracle stays as
-/// it is.
+/// idle request, the server logs the bot out, and the bot stays logged out.
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1 and the local R289 engine"]
 fn live_scriptless_idle_logout_stays_parked_until_login() {

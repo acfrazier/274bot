@@ -52,22 +52,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Login
 
 - A bot with no script now behaves like a normal client. The game's idle
-  timer runs for it: after about 90 seconds without input (the Java client's
-  idle counter of 4500 cycles at its 20 ms cycle) the client asks the server to
-  log it out, and the bot stays logged out. A mouse or key press counts as
-  input, and so does a command you send to the bot (a walk, a route step or a
-  command you type). A bot with a running or paused script keeps the timer
-  switched off, as before.
+  timer runs for it: after 90 seconds without input (4500 client loop cycles
+  at the Java client's 20 ms cycle) the client asks the server to log it out,
+  and the bot stays logged out. A bot with a running or paused script keeps
+  the timer switched off, as before.
 - A bot with no script no longer reconnects by itself after a disconnect (a
   connection reset, a server restart, a missing server answer or a server
-  logout). It stays logged out until you log it in, and its status says why:
-  "logged out: disconnected while idle", "logged out: idle logout by the
-  server" (only when the client had asked for the idle logout) or "logged out
-  by the server". Starting a script on that bot logs it in. If the script
-  stops before the bot is back, the bot stays logged out; stopping a script
-  also cancels a reconnect that is under way. Bots running a script reconnect
-  as before, with the same back-off and the same stop after three unexpected
-  exits in ten minutes.
+  logout). It stays logged out until you log it in, or start a script, and its
+  status says why, for example "logged out: disconnected while idle". If its
+  script stops while a reconnect is under way, the reconnect is cancelled and
+  the bot parks in the same way. Bots running a script reconnect as before,
+  with the same back-off and the same stop after three unexpected exits in ten
+  minutes.
 
 ### Client
 

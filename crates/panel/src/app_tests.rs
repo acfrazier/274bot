@@ -9199,27 +9199,6 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
 /// terminal app, which reads the same `frontend-core` state line).
 #[test]
 fn the_panel_says_why_a_bot_with_no_script_is_logged_out() {
-    panel_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "ogged out: disconnected while idle (Log in to connect)",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server.
-#[test]
-fn the_panel_calls_only_a_requested_logout_an_idle_logout() {
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "ogged out: idle logout by the server (Log in to connect)",
-    );
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "ogged out by the server (Log in to connect)",
-    );
-}
-
-fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
     use crate::session::{Session, SlotIo};
     use frontend_core::surface::{FrameBuf, SlotInput};
     use host_play::{SlotArm, StartupPhase};
@@ -9247,7 +9226,7 @@ fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
     s.set_focus_for_test("bob");
     s.core.set_play(Some(play));
     arm.complete_login_for_test();
-    exit(&arm);
+    arm.exit_while_idle_for_test();
     {
         let play = s.core.play_for_test().unwrap();
         play.statuses.lock().unwrap().push(host_play::SlotStatus {
@@ -9261,6 +9240,7 @@ fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
     }
     s.core.poll_at(Instant::now());
     let (banner, status) = draw_banner_and_status(&s);
+    let state = "ogged out: disconnected while idle (Log in to connect)";
     assert!(banner.contains(state), "{banner}");
     assert!(status.contains(state), "{status}");
 }

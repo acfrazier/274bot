@@ -341,10 +341,6 @@ fn idle_park_reason_is_visible_in_slot_status() {
             host_play::LoginLatchReason::IdleLogout,
             "logged out: idle logout by the server (Log in to connect)",
         ),
-        (
-            host_play::LoginLatchReason::ServerLogout,
-            "logged out by the server (Log in to connect)",
-        ),
     ] {
         let status = SlotStatus {
             username: "alice".into(),
