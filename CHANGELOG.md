@@ -22,6 +22,41 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   "logged out: idle logout by the server" no longer appear. A bot you log out
   yourself stays logged out until you log it in.
 
+### Panel and terminal app
+
+- Cards that the script catalog retires no longer read as failed imports. The
+  panel and the terminal app now say **failed import: <specifier>** only when
+  a script's import is unsupported, and **unavailable: <reason>** when the
+  card is retired or outside supported scope. Retirement messages now name
+  the native replacement or the unsupported feature: the Gatherer for
+  Woodcutter, Miner and Fisher; the Gatherer's Mining and Rune essence
+  resource with a Custom location for EssMiner; and the Quester for AIOQuester
+  and Barcrawl (as part of Scorpion Catcher). ArravSupplier, RoguesPurse and
+  MarketMaker say which unsupported training or trading loop keeps them
+  unavailable. A retired card is not a failed script: a catalog refresh
+  neither records nor counts a load failure for it, even when its source
+  changed.
+- Notices in the panel and the terminal app are now one short line. A
+  refused walk that names 99 danger zones used to fill the panel with more
+  than 100 lines and run off the terminal's message row; now it reads
+  "Blocked by 99 danger zones; tick "Route through danger zones" to walk
+  anyway (see log)", and the whole list is in the Logs once. The same goes
+  for a group walk (the counts and the first bot's name), a command that
+  fails with a long reason, and the script load failures ("7 scripts failed
+  to load: Jive, Green +5 more"). The Status card and the Script pane show a
+  parked script's reason cut to one line; the panel offers the whole reason
+  under a collapsed **Full reason** header with a **Copy** button, and in the
+  terminal app a click on the reason (or **Show full reason** in the command
+  palette) opens it. The terminal app also gets the load-failure list the
+  panel already had: **[Failed N F]** on the Script tab, or **Script: load
+  failures** in the palette. Logs lines no longer cut a long message: it is
+  written as numbered lines that join to the whole text.
+- When you walk a bot that is logged out, the panel and the terminal app now
+  say "not logged in" instead of "map: WalkTo was not applied", and the Logs
+  record the refusal. A bot that is in the game but has no position yet shows
+  "no position yet". When a Teleport does not apply, the terminal app now
+  shows the same reason as the panel, and no longer clears the message line.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
@@ -45,39 +80,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Panel and terminal app
 
-- Cards that the script catalog retires no longer read as failed imports. The
-  panel and the terminal app now say **failed import: <specifier>** only when
-  a script's import is unsupported, and **unavailable: <reason>** when the
-  card is retired or outside supported scope. Retirement messages now name
-  the native replacement or the unsupported feature: the Gatherer for
-  Woodcutter, Miner and Fisher; the Gatherer's Mining and Rune essence
-  resource with a Custom location for EssMiner; and the Quester for AIOQuester
-  and Barcrawl (as part of Scorpion Catcher). ArravSupplier, RoguesPurse and
-  MarketMaker say which unsupported training or trading loop keeps them
-  unavailable. A retired card is not a failed script: a catalog refresh
-  neither records nor counts a load failure for it, even when its source
-  changed.
 - The panel wraps the global danger warning at the docked Nav window width.
-- Notices in the panel and the terminal app are now one short line. A
-  refused walk that names 99 danger zones used to fill the panel with more
-  than 100 lines and run off the terminal's message row; now it reads
-  "Blocked by 99 danger zones; tick "Route through danger zones" to walk
-  anyway (see log)", and the whole list is in the Logs once. The same goes
-  for a group walk (the counts and the first bot's name), a command that
-  fails with a long reason, and the script load failures ("7 scripts failed
-  to load: Jive, Green +5 more"). The Status card and the Script pane show a
-  parked script's reason cut to one line; the panel offers the whole reason
-  under a collapsed **Full reason** header with a **Copy** button, and in the
-  terminal app a click on the reason (or **Show full reason** in the command
-  palette) opens it. The terminal app also gets the load-failure list the
-  panel already had: **[Failed N F]** on the Script tab, or **Script: load
-  failures** in the palette. Logs lines no longer cut a long message: it is
-  written as numbered lines that join to the whole text.
-- When you walk a bot that is logged out, the panel and the terminal app now
-  say "not logged in" instead of "map: WalkTo was not applied", and the Logs
-  record the refusal. A bot that is in the game but has no position yet shows
-  "no position yet". When a Teleport does not apply, the terminal app now
-  shows the same reason as the panel, and no longer clears the message line.
 - Profiles and Fleet now share one saved order. The **Profiles** window
   lists your profiles in your saved Load order (not alphabetically), and
   dragging a row there changes the same order as a Fleet drag in the panel
