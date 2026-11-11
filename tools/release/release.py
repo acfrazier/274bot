@@ -1326,6 +1326,45 @@ def verify_package_archive(archive, destination, *, expected_platform=None,
                 raise ReleaseError(f"{name} --help failed with {result.returncode}")
     return base, manifest, help_results
 
+def verify_staged_map_catalogue(base):
+    base = Path(base)
+    repo = Path(__file__).resolve().parents[2]
+    tool_home = Path.home()
+    environment = os.environ.copy()
+    environment["BOT_NAV_BUILD"] = "skip"
+    environment.setdefault("CARGO_HOME", str(tool_home / ".cargo"))
+    environment.setdefault("RUSTUP_HOME", str(tool_home / ".rustup"))
+    with tempfile.TemporaryDirectory(
+            prefix="274bot-map-catalogue-home-", dir=base.parent) as home:
+        environment["HOME"] = home
+        environment["TMPDIR"] = home
+        if os.name == "nt":
+            environment["USERPROFILE"] = home
+            environment["TEMP"] = home
+            environment["TMP"] = home
+        output = run([
+            "cargo", "run", "--locked", "--quiet", "-p", "host-play",
+            "--no-default-features", "--example", "release_map_catalogue",
+            "--", base,
+        ], cwd=repo, env=environment, capture=True, timeout=900)
+    try:
+        receipt = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise ReleaseError(f"map catalogue checker returned invalid JSON: {error}") from error
+    if not isinstance(receipt, dict) or receipt.get("revision") != 289:
+        raise ReleaseError("map catalogue checker returned an invalid revision receipt")
+    entries = receipt.get("entries")
+    if type(entries) is not int or entries <= 0:
+        raise ReleaseError("map catalogue checker found no entries")
+    searches = receipt.get("searches")
+    if not isinstance(searches, dict):
+        raise ReleaseError("map catalogue checker returned no searches")
+    for query in ("bank", "lum", "Nulo", "Cook"):
+        hits = searches.get(query)
+        if type(hits) is not int or hits <= 0:
+            raise ReleaseError(f"map catalogue checker found no results for {query!r}")
+    return receipt
+
 
 MACHO_MAGICS = frozenset({
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",  # 32-bit, both byte orders
@@ -1811,6 +1850,10 @@ def verify_worker(args):
             expected_commit=args.commit,
             run_help=True,
         )
+        revision = manifest.get("revision")
+        if revision not in (274, 289):
+            raise ReleaseError(f"unsupported release revision: {revision!r}")
+
         native_checks = []
         if args.platform == "macos":
             verify_macos_linkage(base)
@@ -1845,6 +1888,7 @@ def render_verify_plan(args):
                     "extract into a fresh directory with traversal/link rejection",
                     "verify exact membership, byte counts, and SHA-256 release manifest",
                     "run panel-play --help and tui-play --help on the native platform",
+                    "for revision 289, build and search the runtime map catalogue",
                 ] + ([
                     "on macOS, verify all signatures, the staple, and Gatekeeper acceptance",
                 ] if platform == "macos" else []),
@@ -1874,23 +1918,31 @@ def verify_controller(args):
         )
     verify_sha256s(artifact_dir, candidates)
     integrity_platforms = PLATFORMS if set(candidates) == set(PLATFORMS) else selected
+    map_catalogues = {}
     with tempfile.TemporaryDirectory(prefix="274bot-release-verify-") as temporary:
         for platform in integrity_platforms:
             archive = candidates[platform]
             destination = Path(temporary) / platform
-            verify_package_archive(
+            base, manifest, _ = verify_package_archive(
                 archive,
                 destination,
                 expected_platform=platform,
                 expected_commit=args.commit,
                 run_help=False,
             )
+            revision = manifest.get("revision")
+            if revision not in (274, 289):
+                raise ReleaseError(f"unsupported release revision: {revision!r}")
+            # This parser is architecture-independent. Check each staged
+            # payload here, before native workers are dispatched remotely.
+            if revision == 289:
+                map_catalogues[platform] = verify_staged_map_catalogue(base)
     native_archives = {platform: candidates[platform] for platform in selected}
     for platform, archive in native_archives.items():
         if platform == "macos":
             worker = argparse.Namespace(**vars(args))
             worker.platform = platform
-            worker.worker_root = archive.parent
+            worker.worker_root = Path(tempfile.gettempdir())
             worker.archive = archive
             verify_worker(worker)
         elif platform == "linux":
@@ -1917,7 +1969,10 @@ def verify_controller(args):
                 "& " + " ".join(powershell_quote(value) for value in command),
             )
             windows_transport(args, "run", script)
-    print(json.dumps({"verified": sorted(native_archives)}, indent=2))
+    print(json.dumps(
+        {"verified": sorted(native_archives), "map_catalogues": map_catalogues},
+        indent=2,
+    ))
 
 def retain_release_outputs(root, commit, platform):
     root = Path(root).resolve()

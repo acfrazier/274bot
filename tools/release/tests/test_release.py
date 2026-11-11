@@ -1308,6 +1308,98 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "membership"):
                 release.verify_package_archive(bad_archive, extracted)
 
+    def test_staged_map_catalogue_check_requires_entries_and_searches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root / "package"
+            base.mkdir()
+            receipt = {
+                "revision": 289,
+                "entries": 3406,
+                "searches": {"bank": 177, "lum": 4, "Nulo": 1, "Cook": 63},
+            }
+            with mock.patch.object(release, "run", return_value=json.dumps(receipt)) as run:
+                self.assertEqual(release.verify_staged_map_catalogue(base), receipt)
+            command = run.call_args.args[0]
+            self.assertIn("--example", command)
+            self.assertIn("release_map_catalogue", command)
+            self.assertIn(base, command)
+            self.assertEqual(
+                run.call_args.kwargs["cwd"],
+                Path(release.__file__).resolve().parents[2],
+            )
+            self.assertNotEqual(run.call_args.kwargs["env"]["HOME"], str(Path.home()))
+            self.assertEqual(run.call_args.kwargs["env"]["BOT_NAV_BUILD"], "skip")
+            self.assertEqual(
+                run.call_args.kwargs["env"]["TMPDIR"],
+                run.call_args.kwargs["env"]["HOME"],
+            )
+
+            empty = dict(receipt, entries=0)
+            with mock.patch.object(release, "run", return_value=json.dumps(empty)):
+                with self.assertRaisesRegex(release.ReleaseError, "no entries"):
+                    release.verify_staged_map_catalogue(base)
+            missing_search = dict(
+                receipt,
+                searches=dict(receipt["searches"], Cook=0),
+            )
+            with mock.patch.object(release, "run", return_value=json.dumps(missing_search)):
+                with self.assertRaisesRegex(release.ReleaseError, "Cook"):
+                    release.verify_staged_map_catalogue(base)
+
+    def test_worker_leaves_map_check_to_controller(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root / "package"
+            base.mkdir()
+            args = argparse.Namespace(
+                worker_root=root,
+                archive=root / "package.tar.gz",
+                platform="linux",
+                commit="a" * 40,
+            )
+            manifest = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "status": "packaged",
+                "revision": 289,
+                "files": {},
+            }
+            output = io.StringIO()
+            with mock.patch.object(
+                    release, "verify_package_archive", return_value=(base, manifest, {})), \
+                    mock.patch.object(release, "verify_staged_map_catalogue") as check, \
+                    contextlib.redirect_stdout(output):
+                release.verify_worker(args)
+
+            check.assert_not_called()
+            self.assertNotIn("map_catalogue", json.loads(output.getvalue()))
+
+
+    def test_worker_rejects_manifest_without_supported_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root / "package"
+            base.mkdir()
+            args = argparse.Namespace(
+                worker_root=root,
+                archive=root / "package.tar.gz",
+                platform="linux",
+                commit="a" * 40,
+            )
+            manifest = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "status": "packaged",
+                "files": {},
+            }
+            with mock.patch.object(
+                    release, "verify_package_archive", return_value=(base, manifest, {})), \
+                    mock.patch.object(release, "verify_staged_map_catalogue") as check:
+                with self.assertRaisesRegex(release.ReleaseError, "unsupported release revision"):
+                    release.verify_worker(args)
+            check.assert_not_called()
+
     def test_archive_rejects_top_level_extra_duplicate_and_symlink(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1521,7 +1613,7 @@ class ControllerTests(unittest.TestCase):
             rows = (args.artifact_dir / "SHA256SUMS").read_text().splitlines()
             self.assertEqual(len(rows), 3)
 
-    def test_verify_all_sets_local_worker_platform_without_nav_comparison(self):
+    def test_verify_all_checks_each_staged_map_catalogue_on_controller(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             artifacts = root / "artifacts"
@@ -1531,23 +1623,43 @@ class ControllerTests(unittest.TestCase):
             release.update_sha256s(artifacts, "0.1.9")
             args = self.transport_args(root)
             args.artifact_dir = artifacts
-            seen = []
+            workers = []
+            checked_bases = []
+            receipt = {
+                "revision": 289,
+                "entries": 3406,
+                "searches": {"bank": 177, "lum": 4, "Nulo": 1, "Cook": 63},
+            }
 
             def fake_verify(worker):
-                seen.append(worker.platform)
+                workers.append((worker.platform, worker.worker_root))
+
+            def fake_map_check(base):
+                checked_bases.append(base)
+                return receipt
 
             output = io.StringIO()
             with mock.patch.object(release, "verify_worker", side_effect=fake_verify), \
+                    mock.patch.object(release, "verify_staged_map_catalogue",
+                                      side_effect=fake_map_check) as map_check, \
                     mock.patch.object(release, "linux_run"), \
                     mock.patch.object(release, "linux_put"), \
                     mock.patch.object(release, "windows_transport"), \
                     contextlib.redirect_stdout(output):
                 release.verify_controller(args)
 
-            self.assertEqual(seen, ["macos"])
             self.assertEqual(
-                json.loads(output.getvalue())["verified"],
-                sorted(release.PLATFORMS),
+                workers,
+                [("macos", Path(tempfile.gettempdir()))],
+            )
+            self.assertEqual(map_check.call_count, 3)
+            for platform in release.PLATFORMS:
+                self.assertTrue(any(platform in base.name for base in checked_bases))
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["verified"], sorted(release.PLATFORMS))
+            self.assertEqual(set(result["map_catalogues"]), set(release.PLATFORMS))
+            self.assertTrue(
+                all(value == receipt for value in result["map_catalogues"].values())
             )
 
 if __name__ == "__main__":

@@ -10054,3 +10054,34 @@ fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_n
     }
     let _iso = iso;
 }
+
+#[test]
+fn map_catalogue_build_failure_is_visible_at_common_capture_sizes() {
+    let _iso = IsolatedStores::enter("tui-map-catalogue-build-failure");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
+    )));
+    assert_eq!(
+        app.on_key(crate::test_support::key(crossterm::event::KeyCode::F(4))),
+        AppAction::MapOpen
+    );
+
+    session.mark_map_catalogue_unavailable(&mut app, "map search/index bytes");
+    session.poll_map_demand(&mut app);
+
+    assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Unavailable);
+    assert!(app.map_catalogue.is_none());
+    assert!(app.map_search_results.is_empty());
+    for (width, height) in [(120, 40), (80, 24)] {
+        let rows = crate::test_support::draw(&mut app, width, height);
+        let rendered = crate::test_support::text(&rows);
+        assert!(
+            rendered.contains("map catalogue unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+    }
+}

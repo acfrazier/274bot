@@ -68,6 +68,9 @@ use crate::script_shape::{categories_present, resolve_category_order, BrowseCard
 #[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
+/// TUI retry cadence after a failed map-catalogue bind.
+const MAP_CATALOGUE_RETRY: Duration = Duration::from_secs(1);
+
 /// What `tui-play` should do this run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunMode {
@@ -433,6 +436,9 @@ pub struct TuiSession {
     /// Core-owned map demand, bake consent and accepted walk destination.
     map_desk: MapDesk,
     map_catalogue_named: bool,
+    map_catalogue_unavailable: bool,
+    /// Retry a failed catalogue bind at a coarse cadence, not every frame.
+    map_catalogue_probe: Option<Instant>,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
@@ -791,6 +797,8 @@ impl TuiSession {
             launcher,
             map_desk: MapDesk::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
+            map_catalogue_unavailable: false,
+            map_catalogue_probe: None,
             last_focused: None,
             walk_reset: false,
             live_name: None,
@@ -1671,10 +1679,10 @@ impl TuiSession {
                 return;
             }
         }
-        if app.map_catalogue_status == MapCatalogueStatus::Unavailable
-            || app.map_catalogue_status == MapCatalogueStatus::Inactive
+        if !self.map_catalogue_unavailable
+            && (app.map_catalogue_status == MapCatalogueStatus::Unavailable
+                || app.map_catalogue_status == MapCatalogueStatus::Inactive)
         {
-            app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
             app.map_coverage = "coverage: reading cache".into();
         }
         self.poll_map_demand(app);
@@ -1685,6 +1693,30 @@ impl TuiSession {
             return;
         }
         self.core.poll_map_demand(&mut self.map_desk);
+
+        // Keep a bind failure visible while we wait before trying the ready
+        // catalogue again. Progress updates must not hide the map error.
+        if self.map_catalogue_unavailable {
+            let now = Instant::now();
+            if self
+                .map_catalogue_probe
+                .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_RETRY)
+            {
+                if let Some(profile) = self.bound().map(|profile| profile.share()) {
+                    let ready = self
+                        .map_desk
+                        .map_demand()
+                        .and_then(|handle| handle.ready_catalogue().ok())
+                        .or_else(|| peek_walk_catalogue(&profile));
+                    if let Some(ready) = ready {
+                        self.bind_ready_catalogue(app, ready);
+                    } else {
+                        self.map_catalogue_probe = Some(now);
+                    }
+                }
+            }
+            return;
+        }
         let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
@@ -1748,6 +1780,16 @@ impl TuiSession {
     }
 
     fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<WalkReadyCatalogue>) {
+        if self.map_catalogue_unavailable {
+            let now = Instant::now();
+            if self
+                .map_catalogue_probe
+                .is_some_and(|at| now.duration_since(at) < MAP_CATALOGUE_RETRY)
+            {
+                return;
+            }
+        }
+
         let Some(world) = app.world.clone().or_else(|| self.core.nav_world()) else {
             return;
         };
@@ -1765,11 +1807,14 @@ impl TuiSession {
         if same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let Ok((mut catalogue, named)) =
-            self.core.walk_catalogue_from_ready(&profile, world, ready)
-        else {
-            return;
-        };
+        let (mut catalogue, named) =
+            match self.core.walk_catalogue_from_ready(&profile, world, ready) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.mark_map_catalogue_unavailable(app, error);
+                    return;
+                }
+            };
         self.map_catalogue_named = named;
         if !named {
             if let Some(data) = data {
@@ -1778,11 +1823,32 @@ impl TuiSession {
                         self.map_catalogue_named = true;
                         catalogue = named_catalogue;
                     }
-                    Err(_) => return,
+                    Err(error) => {
+                        self.mark_map_catalogue_unavailable(app, error);
+                        return;
+                    }
                 }
             }
         }
+        self.map_catalogue_probe = None;
+        self.map_catalogue_unavailable = false;
         app.bind_walk_catalogue(Arc::new(catalogue));
+    }
+
+    fn mark_map_catalogue_unavailable(&mut self, app: &mut TuiApp, error: impl std::fmt::Display) {
+        self.map_catalogue_probe = Some(Instant::now());
+        if self.map_catalogue_unavailable {
+            return;
+        }
+        api::host_log!(
+            stderr;
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "WalkTo map catalogue: {error}"
+        );
+        self.map_catalogue_unavailable = true;
+        self.map_catalogue_named = false;
+        app.set_map_unavailable("coverage: map catalogue unavailable; terrain imagery unavailable");
     }
 
     fn release_map_catalogue(&mut self) {
@@ -1793,6 +1859,8 @@ impl TuiSession {
             }
         }
         self.map_catalogue_named = false;
+        self.map_catalogue_unavailable = false;
+        self.map_catalogue_probe = None;
     }
 
     /// Confirm the pending map Walk through the shared operator session.
@@ -3815,6 +3883,12 @@ impl TuiSession {
         let focused = app.focused_name();
         if self.last_focused.as_deref() != focused.as_deref() {
             self.last_focused = focused.clone();
+            if self.map_catalogue_unavailable {
+                self.release_map_catalogue();
+                if app.map_active {
+                    app.set_map_unavailable("coverage: reading cache");
+                }
+            }
             let heading = focused
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));

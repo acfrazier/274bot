@@ -1805,6 +1805,40 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
 }
 
+#[test]
+fn panel_driver_shows_map_catalogue_failure() {
+    let (mut session, _dir) = session_with_play("frame-map-catalogue-error", &["alice"]);
+    session.core.set_spawn_workers(false);
+    session.walkto_open = true;
+    session.mark_map_catalogue_unavailable("map search/index bytes");
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!("panel_driver_shows_map_catalogue_failure: no headless GPU, skipped");
+        return;
+    };
+    let _nav = crate::picker::lock_nav_statics();
+    crate::picker::set_pack(Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
+    ))));
+
+    // The first frame creates the dock tree. Let the production picker draw
+    // in the next frame before checking its visible footer notice.
+    for _ in 0..3 {
+        rig.frame(Pointer::Away);
+        if rig.text.contains("map catalogue unavailable") {
+            break;
+        }
+    }
+
+    let message = rig.text.clone();
+    let status = rig.session().map_bind_status();
+    crate::picker::set_pack(None);
+    assert!(
+        message.contains("map catalogue unavailable"),
+        "the map shows its catalogue failure (status: {status:?}): {message}"
+    );
+    assert_eq!(status.as_deref(), Some("map catalogue unavailable"));
+}
+
 /// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
 /// whose pump phase is the production `frame_pumps` order and whose staged
 /// GameInput submit follows it. The CI lanes have no GPU adapter

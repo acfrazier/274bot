@@ -6,6 +6,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## Unreleased
 
+## [0.2.9.1] — 2026-11-11
+
+### Panel and terminal app
+
+- The map's points of interest and search work again on the full world map.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
