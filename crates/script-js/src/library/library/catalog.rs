@@ -1635,7 +1635,11 @@ impl CatalogCandidateWork {
                     self.push_prepared(card, is_added)?;
                 }
                 CardPreparationOutcome::Failed { failure, .. } => {
-                    self.push_failure(failure)?;
+                    // A catalog policy hold has no failure record and never
+                    // counts as a failed card in the refresh report.
+                    if let Some(failure) = failure {
+                        self.push_failure(failure)?;
+                    }
                 }
                 CardPreparationOutcome::Unchanged if !is_added => {
                     self.unchanged_changed.push(index);

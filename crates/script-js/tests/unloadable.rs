@@ -232,7 +232,7 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
     assert_eq!(
         ess.unloadable,
         Some(script_js::UnloadReason::Retired(
-            "replaced by the native Gatherer: choose Mining and the rune essence resource".into()
+            "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location".into()
         ))
     );
     let _ = std::fs::remove_dir_all(dir);
