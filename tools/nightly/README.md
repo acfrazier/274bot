@@ -611,6 +611,11 @@ If two guests already run, the nightly refuses to clone.
    The host stages the runner, catalog, fixtures, engines and isohome helper
    as read-only inputs. Main uses the host Engine A forward; quest runs private
    Engine Q in the clone.
+   Keep `<NIGHTLY_MAC_ROOT>/fixtures/274bot-289-v19.navpack` and its
+   `.navflags` sidecar available for pre-ADR tests. The guest stages the whole
+   fixtures directory read-only; post-ADR trees use their generated local-data
+   navpack and do not fall back to this fixture.
+
    Keep a dedicated rs2b0t checkout at the catalog path, pinned to the same
    revision as the other nightlies. Do not use the operator's working copy.
    Change the pin between runs, never during a run.
