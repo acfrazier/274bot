@@ -15,7 +15,8 @@ pub use views::*;
 mod client_adapter_cache;
 #[cfg(feature = "test-support")]
 pub use client_adapter_cache::{
-    clear_client_adapter_cache_for_tests, set_client_adapter_cache_for_tests,
+    clear_client_adapter_cache_for_tests, isolate_client_adapter_cache_for_tests,
+    set_client_adapter_cache_for_tests, ClientAdapterCacheTestIsolation,
 };
 #[doc(hidden)]
 pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
