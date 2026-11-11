@@ -5,9 +5,10 @@
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
 //! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
 //! path in a private home.
-//! Pre-Start mainland fixtures request a fresh login after observing logout:
-//! idle slots park on a server logout, so the fixture posts Login through its
-//! SlotArm once available rather than relying on automatic reconnect policy.
+//! Pre-Start mainland fixtures request a fresh login after observing logout.
+//! A server logout does not latch the slot, so an unlatched slot with
+//! auto-login reconnects by itself; the fixture still posts a real one-shot
+//! Login through its SlotArm once available, for its own relog.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text

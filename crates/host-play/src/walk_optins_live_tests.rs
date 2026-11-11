@@ -361,9 +361,9 @@ fn live_quester_walk_optins() {
         })
         .collect();
     let setup_deadline = Instant::now() + SETUP_LIMIT;
-    // Each account logs its scriptless bot out once to bind its side tabs; the
-    // approved scriptless policy then parks it, so post the operator's explicit
-    // Login for each account after its own logout.
+    // Each account logs its bot out once to bind its side tabs. Post a real
+    // one-shot Login for each account after its own logout; an unlatched slot
+    // with auto-login would also reconnect by itself.
     let mut relog_posted = std::collections::HashSet::new();
     while !states.values().all(|state| state.lock().ready) && Instant::now() < setup_deadline {
         for account in &names {

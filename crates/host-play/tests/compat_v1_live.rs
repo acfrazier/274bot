@@ -467,10 +467,10 @@ fn request_logout(state: &Arc<Mutex<FrameState>>) -> Result<(), String> {
     Ok(())
 }
 
-/// Log the generated account in again through the host. The host parks a bot with no script after
-/// a logout nobody asked it for (the test's own client logout reads as a server logout), so an
-/// explicit login intent is what lifts that park; a raw client login would leave the slot parked
-/// and its frame hold closed.
+/// Log the generated account in again through the host with a real one-shot
+/// Login (the test's own client logout is an unexpected exit, so an unlatched
+/// slot with auto-login would also reconnect by itself); a raw client login
+/// would leave the slot's frame hold closed.
 fn request_login(session: &LiveSession<'_>) -> Result<(), String> {
     let frame = lock_state(&session.state);
     if let Some(error) = &frame.error {

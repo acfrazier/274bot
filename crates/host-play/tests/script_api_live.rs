@@ -222,9 +222,9 @@ fn pre_relog_tutorial_step(
 }
 
 /// Press the fixture logout, then post the host's explicit Login for this
-/// slot. Every fixture logout is a relog before Start: the bot has no script
-/// then, so the approved scriptless policy parks it after the exit and it
-/// waits for the operator's Login.
+/// slot. Every fixture logout is a relog before Start; the Login is a real
+/// one-shot command, needed where that relog consumed the login. An unlatched
+/// slot with auto-login would also reconnect by itself.
 fn logout_then_login(client: &mut Client, arm: &SlotArm) -> Result<(), String> {
     let ifaces = Arc::clone(&client.ifaces);
     if interact::logout(client, &ifaces) {

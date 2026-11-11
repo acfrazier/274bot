@@ -13,13 +13,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The logout of bots with no script, which 0.2.9 added, is reverted. A bot with
   no script stays logged in however long it sits idle. The game's idle timer
   does not run for it, so the client no longer asks the server to log it out
-  after about 90 seconds. A bot with no script also reconnects by itself after
-  a disconnect (a connection reset, a server restart, a missing server answer
-  or a server logout), as it did in 0.2.8: same back-off, and the same stop
-  after three unexpected exits in ten minutes. The statuses "logged out:
-  disconnected while idle" and "logged out: idle logout by the server" no
-  longer appear. A bot you log out yourself stays logged out until you log it
-  in.
+  after about 90 seconds. After a disconnect (a connection reset, a server
+  restart, a missing server answer or a server logout), a bot with no script
+  reconnects by itself as it did in 0.2.8, when **Log in automatically** is on
+  or a script that needs the bot is running: same back-off. The stop after
+  three unexpected exits in ten minutes covers unexpected disconnects, not a
+  clean server logout. The statuses "logged out: disconnected while idle" and
+  "logged out: idle logout by the server" no longer appear. A bot you log out
+  yourself stays logged out until you log it in.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 

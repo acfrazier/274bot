@@ -447,9 +447,9 @@ pub struct ScenarioRunner {
     relog_session: Option<u64>,
     relog_left_session: bool,
     /// The Relog step sent its logout and the host has not yet posted the
-    /// slot's explicit Login: a bot with no script stays logged out after
-    /// its exit, so the step's own logout cannot rely on a reconnect. The
-    /// driver that ticks this runner consumes the request with
+    /// slot's explicit Login, a real one-shot command that covers the step's
+    /// own relog (an unlatched slot with auto-login would also reconnect by
+    /// itself). The driver that ticks this runner consumes the request with
     /// [`ScenarioRunner::take_relog_login`] and posts the operator Login
     /// intent (host-play's `SlotArm::arm_explicit_login`).
     relog_login_wanted: bool,
@@ -819,8 +819,8 @@ impl ScenarioRunner {
     /// Run companion `index`'s hook once per client cycle on `client`. The
     /// caller delivers one frame per call, exactly like [`tick`]. `true`
     /// means the hook pressed this slot's logout and needs the host's
-    /// explicit Login (the operator Login intent) posted for it, because a
-    /// bot with no script stays parked after its exit.
+    /// explicit Login (the operator Login intent, a real one-shot command)
+    /// posted for it.
     pub fn companion_tick(&mut self, index: usize, client: &mut Client) -> bool {
         (self.scenario.companions[index].per_frame)(client)
     }
@@ -828,8 +828,8 @@ impl ScenarioRunner {
     /// Whether the current Relog step sent its logout and still needs the
     /// host's explicit Login. The driver that ticks this runner consumes the
     /// request with [`Self::take_relog_login`] and posts the operator Login
-    /// intent for the driven slot; a bot with no script does not reconnect by
-    /// itself, so the relog would otherwise wait out its budget.
+    /// intent for the driven slot. The Login is a real one-shot command; an
+    /// unlatched slot with auto-login would also reconnect by itself.
     pub fn relog_login_wanted(&self) -> bool {
         self.relog_login_wanted
     }
@@ -2160,11 +2160,9 @@ impl ScenarioRunner {
                         );
                     }
                     self.relog_logout_sent = true;
-                    // The bot has no script at a pre-Start relog, so the
-                    // approved scriptless policy parks it after this exit;
-                    // the driver posts the operator Login (a no-op wait here
-                    // would time out). A scripted bot ignores the request:
-                    // its own demand already relogs it.
+                    // The driver posts the operator Login, a real one-shot
+                    // command that covers this relog; an unlatched slot with
+                    // auto-login would also reconnect by itself.
                     self.relog_login_wanted = true;
                 }
                 Ok(())

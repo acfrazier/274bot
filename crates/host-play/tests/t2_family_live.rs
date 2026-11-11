@@ -349,9 +349,9 @@ fn local_family_reads_real_content() {
     .expect("spawn fresh Engine A account");
     let deadline = Instant::now() + Duration::from_secs(240);
     if seed_config.is_some() {
-        // The seed logs its scriptless bot out once to complete the tutorial;
-        // the approved scriptless policy then parks it, so post the operator's
-        // explicit Login once after that logout.
+        // The seed logs its bot out once to complete the tutorial. Post a real
+        // one-shot Login once after that logout; an unlatched slot with
+        // auto-login would also reconnect by itself.
         let mut login_posted = false;
         loop {
             let state = prep.lock().unwrap();

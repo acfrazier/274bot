@@ -1740,10 +1740,10 @@ fn run_cells(
         inventory_violation: None,
     }));
     // Each slot's arm is owned here, not by `try_spawn_slot`'s default: the
-    // fixture's own pre-Start relogs log the scriptless bot out, and the
-    // approved idle-park policy keeps it logged out until an explicit Login.
-    // Building the profiles first lets the frame below post that Login on the
-    // same arm the spawned slot runs with.
+    // fixture's own pre-Start relogs log the bot out; the frame below posts a
+    // real one-shot Login on the arm the spawned slot runs with. An unlatched
+    // slot with auto-login would also reconnect by itself. Building the
+    // profiles first makes that arm available to the frame.
     let mut live_profiles = Vec::with_capacity(entries.len());
     let mut slot_arms = Vec::with_capacity(entries.len());
     for (index, (account, password)) in entries.iter().enumerate() {
