@@ -48,7 +48,7 @@ pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Failures", 'F'),
 ];
 #[cfg(not(feature = "js"))]
-pub const SCRIPT_KEYS: [(&str, char); 8] = [
+pub const SCRIPT_KEYS: [(&str, char); 7] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
@@ -56,7 +56,6 @@ pub const SCRIPT_KEYS: [(&str, char); 8] = [
     ("Params", 'v'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
-    ("Failures", 'F'),
 ];
 
 /// The key associated with a script-pane button label.
