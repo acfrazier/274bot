@@ -185,6 +185,10 @@ impl SurvivalStep {
             .zip(hp)
             .map(|(hazard, hp)| hazard.max_damage(hp, hp_max));
         let danger = base.map(|danger| danger.saturating_add(hazard.unwrap_or(0)));
+        let burst = self
+            .threats
+            .burst(&frame, tables, tick, false, false)
+            .map(|burst| burst.saturating_add(hazard.unwrap_or(0)));
         let exposure = math::exposure(&self.threats, tables, tick);
         let condition = cx.condition();
         let q_unknown = cx.poison_unknown_pulse();
@@ -244,6 +248,7 @@ impl SurvivalStep {
                     schedule,
                     policy::EatInputs {
                         danger,
+                        burst,
                         poison_fire,
                         hp,
                         hp_max,

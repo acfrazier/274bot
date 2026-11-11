@@ -403,27 +403,52 @@ pub(crate) struct EatChoice {
 /// The scalar state used to choose food for one observation.
 pub(crate) struct EatInputs {
     pub danger: Option<i32>,
+    /// The most damage that can land before this bite takes effect
+    /// ([`hits_before_bite`]); `None` when the danger is unknown.
+    pub burst: Option<i32>,
     pub poison_fire: i32,
     pub hp: i32,
     pub hp_max: i32,
     pub tick: u16,
     pub eat_floor: i32,
 }
-/// Shared food selection for Combat, WalkGuard and runner survival checks.
-/// The caller owns admission and pending-operation policy; this function only
-/// evaluates the current observation. `poison_fire` is the next poison
-/// fire's damage. `eat_floor` is a caller-specific lower bound on the bite
-/// line. A bot at full HP never bites.
-///
-/// Two tiers. **Critical**: at or below `danger + 1` plus the next poison fire
-/// (the next hit can kill; with an unknown danger, a quarter of the maximum
-/// rounded up, plus the fire) the best-fitting food is eaten even when it
-/// overheals. **Caution**: above that and up to the eat line (`2 * danger + 1`,
-/// half the maximum when the danger is unknown, or the caller's floor) only a
-/// food whose heal fits the missing HP is chosen, so no bite is wasted; when
-/// none fits nothing is eaten (the next hit cannot kill). A combo bite keeps
-/// its own lock-survival gate in both tiers: its purpose is to carry the bot
-/// through the input lock, so it may overheal.
+/// Ticks between sending a bite and its heal: the route model's own `LAG`.
+pub(crate) const BITE_DELAY: i32 = super::risk::consts::LAG;
+
+/// How many hits one attacker with `rate` ticks between attacks can land
+/// before a bite sent now takes effect. Attacks are `rate` ticks apart, so a
+/// window of [`BITE_DELAY`] ticks holds at most `ceil(BITE_DELAY / rate)` of
+/// them (an unknown rate of zero counts as an attack every tick).
+#[inline]
+pub(crate) fn hits_before_bite(rate: u8) -> i32 {
+    (BITE_DELAY + i32::from(rate.max(1)) - 1) / i32::from(rate.max(1))
+}
+
+/// The critical floor: the HP at or below which the damage that can land
+/// before a bite takes effect (`burst`) can kill, so the best-fitting food is
+/// eaten even when it overheals. `burst` is every attacker's maximum hit once
+/// per attack it can make inside [`BITE_DELAY`]; the real eater takes it from
+/// the live threats and the route model from the plan's rows, both through
+/// [`hits_before_bite`]. It is never below `danger`. With an unknown danger
+/// the floor is a quarter of the maximum, rounded up. The next poison fire
+/// is added to both.
+pub(crate) fn critical_floor(
+    danger: Option<i32>,
+    burst: Option<i32>,
+    hp_max: i32,
+    poison_fire: i32,
+) -> i32 {
+    match danger {
+        Some(danger) => burst
+            .unwrap_or(danger)
+            .max(danger)
+            .saturating_add(1)
+            .saturating_add(poison_fire),
+        None => ((hp_max.max(0) + 3) / 4).saturating_add(poison_fire),
+    }
+}
+/// The test entry to [`eat_choice_excluding`]: every attacker lands one hit
+/// inside the bite delay (`burst` is the danger), no protected items.
 #[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
@@ -446,6 +471,7 @@ pub(crate) fn eat_choice(
         schedule,
         EatInputs {
             danger,
+            burst: danger,
             poison_fire,
             hp,
             hp_max,
@@ -455,41 +481,22 @@ pub(crate) fn eat_choice(
         &[],
     )
 }
-/// The route replay's model keeps the single eat line (every bite up to the
-/// line may overheal): the replay prices a crossing by the HP its own floors
-/// ask for, and its synthetic danger (half the intended line) is not a threat
-/// the two tiers could judge. Same arguments as [`eat_choice`].
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the same explicit scalars as eat_choice"
-)]
-pub(crate) fn eat_choice_modelled(
-    frame: &Frame<'_>,
-    tables: &CombatTables,
-    schedule: &Schedule,
-    danger: Option<i32>,
-    poison_fire: i32,
-    hp: i32,
-    hp_max: i32,
-    tick: u16,
-    eat_floor: i32,
-) -> Option<EatChoice> {
-    choose(
-        frame,
-        tables,
-        schedule,
-        EatInputs {
-            danger,
-            poison_fire,
-            hp,
-            hp_max,
-            tick,
-            eat_floor,
-        },
-        &[],
-        false,
-    )
-}
+/// Shared food selection for Combat, WalkGuard and runner survival checks.
+/// The caller owns admission and pending-operation policy; this function only
+/// evaluates the current observation. `poison_fire` is the next poison
+/// fire's damage. `eat_floor` is a caller-specific lower bound on the bite
+/// line. A bot at full HP never bites.
+///
+/// Two tiers. **Critical**: at or below [`critical_floor`] (the damage that can
+/// land before the bite takes effect, plus 1, plus the next poison fire; with
+/// an unknown danger, a quarter of the maximum rounded up, plus the fire) the
+/// best-fitting food is eaten even when it overheals. **Caution**: above that
+/// and up to the eat line (`2 * danger + 1`, half the maximum when the danger
+/// is unknown, or the caller's floor) only a food whose heal fits the missing
+/// HP is chosen, so no bite is wasted; when none fits nothing is eaten (the
+/// damage that can land before the bite cannot kill). A combo bite keeps
+/// its own lock-survival gate in both tiers: its purpose is to carry the bot
+/// through the input lock, so it may overheal.
 pub(crate) fn eat_choice_excluding(
     frame: &Frame<'_>,
     tables: &CombatTables,
@@ -497,18 +504,9 @@ pub(crate) fn eat_choice_excluding(
     inputs: EatInputs,
     protected_items: &[FoodReserve],
 ) -> Option<EatChoice> {
-    choose(frame, tables, schedule, inputs, protected_items, true)
-}
-fn choose(
-    frame: &Frame<'_>,
-    tables: &CombatTables,
-    schedule: &Schedule,
-    inputs: EatInputs,
-    protected_items: &[FoodReserve],
-    two_tier: bool,
-) -> Option<EatChoice> {
     let EatInputs {
         danger,
+        burst,
         poison_fire,
         hp,
         hp_max,
@@ -516,7 +514,8 @@ fn choose(
         eat_floor,
     } = inputs;
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
-    let eat_line = lines.eat.max(eat_floor);
+    let critical = critical_floor(danger, burst, hp_max, poison_fire);
+    let eat_line = lines.eat.max(eat_floor).max(critical);
     if hp <= 0
         || hp >= hp_max
         || (danger == Some(0) && poison_fire == 0 && eat_floor < lines.eat)
@@ -525,12 +524,8 @@ fn choose(
         return None;
     }
 
-    let critical = match danger {
-        Some(_) => lines.emergency,
-        None => (hp_max.max(0) + 3) / 4 + poison_fire,
-    };
     let basis = crate::survival::eat::Basis::new(critical, danger);
-    let fit_only = two_tier && hp > critical;
+    let fit_only = hp > critical;
     let ordinary = food_choice(
         hp,
         hp_max,
@@ -579,9 +574,147 @@ fn choose(
         basis,
     })
 }
+/// The cases the real eater (`WalkGuard`, in `guard.rs`) and the route model
+/// (`risk::replay`, in `risk/tests.rs`) must both decide the same way. Each
+/// attacker is a content NPC id (revision 289, melee, one hit per attack):
+/// 1560 Ice Troll (max hit 25, rate 4), 64 Ice spider (6, rate 4). The food
+/// is five lobsters (heal 12). `bite` is whether a bite is chosen.
+#[cfg(test)]
+pub(crate) mod shared_cases {
+    pub(crate) struct Case {
+        pub label: &'static str,
+        pub attackers: &'static [i32],
+        pub hp: i32,
+        pub hp_max: i32,
+        pub bite: bool,
+    }
+    const TROLL: i32 = 1560;
+    const SPIDER: i32 = 64;
+    pub(crate) const CASES: &[Case] = &[
+        // One strong attacker: danger 25, critical floor 26. The 12-point
+        // lobster overheals a 20/30 account, and it is eaten.
+        Case {
+            label: "single strong attacker is critical",
+            attackers: &[TROLL],
+            hp: 20,
+            hp_max: 30,
+            bite: true,
+        },
+        // Two weak attackers: danger 12, critical floor 13. At 20/30 the
+        // next volley cannot kill; the lobster does not fit; no bite.
+        Case {
+            label: "two weak attackers are not critical",
+            attackers: &[SPIDER, SPIDER],
+            hp: 20,
+            hp_max: 30,
+            bite: false,
+        },
+        // A 20-point account: at 13 the lobster (25) overheals, and the
+        // critical floor eats it; at 14 it is caution and no lobster fits.
+        Case {
+            label: "two weak attackers at their critical floor",
+            attackers: &[SPIDER, SPIDER],
+            hp: 13,
+            hp_max: 20,
+            bite: true,
+        },
+        Case {
+            label: "two weak attackers one above their critical floor",
+            attackers: &[SPIDER, SPIDER],
+            hp: 14,
+            hp_max: 20,
+            bite: false,
+        },
+        // Caution tier: the heal fits exactly at 18/30 and not at 19/30.
+        Case {
+            label: "caution tier eats a lobster that just fits",
+            attackers: &[SPIDER, SPIDER],
+            hp: 18,
+            hp_max: 30,
+            bite: true,
+        },
+        Case {
+            label: "caution tier skips a lobster that just overheals",
+            attackers: &[SPIDER, SPIDER],
+            hp: 19,
+            hp_max: 30,
+            bite: false,
+        },
+        Case {
+            label: "single strong attacker at its critical floor",
+            attackers: &[TROLL],
+            hp: 26,
+            hp_max: 30,
+            bite: true,
+        },
+        Case {
+            label: "single strong attacker one above its critical floor",
+            attackers: &[TROLL],
+            hp: 27,
+            hp_max: 30,
+            bite: false,
+        },
+        // Danger 31 (25 + 6), critical floor 32.
+        Case {
+            label: "strong plus weak at the summed critical floor",
+            attackers: &[TROLL, SPIDER],
+            hp: 32,
+            hp_max: 40,
+            bite: true,
+        },
+        Case {
+            label: "strong plus weak one above the summed critical floor",
+            attackers: &[TROLL, SPIDER],
+            hp: 33,
+            hp_max: 40,
+            bite: false,
+        },
+        // Caution tier, the heal fits: eaten without waste.
+        Case {
+            label: "caution tier eats a lobster that fits",
+            attackers: &[SPIDER, SPIDER],
+            hp: 20,
+            hp_max: 40,
+            bite: true,
+        },
+        Case {
+            label: "full HP never bites",
+            attackers: &[TROLL],
+            hp: 30,
+            hp_max: 30,
+            bite: false,
+        },
+    ];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hits_before_bite_counts_attacks_inside_the_bite_delay() {
+        // The bite delay is two ticks: attacks `rate` ticks apart put at most
+        // ceil(2 / rate) of them in the window.
+        assert_eq!(BITE_DELAY, 2);
+        assert_eq!(hits_before_bite(0), 2);
+        assert_eq!(hits_before_bite(1), 2);
+        assert_eq!(hits_before_bite(2), 1);
+        assert_eq!(hits_before_bite(4), 1);
+        assert_eq!(hits_before_bite(u8::MAX), 1);
+    }
+
+    #[test]
+    fn critical_floor_is_the_burst_plus_one_plus_the_fire() {
+        assert_eq!(critical_floor(Some(12), Some(12), 40, 0), 13);
+        assert_eq!(critical_floor(Some(12), Some(24), 40, 0), 25);
+        assert_eq!(critical_floor(Some(12), Some(24), 40, 6), 31);
+        // A burst below the danger cannot lower the floor.
+        assert_eq!(critical_floor(Some(12), Some(3), 40, 0), 13);
+        assert_eq!(critical_floor(Some(12), None, 40, 0), 13);
+        // Unknown danger: a quarter of the maximum, rounded up.
+        assert_eq!(critical_floor(None, None, 40, 0), 10);
+        assert_eq!(critical_floor(None, None, 41, 2), 13);
+    }
 
     #[test]
     fn prayer_sip_uses_the_native_c5_floor() {

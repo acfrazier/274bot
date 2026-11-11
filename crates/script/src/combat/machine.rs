@@ -2375,7 +2375,7 @@ impl Combat {
         plan: &mut TickPlan,
         frame: &Frame<'_>,
         tick: u16,
-        danger: Option<i32>,
+        (danger, burst): (Option<i32>, Option<i32>),
         poison_fire: i32,
         protected_items: &[super::FoodReserve],
     ) {
@@ -2393,6 +2393,7 @@ impl Combat {
             &self.schedule,
             policy::EatInputs {
                 danger,
+                burst,
                 poison_fire,
                 hp,
                 hp_max: max,
@@ -2588,6 +2589,13 @@ impl Combat {
             self.shield(frame),
             self.antifire(tick),
         );
+        let mut burst = self.threats.burst(
+            frame,
+            &self.tables,
+            tick,
+            self.shield(frame),
+            self.antifire(tick),
+        );
         let poison_fire =
             crate::survival::math::poison_fire(cx.condition(), &self.threats, &self.tables, tick);
         let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
@@ -2623,7 +2631,7 @@ impl Combat {
                     &mut plan,
                     frame,
                     tick,
-                    danger,
+                    (danger, burst),
                     poison_fire,
                     cx.protected_items(),
                 );
@@ -2659,7 +2667,7 @@ impl Combat {
                     &mut plan,
                     frame,
                     tick,
-                    danger,
+                    (danger, burst),
                     poison_fire,
                     cx.protected_items(),
                 );
@@ -2670,12 +2678,17 @@ impl Combat {
             return Ok(plan);
         }
         // Emergency uses the original danger, before free reducers project it.
-        if (danger != Some(0) || poison_fire > 0) && hp <= lines.emergency {
+        if (danger != Some(0) || poison_fire > 0)
+            && hp
+                <= lines
+                    .emergency
+                    .max(policy::critical_floor(danger, burst, hp_max, poison_fire))
+        {
             self.eat(
                 &mut plan,
                 frame,
                 tick,
-                danger,
+                (danger, burst),
                 poison_fire,
                 cx.protected_items(),
             );
@@ -2749,6 +2762,13 @@ impl Combat {
                     self.antifire(tick),
                     style,
                 );
+                burst = self.threats.burst_with(
+                    &self.tables,
+                    tick,
+                    self.shield(frame),
+                    self.antifire(tick),
+                    style,
+                );
                 lines = select::lines(danger, hp_max).with_poison(poison_fire);
             }
         }
@@ -2759,7 +2779,7 @@ impl Combat {
                 &mut plan,
                 frame,
                 tick,
-                danger,
+                (danger, burst),
                 poison_fire,
                 cx.protected_items(),
             );

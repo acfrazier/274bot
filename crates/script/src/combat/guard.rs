@@ -505,6 +505,7 @@ impl WalkGuard {
         if let Some(op) = self.cure_op(&frame, condition, cure_policy, danger, tick) {
             return Some(op);
         }
+        let burst = self.threats.burst(&frame, &self.tables, tick, false, false);
         let poison_fire =
             crate::survival::math::poison_fire(condition, &self.threats, &self.tables, tick);
         let eat_choice = if self.flags & FLAG_FOOD_ALLOWED != 0
@@ -517,6 +518,7 @@ impl WalkGuard {
                 &self.schedule,
                 policy::EatInputs {
                     danger,
+                    burst,
                     poison_fire,
                     hp,
                     hp_max,
@@ -531,11 +533,14 @@ impl WalkGuard {
         if let Some(choice) = &eat_choice {
             self.eat_basis = choice.basis;
         }
+        // Emergency: the old one-volley line, or the bite's critical floor
+        // when the damage that can land before it takes effect is more.
+        let lines = select::lines(danger, hp_max).with_poison(poison_fire);
         if (danger != Some(0) || poison_fire > 0)
             && hp
-                <= select::lines(danger, hp_max)
-                    .with_poison(poison_fire)
+                <= lines
                     .emergency
+                    .max(policy::critical_floor(danger, burst, hp_max, poison_fire))
         {
             if let Some(eat) = self.eat_op(&frame, eat_choice) {
                 return Some(eat);
@@ -2132,6 +2137,61 @@ mod tests {
             crate::survival::CurePoison::WhenNeeded,
         );
         assert_eat(op.as_ref(), "Lobster");
+    }
+
+    /// The real eater's side of the cases the route model must decide the
+    /// same way (`risk/tests.rs` runs the same table through the replay's
+    /// own window damage).
+    #[test]
+    fn the_real_eater_decides_the_shared_cases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        for case in policy::shared_cases::CASES {
+            let mut scene = Scene::new(43);
+            scene.stats[3].effective = case.hp;
+            scene.stats[3].base = case.hp_max;
+            scene.add_food("lobster", 0, 5);
+            let template = scene.npcs[0].clone();
+            scene.npcs = case
+                .attackers
+                .iter()
+                .enumerate()
+                .map(|(slot, id)| {
+                    let row = data
+                        .npc_names()
+                        .unwrap()
+                        .rows
+                        .iter()
+                        .find(|row| row.id == *id)
+                        .expect("a shared case names a content NPC");
+                    let mut npc = template.clone();
+                    npc.index = 7 + slot;
+                    npc.r#type = Some(row.id as usize);
+                    npc.name = row.display.clone();
+                    npc.target = Some(ActorTargetView {
+                        kind: ActorKind::Player,
+                        index: 1,
+                    });
+                    npc.in_combat = true;
+                    npc
+                })
+                .collect();
+            scene.refresh();
+            let mut guard = WalkGuard::begin_food_only_with(
+                &scene.request(),
+                &scene.view(),
+                Arc::clone(&scene.tables),
+            )
+            .unwrap();
+            let op = guard.tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
+            assert_eq!(is_eat(&op), case.bite, "{}: {op:?}", case.label);
+        }
     }
 
     #[test]

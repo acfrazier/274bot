@@ -1670,11 +1670,24 @@ fn simulate_ice(
         let topup = t < crossing_start
             && crossing_start - t <= 30
             && smallest.is_some_and(|i| hp + heals[i] <= cap);
+        // The two-tier rule by hand. The one attacker hits 6 every 4 ticks
+        // from `crossing_start` for 39 ticks, so the ticks `t + 1..=t + 2`
+        // (a bite's delay) hold at most one of its hits: the critical floor
+        // is 6 + 1 while the attacker is in reach of the window, 1 outside.
+        let attacker_in_window = t + 2 >= crossing_start && t + 1 < crossing_start + 39;
+        let critical = if attacker_in_window { 6 + 1 } else { 1 };
         if due.is_none() && t >= ready && (topup || hp <= line) {
             let fitting = (0..2)
                 .filter(|i| left[*i] > 0 && hp + heals[*i] <= cap)
                 .max_by_key(|i| heals[*i]);
-            if let Some(food) = fitting.or(smallest) {
+            // Above the critical floor only a food that fits is eaten; at or
+            // below it the best fit is eaten even when it overheals.
+            let choice = if hp > critical {
+                fitting
+            } else {
+                fitting.or(smallest)
+            };
+            if let Some(food) = choice {
                 left[food] -= 1;
                 bites += 1;
                 due = Some((t + 2, heals[food]));
@@ -1695,14 +1708,27 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
     let route = route(80, 127);
     let path = fx.path(&route);
     let plan = corridor_plan(&fx, &tables, 20);
-    for (hp, cap, food, pass, after) in [
-        (40, 40, 0, false, 22),
-        (40, 40, 4, false, 22),
-        (40, 40, 5, true, 16),
-        (45, 45, 6, true, 21),
-        (20, 40, 0, false, 14),
-        (20, 40, 6, false, 22),
-        (20, 40, 7, true, 16),
+    // The replay eats as the real eater does: above its critical floor (one
+    // hit of 6, plus 1, is 7) only a lobster that fits (`hp + 12 <= cap`) is
+    // eaten, so no bite overheals. The route floor reaches 30. At cap 40 a
+    // lobster fits only at HP 28 or below, under that floor, and the
+    // critical floor (7) is far below it: no food count holds HP above 30,
+    // so every cap-40 row refuses and `needed` is `None`. At cap 45 a
+    // lobster fits at 33 or below, above the floor, so each bite lands
+    // inside the band: 45 -> 39 -> 33 -> bite -> 45, and the counts are
+    // the bites the crossing needs.
+    // (hp, cap, lobsters, passes, hp after, least extra lobsters or None)
+    for (hp, cap, food, pass, after, needed) in [
+        (40, 40, 0, false, 22, None),
+        (40, 40, 5, false, 28, None),
+        (45, 45, 0, false, 21, Some(3)),
+        (45, 45, 2, false, 21, Some(1)),
+        (45, 45, 3, true, 21, None),
+        (45, 45, 6, true, 21, None),
+        (50, 50, 1, false, 26, Some(1)),
+        (60, 60, 1, false, 24, Some(1)),
+        (20, 40, 0, false, 14, None),
+        (20, 40, 8, false, 26, None),
     ] {
         let input = input(hp, cap, food, &tables);
         let mut clicks = Vec::new();
@@ -1728,31 +1754,27 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
         );
         assert_eq!(clicks, independent.3, "hp={hp},food={food}");
         assert_eq!((actual.passed, actual.hp_after), (pass, after));
-        if !pass {
-            let needed = if hp == 20 {
-                if food == 0 {
-                    7
-                } else {
-                    1
-                }
-            } else if food == 0 {
-                5
-            } else {
-                1
-            };
-            for extra in 1..=needed {
-                let fixed = replay(
-                    path,
-                    &plan,
-                    &input,
-                    &tables,
-                    WalkAllow::default(),
-                    Some((input.food_ids[0], extra)),
-                    |_, _, _, _, _| {},
-                )
-                .unwrap();
-                assert_eq!(fixed.passed, extra == needed, "least additional count");
-            }
+        if pass {
+            assert_eq!(needed, None);
+            continue;
+        }
+        let tried = needed.unwrap_or(12);
+        for extra in 1..=tried {
+            let fixed = replay(
+                path,
+                &plan,
+                &input,
+                &tables,
+                WalkAllow::default(),
+                Some((input.food_ids[0], extra)),
+                |_, _, _, _, _| {},
+            )
+            .unwrap();
+            assert_eq!(
+                fixed.passed,
+                needed == Some(extra),
+                "least additional count, hp={hp},food={food},extra={extra}"
+            );
         }
     }
 }
@@ -4269,4 +4291,270 @@ fn single_way_counts_one_attacker_across_different_kinds() {
     assert_eq!(one.verdict, Verdict::Survivable, "{}", one.reason);
     assert!(one.bound <= all.bound);
     assert_eq!(all.verdict, Verdict::Unsurvivable, "{}", all.reason);
+}
+
+/// Whether the shared eat choice picks a bite for a bot holding five
+/// lobsters, given the danger and burst the model read from its plan.
+fn model_bites(tables: &CombatTables, danger: i32, burst: i32, hp: i32, hp_max: i32) -> bool {
+    use crate::combat::frame::Frame;
+    use crate::combat::policy;
+    use crate::combat::schedule::Schedule;
+    use api::obj_names::ItemDefView;
+    use api::snapshot::{
+        ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView,
+        LocalPlayerView, PlayerView, WorldStateView,
+    };
+    let lobster = tables.selected().item_by_alias("lobster").unwrap().id;
+    let world = WorldStateView::default();
+    let local = LocalPlayerView {
+        player: PlayerView {
+            index: 0,
+            actor: ActorView {
+                name: None,
+                actions: Vec::new(),
+                tile: tile(80),
+                distance: 0,
+                animation: -1,
+                animation_frame: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: -1,
+                health: 0,
+                total_health: 0,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            network: tile(80),
+            combat_level: 1,
+            skill_level: 0,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 0,
+        weight: 0,
+        animation_update: None,
+    };
+    let inventory = [ItemView {
+        def: ItemDefView {
+            id: lobster,
+            name: None,
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 5,
+        actions: Vec::new(),
+        component_id: 0,
+    }];
+    let frame = Frame {
+        here: tile(80),
+        combat_tab: None,
+        tick: 5,
+        stats: &[],
+        inventory: &inventory,
+        equipment: &[],
+        npcs: &[],
+        players: &[],
+        local: &local,
+        world: &world,
+        projectiles: &[],
+        hitmarks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+        prayers: [false; 15],
+        varps: &[],
+        in_combat: CombatView {
+            in_combat: false,
+            target: None,
+        },
+        reach: None,
+        wilderness: None,
+    };
+    policy::eat_choice_excluding(
+        &frame,
+        tables,
+        &Schedule::default(),
+        policy::EatInputs {
+            danger: Some(danger),
+            burst: Some(burst),
+            poison_fire: 0,
+            hp,
+            hp_max,
+            tick: 5,
+            eat_floor: 0,
+        },
+        &[],
+    )
+    .and_then(|choice| choice.ordinary)
+    .is_some()
+}
+
+/// The route model's side of the cases the real eater (`guard.rs`,
+/// `the_real_eater_decides_the_shared_cases`) decides the same way: the
+/// plan's own window damage feeds the one shared eat choice.
+#[test]
+fn the_route_model_decides_the_shared_cases() {
+    use crate::combat::policy::shared_cases::CASES;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
+    let route = route(80, 127);
+    let path = fx.path(&route);
+    for case in CASES {
+        // Each attacker's hit and rate are the content's own, as the real
+        // eater's threat rows read them.
+        let intervals: Vec<ZoneInterval> = case
+            .attackers
+            .iter()
+            .map(|id| {
+                let fact = tables.npc(*id).expect("a shared case names a content NPC");
+                let hit = crate::combat::select::facts::npc_max_hit(fact)
+                    .expect("a known-damage attacker");
+                ZoneInterval::new(
+                    fx.bound(ZoneKey::Zone(0)),
+                    *id,
+                    tile(120),
+                    0,
+                    46,
+                    0,
+                    46,
+                    13,
+                    1,
+                    hit,
+                    tables.npc_rate(fact),
+                    Style::Melee,
+                    None,
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+            .collect();
+        let plan = RoutePlan {
+            complete: true,
+            pack: Some(fx.pack()),
+            intervals: intervals.into_boxed_slice(),
+            crossings: Vec::new().into_boxed_slice(),
+        };
+        let mut checkpoint = || std::future::ready(());
+        let (danger, burst) = poll_ready(replay::window_damage(
+            path,
+            &plan,
+            5,
+            &input(case.hp as u8, case.hp_max as u8, 5, &tables),
+            &tables,
+            WalkAllow::default(),
+            &mut checkpoint,
+        ))
+        .unwrap();
+        assert_eq!(
+            model_bites(&tables, danger, burst, case.hp, case.hp_max),
+            case.bite,
+            "{}: danger {danger}, burst {burst}",
+            case.label
+        );
+    }
+}
+
+/// The burst, not the danger, sets the critical floor: an attacker of 6 that
+/// attacks every tick lands two hits before a bite does, so a 13/20 account
+/// is critical (burst 12, floor 13) and overheals its lobster; the same hit
+/// every fourth tick is one hit (burst 6, floor 7), and the account waits.
+#[test]
+fn a_rate_one_attacker_raises_the_critical_floor_through_its_burst() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    assert!(model_bites(&tables, 6, 12, 13, 20));
+    assert!(!model_bites(&tables, 6, 12, 14, 20));
+    assert!(!model_bites(&tables, 6, 6, 13, 20));
+    assert!(model_bites(&tables, 6, 6, 7, 20));
+}
+
+/// A rate-one attacker lands two hits inside the bite delay; a slower one
+/// lands one. The window damage counts both, and a hazard or a row that has
+/// ended or has not begun counts once or not at all.
+#[test]
+fn window_damage_counts_hits_inside_the_bite_delay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
+    let route = route(80, 127);
+    let path = fx.path(&route);
+    let row = |a: u16, b: u16, hit: u8, rate: u8, hazard: bool| {
+        ZoneInterval::new(
+            fx.bound(ZoneKey::Zone(0)),
+            known_kind(&tables).npc_id,
+            tile(120),
+            a,
+            b,
+            a,
+            b,
+            13,
+            1,
+            hit,
+            rate,
+            Style::Melee,
+            None,
+            false,
+            hazard,
+        )
+        .unwrap()
+    };
+    let at = |rows: Vec<ZoneInterval>, tick: i32| {
+        let plan = RoutePlan {
+            complete: true,
+            pack: Some(fx.pack()),
+            intervals: rows.into_boxed_slice(),
+            crossings: Vec::new().into_boxed_slice(),
+        };
+        let mut checkpoint = || std::future::ready(());
+        poll_ready(replay::window_damage(
+            path,
+            &plan,
+            tick,
+            &input(40, 40, 5, &tables),
+            &tables,
+            WalkAllow::default(),
+            &mut checkpoint,
+        ))
+        .unwrap()
+    };
+    // Rate 1: two hits of 7. Rate 2 and 4: one.
+    assert_eq!(at(vec![row(0, 46, 7, 1, false)], 5), (7, 14));
+    assert_eq!(at(vec![row(0, 46, 7, 2, false)], 5), (7, 7));
+    assert_eq!(at(vec![row(0, 46, 7, 4, false)], 5), (7, 7));
+    // Two attackers add; a strong one is not a weak one doubled.
+    assert_eq!(
+        at(vec![row(0, 46, 9, 4, false), row(0, 46, 4, 1, false)], 5),
+        (13, 17)
+    );
+    // The row has not begun: it starts after the window (path tick of index
+    // 30 is 45) and its first hit is out of reach at tick 5.
+    assert_eq!(at(vec![row(30, 46, 7, 1, false)], 5), (0, 0));
+    // A hazard hits once, only when its start falls in the window.
+    let start = path.point(10).unwrap().tick;
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start - 1), (8, 8));
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start - 3), (0, 0));
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start), (0, 0));
 }
