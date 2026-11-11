@@ -1812,8 +1812,7 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     use frontend_core::DangerLevel;
 
     let _isolated = IsolatedStores::enter("frame-danger-routing-middle");
-    let (mut session, _dir) = session_with_play("frame-danger-routing-middle", &["alice"]);
-    session.nav_settings_open = true;
+    let (session, _dir) = session_with_play("frame-danger-routing-middle", &["alice"]);
     let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
         eprintln!(
             "panel_driver_selects_when_survivable_from_the_open_dropdown: no headless GPU, skipped"
@@ -1823,9 +1822,12 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
     rig.frames_until("the panel preferences", |rig| {
         rig.session().panel_preferences_ready()
     });
+    rig.session().open_window(PanelWindow::NavConfig);
     super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
     super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
-    rig.frame(Pointer::Away);
+    rig.frames_until("the active Nav config frame", |_| {
+        super::TEST_ROUTING_ITEM_BOUNDS.with_borrow(|items| items.len() > 9)
+    });
     assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Never);
 
     let items = super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
