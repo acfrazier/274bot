@@ -88,6 +88,7 @@ const CORE: &[(&str, Decision)] = &[
     ("fleet.rs::Fleet::latch_logout", Row(C::Logout)),
     ("fleet.rs::Fleet::clear_latch", Row(C::Login)),
     // fleet.rs: the fleet view model over the staged filter/order.
+    ("brief.rs::notice_line", Excluded(FORMAT)),
     ("fleet.rs::contains_ci", Excluded(FORMAT)),
     ("fleet.rs::state_label", Excluded(FORMAT)),
     (
@@ -529,6 +530,10 @@ const CORE: &[(&str, Decision)] = &[
     (
         "scripts/mod.rs::Scripts::show_load_failures",
         Excluded("presentation: shows the library's load failures on the banner once a Start is accepted"),
+    ),
+    (
+        "scripts/mod.rs::Scripts::publish_load_failures",
+        Excluded("presentation: logs the library's new load failures once and returns the banner line"),
     ),
     ("scripts/mod.rs::Scripts::take_start_failures", Excluded(RESULT)),
     (

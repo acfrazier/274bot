@@ -2612,9 +2612,19 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     );
     settle_starts(&mut session, &mut app);
     assert_eq!(session.core.script_state("bob"), ScriptRunState::Running);
+    // The strip names the count and the card; the failure's diagnostic and
+    // path are in the retained failure (and in the log), not on the strip.
     let output = app.error.as_deref().unwrap();
-    assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
-    assert!(output.contains(&path.display().to_string()));
+    assert!(
+        output.starts_with("1 script failed to load: retry"),
+        "{output}"
+    );
+    assert!(
+        output.chars().count() <= frontend_core::LINE_MAX,
+        "{output}"
+    );
+    assert!(retained.contains("tui-initial-load") && retained.contains("runtime-load"));
+    assert!(retained.contains(&path.display().to_string()));
     session.script_start(&mut app, &sel); // active slot refuses before evaluating
     assert!(app
         .error
@@ -3380,10 +3390,7 @@ fn refused_no_origin_walk_does_not_arm_destination() {
         app.walk_dest
     );
     let error = app.error.as_deref().unwrap_or("");
-    assert!(
-        error.contains("no observed player"),
-        "refusal must be visible: {error:?}"
-    );
+    assert_eq!(error, "not logged in", "the reason must be visible");
 }
 
 #[test]
@@ -7261,7 +7268,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
         app.error
             .as_deref()
             .unwrap_or("")
-            .contains("tui-first-load"),
+            .contains("1 script failed to load"),
         "{:?}",
         app.error
     );

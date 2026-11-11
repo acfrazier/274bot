@@ -9350,6 +9350,7 @@ fn the_status_and_script_panes_show_the_short_reason() {
     }
     ctx.render();
     let open = drawn.0.take();
+    drop(ctx);
     assert!(open.contains("Copy"), "{open}");
     assert!(open.contains("blocked by danger zones"), "{open}");
 
@@ -9368,9 +9369,10 @@ fn the_banner_for_a_99_zone_refusal_is_short() {
     let mut session = crate::session::Session::new();
     session.error = Some(zone_reason());
     let (banner, _) = draw_banner_and_status(&session);
+    // The first line is the test window's title.
     let lines: Vec<&str> = banner
         .lines()
-        .filter(|line| !line.trim().is_empty())
+        .filter(|line| !line.trim().is_empty() && *line != "banner")
         .collect();
     assert_eq!(lines.len(), 1, "{banner:?}");
     assert!(
