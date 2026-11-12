@@ -1268,6 +1268,41 @@ mod tests {
         )));
     }
 
+    /// Quest paths gather by resource key (`"resource": "iron"`). The key names every method of that resource: regular
+    /// iron and the Haunted Mine veins. A path that names the method id (`"mining.iron"`) still gets exactly one.
+    #[test]
+    fn a_resource_key_compiles_to_every_method_of_its_resource_and_a_method_id_to_one() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let catalog = api::selected::FamilyPreparation::run({
+            let selected = Arc::clone(&selected);
+            move |worker| api::gather_methods::prepare(&selected, worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let ids = |args: serde_json::Value| -> Vec<String> {
+            let need = provisioning_tool_need(&args, Arc::clone(&catalog), &selected)
+                .unwrap_or_else(|error| panic!("{args} does not compile: {error:?}"));
+            need.methods
+                .iter()
+                .map(|&index| catalog.methods()[index].id.0.to_string())
+                .collect()
+        };
+        let until = serde_json::json!({ "obj": "iron_ore", "qty": 2 });
+        assert_eq!(
+            ids(serde_json::json!({ "skill": "mining", "resource": "iron", "until": until })),
+            ["mining.iron", "mining.iron.get_ore_normal"]
+        );
+        assert_eq!(
+            ids(serde_json::json!({ "skill": "mining", "method": "mining.iron", "until": until })),
+            ["mining.iron"]
+        );
+    }
+
     #[test]
     fn gather_arrives_at_a_loc_footprint_not_its_origin() {
         if !api::test_support::game_data_available() {

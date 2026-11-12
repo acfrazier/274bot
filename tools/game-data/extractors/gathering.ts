@@ -714,25 +714,27 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
     }
     const methodGroups: { id: string; ore: string; rows: DbRow[] }[] = [];
     for (const [ore, group] of groups) {
+        // Group the row's resource rocks by the tick behaviour of the handler each loc really dispatches to
+        // (depletes, delayed yield). A group whose rocks run different handlers (289 Haunted Mine iron runs
+        // mining_rock_normal beside the fast regular iron) cannot share one tick_arm.
         const variants = new Map<string, { label: string; rocks: Set<string> }>();
-        if (ctx.revision === 377) {
-            for (const row of group) for (const data of row.data.get('rock') ?? []) {
-                const rock = model.rocks.get(data.values[0]);
-                if (rock?.class !== 'resource' || !rock.label) continue;
-                const label = model.labels.get(rock.label);
-                if (!label || 'code' in label) continue;
-                const key = `${label.depletes}:${label.delayDrop}`;
-                const variant = variants.get(key) ?? { label: rock.label, rocks: new Set<string>() };
-                variant.rocks.add(rock.alias);
-                variants.set(key, variant);
-            }
+        for (const row of group) for (const data of row.data.get('rock') ?? []) {
+            const rock = model.rocks.get(data.values[0]);
+            if (rock?.class !== 'resource' || !rock.label) continue;
+            const label = model.labels.get(rock.label);
+            if (!label || 'code' in label) continue;
+            const key = `${label.depletes}:${label.delayDrop}`;
+            const variant = variants.get(key) ?? { label: rock.label, rocks: new Set<string>() };
+            variant.rocks.add(rock.alias);
+            variants.set(key, variant);
         }
         if (variants.size <= 1) {
             methodGroups.push({ id: `mining.${ore}`, ore, rows: group });
             continue;
         }
-        // One tick_arm cannot describe both delayed and immediate yield handlers.
-        // Keep each selected 377 resource, but give incompatible handlers separate methods.
+        // One tick_arm cannot describe both delayed and immediate yield handlers. The first variant in row
+        // order keeps the plain `mining.<ore>` id; each other variant gets a method named by its handler label,
+        // so every rock keeps exactly its own handler's timing.
         let primary = true;
         for (const variant of variants.values()) {
             const selected = group.map((row) => {

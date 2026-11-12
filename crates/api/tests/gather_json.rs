@@ -253,9 +253,15 @@ fn method_rows_keep_every_fact_next_to_its_completeness() {
             .iter()
             .map(|id| id["id"].as_i64().unwrap())
             .collect();
+        // Regular copper and the tutorial rock first; 289 content adds the Haunted Mine copper veins to the row.
+        let haunted: &[i64] = if revision == "289" {
+            &[4976, 4977, 4978]
+        } else {
+            &[]
+        };
         assert_eq!(
             resources,
-            [2090, 2091, 3042],
+            [&[2090, 2091, 3042][..], haunted].concat(),
             "{revision}: the tutorial copper rock is typed"
         );
 
@@ -266,9 +272,14 @@ fn method_rows_keep_every_fact_next_to_its_completeness() {
             .iter()
             .map(|id| id["id"].as_i64().unwrap())
             .collect();
+        let haunted_tin: &[i64] = if revision == "289" {
+            &[4979, 4980, 4981]
+        } else {
+            &[]
+        };
         assert_eq!(
             tin_resources,
-            [2094, 2095, 3043],
+            [&[2094, 2095, 3043][..], haunted_tin].concat(),
             "{revision}: the tutorial tin rock is typed"
         );
 
@@ -331,7 +342,12 @@ fn resource_lookup_matches_the_trimmed_key_only() {
     for (revision, catalog) in both() {
         for name in ["iron", "Iron", "  IRON "] {
             let hit = gather_resource(Some(catalog), name).unwrap();
-            assert_eq!(method_ids(&hit), ["mining.iron"], "{revision} {name:?}");
+            let expected: &[&str] = if revision == "289" {
+                &["mining.iron", "mining.iron.get_ore_normal"]
+            } else {
+                &["mining.iron"]
+            };
+            assert_eq!(method_ids(&hit), expected, "{revision} {name:?}");
         }
         for name in [
             "Rocks",
