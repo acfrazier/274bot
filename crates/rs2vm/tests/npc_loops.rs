@@ -368,3 +368,37 @@ fn a_second_cycle_has_no_acyclic_pass_allowance() {
         .enumerate()
         .any(|(i, p)| landing(p) && r.covered(i, landing)));
 }
+
+#[test]
+fn terminal_label_jump_does_not_disable_the_npc_pass_summary() {
+    let mut program = loop_program(
+        |a| {
+            a.op("NPC_CATEGORY", 0);
+            a.push(121);
+            a.branch("BRANCH_NOT", "skip_non_guard");
+            a.op("JUMP_WITH_PARAMS", 1);
+            a.label("skip_non_guard");
+        },
+        |_| {},
+    );
+    let code = &program.scripts[&ScriptId(0)].code;
+    let tail = code[code.len() - 3..].to_vec();
+    program.scripts.insert(
+        ScriptId(1),
+        Script {
+            id: ScriptId(1),
+            code: tail,
+            ..Script::default()
+        },
+    );
+    let result = run(&program, View::NAV);
+    assert!(
+        result
+            .paths
+            .iter()
+            .enumerate()
+            .any(|(index, path)| landing(path) && result.covered(index, landing)),
+        "every iterator outcome must finish at DEST, including a terminal label jump"
+    );
+    assert!(result.transfers.loop_summaries > 0);
+}

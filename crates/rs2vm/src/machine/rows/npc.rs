@@ -390,7 +390,7 @@ impl Exec<'_, '_> {
             let offset = ins.int().unwrap_or(0);
             let target = |off: i32| usize::try_from(scan.pc as i64 + 1 + i64::from(off)).ok();
             let child = match name {
-                "RETURN" => None,
+                "RETURN" | "JUMP" | "JUMP_WITH_PARAMS" => None,
                 "BRANCH" => {
                     if scan.next == 0 {
                         target(offset)
