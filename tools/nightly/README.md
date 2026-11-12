@@ -727,7 +727,7 @@ administrator, once.
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
 4. Install the engine's JavaScript dependencies for local-data generation. The
    `tools/game-data/generate.ts` script imports TypeScript from this tree. After
-   you copy the engine, run this in PowerShell:
+   you copy the engine, run this once before the nightly starts:
    ```powershell
    Set-Location C:\274bot-nightly\engine-pristine\engine
    & 'C:\Users\BotTest\.cargo\bin\bun.exe' install --frozen-lockfile --ignore-scripts --no-save
