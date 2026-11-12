@@ -2092,20 +2092,8 @@ fn shilo_cart_routes_require_completion_in_baked_runtime_policy() {
 
     let fx = Fixture::new();
     write_static_route_journal(&fx);
-    write_blocked_square(
-        &fx,
-        43,
-        50,
-        &[(2779, 3211), (2776, 3214)],
-        "",
-    );
-    write_blocked_square(
-        &fx,
-        44,
-        46,
-        &[(2834, 2951), (2834, 2954)],
-        "",
-    );
+    write_blocked_square(&fx, 43, 50, &[(2779, 3211), (2776, 3214)], "");
+    write_blocked_square(&fx, 44, 46, &[(2834, 2951), (2834, 2954)], "");
     let defs = loc_defs(&[]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &collision);

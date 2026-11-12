@@ -305,7 +305,6 @@ mod tests {
         assert!(std::mem::size_of::<QuestListStatusEvidence>() <= 64);
     }
 
-
     #[test]
     fn reconnect_and_causal_changes_invalidate_but_idle_ticks_do_not() {
         let run = RunKey {
@@ -661,9 +660,16 @@ mod quest_list_tests {
             return;
         };
         let mut identity = selected.quest_identity().unwrap().clone();
-        let row = identity.rows.iter_mut().find(|row| row.id == "hero").unwrap();
+        let row = identity
+            .rows
+            .iter_mut()
+            .find(|row| row.id == "hero")
+            .unwrap();
         row.colour_authoritative = false;
-        row.completion_range = Some(InclusiveRange { min: Some(8), max: Some(15) });
+        row.completion_range = Some(InclusiveRange {
+            min: Some(8),
+            max: Some(15),
+        });
         let quests = QuestCatalog::from_identity(Some(&identity)).unwrap();
         assert_window_from_colour(&quests, "hero", 0x00F800, 8, 15, Truth::True);
         assert_window_from_colour(&quests, "hero", 0x00F800, 15, 15, Truth::Unknown);
@@ -680,10 +686,13 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn window_gate_barrier_unknown_on_green() {
+    fn completed_priest_window_stays_weak_after_reachable_writer() {
         let Some(quests) = catalog() else {
             return;
         };
+        // drezel.rs2:8-12,138-147 can change the completed stage from 60 to 61.
+        assert!(!quests.quest("priestperil").unwrap().colour_authoritative);
+        assert_window_from_colour(&quests, "priestperil", 0x00F800, 60, 61, Truth::True);
         assert_window_from_colour(&quests, "priestperil", 0x00F800, 61, 61, Truth::Unknown);
     }
 

@@ -1085,7 +1085,11 @@ fn main() -> Result<(), String> {
         }
     }
     let stamp = EvidenceStamp {
-        run: RunKey { slot: 1, run: 1, session: 1 },
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
         tick: 1,
         sequence: 1,
     };
@@ -1098,13 +1102,17 @@ fn main() -> Result<(), String> {
     ] {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
-        snapshot.seed_quest_statuses(vec![QuestStatusView {
-            component_id: 1,
-            name: "Hero's Quest".into(),
-            colour,
-        }], true);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: "Hero's Quest".into(),
+                colour,
+            }],
+            true,
+        );
         let provider = QuestListEvidenceProvider::from_snapshot(
-            &quests, SnapshotView::new(Some(&snapshot), stamp),
+            &quests,
+            SnapshotView::new(Some(&snapshot), stamp),
         );
         let state = WorldState::from_snapshot(&snapshot)
             .with_map_members(true)
