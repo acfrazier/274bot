@@ -622,6 +622,54 @@ fn poison_hold_gap_at_initial_deadline_can_clear_at_tick_62() {
 }
 
 #[test]
+fn poison_hold_missed_deadline_update_clears_or_refuses_by_tick_63() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for settles in [true, false] {
+        let mut rig = HoldRig::new(0, 0, true);
+        rig.pump(tile(0), true);
+        for tick in (1..=30).chain(32..=63) {
+            if !settles && tick > 32 && tick < 63 && tick % 2 == 1 {
+                continue;
+            }
+            rig.observe(tick, tile(0), None, None);
+            rig.pump(tile(0), true);
+            let navs = rig.bot();
+            if tick < 63 {
+                assert!(
+                    navs[ALICE].risk_refusal.is_none(),
+                    "tick {tick}, refusal={:?}",
+                    navs[ALICE].risk_refusal
+                );
+                assert!(navs[ALICE].poison_hold.is_some());
+                assert!(rig.driver.walks.is_empty(), "no hop before Clear");
+            }
+        }
+        let navs = rig.bot();
+        assert!(navs[ALICE].poison_hold.is_none());
+        if settles {
+            assert_eq!(
+                navs[ALICE].condition.current().unwrap().poison,
+                PoisonState::Clear
+            );
+            assert!(navs[ALICE].risk_refusal.is_none());
+            assert!(!rig.driver.walks.is_empty());
+        } else {
+            assert!(matches!(
+                navs[ALICE].risk_refusal.as_deref().map(|entry| &entry.1),
+                Some(WalkRefusal::PoisonUnsettled {
+                    waited: 63,
+                    cause: WindowReset::FrameGap,
+                })
+            ));
+            assert!(navs[ALICE].route.is_none());
+            assert!(rig.driver.walks.is_empty());
+        }
+    }
+}
+
+#[test]
 fn poison_hold_repeated_gaps_refuse_with_last_detail_by_tick_62() {
     if !api::test_support::game_data_available() {
         return;

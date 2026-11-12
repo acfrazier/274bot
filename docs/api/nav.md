@@ -1042,8 +1042,9 @@ sends no hop past that index while the fact is Unknown. At the retreat tile it
 waits for the published remainder, not a new full window. One skipped or
 duplicated observation can extend that deadline to cover the restarted clean
 window, but only while dispatch acceptance remains valid. The hold permits
-one such extension, at most 31 additional observed game ticks. Thus, the total
-wait is at most the initial remainder plus 31, never more than 62 ticks.
+one such extension. It covers the next update after one missed deadline update,
+then a fresh 31-tick window. Thus, the total wait is at most the initial
+remainder plus 32, never more than 63 observed game ticks.
 Further gaps cannot extend the deadline again. Clear, poison, or cure evidence
 still takes precedence on the final tick. An unresolved deadline reports
 `PoisonUnsettled { waited, cause }` with the last reset cause. A modal, guardian

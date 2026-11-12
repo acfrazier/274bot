@@ -29,15 +29,15 @@ impl HoldWait {
         if self.recovered_gap
             || !window.accepted
             || window.last_reset != WindowReset::FrameGap
-            || self.elapsed(now) > self.deadline.wrapping_sub(self.started)
+            || self.elapsed(now) > self.deadline.wrapping_sub(self.started) + 1
         {
             return;
         }
         let deadline = now.wrapping_add(u16::from(window.remaining));
         let extension = deadline.wrapping_sub(self.deadline);
-        // poison.rs2:29,72-75 queues damage after a 30-tick timer. Allow one
-        // replacement 31-edge window, never a second deadline extension.
-        if extension != 0 && extension <= u16::from(crate::slot_condition::CLEAN_TICKS) {
+        // poison.rs2:29,72-75 needs 31 clean edges. Cover one missed deadline
+        // update and one replacement window, never a second extension.
+        if extension != 0 && extension <= u16::from(crate::slot_condition::CLEAN_TICKS) + 1 {
             self.deadline = deadline;
             self.recovered_gap = true;
         }
@@ -124,12 +124,12 @@ mod tests {
         };
         for started in [0u16, 65_530] {
             let mut wait = HoldWait::start(started, CLEAN_TICKS);
-            wait.recover_frame_gap(started.wrapping_add(31), gap);
-            assert_eq!(wait.deadline, started.wrapping_add(62));
-            wait.recover_frame_gap(started.wrapping_add(33), gap);
-            assert_eq!(wait.deadline, started.wrapping_add(62));
-            assert!(!wait.ended(started.wrapping_add(61)));
-            assert!(wait.ended(started.wrapping_add(62)));
+            wait.recover_frame_gap(started.wrapping_add(32), gap);
+            assert_eq!(wait.deadline, started.wrapping_add(63));
+            wait.recover_frame_gap(started.wrapping_add(34), gap);
+            assert_eq!(wait.deadline, started.wrapping_add(63));
+            assert!(!wait.ended(started.wrapping_add(62)));
+            assert!(wait.ended(started.wrapping_add(63)));
         }
     }
 
@@ -148,7 +148,7 @@ mod tests {
         );
         assert_eq!(wait.deadline, 31);
         wait.recover_frame_gap(
-            32,
+            33,
             PoisonWindow {
                 accepted: true,
                 remaining: CLEAN_TICKS,
