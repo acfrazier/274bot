@@ -161,6 +161,9 @@ globs = [
   "crates/script-js/src/tooling/compat_dts.rs",
   # API example compiled and run by the headless actor_observation tests.
   "crates/script-js/examples/actor_observation_v2.ts",
+  # Developer inventory emitter: reads a local rs2b0t tree and prints JSON for
+  # comparison; it opens no session and ships no runtime path.
+  "crates/script-js/examples/catalog_inventory.rs",
   # deleted by script split S3; its code moved to `script-js`
   # S3 commit: 6831a262cbb35272e6a596b14a1239901b1ea90b.
   "crates/script/src/shim/mod.rs",
@@ -410,8 +413,11 @@ cells = [
   "panel.loadout-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib loadouts::tests::",
 ]
 
+# The TUI command and input path. bin::tests opens the fleet-card picker with
+# `c`, walks it with the arrow keys and picks with Enter, which runs
+# fleet_card.rs's CardPicker over the real app state.
 [[cover]]
-globs = ["crates/tui/src/commands.rs", "crates/tui/src/input.rs", "crates/tui/src/overlay.rs", "crates/tui/src/palette.rs"]
+globs = ["crates/tui/src/commands.rs", "crates/tui/src/fleet_card.rs", "crates/tui/src/input.rs", "crates/tui/src/overlay.rs", "crates/tui/src/palette.rs"]
 cells = [
   "tui.command-refusal-headless|TUI_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/tui ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib bin::tests::",
 ]
@@ -1736,8 +1742,10 @@ cells = [
 # OperatorSession::walk_map_context -> WalkMap::confirm_walk_plan ->
 # OperatorSession::confirm_marked_walk -> Play::map_walk_group and real arms.
 # It also checks session/map destination retention and typed error projection.
+# The whole library also runs rs2b0t_import.rs: the export parser, the preview
+# and apply flow, and the dimmed-catalog-card mapping.
 [[cover]]
-globs = ["crates/frontend-core/Cargo.toml", "crates/frontend-core/src/session/map.rs", "crates/frontend-core/src/walk_map.rs", "crates/frontend-core/src/launch.rs", "crates/frontend-core/src/session/vault_rows.rs"]
+globs = ["crates/frontend-core/Cargo.toml", "crates/frontend-core/src/rs2b0t_import.rs", "crates/frontend-core/src/session/map.rs", "crates/frontend-core/src/walk_map.rs", "crates/frontend-core/src/launch.rs", "crates/frontend-core/src/session/vault_rows.rs"]
 cells = [
   "frontend-core.map-walk-headless|BOT_NAV_BUILD=skip NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} env -u LIVE nice -n 10 cargo test --locked -p frontend-core --lib",
 ]

@@ -200,6 +200,32 @@ fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), Str
     }
 }
 
+/// Prepare a whole catalog the way the product's refresh does: the bounded
+/// catalogue job on WorkAdmission, joined to its terminal result.
+fn prepare_catalogue(js: &JsLibrary, root: &Path) -> script_js::CatalogPreparationResult {
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(root)
+            .expect("capture the catalogue metadata"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .unwrap();
+    script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_prepare(),
+    )
+    .expect("admit catalogue preparation")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue preparation completes")
+}
+
 #[test]
 fn mixed_file_batch_keeps_both_failures_after_success() {
     let dir = scratch("mixed-file");
@@ -238,8 +264,10 @@ fn duplicate_display_names_are_keyed_by_path() {
     assert!(js.load(&one).is_err());
     let imported = js.load(&two).expect("unloadable file still registers");
     assert_eq!(
-        imported.unloadable.as_deref(),
-        Some("../../event/webwalk/Something.js")
+        imported.unloadable,
+        Some(script_js::UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into()
+        ))
     );
 
     let failures = js.load_failures();
@@ -418,6 +446,112 @@ fn catalog_mixed_batch_retains_named_failures() {
         "{named} / {}",
         js.named_failure_output()
     );
+}
+
+/// A retired card that the catalog refresh adds is not a prepare failure and
+/// never enters the refresh report's failed count.
+#[test]
+fn catalog_policy_hold_refresh_records_no_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-policy-hold-added");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("Woodcutter", GOOD)]);
+    let mut js = library(&dir);
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(result.diff.added, ["Woodcutter"]);
+    assert!(
+        result.prepare_failed.is_empty(),
+        "a retired card is not a prepare failure: {:?}",
+        result.prepare_failed
+    );
+    let report = js.apply_catalog_diff(result.diff);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.summary(), "added 1");
+    let card = js
+        .get(ScriptSource::Catalog, "Woodcutter")
+        .expect("the retired card stays listed");
+    assert_eq!(
+        card.unloadable,
+        Some(script_js::UnloadReason::Retired(
+            "replaced by the native Gatherer".into()
+        ))
+    );
+    assert!(
+        js.load_failure(&card.identity_key()).is_none(),
+        "a retired card records no load failure"
+    );
+}
+
+/// A retired card whose source changes keeps its old registration and gains
+/// no load-failure record.
+#[test]
+fn a_changed_retired_card_does_not_gain_a_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-policy-hold-changed");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("Woodcutter", GOOD)]);
+    let mut js = library(&dir);
+    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("register the catalog");
+    let path = root.join("src/bot/scripts/Woodcutter/Woodcutter.ts");
+    std::fs::write(&path, GOOD_V2).unwrap();
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(result.diff.changed, ["Woodcutter"]);
+    assert!(
+        result.prepare_failed.is_empty(),
+        "a retired card is not a prepare failure: {:?}",
+        result.prepare_failed
+    );
+    for failure in &result.prepare_failed {
+        js.record_failure(failure.clone());
+    }
+    let report = js.apply_catalog_diff(result.diff);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(!report.summary().contains("failed"), "{}", report.summary());
+    let key = js
+        .get(ScriptSource::Catalog, "Woodcutter")
+        .expect("the retired card stays listed")
+        .identity_key();
+    assert!(
+        js.load_failure(&key).is_none(),
+        "a changed retired card gains no load failure"
+    );
+}
+
+/// An unresolved import is still a load failure, recorded with the specifier
+/// and counted in the refresh report.
+#[test]
+fn an_unsupported_import_still_records_a_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-import-failure");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("BadImport", BAD_IMPORT)]);
+    let mut js = library(&dir);
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(
+        result.prepare_failed.len(),
+        1,
+        "{:?}",
+        result.prepare_failed
+    );
+    let failure = &result.prepare_failed[0];
+    assert_eq!(failure.name, "BadImport");
+    assert_eq!(failure.stage, LoadStage::ImportResolution);
+    assert_eq!(
+        failure.sibling.as_deref(),
+        Some("../../event/webwalk/Something.js")
+    );
+    for failure in &result.prepare_failed {
+        js.record_failure(failure.clone());
+    }
+    let mut report = js.apply_catalog_diff(result.diff);
+    report.failed.extend(result.prepare_failed);
+    assert_eq!(report.failed.len(), 1);
+    assert_eq!(report.summary(), "added 1, failed 1");
+    assert!(js
+        .load_failures()
+        .iter()
+        .any(|f| f.name == "BadImport" && f.stage == LoadStage::ImportResolution));
 }
 
 #[test]

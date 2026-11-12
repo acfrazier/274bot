@@ -36,7 +36,7 @@ pub use library::shape::{
     live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
     raw_content_fingerprint, resolve_api_family, resolve_sibling_path, scan_import_specifiers,
     scan_same_folder_js_imports, scan_scripts_sibling_js_imports, sibling_module_url, ApiFamily,
-    LoadShape, VersionDiag, CATALOG_DIM,
+    LoadShape, UnloadReason, VersionDiag, CATALOG_DIM,
 };
 
 pub use library::shape::{resolve_sibling_modules, transpile_ts};

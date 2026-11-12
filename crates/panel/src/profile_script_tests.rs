@@ -1158,6 +1158,85 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
 
 #[cfg(feature = "js")]
 #[test]
+fn catalog_policy_hold_refresh_records_no_load_failure() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-policy-hold");
+    fake_catalog(&root, &[("GoodBot", BOT_TS), ("Woodcutter", BOT_TS)]);
+    s.scripts
+        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    s.scripts
+        .ensure_card(CardSource::Catalog, "GoodBot")
+        .unwrap();
+    s.scripts
+        .ensure_card(CardSource::Catalog, "Woodcutter")
+        .unwrap();
+    assert!(
+        !s.scripts.load_failures().any(|f| f.name() == "Woodcutter"),
+        "a retired card records no load failure: {:?}",
+        s.scripts.load_failure_count()
+    );
+    fs::write(
+        root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+        "export default class T extends LoopingBot { override loop() { return; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/bot/scripts/Woodcutter/Woodcutter.ts"),
+        "export default class T extends LoopingBot { override loop() { let n = 1; } }\n",
+    )
+    .unwrap();
+    refresh_catalog(&mut s, &root);
+    settle(&mut s);
+    let names: Vec<String> = s
+        .scripts
+        .load_failures()
+        .map(|f| f.name().to_owned())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name == "Woodcutter"),
+        "a changed retired card gains no failure: {names:?}"
+    );
+    let report = s.scripts.catalog_refresh_report().unwrap_or("");
+    assert!(
+        !report.contains("failed"),
+        "the refresh count excludes a policy hold: {report:?}"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn start_refuses_a_retired_catalog_card_without_a_failure_record() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-retired-start");
+    fake_catalog(&root, &[("Woodcutter", BOT_TS)]);
+    s.scripts
+        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    let key = s
+        .scripts
+        .card(CardSource::Catalog, "Woodcutter")
+        .expect("retired card is listed")
+        .identity_key();
+    let err = start_sel(
+        &mut s,
+        "alice",
+        ScriptChoice::loaded(CardSource::Catalog, "Woodcutter"),
+    )
+    .expect_err("Start refuses a retired card");
+    assert!(
+        err.contains("unavailable: replaced by the native Gatherer"),
+        "{err}"
+    );
+    assert_eq!(s.core.script_state("alice"), ScriptRunState::Idle);
+    assert!(
+        s.scripts.load_failure(&key).is_none(),
+        "refusing Start records no load failure"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn catalog_mixed_batch_keeps_two_failures_after_success() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-mixed");
