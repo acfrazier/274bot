@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn real_289_multiway_has_4697_sorted_keys() {
+    fn real_289_multiway_keys_match_distinct_content_rows() {
         let Some(path) = api::test_support::local_asset_path(
             "BOT_NAV_CONTENT_DIR_MULTIWAY_CSV",
             "/Users/acfrazier/experiments/lostcity-289/content/maps/multiway.csv",
@@ -244,11 +244,60 @@ mod tests {
         };
         let csv = std::fs::read_to_string(&path).expect("289 multiway.csv");
         let keys = produce_multiway_keys(&csv).unwrap();
-        assert_eq!(keys.len(), 4697);
-        assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
-        for &key in keys.iter() {
-            unpack_tile_key(key).unwrap();
+
+        let mut content_tiles = std::collections::BTreeSet::new();
+        for (index, raw) in csv.lines().enumerate() {
+            let row = raw.trim();
+            if row.is_empty() || row.starts_with("//") {
+                continue;
+            }
+            let mut parts = row.split('_');
+            let mut component = || {
+                let part = parts
+                    .next()
+                    .unwrap_or_else(|| panic!("multiway line {}: {row:?}", index + 1));
+                part.parse::<i32>()
+                    .unwrap_or_else(|_| panic!("multiway line {}: {row:?}", index + 1))
+            };
+            let level = component();
+            let map_x = component();
+            let map_z = component();
+            let local_x = component();
+            let local_z = component();
+            assert!(
+                parts.next().is_none(),
+                "multiway line {}: {row:?}",
+                index + 1
+            );
+            content_tiles.insert((level, map_x * 64 + local_x, map_z * 64 + local_z));
         }
+
+        assert!(
+            keys.windows(2).all(|pair| pair[0] < pair[1]),
+            "multiway keys must be strictly sorted, with no duplicates"
+        );
+        let packed_tiles: std::collections::BTreeSet<_> = keys
+            .iter()
+            .map(|&key| {
+                let tile = unpack_tile_key(key).unwrap();
+                (tile.level, tile.x, tile.z)
+            })
+            .collect();
+        assert_eq!(
+            packed_tiles.len(),
+            keys.len(),
+            "multiway keys must not repeat a tile"
+        );
+        assert_eq!(
+            packed_tiles, content_tiles,
+            "every packed key must trace to a row of the CSV it read"
+        );
+        assert_eq!(
+            keys.len(),
+            content_tiles.len(),
+            "key count must equal the distinct rows counted independently from the CSV"
+        );
+
         let bytes = nav_planner::pack::encode_multiway_keys(&keys).unwrap();
         let decoded = nav_planner::pack::decode_multiway_section(&bytes).unwrap();
         assert_eq!(&*decoded, &*keys);
