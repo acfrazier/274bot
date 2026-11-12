@@ -5439,6 +5439,7 @@ impl Session {
         self.map_catalogue_named = false;
         self.map_catalogue_unavailable = false;
         self.map_catalogue_failed_inputs = None;
+        self.map_model.close();
     }
 
     pub fn map_bind_status(&self) -> Option<String> {

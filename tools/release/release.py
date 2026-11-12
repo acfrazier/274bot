@@ -1889,6 +1889,7 @@ def render_verify_plan(args):
                     "verify exact membership, byte counts, and SHA-256 release manifest",
                     "run panel-play --help and tui-play --help on the native platform",
                     "require a clean host checkout at the requested commit before the map check",
+                    "build the revision-289 map catalogue from the packaged data and run its searches",
                 ] + ([
                     "on macOS, verify all signatures, the staple, and Gatekeeper acceptance",
                 ] if platform == "macos" else []),
