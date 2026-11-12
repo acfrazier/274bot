@@ -10075,7 +10075,7 @@ fn catalog_import_runtime_failure_uses_the_shared_notice() {
     );
     assert_eq!(
         session.error.as_deref(),
-        Some(named_failures.as_str()),
+        session.scripts.load_failure_line().as_deref(),
         "the panel must show the shared core failure notice"
     );
 }

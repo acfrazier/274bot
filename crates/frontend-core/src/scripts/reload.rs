@@ -1438,11 +1438,11 @@ impl Scripts {
     ) {
         match &result {
             Ok(_) if self.js.load_failure_count() > 0 => {
-                let failures = self.js.named_failure_output();
                 if not_checked.is_empty() {
-                    self.show(failures);
+                    self.show_load_failures();
                 } else {
-                    self.show(format!("{failures}\n{}", not_checked_line(not_checked)));
+                    let failures = self.publish_load_failures().unwrap_or_default();
+                    self.show(format!("{failures}; {}", not_checked_line(not_checked)));
                 }
             }
             Ok(count) if !not_checked.is_empty() => self.show(format!(

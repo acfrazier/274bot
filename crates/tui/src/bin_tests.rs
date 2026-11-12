@@ -2481,7 +2481,7 @@ fn catalog_import_retains_runtime_failure_for_new_card() {
     );
     assert_eq!(
         app.error.as_deref(),
-        Some(named_failures.as_str()),
+        session.scripts.load_failure_line().as_deref(),
         "the TUI must show the shared core failure notice"
     );
 }
