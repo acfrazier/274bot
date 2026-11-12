@@ -754,7 +754,7 @@ function buildGraph(content: string, variable: string, constants: ReadonlyMap<st
         const relative = path.relative(content, file).split(path.sep).join('/');
         blocks.push(...parseRs2Blocks(relative, fs.readFileSync(file, 'utf8')));
     }
-    const { byId, reverse } = controlGraph(blocks, variable, constants);
+    const { byId, reverse } = controlGraph(blocks, variable, constants, selectorResolver(blocks, constants));
     const writers: Writer[] = [];
     for (const block of byId.values()) for (const statement of block.statements) {
         const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`).exec(statement.text);

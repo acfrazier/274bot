@@ -546,7 +546,8 @@ fn cart_completion_gate(content_root: &Path, npc: i32) -> Option<bool> {
         if !compact_eq(&head, "%zombiequeen<^zombiequeen_complete") {
             return None;
         }
-        let mut refusal = top_level_statements(&arm);
+        let inner = arm.trim().strip_prefix('{')?.strip_suffix('}')?;
+        let mut refusal = top_level_statements(inner);
         if !compact_eq(&refusal.pop()?, "return;")
             || refusal.is_empty()
             || refusal.iter().any(|statement| {

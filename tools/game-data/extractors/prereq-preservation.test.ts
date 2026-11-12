@@ -427,3 +427,25 @@ switch_component(last_com) {
     );
     assert.deepEqual(possible.map(({ right }) => right), ['1', '0']);
 }
+
+withContent({
+    'scripts/journal.rs2': `[opnpc1,menu]
+def_int $option;
+if (%progress = 1) {
+    $option = 3;
+} else {
+    $option = ~choose_two(1, 2);
+}
+switch_int($option) {
+    case 3:
+        %progress = 2;
+}
+[proc,choose_two](int $first, int $second)(int)
+switch_component(last_com) {
+    case panel:first: return($first);
+    case default: return($second);
+}
+`,
+}, (content) => assertPrereqPreservation(
+    content, [row([3, 5], [3, 5])], undefined, [journal([3, 5], [3, 5])],
+));
