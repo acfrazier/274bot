@@ -16,6 +16,50 @@ pub enum ServiceKind {
     ShopKeeper,
 }
 
+/// A route cost in half ticks.
+///
+/// The router walks one tile in half a tick at the run rate and charges a
+/// transport whole ticks, so every route cost is a whole count of half ticks.
+/// Comparing half ticks is exact: a shop at half a tick and a spawn at one
+/// tick are not tied. The value is a cost, not a duration to wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct RouteCost(u32);
+
+impl RouteCost {
+    /// A route of no cost.
+    pub const ZERO: Self = Self(0);
+
+    /// The cost of this many whole ticks. A count above the range saturates.
+    pub const fn from_ticks(ticks: u32) -> Self {
+        Self(ticks.saturating_mul(2))
+    }
+
+    /// The cost of this many half ticks.
+    pub const fn from_half_ticks(half_ticks: u32) -> Self {
+        Self(half_ticks)
+    }
+
+    /// The cost as a count of half ticks. Use this for every comparison.
+    pub const fn half_ticks(self) -> u32 {
+        self.0
+    }
+
+    /// The cost in whole ticks, rounded up. For text only, never for a comparison.
+    pub const fn ticks_ceil(self) -> u32 {
+        self.0.div_ceil(2)
+    }
+
+    /// The sum of two costs. A sum above the range saturates.
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+
+    /// This cost repeated `count` times. A product above the range saturates.
+    pub const fn saturating_mul(self, count: u32) -> Self {
+        Self(self.0.saturating_mul(count))
+    }
+}
+
 /// A borrowed view of a retained row whose access tiles nav has validated.
 #[derive(Debug, Clone, Copy)]
 pub struct ServiceCandidate<'a> {
@@ -260,5 +304,47 @@ mod tests {
             });
             assert_eq!(measured.count_total, 0, "{revision:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod route_cost_tests {
+    use super::RouteCost;
+
+    #[test]
+    fn half_tick_costs_stay_exact_and_order_below_whole_ticks() {
+        let shop = RouteCost::from_half_ticks(1);
+        let ground = RouteCost::from_ticks(1);
+        assert_eq!(shop.half_ticks(), 1);
+        assert_eq!(ground.half_ticks(), 2);
+        assert!(shop < ground, "a half tick is not tied with one tick");
+        assert_eq!(
+            [ground, shop].into_iter().min(),
+            Some(shop),
+            "the cheaper half-tick route wins a comparison across kinds"
+        );
+    }
+
+    #[test]
+    fn text_rounds_up_and_sums_stay_in_half_ticks() {
+        assert_eq!(RouteCost::ZERO.ticks_ceil(), 0);
+        assert_eq!(RouteCost::from_half_ticks(1).ticks_ceil(), 1);
+        assert_eq!(RouteCost::from_half_ticks(2).ticks_ceil(), 1);
+        assert_eq!(RouteCost::from_half_ticks(3).ticks_ceil(), 2);
+        let sum = RouteCost::from_half_ticks(3).saturating_add(RouteCost::from_ticks(2));
+        assert_eq!(sum.half_ticks(), 7);
+        assert_eq!(
+            RouteCost::from_half_ticks(3).saturating_mul(4).half_ticks(),
+            12
+        );
+    }
+
+    #[test]
+    fn out_of_range_costs_saturate() {
+        assert_eq!(RouteCost::from_ticks(u32::MAX).half_ticks(), u32::MAX);
+        let top = RouteCost::from_half_ticks(u32::MAX);
+        assert_eq!(top.saturating_add(RouteCost::from_half_ticks(1)), top);
+        assert_eq!(top.saturating_mul(2), top);
+        assert_eq!(top.ticks_ceil(), u32::MAX / 2 + 1);
     }
 }

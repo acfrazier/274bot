@@ -378,6 +378,7 @@ impl PickResult {
         let service = match &self.service_outcome {
             Some(ServicePickOutcome::NoPath {
                 unresolved: Some(gates),
+                ..
             }) => arc_slice_heap_bytes::<api::selected::QuestGate>(gates.len())?,
             _ => 0,
         };
@@ -540,7 +541,7 @@ struct CooperativeBankPickJob {
     first_access_tile: Option<WorldTile>,
     first_order: usize,
     first_access: usize,
-    first_service_cost: Option<u32>,
+    first_service_cost: Option<api::service_pick::RouteCost>,
     pending_route: Option<nav_planner::router::CompactRoute>,
     pending_many_results: Option<Box<[BankPickTargetResult]>>,
     result: Option<PickResult>,
@@ -1244,6 +1245,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                     self.result =
                                         Some(PickResult::service(ServicePickOutcome::NoPath {
                                             unresolved: gates.map(Arc::from),
+                                            unjudged: 0,
                                         }));
                                     self.stage = BankPickStage::Finish;
                                 }
@@ -1313,6 +1315,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                                 index,
                                                 access_tile,
                                                 cost,
+                                                unjudged: 0,
                                             })
                                         }
                                         _ => PickResult::service(ServicePickOutcome::NotSettled),
@@ -1890,12 +1893,24 @@ fn service_first_route_error(error: nav_planner::router::RouteError) -> Option<S
     }
 }
 
-fn service_route_cost(route: &nav_planner::router::CompactRoute) -> Option<u32> {
-    let ticks = route.ticks();
-    if !ticks.is_finite() || !(0.0..=f64::from(u32::MAX)).contains(&ticks) {
+/// The route's cost in half ticks. The router charges half a tick for a run
+/// step and whole ticks for a transport, so the sum is a whole count of half
+/// ticks and `ceil` only guards the float conversion (nav-planner `router.rs`
+/// module doc, checked on the real pack by `every_transport_cost_is_whole_half_ticks`).
+fn service_route_cost(
+    route: &nav_planner::router::CompactRoute,
+) -> Option<api::service_pick::RouteCost> {
+    route_cost_from_ticks(route.ticks())
+}
+
+fn route_cost_from_ticks(ticks: f64) -> Option<api::service_pick::RouteCost> {
+    let half_ticks = ticks * 2.0;
+    if !half_ticks.is_finite() || !(0.0..=f64::from(u32::MAX)).contains(&half_ticks) {
         return None;
     }
-    Some(ticks.ceil() as u32)
+    Some(api::service_pick::RouteCost::from_half_ticks(
+        half_ticks.ceil() as u32,
+    ))
 }
 
 fn pending_service_pick(

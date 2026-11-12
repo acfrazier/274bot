@@ -37,6 +37,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   handler's delayed yield. The Knife tick technique times each target with its
   own method's facts and no longer carries a timing cycle from one method to a
   target of another.
+- Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
+  with spare logs, and judge cycles without a chance XP requirement. Startup
+  counts player-tile movement on native and replacement routes.
 
 ### Panel and terminal app
 
