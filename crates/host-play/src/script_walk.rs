@@ -190,9 +190,13 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
         }
     }
 
-    let Some(wait) = bot.poison_hold.as_ref().and_then(|hold| hold.wait) else {
+    let Some(wait) = bot.poison_hold.as_mut().and_then(|hold| hold.wait.as_mut()) else {
         return false;
     };
+    if let Some(window) = window {
+        wait.recover_frame_gap(now, window);
+    }
+    let wait = *wait;
     if wait.ended(now) {
         let cause = window.map_or(WindowReset::IncompleteFact, |window| window.last_reset);
         let destination = bot.route_destination().or(retreat).or(here);

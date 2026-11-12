@@ -1039,11 +1039,18 @@ at tick zero and every 30 ticks throughout the route, including safe gaps.
 If that bound fails, it tests the same route without poison. A passing clear
 bound admits with `WaitForClear` at the last safe retreat index. The follower
 sends no hop past that index while the fact is Unknown. At the retreat tile it
-waits only the published remainder, not a new full window. A new fact is
-reassessed before the deadline; an unresolved deadline reports
-`PoisonUnsettled { waited, cause }`. If there is no safe retreat index, the
-clear bound admits without a hold. Poison alone never refuses a route without
-entering crossings.
+waits for the published remainder, not a new full window. One skipped or
+duplicated observation can extend that deadline to cover the restarted clean
+window, but only while dispatch acceptance remains valid. The hold permits
+one such extension, at most 31 additional observed game ticks. Thus, the total
+wait is at most the initial remainder plus 31, never more than 62 ticks.
+Further gaps cannot extend the deadline again. Clear, poison, or cure evidence
+still takes precedence on the final tick. An unresolved deadline reports
+`PoisonUnsettled { waited, cause }` with the last reset cause. A modal, guardian
+hold, incomplete fact, incomplete dispatch trace, or relog still clears
+acceptance. A position change alone does not reset it.
+If there is no safe retreat index, the clear bound admits without a hold.
+Poison alone never refuses a route without entering crossings.
 
 The `poison_long_approach` live test proves Clear before retreat through the
 captured route identity, a unique owned WalkAttempt aim before the retreat

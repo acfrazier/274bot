@@ -567,6 +567,135 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
 }
 
 #[test]
+fn poison_hold_gap_during_wait_reaches_clear_without_another_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = HoldRig::new(0, 0, true);
+    rig.pump(tile(0), true);
+    for tick in std::iter::once(1).chain(3..=34) {
+        rig.observe(tick, tile(0), None, None);
+        rig.pump(tile(0), true);
+        let navs = rig.bot();
+        assert!(
+            navs[ALICE].risk_refusal.is_none(),
+            "a missed update must not end the hold at tick {tick}"
+        );
+        if tick < 34 {
+            assert!(navs[ALICE].poison_hold.is_some());
+            assert!(rig.driver.walks.is_empty(), "no hop before Clear");
+        }
+    }
+    let navs = rig.bot();
+    assert_eq!(
+        navs[ALICE].condition.current().unwrap().poison,
+        PoisonState::Clear
+    );
+    assert!(navs[ALICE].poison_hold.is_none());
+    assert!(!rig.driver.walks.is_empty(), "Clear resumes the walk");
+}
+
+#[test]
+fn poison_hold_gap_at_initial_deadline_can_clear_at_tick_62() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = HoldRig::new(0, 0, true);
+    rig.pump(tile(0), true);
+    for tick in (1..=29).chain(31..=62) {
+        rig.observe(tick, tile(0), None, None);
+        rig.pump(tile(0), true);
+        let navs = rig.bot();
+        assert!(navs[ALICE].risk_refusal.is_none(), "tick {tick}");
+        if tick < 62 {
+            assert!(navs[ALICE].poison_hold.is_some());
+            assert!(rig.driver.walks.is_empty());
+        }
+    }
+    let navs = rig.bot();
+    assert_eq!(
+        navs[ALICE].condition.current().unwrap().poison,
+        PoisonState::Clear
+    );
+    assert!(navs[ALICE].poison_hold.is_none());
+    assert!(!rig.driver.walks.is_empty());
+}
+
+#[test]
+fn poison_hold_repeated_gaps_refuse_with_last_detail_by_tick_62() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = HoldRig::new(0, 0, true);
+    rig.pump(tile(0), true);
+    for tick in (1..=29).chain((31..=61).step_by(2)).chain([62]) {
+        rig.observe(tick, tile(0), None, None);
+        rig.pump(tile(0), true);
+        assert!(rig.driver.walks.is_empty(), "no hop before Clear");
+        if tick < 62 {
+            assert!(rig.bot()[ALICE].risk_refusal.is_none(), "tick {tick}");
+        }
+    }
+    let navs = rig.bot();
+    assert!(matches!(
+        navs[ALICE].risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(WalkRefusal::PoisonUnsettled {
+            waited: 62,
+            cause: WindowReset::FrameGap,
+        })
+    ));
+    assert!(navs[ALICE].route.is_none());
+    assert!(navs[ALICE].poison_hold.is_none());
+}
+
+#[test]
+fn poison_hold_gap_then_relog_does_not_admit_stale_acceptance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = HoldRig::new(0, 0, true);
+    rig.observe(1, tile(0), None, None);
+    rig.observe(3, tile(0), None, None);
+    assert!(
+        rig.bot()[ALICE]
+            .condition
+            .current()
+            .unwrap()
+            .poison_window
+            .unwrap()
+            .accepted
+    );
+    let tables = admission::condition_tables(&rig.world).unwrap();
+    rig.navs
+        .lock()
+        .unwrap()
+        .get_mut(ALICE)
+        .unwrap()
+        .condition
+        .session_started(3, 0, Some(tables));
+    rig.observe(4, tile(0), None, None);
+    rig.pump(tile(0), true);
+    for tick in 5..=35 {
+        rig.observe(tick, tile(0), None, None);
+        let fact = *rig.bot()[ALICE].condition.current().unwrap();
+        assert!(matches!(fact.poison, PoisonState::Unknown { .. }));
+        assert!(!fact.poison_window.unwrap().accepted);
+        rig.pump(tile(0), true);
+    }
+    assert_eq!(
+        rig.driver.walks,
+        vec![(0, 1)],
+        "only the new session's stand click is requested, never an exposed hop"
+    );
+    let navs = rig.bot();
+    assert!(matches!(
+        navs[ALICE].risk_refusal.as_deref().map(|entry| &entry.1),
+        Some(WalkRefusal::PoisonUnsettled { waited: 31, .. })
+    ));
+    assert!(navs[ALICE].route.is_none());
+}
+
+#[test]
 fn poison_hold_partial_window_waits_the_remainder() {
     if !api::test_support::game_data_available() {
         return;
