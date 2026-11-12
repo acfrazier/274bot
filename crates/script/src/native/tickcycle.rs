@@ -544,6 +544,12 @@ impl TickCycle {
         }
     }
 
+    /// The method and tool facts this cycle was built from. A parked cycle serves only a target whose own
+    /// facts are identical: two methods of one resource can differ in delayed yield.
+    pub(crate) const fn spec(&self) -> CycleSpec {
+        self.spec
+    }
+
     /// Advance the consumer's chat cursor after it has read all newer chat rows.
     pub(crate) const fn set_chat_cursor(&mut self, cursor: i32) {
         self.chat_cursor = cursor;

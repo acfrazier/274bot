@@ -2932,6 +2932,9 @@ function knownValue<T>(cell: Know<T>, label: string): T {
     return cell.value;
 }
 const targetsOf = (method: MethodWire, cls?: TargetWire['class']) => knownValue(method.targets, `${method.id} targets`).filter((target) => cls === undefined || target.class === cls);
+/** Resource rock names the assertions are about: newer content adds unnamed quest veins (`loc_<id>`, Haunted Mine) to every ore row. */
+const namedRocks = (view: { name(kind: string, id: number): string; method(id: string): MethodWire }, id: string) => targetsOf(view.method(id), 'resource')
+    .map((target) => view.name('loc', target.id)).filter((name) => !/^loc_\d+$/.test(name));
 function listContentFiles(root: string, dir: string, extension: string, out: string[] = []) {
     for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
         if (entry.isDirectory()) listContentFiles(root, `${dir}/${entry.name}`, extension, out);
@@ -3017,12 +3020,36 @@ const mixedIron = extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
         'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
         'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
 }), 377);
+const ironTargetIds = (family: GatheringFamily) => family.payload.methods.filter((method) => method.resources.includes('iron'))
+    .flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b);
 const mixedIronMethods = mixedIron.payload.methods.filter((method) => method.resources.includes('iron'));
 assert.deepEqual(mixedIronMethods.map((method) => [method.id, method.tick_arm.delay_drop]).sort(),
     [['mining.iron', true], ['mining.iron.get_ore_fast', false]]);
-assert.deepEqual(mixedIronMethods.flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b),
-    targetsOf(baseline.payload.methods.find((method) => method.id === 'mining.iron')!, 'resource').map((target) => target.id).sort((a, b) => a - b),
+assert.deepEqual(ironTargetIds(mixedIron), ironTargetIds(baseline),
     'each incompatible 377 iron target stays available with exactly its own tick timing');
+
+// Revision 289 splits a row by real handler too (the Haunted Mine iron rocks run mining_rock_normal inside the
+// iron row that regular iron runs as mining_rock_fast): one method per handler, each target on its own handler.
+const mixedIron289 = extractGatheringFamily(gatheringFixture((rootDir) => {
+    replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc',
+        'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
+        'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
+}));
+const mixedIron289View = gatherView(mixedIron289);
+const mixedIron289Methods = mixedIron289.payload.methods.filter((method) => method.resources.includes('iron'));
+assert.deepEqual(mixedIron289Methods.map((method) => [method.id, method.tick_arm.delay_drop, method.tick_arm.depletes]).sort(),
+    [['mining.iron', true, true], ['mining.iron.get_ore_fast', false, true]], '289 gives each iron handler its own method');
+const iron289Names = (id: string) => targetsOf(mixedIron289View.method(id), 'resource').map((target) => mixedIron289View.name('loc', target.id));
+assert.ok(iron289Names('mining.iron').includes('ironrock1'), 'the rock whose category is mining_rock_normal runs the delayed method');
+assert.ok(iron289Names('mining.iron.get_ore_fast').includes('ironrock2'), 'the rock whose category is mining_rock_fast runs the immediate method');
+assert.ok(!iron289Names('mining.iron').includes('ironrock2') && !iron289Names('mining.iron.get_ore_fast').includes('ironrock1'), 'no rock appears under another handler');
+assert.deepEqual(ironTargetIds(mixedIron289), ironTargetIds(baseline), 'splitting by handler neither adds nor drops an iron target');
+assert.deepEqual(gatherResources(mixedIron289.payload, new Map([[440, 'Iron ore']])).filter((row) => row.key === 'iron')
+    .map((row) => [row.method, row.methods, row.selectable]), [['mining.iron', ['mining.iron', 'mining.iron.get_ore_fast'], true]],
+    'the iron resource row keeps both methods under one selectable option');
+assert.deepEqual(mixedIron289.payload.methods.filter((method) => method.resources.includes('copper')).map((method) => method.id), ['mining.copper'],
+    'an unmixed row stays one method');
+
 
 function renameWaterfallSpot(rootDir: string) {
     for (const relative of ['pack/loc.pack', 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2',
@@ -3188,11 +3215,11 @@ const freshfishEntity = baseline.payload.entities.find((entity) => entity.endsWi
 assert.ok(freshfishEntity, 'the packed freshfish entity fact is retained');
 const freshfishId = Number(freshfishEntity.split(' ')[1]);
 assert.ok(baseline.payload.placements.some((file) => file.file === 'maps/m50_50.jm2' && file.rows.some((row) => row.split(' ')[4] === `n${freshfishId}`)), 'the synthetic NPC placement row is retained with its entity fact');
-assert.deepEqual(targetsOf(baselineView.method('mining.copper'), 'resource').map((target) => baselineView.name('loc', target.id)), ['copperrock1', 'copperrock2', 'newbiecopperrock']);
+assert.deepEqual(namedRocks(baselineView, 'mining.copper'), ['copperrock1', 'copperrock2', 'newbiecopperrock']);
 assert.equal(baselineView.method('mining.copper').targets.state, 'partial');
 const retyped = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, logs, 1);')));
 const retypedView = gatherView(retyped);
-assert.deepEqual(targetsOf(retypedView.method('mining.copper'), 'resource').map((target) => retypedView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(retypedView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(retyped.payload.loose.find((each) => retypedView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 assert.equal(family289Rows(retyped, 'mining.copper'), 1, 'the tutorial rock contributes no fixture placements');
 // M-215 R2: promotion is fail-closed on yield cardinality. A second grant beside the unit
@@ -3200,11 +3227,11 @@ assert.equal(family289Rows(retyped, 'mining.copper'), 1, 'the tutorial rock cont
 // to Unknown instead of promoting it as a copper resource.
 const doubled = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, copper_ore, 1);')));
 const doubledView = gatherView(doubled);
-assert.deepEqual(targetsOf(doubledView.method('mining.copper'), 'resource').map((target) => doubledView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(doubledView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(doubled.payload.loose.find((each) => doubledView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 const extraGrant = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, tin_ore, 2);')));
 const extraView = gatherView(extraGrant);
-assert.deepEqual(targetsOf(extraView.method('mining.copper'), 'resource').map((target) => extraView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(extraView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(extraGrant.payload.loose.find((each) => extraView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 
 // Bait must agree between the equipment struct and the roll; an unmodelled guard makes requirements partial.

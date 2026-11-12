@@ -858,6 +858,8 @@ fn per_target_applicability_rechecks_the_method_and_changed_tool_before_the_next
         ),
         ("mining.iron", 1275, Some(OffReason::NoGain)),
         ("mining.iron", 1273, None),
+        ("mining.iron.get_ore_normal", 1275, Some(OffReason::NoGain)),
+        ("mining.iron.get_ore_normal", 1273, None),
         ("woodcutting.oak", 1349, None),
     ] {
         let index = gatherer
@@ -890,4 +892,73 @@ fn per_target_applicability_rechecks_the_method_and_changed_tool_before_the_next
             "{method_id} tool {tool}"
         );
     }
+}
+
+/// "Iron" holds a fast-handler method (regular rocks) and a normal-handler method (Haunted Mine veins). A cycle
+/// parked after one method's target must never time the other method's: delayed against immediate yield decides
+/// how the cycle reads a success, so the next target starts a cycle from its own method's facts.
+#[test]
+fn a_parked_cycle_serves_only_a_target_of_the_same_method_facts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut gatherer, mut snapshot, fast) =
+        fixture_with(&[("miningResources", serde_json::json!(["iron"]))]);
+    gatherer.tool = ToolState {
+        id: 1273,
+        worn: false,
+    };
+    seed_timing_stock(&gatherer, &mut snapshot);
+    let catalog = Arc::clone(&gatherer.prepared.catalog);
+    assert_eq!(
+        catalog.methods()[usize::from(fast.method_index)]
+            .id
+            .0
+            .as_ref(),
+        "mining.iron",
+        "the fixture target is regular iron"
+    );
+    let normal_index = gatherer
+        .prepared
+        .methods
+        .iter()
+        .copied()
+        .find(|&index| catalog.methods()[index].id.0.as_ref() == "mining.iron.get_ore_normal")
+        .expect("the iron option carries the Haunted Mine normal-handler method");
+    let mut normal = fast.clone();
+    normal.method_index = normal_index as u16;
+    normal.entity = known_rows(&catalog.methods()[normal_index].targets)
+        .iter()
+        .find(|row| row.class == api::gather_methods::TargetClass::Resource)
+        .unwrap()
+        .entity;
+    let (fast_cycle, fast_policy) = proven_idle_cycle(&gatherer, &fast);
+    let (normal_cycle, _) = proven_idle_cycle(&gatherer, &normal);
+    assert!(!fast_cycle.spec().delay_drop && normal_cycle.spec().delay_drop);
+
+    gatherer.tick_policy = fast_policy;
+    gatherer.parked_cycle = Some(normal_cycle);
+    with_tick(&snapshot, &mut None, 1, |tick| {
+        let timing = gatherer
+            .timing_for_target(&fast, &tick.cx)
+            .expect("regular iron arms with the knife");
+        assert_eq!(
+            timing.cycle.spec(),
+            fast_cycle.spec(),
+            "the Haunted Mine cycle is dropped, not continued, for a regular rock"
+        );
+        assert_ne!(timing.cycle, normal_cycle);
+    });
+    assert!(gatherer.parked_cycle.is_none());
+
+    gatherer.parked_cycle = Some(fast_cycle);
+    with_tick(&snapshot, &mut None, 2, |tick| {
+        let timing = gatherer
+            .timing_for_target(&fast, &tick.cx)
+            .expect("regular iron arms with the knife");
+        assert_eq!(
+            timing.cycle, fast_cycle,
+            "a cycle of the same method keeps going across targets"
+        );
+    });
 }

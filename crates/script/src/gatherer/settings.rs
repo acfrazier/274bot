@@ -1151,6 +1151,46 @@ mod tests {
         ));
     }
 
+    /// Revision 289 content runs regular iron as `mining_rock_fast` and the Haunted Mine iron veins as
+    /// `mining_rock_normal`, so one "iron" card option holds two methods with different tick behaviour.
+    #[test]
+    fn iron_resolves_to_its_fast_and_its_normal_method_and_both_admit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (selected, catalog) = selected_catalog(api::selected::ClientRevision::R289);
+        let option = selected
+            .gather_option("mining", "iron")
+            .expect("iron is a mining option");
+        assert!(
+            option.selectable,
+            "the option stays selectable: {:?}",
+            option.gap
+        );
+        assert_eq!(
+            option.methods,
+            ["mining.iron", "mining.iron.get_ore_normal"]
+        );
+        let mut bag = SettingsBag::new();
+        bag.insert("skill".into(), json!("Mining"));
+        bag.insert("miningResources".into(), json!(["iron"]));
+        let settings = GathererSettings::from_bag(&bag).unwrap();
+        let (bits, methods) = resolve_methods(&settings, &selected, &catalog).unwrap();
+        assert_eq!(bits.count_ones(), 2);
+        let arms: Vec<_> = methods
+            .iter()
+            .map(|index| {
+                let method = &catalog.methods()[*index];
+                (method.id.0.as_ref(), method.tick_arm.delay_drop)
+            })
+            .collect();
+        assert_eq!(
+            arms,
+            [("mining.iron", false), ("mining.iron.get_ore_normal", true)],
+            "regular iron keeps its immediate-yield method; the Haunted Mine veins get the delayed one"
+        );
+    }
+
     #[test]
     fn death_settings_validate_schema_and_live_application_classification() {
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
