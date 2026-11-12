@@ -1684,6 +1684,14 @@ fn picker_map_body(
         .unwrap_or(0);
     let toolbar = draw_walkto_toolbar(ui, session, map, world, &levels, &mut lvl_idx);
     persist_special_area_toggle(session, map);
+    let binding_status = session.map_bind_status();
+    if let Some(status) = binding_status.as_deref() {
+        if status == "map catalogue unavailable" || status.starts_with("map bake failed:") {
+            ui.text_colored(ERROR, status);
+        } else {
+            ui.text_disabled(status);
+        }
+    }
     if !map.search.trim().is_empty() && WalkMap::parse_coordinates(map.search.trim()).is_err() {
         if let Some(coord) = map.parse_search_coord() {
             ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.plane));
@@ -1702,9 +1710,6 @@ fn picker_map_body(
     } else {
         map.status_line().to_string()
     };
-    if let Some(prefix) = session.map_bind_status() {
-        status = format!("{prefix} · {status}");
-    }
     if let Some(catalogue) = &session.map_catalogue {
         for message in catalogue.coverage_messages() {
             status = format!("{status} · {message}");

@@ -66,6 +66,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::test_support::map_fixture::MapFixture;
+use crate::test_support::{
+    map_catalogue_fixture, map_fixture as host_map_fixture, map_play_fixture,
+};
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 use upgrade_home::UpgradeHome;
@@ -979,6 +982,154 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     assert!(crate::picker::map_reach_bitset(&world).is_none());
 }
 
+#[test]
+fn published_catalogue_probe_stamps_before_reading_ready_data() {
+    let now = Instant::now();
+    let mut probe = None;
+    let mut reads = 0;
+    let first = super::probe_published_catalogue(&mut probe, now, || {
+        reads += 1;
+        Some("ready")
+    });
+    assert_eq!(first, Some(Some("ready")));
+    assert_eq!(probe, Some(now));
+
+    let skipped =
+        super::probe_published_catalogue(&mut probe, now + Duration::from_millis(500), || {
+            reads += 1;
+            Some("ready")
+        });
+    assert_eq!(skipped, None);
+    assert_eq!(reads, 1);
+
+    let next = super::probe_published_catalogue(&mut probe, now + Duration::from_secs(1), || {
+        reads += 1;
+        Some("ready")
+    });
+    assert_eq!(next, Some(Some("ready")));
+    assert_eq!(reads, 2);
+}
+
+#[test]
+fn panel_failed_map_catalogue_retries_only_after_inputs_change() {
+    let small_world = NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = host_map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.install_prepared_template(ProfileTemplate::from_host(Arc::clone(
+        &profile_fixture.template,
+    )));
+    crate::session::reset_map_catalogue_build_count();
+
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        session.map_bind_status().as_deref(),
+        Some("map catalogue unavailable")
+    );
+    assert_eq!(crate::session::map_catalogue_build_count(), 1);
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt on the next frame"
+    );
+
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt"
+    );
+
+    let navpois = profile_fixture
+        .template
+        .profile()
+        .nav_pack()
+        .with_extension("navpois");
+    std::fs::write(&navpois, b"changed navpois input").unwrap();
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "navpois changes wait for the coarse metadata probe"
+    );
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        2,
+        "changed navpois metadata permits one retry"
+    );
+
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        3,
+        "changed pack identity permits one retry"
+    );
+
+    let mut alternate_grid = nav_planner::grid::StepGrid::fixture_open_3x3();
+    alternate_grid.set_walkable(
+        nav_planner::tile::Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        false,
+    );
+    let alternate_world = NavWorld::from_grid(&alternate_grid);
+    let other_profile_fixture = host_map_fixture::MapFixture::new(&alternate_world, "local-289");
+    let other_ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(other_profile_fixture.template.profile());
+    let other_ready = other_ready_fixture.ready();
+    let mut other_session = Session::new();
+    other_session.install_prepared_template(ProfileTemplate::from_host(Arc::clone(
+        &other_profile_fixture.template,
+    )));
+    let other_profile = other_session.server_profile().expect("bound profile");
+    let original_profile = session.server_profile().expect("bound profile");
+    let original_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        original_profile,
+        &changed_world,
+        &ready,
+    );
+    let changed_ready_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        original_profile,
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_ready_inputs);
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&other_ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        4,
+        "changed ready catalogue identity permits an immediate retry"
+    );
+    let changed_profile_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        other_profile,
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_profile_inputs);
+
+    session
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(
+            &other_profile_fixture.template,
+        )));
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&other_ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        5,
+        "changed profile identity permits an immediate retry"
+    );
+}
 #[test]
 fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
@@ -3676,11 +3827,14 @@ fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         )
     });
     let fixture = MapFixture::new(&world, "public-289");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 2778,
-        z: 3401,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 2778,
+            z: 3401,
+            level: 0,
+        },
+    )));
     let deadline = Instant::now() + Duration::from_secs(60);
     while !session.quester_paths.is_running() {
         assert!(
@@ -4145,7 +4299,7 @@ fn bind_picker_session(
     origin: Tile,
 ) -> (MapFixture, Arc<NavWorld>) {
     let fixture = MapFixture::new(world, "local-289");
-    let play = fixture.play(origin);
+    let play = map_play_fixture::play(&fixture.template, origin);
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
@@ -4835,11 +4989,14 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     }
     let world = open_world(3, 3);
     let fixture = MapFixture::new(&world, "public-289");
-    let play = fixture.play(Tile {
-        x: 0,
-        z: 1,
-        level: 0,
-    });
+    let play = map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
     let mut s = Session::new();
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
@@ -4880,7 +5037,7 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
         level: 0,
     };
     let fixture = MapFixture::new(&world, "local-289");
-    let play = fixture.play(origin);
+    let play = map_play_fixture::play(&fixture.template, origin);
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
@@ -4927,7 +5084,7 @@ fn picker_teleport_follows_profile_class() {
 
     let mut local = Session::new();
     let local_fixture = MapFixture::new(&world, "local-289");
-    let play = local_fixture.play(origin);
+    let play = map_play_fixture::play(&local_fixture.template, origin);
     local
         .launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(

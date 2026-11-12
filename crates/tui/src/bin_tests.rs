@@ -31,8 +31,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use host_play as map_host;
+#[path = "../../host-play/tests/support/map_catalogue_fixture.rs"]
+mod map_catalogue_fixture;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
+#[path = "../../host-play/tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 
@@ -3072,7 +3076,9 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
-    session.core.set_play(Some(fixture.play(origin)));
+    session
+        .core
+        .set_play(Some(map_play_fixture::play(&fixture.template, origin)));
     publish_map_walk_snapshot(&mut session.core, "alice", origin);
     let mut app = TuiApp::new("274bot headless");
     app.map_active = true;
@@ -3286,11 +3292,14 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add(slot);
     select(&mut session, slot);
-    let mut play = fixture.play(Tile {
-        x: 0,
-        z: 1,
-        level: 0,
-    });
+    let mut play = map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
     play.attach_arm(slot, SlotArm::new(1, false));
     play.statuses.lock().unwrap().push(SlotStatus {
         username: slot.into(),
@@ -3370,7 +3379,7 @@ fn map_walk_uses_core_slot_position_and_keeps_snapped_destination() {
         z: 1,
         level: 0,
     };
-    let mut play = fixture.play(origin);
+    let mut play = map_play_fixture::play(&fixture.template, origin);
     play.attach_arm(name, SlotArm::new(1, false));
     play.statuses.lock().unwrap().push(host_play::SlotStatus {
         username: name.into(),
@@ -3418,7 +3427,9 @@ fn production_walk_uses_the_live_slot_origin_when_ui_position_is_missing() {
         z: 1,
         level: 0,
     };
-    session.core.set_play(Some(fixture.play(origin)));
+    session
+        .core
+        .set_play(Some(map_play_fixture::play(&fixture.template, origin)));
     publish_map_walk_snapshot(&mut session.core, name, origin);
     let mut app = TuiApp::new("274bot headless");
     app.names = vec![name.into()];
@@ -3478,11 +3489,14 @@ fn refused_no_origin_walk_does_not_arm_destination() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 0,
-        z: 0,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+    )));
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
@@ -5877,11 +5891,14 @@ fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         )
     });
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 2778,
-        z: 3401,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 2778,
+            z: 3401,
+            level: 0,
+        },
+    )));
     let start_deadline = Instant::now() + Duration::from_secs(60);
     while !app.quester_paths_controller.is_running() {
         assert!(
@@ -10150,4 +10167,156 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
     );
     assert_eq!(frames, 12);
     let _iso = iso;
+}
+
+#[test]
+fn map_catalogue_build_failure_is_visible_and_retries_only_after_inputs_change() {
+    let _iso = IsolatedStores::enter("tui-map-catalogue-build-failure");
+    let small_world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let mut session = TuiSession::new_bound(Arc::clone(&profile_fixture.template));
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    app.world = Some(Arc::clone(&world));
+    assert_eq!(
+        app.on_key(crate::test_support::key(crossterm::event::KeyCode::F(4))),
+        AppAction::MapOpen
+    );
+    dispatch(&mut session, &mut app, AppAction::MapOpen);
+    assert!(
+        app.map_catalogue_status != MapCatalogueStatus::Unavailable
+            || !app.map_coverage.contains("reading cache"),
+        "unavailable status must not pair with reading-cache coverage: {}",
+        app.map_coverage
+    );
+
+    reset_map_catalogue_build_count();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(map_catalogue_build_count(), 1);
+    assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Unavailable);
+    assert!(
+        app.map_coverage.contains("catalogue unavailable"),
+        "{}",
+        app.map_coverage
+    );
+    assert!(!app.map_coverage.contains("reading cache"));
+    assert!(app.map_catalogue.is_none());
+    assert!(app.map_search_results.is_empty());
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt on the next frame"
+    );
+
+    for (width, height) in [(120, 40), (80, 24)] {
+        let rows = crate::test_support::draw(&mut app, width, height);
+        let rendered = crate::test_support::text(&rows);
+        assert!(
+            rendered.contains("map catalogue unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("status: Unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("status: Unavailable  coverage: reading cache"),
+            "{width}x{height}:\n{rendered}"
+        );
+    }
+
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt"
+    );
+
+    let navpois = profile_fixture
+        .template
+        .profile()
+        .nav_pack()
+        .with_extension("navpois");
+    std::fs::write(&navpois, b"changed navpois input").unwrap();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "navpois changes wait for the coarse metadata probe"
+    );
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        2,
+        "changed navpois metadata permits one retry"
+    );
+
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    app.world = Some(Arc::clone(&changed_world));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        3,
+        "changed pack identity permits one retry"
+    );
+    let mut alternate_grid = nav_planner::grid::StepGrid::fixture_open_3x3();
+    alternate_grid.set_walkable(
+        nav_planner::tile::Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        false,
+    );
+    let alternate_world = nav_planner::world::NavWorld::from_grid(&alternate_grid);
+    let other_profile_fixture = map_fixture::MapFixture::new(&alternate_world, "local-289");
+    let other_ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(other_profile_fixture.template.profile());
+    let other_ready = other_ready_fixture.ready();
+    let original_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &ready,
+    );
+    let changed_ready_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_ready_inputs);
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        4,
+        "changed ready catalogue identity permits an immediate retry"
+    );
+
+    let other_session = TuiSession::new_bound(Arc::clone(&other_profile_fixture.template));
+    let changed_profile_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        other_session.bound().expect("other bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_profile_inputs);
+
+    session
+        .launcher
+        .install_template(frontend_core::launch::ProfileTemplate::from_host(
+            Arc::clone(&other_profile_fixture.template),
+        ));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        5,
+        "changed profile identity permits an immediate retry"
+    );
 }

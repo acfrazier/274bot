@@ -24,6 +24,14 @@ use crate as map_host;
 #[path = "../../tests/support/map_fixture.rs"]
 mod map_fixture;
 use map_fixture::MapFixture;
+#[path = "../../tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
+
+impl MapFixture {
+    fn play(&self, origin: Tile) -> crate::Play {
+        map_play_fixture::play(&self.template, origin)
+    }
+}
 
 fn bound_context(play: &crate::Play) -> MapContext {
     MapContext {
@@ -417,6 +425,39 @@ fn missing_sources_do_not_invent_banks() {
     assert!(catalogue
         .entries()
         .all(|e| !matches!(e.kind(), PoiKind::Bank)));
+}
+
+#[test]
+fn grouped_transport_rows_above_entry_limit_build_and_search() {
+    const RAW_ROWS: usize = 16_385;
+    let mut world = world(t(0, 0, 0), 12, &[]);
+    world.graph.edges = (0..RAW_ROWS)
+        .map(|index| {
+            edge(
+                TransportKind::Ladder,
+                wt(3, 4, 0),
+                wt(4 + (index % 4) as i32, 4, 1),
+            )
+        })
+        .collect();
+
+    let catalogue = Catalogue::new(Arc::new(world), identity(), None, None).unwrap();
+    assert_eq!(catalogue.entries().len(), 1);
+    let entry = catalogue.entries().next().expect("one displayed transport");
+    assert_eq!(entry.transports().count(), RAW_ROWS);
+
+    let mut search = Search::default();
+    search.update(&catalogue, "LADDER").unwrap();
+    assert_eq!(search.results().len(), 1);
+    assert_eq!(
+        catalogue
+            .entry(search.results()[0])
+            .expect("search result")
+            .transports()
+            .count(),
+        RAW_ROWS,
+        "search keeps every transport alternative"
+    );
 }
 
 #[test]

@@ -41,6 +41,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Panel and terminal app
 
+- The map's points of interest and search work again on the full world map.
 - Cards that the script catalog retires no longer read as failed imports. The
   panel and the terminal app now say **failed import: <specifier>** only when
   a script's import is unsupported, and **unavailable: <reason>** when the

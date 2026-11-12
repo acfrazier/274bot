@@ -28,7 +28,7 @@ use host_play::{SlotArm, SlotStatus};
 
 use super::{frame_pumps, game_window_title, ui_frame, LiveHarness, LiveNull, PanelState};
 use crate::session::{PanelWindow, Session, SlotIo};
-use crate::test_support::TestDir;
+use crate::test_support::{map_catalogue_fixture, map_fixture, map_play_fixture, TestDir};
 use crate::window::Gpu;
 use frontend_core::{OperatorCommand, Targets};
 
@@ -1803,6 +1803,63 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     );
     assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
     assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
+}
+
+#[test]
+fn panel_driver_shows_map_catalogue_failure() {
+    let small_world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.install_prepared_template(frontend_core::launch::ProfileTemplate::from_host(
+        Arc::clone(&profile_fixture.template),
+    ));
+    session.core.set_play(Some(map_play_fixture::play(
+        &profile_fixture.template,
+        nav_planner::tile::Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+    )));
+    session.set_focus_for_test("alice");
+    session.walkto_open = true;
+    crate::session::reset_map_catalogue_build_count();
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(crate::session::map_catalogue_build_count(), 1);
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), ready);
+    assert_eq!(crate::session::map_catalogue_build_count(), 2);
+
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!("panel_driver_shows_map_catalogue_failure: no headless GPU, skipped");
+        return;
+    };
+    let _nav = crate::picker::lock_nav_statics();
+    crate::picker::set_pack(Some(changed_world));
+
+    // The first frame creates the dock tree. Keep drawing until the production
+    // picker shows its map-status notice above the canvas.
+    for _ in 0..3 {
+        rig.frame(Pointer::Away);
+        if rig.text.contains("map catalogue unavailable") {
+            break;
+        }
+    }
+
+    let message = rig.text.clone();
+    let status = rig.session().map_bind_status();
+    crate::picker::set_pack(None);
+    assert!(
+        message.contains("map catalogue unavailable"),
+        "the map shows its catalogue failure (status: {status:?}): {message}"
+    );
+    assert_eq!(status.as_deref(), Some("map catalogue unavailable"));
 }
 
 /// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
