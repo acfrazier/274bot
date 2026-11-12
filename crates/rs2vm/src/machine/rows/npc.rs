@@ -455,20 +455,18 @@ impl Exec<'_, '_> {
                 return Err(unsupported(st.at, "NPC loop can change its population").into());
             }
             if scan.max.is_some()
-                && (matches!(
-                    name,
-                    "GOSUB" | "GOSUB_WITH_PARAMS" | "JUMP" | "JUMP_WITH_PARAMS"
-                ) || matches!(
-                    command,
-                    Some(
-                        "npc_findall"
-                            | "npc_findallany"
-                            | "npc_huntall"
-                            | "p_delay"
-                            | "p_arrivedelay"
-                            | "npc_findnext"
-                    )
-                ))
+                && (matches!(name, "GOSUB" | "GOSUB_WITH_PARAMS")
+                    || matches!(
+                        command,
+                        Some(
+                            "npc_findall"
+                                | "npc_findallany"
+                                | "npc_huntall"
+                                | "p_delay"
+                                | "p_arrivedelay"
+                                | "npc_findnext"
+                        )
+                    ))
             {
                 return Ok(None);
             }
