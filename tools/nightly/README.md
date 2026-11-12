@@ -712,10 +712,11 @@ administrator, once.
 2. `C:\274bot-nightly\` with `runs\`, `logs\`, `state\`; the venv:
    `& 'C:\Program Files\Python314\python.exe' -m venv C:\274bot-nightly\venv`, then
    `C:\274bot-nightly\venv\Scripts\python.exe -m pip install --require-hashes --only-binary :all: --no-deps -r <runner>\tools\nightly\windows\requirements.txt`.
-3. Read-only inputs (copied in once; refresh them when they change):
-   `engine-pristine\{engine,content}` (the 289 engine and content, without
-   `node_modules`, account database or player saves: the clients read its pack, config
-   and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
+3. Read-only inputs (copy in once and refresh them when they change):
+   `engine-pristine\{engine,content}` contains the 289 engine and content.
+   Copy it without `node_modules`, account database or player saves. The clients
+   read its pack, config and content. The runner never starts this engine. Also copy
+   `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
    when it is missing or stale), `fixtures\274bot-289-v18.navpack` with its sidecars
    (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`) for
@@ -724,13 +725,22 @@ administrator, once.
    `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
-4. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
+4. Install the engine's JavaScript dependencies for local-data generation. The
+   `tools/game-data/generate.ts` script imports TypeScript from this tree. After
+   you copy the engine, run this in PowerShell:
+   ```powershell
+   Set-Location C:\274bot-nightly\engine-pristine\engine
+   & 'C:\Users\BotTest\.cargo\bin\bun.exe' install --frozen-lockfile --ignore-scripts --no-save
+   ```
+   Bun reads `package-lock.json` and creates `node_modules\`. Repeat when the
+   lockfile changes.
+5. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
    carries `tools/nightly/` (`git -C C:\274bot-nightly\runner pull --ff-only` to update).
-5. Settings: copy [`windows/nightly.env`](windows/nightly.env) to `C:\274bot-nightly\nightly.env`.
-6. Tasks: `powershell -ExecutionPolicy Bypass -File C:\274bot-nightly\runner\tools\nightly\windows\install-tasks.ps1`
+6. Settings: copy [`windows/nightly.env`](windows/nightly.env) to `C:\274bot-nightly\nightly.env`.
+7. Tasks: `powershell -ExecutionPolicy Bypass -File C:\274bot-nightly\runner\tools\nightly\windows\install-tasks.ps1`
    (`-At 23:00` by default).
-7. Engine B: the review machine's `274bot-nightly-win-engine` service (above).
-8. Pull account, **by an administrator** (elevated PowerShell), with the archive host's
+8. Engine B: the review machine's `274bot-nightly-win-engine` service (above).
+9. Pull account, **by an administrator** (elevated PowerShell), with the archive host's
    public key: `C:\274bot-nightly\runner\tools\nightly\windows\pull-access.ps1 -PublicKey '<win_pull_ed25519.pub>'`
    (`-From` defaults to the archive host's 10.0.0.72). It creates `274bot-pull` (no
    groups, random unknown password), makes `C:\274bot-nightly` private to BotTest,
