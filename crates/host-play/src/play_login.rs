@@ -10,10 +10,9 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Deadline, Event, Scope, SessionKey, SlotKey, SlotKeyMinter};
 use api::lifecycle::{
-    AbortedAttempt, HandshakeKind, HoldReason, IdlePark, Intent, IntentCommand, IntentMailbox,
-    LifecycleFact, LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker,
-    SessionEndCause, SessionEventOut, SessionGate, TransportFailure,
-    WorldChoice as IntentWorldChoice,
+    AbortedAttempt, HandshakeKind, HoldReason, Intent, IntentCommand, IntentMailbox, LifecycleFact,
+    LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker, SessionEndCause,
+    SessionEventOut, SessionGate, TransportFailure, WorldChoice as IntentWorldChoice,
 };
 use client::client::{Client, LoginError};
 use client::config::IfType;
@@ -58,26 +57,11 @@ struct CleanExit {
     world_generation: u64,
 }
 
-/// Why the slot sits on the title until the operator logs it in. The first
-/// three are latches; the idle reasons are the park of a bot that had no
-/// script when its session ended without anyone asking for it (unlike a
-/// latch, a script that needs a session starts the login again).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginLatchReason {
     OperatorLogout,
     PersistedLogout,
-    RepeatedUnexpectedLogouts {
-        count: u8,
-        window_seconds: u64,
-    },
-    /// The server logged out a bot with no script after the client's own
-    /// idle request (the idle logout).
-    IdleLogout,
-    /// The server logged out a bot with no script and no idle request was
-    /// pending.
-    ServerLogout,
-    /// A bot with no script lost its connection.
-    IdleDisconnect,
+    RepeatedUnexpectedLogouts { count: u8, window_seconds: u64 },
 }
 
 impl std::fmt::Display for LoginLatchReason {
@@ -92,9 +76,6 @@ impl std::fmt::Display for LoginLatchReason {
                 f,
                 "repeat guard: {count} unexpected logouts in {window_seconds}s"
             ),
-            Self::IdleLogout => f.write_str("idle logout by the server"),
-            Self::ServerLogout => f.write_str("logged out by the server"),
-            Self::IdleDisconnect => f.write_str("disconnected while idle"),
         }
     }
 }
@@ -112,9 +93,6 @@ pub(super) enum RelogParkReason {
     PersistedLogout,
     RepeatGuard,
     WorldError,
-    IdleLogout,
-    ServerLogout,
-    IdleDisconnect,
 }
 
 impl std::fmt::Display for RelogParkReason {
@@ -125,9 +103,6 @@ impl std::fmt::Display for RelogParkReason {
             Self::PersistedLogout => "persisted_logout",
             Self::RepeatGuard => "repeat_guard",
             Self::WorldError => "world_error",
-            Self::IdleLogout => "idle_logout",
-            Self::ServerLogout => "server_logout",
-            Self::IdleDisconnect => "idle_disconnect",
         })
     }
 }
@@ -227,7 +202,6 @@ impl SlotLifecycle {
             .observe(LifecycleFact::SessionExited {
                 clean: cause.is_clean(),
                 resumable,
-                idle_request_pending: cause == SessionEndCause::IdleLogout,
             })
             .expect("slot session exit generation exhausted");
     }
@@ -663,26 +637,23 @@ impl SlotArm {
         self.lifecycle.lock().mailbox.snapshot().latch().is_some()
     }
 
-    /// Why the slot sits on the title until the operator acts: a latch, or
-    /// the park of a bot without a script after an exit nobody asked for.
     pub fn login_latch_reason(&self) -> Option<LoginLatchReason> {
-        let snapshot = self.lifecycle.lock().mailbox.snapshot();
-        match snapshot.latch() {
-            Some(LoginLatch::OperatorLogout) => Some(LoginLatchReason::OperatorLogout),
-            Some(LoginLatch::PersistedLogout) => Some(LoginLatchReason::PersistedLogout),
-            Some(LoginLatch::RepeatGuard {
-                count,
-                window_seconds,
-            }) => Some(LoginLatchReason::RepeatedUnexpectedLogouts {
-                count,
-                window_seconds,
-            }),
-            None => snapshot.idle_park().map(|park| match park {
-                IdlePark::IdleLogout => LoginLatchReason::IdleLogout,
-                IdlePark::ServerLogout => LoginLatchReason::ServerLogout,
-                IdlePark::Disconnect => LoginLatchReason::IdleDisconnect,
-            }),
-        }
+        self.lifecycle
+            .lock()
+            .mailbox
+            .snapshot()
+            .latch()
+            .map(|reason| match reason {
+                LoginLatch::OperatorLogout => LoginLatchReason::OperatorLogout,
+                LoginLatch::PersistedLogout => LoginLatchReason::PersistedLogout,
+                LoginLatch::RepeatGuard {
+                    count,
+                    window_seconds,
+                } => LoginLatchReason::RepeatedUnexpectedLogouts {
+                    count,
+                    window_seconds,
+                },
+            })
     }
 
     pub fn set_lowmem_handshake(&self, lowmem: bool) {
@@ -867,7 +838,6 @@ impl SlotArm {
                 .observe(LifecycleFact::SessionExited {
                     clean: false,
                     resumable: false,
-                    idle_request_pending: false,
                 })
                 .expect("slot fallback exit generation exhausted");
         }
@@ -885,9 +855,6 @@ impl SlotArm {
             Some(ParkReason::PersistedLogout) => RelogParkReason::PersistedLogout,
             Some(ParkReason::RepeatGuard) => RelogParkReason::RepeatGuard,
             Some(ParkReason::WorldError) => RelogParkReason::WorldError,
-            Some(ParkReason::IdleLogout) => RelogParkReason::IdleLogout,
-            Some(ParkReason::ServerLogout) => RelogParkReason::ServerLogout,
-            Some(ParkReason::IdleDisconnect) => RelogParkReason::IdleDisconnect,
             Some(ParkReason::NoIntent) | None => RelogParkReason::NoIntent,
         }
     }
@@ -1625,12 +1592,6 @@ impl SlotArm {
         if self.session_key().is_some() {
             self.observe_session_exit(SessionEndCause::ServerLogout, false);
         }
-        if self.login_command(false).is_none() && !self.login_latched() {
-            // No login is wanted and nothing latched it: the fixture has no
-            // script and auto-login is off, or the exit above parked it. The
-            // test's own login is the operator's.
-            self.arm_explicit_login();
-        }
         let command = self.login_command(false).expect("test login wanted");
         let mut lifecycle = self.lifecycle.lock();
         let kind = if lifecycle.mailbox.reconnects() {
@@ -1654,26 +1615,6 @@ impl SlotArm {
                 window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
             })
             .expect("test repeat-guard generation exhausted");
-    }
-
-    /// The session of a bot with no script drops, as the slot reports it
-    /// when the connection is lost: the bot parks (disconnected while idle).
-    pub fn exit_while_idle_for_test(&self) {
-        self.observe_session_exit(SessionEndCause::ConnectionLost, false);
-    }
-
-    /// The session of a bot with no script ends by a server logout nobody
-    /// asked for: with `idle_request` the client's own idle request was
-    /// pending (the idle logout), without it the server explains nothing.
-    pub fn exit_by_server_logout_for_test(&self, idle_request: bool) {
-        self.observe_session_exit(
-            if idle_request {
-                SessionEndCause::IdleLogout
-            } else {
-                SessionEndCause::ServerLogout
-            },
-            false,
-        );
     }
 }
 

@@ -2093,8 +2093,9 @@ fn run_live_probe() {
     let preparation_deadline = Instant::now() + PREPARATION_DEADLINE;
     let mut terminal_error = None;
     loop {
-        // The quester-stage preparation relogs a scriptless bot: the host
-        // keeps it logged out after the logout until the operator Login.
+        // The fixture's own relog logs the bot out. The Login below is a real
+        // one-shot command, needed only where that relog consumed the login; an
+        // unlatched slot with auto-login reconnects by itself.
         if let Some(arm) = play.arm(&account) {
             if frame_state.lock().runner.take_relog_login() {
                 arm.arm_explicit_login();

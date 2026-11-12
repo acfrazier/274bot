@@ -402,9 +402,9 @@ fn make_fixture_with_seed_commands(
     let snapshot = Arc::new(Mutex::new(GameSnapshot::new()));
     let frame_snapshot = Arc::clone(&snapshot);
     let frame_seeded = Arc::clone(&seeded);
-    // Set by the frame when it logs the scriptless fixture account out; the
-    // approved scriptless policy then parks it, so the waiting thread posts the
-    // operator's explicit Login once.
+    // Set by the frame when it logs the fixture account out; the waiting
+    // thread then posts a real one-shot Login once. An unlatched slot with
+    // auto-login would also reconnect by itself.
     let logged_out = Arc::new(AtomicBool::new(false));
     let frame_logged_out = Arc::clone(&logged_out);
     let frame_name = seed_name.clone();

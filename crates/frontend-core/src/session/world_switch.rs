@@ -354,9 +354,6 @@ impl<Io> OperatorSession<Io> {
                 LoginLatchReason::OperatorLogout => ParkReason::OperatorLogout,
                 LoginLatchReason::PersistedLogout => ParkReason::PersistedLogout,
                 LoginLatchReason::RepeatedUnexpectedLogouts { .. } => ParkReason::RepeatGuard,
-                LoginLatchReason::IdleLogout => ParkReason::IdleLogout,
-                LoginLatchReason::ServerLogout => ParkReason::ServerLogout,
-                LoginLatchReason::IdleDisconnect => ParkReason::IdleDisconnect,
             });
             (
                 Settlement::Cancelled(Cancellation::Superseded),

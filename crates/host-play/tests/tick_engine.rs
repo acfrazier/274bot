@@ -1262,9 +1262,9 @@ impl LiveRun {
                 if let Some(error) = &setup.error {
                     return Err(error.clone());
                 }
-                // The fixture logs its scriptless bot out to complete the tutorial; the
-                // approved scriptless policy then parks it, so post the operator's
-                // explicit Login once after that logout.
+                // The fixture logs its bot out to complete the tutorial. Post a real
+                // one-shot Login once after that logout; an unlatched slot with
+                // auto-login would also reconnect by itself.
                 if setup.phase == SetupPhase::WaitRelogin && !login_posted {
                     login_posted = true;
                     if let Some(arm) = self.play().arm(&self.account) {

@@ -569,8 +569,9 @@ fn start_trade_pair() -> (
     (isolated, play, names, state)
 }
 
-/// Each slot logs its account out to re-seed the tutorial, and the host parks a bot with no script
-/// after a logout nobody asked it for. An explicit login intent lifts that park.
+/// Each slot logs its account out to re-seed the tutorial. A latched slot needs
+/// an explicit Login, a real one-shot command; an unlatched slot with
+/// auto-login reconnects by itself.
 fn wait_for_trade_prep(play: &Play, state: &Mutex<Vec<TradeSlot>>) {
     let deadline = Instant::now() + PREP_DEADLINE;
     loop {

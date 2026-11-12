@@ -2780,27 +2780,6 @@ fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() 
     );
 }
 
-/// A bot that parks between game ticks still reaches the Java idle
-/// threshold after 90 s: the host replays the parked cycles into the idle
-/// counter, but only for a client whose host asked for that timer.
-#[test]
-fn entity_catchup_replays_parked_cycles_into_the_idle_timer_only_when_asked_for() {
-    for (asked, expected) in [(false, 100), (true, 129)] {
-        let mut c = Client::new(cfg());
-        c.error_loading = false;
-        c.ingame = true;
-        c.set_external_reconnect_owner(true);
-        c.set_host_idle_timer(asked);
-        c.shell.idle_cycles = 100;
-        let mut slot = SlotLoop::new();
-        let t0 = Instant::now();
-        slot.recover_entity_cycles(&mut c, t0);
-        slot.recover_entity_cycles(&mut c, t0 + Duration::from_millis(600));
-        assert_eq!(c.loop_cycle, 29, "asked={asked}");
-        assert_eq!(c.shell.idle_cycles, expected, "asked={asked}");
-    }
-}
-
 #[test]
 fn idle_observe_wire_reaches_socket_on_the_next_frame_without_parking() {
     use std::io::Read;

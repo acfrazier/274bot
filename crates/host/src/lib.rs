@@ -1591,8 +1591,7 @@ impl SlotLoop {
     /// Recover missed 20 ms cycles on every slot, including late focused
     /// and busy frames, before new packets replace routes or animations.
     /// Advance only entity and presentation state, including cutscene camera
-    /// updates. Never replay I/O or input timers, except the Java idle timer
-    /// a host asked for (below).
+    /// updates. Never replay I/O or input timers.
     fn recover_entity_cycles(&mut self, client: &mut Client, now: Instant) {
         if !client.ingame || client.error_loading || client.gens.session != self.pump.last().session
         {
@@ -1618,15 +1617,6 @@ impl SlotLoop {
             for cycle in &mut client.cam_shake_cycle {
                 *cycle = cycle.wrapping_add(1);
             }
-        }
-        // The one input timer replayed: the Java idle timer counts 20 ms
-        // cycles, so a bot that parks between game ticks still reaches its
-        // 4500-cycle threshold after the Java client's 90 s, not after 4500
-        // parked passes. Only a client whose host asked for that timer
-        // ([`Client::set_host_idle_timer`]) counts; every other timer stays
-        // unreplayed.
-        if missed > 0 && client.host_idle_timer() {
-            client.shell.idle_cycles = client.shell.idle_cycles.saturating_add(missed);
         }
         // Retain fractional periods and account for early control wakes.
         // Do not carry capped stall debt across newly received packets.

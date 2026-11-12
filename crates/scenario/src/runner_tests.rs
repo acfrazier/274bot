@@ -1687,8 +1687,8 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
 }
 
 /// A companion hook's `true` is a one-shot host-login request: the driver
-/// reads it from the tick and posts the slot's operator Login, which the
-/// scriptless park policy needs after a prep relog's logout.
+/// reads it from the tick and posts the slot's operator Login, a real
+/// one-shot command for a prep relog's logout.
 #[test]
 fn companion_tick_surfaces_a_one_shot_host_login_request() {
     let scenario = Scenario {
@@ -2120,7 +2120,7 @@ fn relog_presses_the_logout_button_while_ingame() {
     );
     assert!(
         runner.relog_login_wanted(),
-        "a scriptless relog needs the host's explicit Login"
+        "the Relog step requests the host's explicit Login after its logout"
     );
     assert!(
         runner.take_relog_login(),

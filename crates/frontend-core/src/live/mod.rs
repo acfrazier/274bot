@@ -156,7 +156,7 @@ struct RunnerState {
     live_timing: Option<host_play::live_gate::LiveTiming>,
     core_mode: Option<host_play::live_gate::LiveCore>,
     /// Slots whose fixture pressed its logout and asked for the host's
-    /// explicit Login (the scriptless park policy). The front end drains
+    /// explicit Login (a real one-shot command). The front end drains
     /// them each poll and posts `SlotArm::arm_explicit_login` for that slot.
     login_requests: Vec<String>,
 }
@@ -548,7 +548,8 @@ impl RunnerHandle {
     /// Drain the slots whose live fixture pressed its logout and needs the
     /// host's explicit Login. The front end posts
     /// `SlotArm::arm_explicit_login` for each name (the operator's Login
-    /// command); a bot with no script does not reconnect by itself.
+    /// command); an unlatched slot with auto-login would also reconnect by
+    /// itself.
     pub(crate) fn take_relog_logins(&self) -> Vec<String> {
         std::mem::take(&mut self.0.lock().unwrap().login_requests)
     }

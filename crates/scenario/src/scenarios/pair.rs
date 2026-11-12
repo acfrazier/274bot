@@ -1316,8 +1316,8 @@ struct PairCompanionSlot {
     prep_barrier: Option<PairPrepBarrier>,
     tutorial_reseed: Option<crate::tutorial::PostRelogTutorial>,
     /// This frame pressed the logout; the host must post the slot's explicit
-    /// Login because a bot with no script stays parked after its exit. The
-    /// companion hook returns it once and clears it.
+    /// Login, a real one-shot command. The companion hook returns it once and
+    /// clears it.
     login_wanted: bool,
 }
 
@@ -1378,9 +1378,8 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                     slot.logout_session = c.gens.session;
                     slot.last_action = now;
                     slot.stage = PairPrepStage::WaitRelog;
-                    // The companion has no script during prep, so the
-                    // approved scriptless policy parks it after this exit.
-                    // Ask the host for the operator's explicit Login.
+                    // The companion's prep relog exits here. Ask the host for the
+                    // operator's explicit Login, a real one-shot command.
                     slot.login_wanted = true;
                 }
             }

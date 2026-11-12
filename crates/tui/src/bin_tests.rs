@@ -33,6 +33,8 @@ use std::time::{Duration, Instant};
 use host_play as map_host;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
+#[path = "../../host-play/tests/support/map_catalogue_fixture.rs"]
+mod map_catalogue_fixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 
@@ -9967,115 +9969,47 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
     let _iso = iso;
 }
 
-/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
-/// out and says why, at 120x40 and 80x24. With `TUI_CAPTURE_DIR` set, the
-/// frames are written to `<dir>/idle-park` by the capture harness.
-#[test]
-fn an_idle_park_says_why_the_bot_is_logged_out_at_both_sizes() {
-    tui_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "logged out: disconnected while idle (Log in to connect)",
-        "logged-out-while-idle",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server, as in the panel.
-#[test]
-fn the_tui_calls_only_a_requested_logout_an_idle_logout() {
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "logged out: idle logout by the server (Log in to connect)",
-        "logged-out-idle-logout",
-    );
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "logged out by the server (Log in to connect)",
-        "logged-out-by-the-server",
-    );
-}
-
-fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_name: &str) {
-    let iso = IsolatedStores::enter("tui-idle-park");
-    let (mut session, mut app) = tui_with_profiles(&iso, &["bob"]);
-    let dir = std::env::var_os("TUI_CAPTURE_DIR")
-        .map(|dir| std::path::PathBuf::from(dir).join("idle-park"));
-    if let Some(dir) = dir.as_deref() {
-        std::fs::create_dir_all(dir).unwrap();
-    }
-    app.focused = Some(0);
-    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
-    app.key_focus = crate::layout::Pane::Detail;
-    let arm = session
-        .core
-        .play_for_test()
-        .and_then(|play| play.arm("bob"))
-        .expect("bob's arm");
-    arm.complete_login_for_test();
-    exit(&arm);
-    publish_status(&session, "bob", |row| {
-        row.connected = false;
-        row.ingame = false;
-        row.login_latched = true;
-        row.login_latch_reason = arm.login_latch_reason();
-        row.startup_phase = host_play::StartupPhase::Queueing;
-        row.startup_phase_started = Instant::now();
-    });
-    session.pump(&mut app);
-    for (cols, rows) in [(120, 40), (80, 24)] {
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
-        terminal.draw(|frame| app.draw(frame)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let text: String = (0..rows)
-            .map(|y| {
-                (0..cols)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        // The narrowest status pane wraps the long line: match its head.
-        let head: String = format!("state: {state}").chars().take(30).collect();
-        assert!(text.contains(&head), "{cols}x{rows}:\n{text}");
-        if let Some(dir) = dir.as_deref() {
-            let proof = serde_json::json!({ "state": state });
-            super::manual_click_live_tests::capture(
-                &mut app,
-                cols,
-                rows,
-                dir,
-                &format!("{cols}x{rows}"),
-                capture_name,
-                &proof,
-            )
-            .unwrap();
-        }
-    }
-    let _iso = iso;
-}
 
 #[test]
-fn map_catalogue_build_failure_is_visible_at_common_capture_sizes() {
+fn map_catalogue_build_failure_is_visible_and_retries_only_after_inputs_change() {
     let _iso = IsolatedStores::enter("tui-map-catalogue-build-failure");
-    let mut session = TuiSession::new(dummy_options());
+    let small_world = nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
+    );
+    let profile_fixture = map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let mut session = TuiSession::new_bound(Arc::clone(&profile_fixture.template));
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
-    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
-        &nav_planner::grid::StepGrid::fixture_open_3x3(),
-    )));
+    app.world = Some(Arc::clone(&world));
     assert_eq!(
         app.on_key(crate::test_support::key(crossterm::event::KeyCode::F(4))),
         AppAction::MapOpen
     );
 
-    session.mark_map_catalogue_unavailable(&mut app, "map search/index bytes");
-    session.poll_map_demand(&mut app);
-
+    reset_map_catalogue_build_count();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(map_catalogue_build_count(), 1);
     assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Unavailable);
+    assert!(
+        app.map_coverage.contains("catalogue unavailable"),
+        "{}",
+        app.map_coverage
+    );
+    assert!(!app.map_coverage.contains("reading cache"));
     assert!(app.map_catalogue.is_none());
     assert!(app.map_search_results.is_empty());
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt on the next frame"
+    );
+
     for (width, height) in [(120, 40), (80, 24)] {
         let rows = crate::test_support::draw(&mut app, width, height);
         let rendered = crate::test_support::text(&rows);
@@ -10083,5 +10017,100 @@ fn map_catalogue_build_failure_is_visible_at_common_capture_sizes() {
             rendered.contains("map catalogue unavailable"),
             "{width}x{height}:\n{rendered}"
         );
+        assert!(
+            rendered.contains("status: Unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("status: Unavailable  coverage: reading cache"),
+            "{width}x{height}:\n{rendered}"
+        );
     }
+
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt"
+    );
+
+    let navpois = profile_fixture
+        .template
+        .profile()
+        .nav_pack()
+        .with_extension("navpois");
+    std::fs::write(&navpois, b"changed navpois input").unwrap();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "navpois changes wait for the coarse metadata probe"
+    );
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        2,
+        "changed navpois metadata permits one retry"
+    );
+
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    app.world = Some(Arc::clone(&changed_world));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        3,
+        "changed pack identity permits one retry"
+    );
+    let mut alternate_grid = nav_planner::grid::StepGrid::fixture_open_3x3();
+    alternate_grid.set_walkable(
+        nav_planner::tile::Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        false,
+    );
+    let alternate_world = nav_planner::world::NavWorld::from_grid(&alternate_grid);
+    let other_profile_fixture = map_fixture::MapFixture::new(&alternate_world, "local-289");
+    let other_ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(other_profile_fixture.template.profile());
+    let other_ready = other_ready_fixture.ready();
+    let original_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &ready,
+    );
+    let changed_ready_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_ready_inputs);
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        4,
+        "changed ready catalogue identity permits an immediate retry"
+    );
+
+    let other_session = TuiSession::new_bound(Arc::clone(&other_profile_fixture.template));
+    let changed_profile_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        other_session.bound().expect("other bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_profile_inputs);
+
+    session.launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(
+        Arc::clone(&other_profile_fixture.template),
+    ));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        5,
+        "changed profile identity permits an immediate retry"
+    );
+
 }

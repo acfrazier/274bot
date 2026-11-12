@@ -144,9 +144,9 @@ fn legs() -> Vec<LegSpec> {
     legs
 }
 
-/// The fixture logs its scriptless bot out to bind the tutorial side tabs; the
-/// approved scriptless policy then parks it, so post the operator's explicit
-/// Login once per account when its preparation reaches the relog wait.
+/// The fixture logs its bot out to bind the tutorial side tabs. Post a real
+/// one-shot Login once per account when its preparation reaches the relog
+/// wait; an unlatched slot with auto-login would also reconnect by itself.
 fn post_relog_login(play: &super::Play, account: &str) {
     if let Some(arm) = play.arm(account) {
         arm.arm_explicit_login();
