@@ -9,6 +9,91 @@ use crate::test_support::headless_gpu;
 use crate::theme::PANEL_FONT_SIZE;
 
 #[test]
+fn recreated_window_preserves_visibility_without_background_activation() {
+    use std::cell::RefCell;
+
+    #[derive(Debug, PartialEq)]
+    enum NativeCall {
+        Create { active: bool, visible: bool },
+        Minimize,
+    }
+
+    for (focused, visible, minimized, occluded, active) in [
+        (false, true, false, false, false),
+        (true, true, true, false, false),
+        (true, true, false, true, false),
+        (false, false, false, false, false),
+        (true, true, false, false, true),
+    ] {
+        let calls = RefCell::new(Vec::new());
+        let previous = RecreateWindowState {
+            focused,
+            visible,
+            minimized,
+            occluded,
+        };
+        create_panel_window(
+            Window::default_attributes(),
+            Some(previous),
+            || panic!("recreation must use the previous window's focus"),
+            |attributes| {
+                calls.borrow_mut().push(NativeCall::Create {
+                    active: attributes.active,
+                    visible: attributes.visible,
+                });
+                Ok::<_, std::convert::Infallible>(())
+            },
+            |_| calls.borrow_mut().push(NativeCall::Minimize),
+        )
+        .unwrap();
+        let mut expected = vec![NativeCall::Create { active, visible }];
+        if minimized {
+            expected.push(NativeCall::Minimize);
+        }
+        assert_eq!(*calls.borrow(), expected);
+    }
+}
+
+#[test]
+fn first_window_only_requests_activation_for_an_already_active_app() {
+    for application_active in [false, true] {
+        let requested = create_panel_window(
+            Window::default_attributes(),
+            None,
+            || application_active,
+            |attributes| Ok::<_, std::convert::Infallible>((attributes.active, attributes.visible)),
+            |_| panic!("initial creation must not request minimization"),
+        )
+        .unwrap();
+        assert_eq!(requested, (application_active, true));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_event_loop_does_not_activate_ignoring_other_apps() {
+    assert!(!macos_event_loop_activate_ignoring_other_apps());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn application_active_guard_skips_appkit_off_main_thread() {
+    let (active, is_active_called) = std::thread::spawn(|| {
+        let mut is_active_called = false;
+        let active = with_main_thread_marker(|_| {
+            is_active_called = true;
+            true
+        });
+        (active, is_active_called)
+    })
+    .join()
+    .expect("the worker thread must complete");
+
+    assert_eq!(active, None);
+    assert!(!is_active_called);
+}
+
+#[test]
 fn panel_adapter_request_options_uses_the_platform_default() {
     let expected = if cfg!(target_os = "linux") {
         wgpu::PowerPreference::None
