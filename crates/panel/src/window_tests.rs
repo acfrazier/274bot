@@ -35,6 +35,7 @@ fn recreated_window_preserves_visibility_without_background_activation() {
         create_panel_window(
             Window::default_attributes(),
             Some(previous),
+            || panic!("recreation must use the previous window's focus"),
             |attributes| {
                 calls.borrow_mut().push(NativeCall::Create {
                     active: attributes.active,
@@ -54,17 +55,18 @@ fn recreated_window_preserves_visibility_without_background_activation() {
 }
 
 #[test]
-fn first_window_keeps_its_requested_activation() {
-    let attributes = Window::default_attributes();
-    let expected = (attributes.active, attributes.visible);
-    let requested = create_panel_window(
-        attributes,
-        None,
-        |attributes| Ok::<_, std::convert::Infallible>((attributes.active, attributes.visible)),
-        |_| panic!("initial creation must not request minimization"),
-    )
-    .unwrap();
-    assert_eq!(requested, expected);
+fn first_window_only_requests_activation_for_an_already_active_app() {
+    for application_active in [false, true] {
+        let requested = create_panel_window(
+            Window::default_attributes(),
+            None,
+            || application_active,
+            |attributes| Ok::<_, std::convert::Infallible>((attributes.active, attributes.visible)),
+            |_| panic!("initial creation must not request minimization"),
+        )
+        .unwrap();
+        assert_eq!(requested, (application_active, true));
+    }
 }
 
 #[test]

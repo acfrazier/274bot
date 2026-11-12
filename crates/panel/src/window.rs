@@ -766,9 +766,26 @@ impl RecreateWindowState {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn application_is_active() -> bool {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    let main_thread = MainThreadMarker::new().expect("panel windows run on the main thread");
+    let application = NSApplication::sharedApplication(main_thread);
+    // SAFETY: this reads AppKit state on the window event loop's main thread.
+    unsafe { application.isActive() }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn application_is_active() -> bool {
+    true
+}
+
 fn create_panel_window<W, E>(
     mut attributes: WindowAttributes,
     previous: Option<RecreateWindowState>,
+    application_active: impl FnOnce() -> bool,
     create: impl FnOnce(WindowAttributes) -> Result<W, E>,
     minimize: impl FnOnce(&W),
 ) -> Result<W, E> {
@@ -778,6 +795,8 @@ fn create_panel_window<W, E>(
             .with_visible(previous.visible);
         previous.minimized
     } else {
+        // Finder and Dock launches activate the app; background launches must not.
+        attributes = attributes.with_active(application_active());
         false
     };
     let window = create(attributes)?;
@@ -812,6 +831,7 @@ impl AppWindow {
                         .with_title(cfg.window_title.clone())
                         .with_inner_size(size),
                     previous,
+                    application_is_active,
                     |attributes| event_loop.create_window(attributes),
                     |window| window.set_minimized(true),
                 )
@@ -1943,7 +1963,13 @@ pub fn run<F>(
 where
     F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
-    let event_loop = EventLoop::new()?;
+    let mut builder = EventLoop::builder();
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        builder.with_activate_ignoring_other_apps(false);
+    }
+    let event_loop = builder.build()?;
     match cfg.redraw {
         RedrawMode::Poll => event_loop.set_control_flow(ControlFlow::Poll),
         RedrawMode::Wait => event_loop.set_control_flow(ControlFlow::Wait),
