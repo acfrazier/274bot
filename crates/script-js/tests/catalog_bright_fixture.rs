@@ -81,21 +81,9 @@ fn register_fixture(dir: &Path) -> JsLibrary {
 fn throw_shaped(line: &str) -> bool {
     line.contains("not impl") || line.contains("Error:") || line.contains("TypeError")
 }
-fn selected_named_banks(
-    data: &api::game_data::SelectedGameData,
-) -> Arc<api::named_banks::NamedBankFacts> {
-    if let Some(path) = std::env::var_os("WORLD_NAV_PACK").map(PathBuf::from) {
-        let world = nav_planner::world::NavWorld::load_pack(&path)
-            .expect("load selected navigation world for bank facts");
-        world
-            .bind_named_bank_facts(data)
-            .expect("bind selected bank placements to the navigation world");
-        return Arc::clone(
-            world
-                .named_bank_facts()
-                .expect("selected navigation world has named-bank facts"),
-        );
-    }
+/// The frozen bank roster as the public `api` catalogue gives it. The test needs
+/// every bank name to resolve; it does not need a navigation world.
+fn selected_named_banks() -> Arc<api::named_banks::NamedBankFacts> {
     let catalog = api::named_banks::bank_catalog().expect("selected bank catalog");
     Arc::new(api::named_banks::NamedBankFacts::from_banks(
         catalog
@@ -363,7 +351,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     let cache = JsCache::new(dir.join("siblings"));
     let bytes = script_js::wire::encode_snapshot(&common::ingame_snapshot());
     let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let named_banks = selected_named_banks(&content);
+    let named_banks = selected_named_banks();
     let mut started = 0usize;
     for name in bright_names {
         if let Err(error) = lib.ensure_js(ScriptSource::Catalog, &name) {
