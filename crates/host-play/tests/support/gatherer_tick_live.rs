@@ -8,7 +8,8 @@
 //! Live execution requires LIVE=1, BOT_CPU=1, a 1-4 character BOT_LIVE_NAME_PREFIX,
 //! GATHERER_GAME_PORT=47594, GATHERER_HTTP_PORT=3080, and absolute
 //! GATHERER_NAV_PACK, GATHERER_ENGINE_DIR, GATHERER_CATALOG_ROOT, and
-//! GATHERER_TICK_EVIDENCE paths. The evidence destination must not already exist.
+//! GATHERER_TICK_EVIDENCE paths. Optional GATHERER_TICK_COMMIT records the
+//! code commit in the evidence JSON. The evidence destination must not exist.
 
 use super::{mint_profile, required, selected_profile, TempRoot};
 use api::interact;
@@ -78,9 +79,9 @@ const REQUIRED_CYCLES: u32 = 60;
 const PROBE_CYCLES: u32 = 300;
 const PROBE_TICK_BUDGET: u32 = 2_400;
 const CELL_TICK_BUDGET: u32 = 800;
-// fishing_movement.rs2:8-12 waits at least 280 ticks between spot moves.
-// Its current timer has an unknown phase: cover one immediate move, each
-// later move in the cell budget, and the log used by a successful arm.
+// Content requires at least 280 ticks between fishing spot moves.
+// In 800 ticks, one move can occur at an unknown phase, plus
+// floor(800 / 280) later moves. One more log covers the arm.
 const NET_MOVE_MIN_TICKS: u32 = 280;
 const NET_LOG_COUNT: i32 = 2 + (CELL_TICK_BUDGET / NET_MOVE_MIN_TICKS) as i32;
 const RUNE_XP_TICK_BUDGET: u32 = 60;
@@ -298,6 +299,7 @@ struct SetupState {
     error: Option<String>,
     logout_session: Option<u64>,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
+    equipment: Vec<(i32, i32)>,
 }
 
 impl SetupState {
@@ -325,6 +327,7 @@ impl SetupState {
             error: None,
             logout_session: None,
             tutorial_reseed: None,
+            equipment: Vec::new(),
         }
     }
 
@@ -434,12 +437,17 @@ impl SetupState {
                 }
             }
             SetupPhase::WaitWornTool => {
-                if snapshot
-                    .equipment()
+                let equipment = snapshot.equipment();
+                if equipment
                     .iter()
                     .any(|item| item.def.id == IRON_AXE_ID && item.count > 0)
                     && self.ready_in_snapshot(&snapshot)
                 {
+                    self.equipment = equipment
+                        .iter()
+                        .filter(|item| item.count > 0)
+                        .map(|item| (item.def.id, item.count))
+                        .collect();
                     self.phase = SetupPhase::Ready;
                 }
             }
@@ -578,15 +586,13 @@ fn integer_field(status: &ScriptStatus, key: &str) -> Option<i64> {
         })
 }
 
-/// Add observed native-approach ticks to the selected first-arm wait.
-/// A replacement approach requires depletion; duplicate polls add no ticks.
+/// Add only observed route-motion ticks to the selected first-arm wait.
+/// A replacement route starts at depletion; status intent adds no ticks.
 struct FirstArmWait {
     origin: u32,
     native_budget: u32,
     absolute_budget: u32,
-    last_tick: u32,
     depleted_tick: Option<u32>,
-    approaching: bool,
     replacement_route_ticks: u32,
     native_route_ticks: u32,
 }
@@ -597,9 +603,7 @@ impl FirstArmWait {
             origin,
             native_budget,
             absolute_budget,
-            last_tick: origin,
             depleted_tick: None,
-            approaching: false,
             replacement_route_ticks: 0,
             native_route_ticks: 0,
         }
@@ -608,25 +612,26 @@ impl FirstArmWait {
     fn observe(
         &mut self,
         now: u32,
-        depleted: bool,
-        approaching: bool,
+        observed_depleted_tick: Option<u32>,
+        reported_approaching: bool,
+        replacement_route_ticks: u32,
         native_route_ticks: u32,
         armed: bool,
     ) -> Result<bool, String> {
-        if self.approaching {
-            self.replacement_route_ticks += now.wrapping_sub(self.last_tick);
+        if self.depleted_tick.is_none() {
+            self.depleted_tick = observed_depleted_tick;
         }
+        self.replacement_route_ticks = if self.depleted_tick.is_some() {
+            replacement_route_ticks
+        } else {
+            0
+        };
         self.native_route_ticks = native_route_ticks;
-        self.last_tick = now;
-        if depleted && self.depleted_tick.is_none() {
-            self.depleted_tick = Some(now);
-        }
-        self.approaching = self.depleted_tick.is_some() && approaching;
         let elapsed = now.wrapping_sub(self.origin);
         let route_ticks = self.route_ticks();
         if elapsed > self.absolute_budget || elapsed > self.native_budget + route_ticks {
             return Err(format!(
-                "Gatherer Start did not reach its first arm within {} native ticks plus {route_ticks} observed approach ticks (depleted={:?}, elapsed={elapsed})",
+                "Gatherer Start did not reach its first arm within {} native ticks plus {route_ticks} observed approach ticks (depleted={:?}, elapsed={elapsed}, reported_approaching={reported_approaching})",
                 self.native_budget, self.depleted_tick
             ));
         }
@@ -638,19 +643,18 @@ impl FirstArmWait {
     }
 }
 
-/// A native NPC click can walk before its content handler starts. Count
-/// observed moving game ticks, not host polls or a mere walking intention.
-struct NativeApproach {
-    click_tick: u32,
+/// Counts moving game ticks after a route starts, not host polls or intent.
+struct ObservedRoute {
+    start_tick: u32,
     last_tile: Option<WorldTile>,
     last_move_tick: Option<u32>,
     route_ticks: u32,
 }
 
-impl NativeApproach {
-    fn new(click_tick: u32, last_tile: Option<WorldTile>) -> Self {
+impl ObservedRoute {
+    fn new(start_tick: u32, last_tile: Option<WorldTile>) -> Self {
         Self {
-            click_tick,
+            start_tick,
             last_tile,
             last_move_tick: None,
             route_ticks: 0,
@@ -658,14 +662,14 @@ impl NativeApproach {
     }
 
     fn observe(&mut self, tick: u32, tile: Option<WorldTile>) {
-        if tick.wrapping_sub(self.click_tick) > CELL_TICK_BUDGET {
+        let elapsed = tick.wrapping_sub(self.start_tick);
+        if elapsed == 0 || elapsed > CELL_TICK_BUDGET {
             return;
         }
         let Some(tile) = tile else {
             return;
         };
-        if tick != self.click_tick
-            && self.last_tile.is_some_and(|previous| previous != tile)
+        if self.last_tile.is_some_and(|previous| previous != tile)
             && self.last_move_tick != Some(tick)
         {
             self.route_ticks += 1;
@@ -986,7 +990,7 @@ impl LiveRun {
         let deadline = Instant::now() + Duration::from_secs(30);
         let mut arm_wait =
             FirstArmWait::new(origin, self.first_arm_budget, self.case.tick_budget());
-        let mut native_approach = None;
+        let mut observed_route = None;
         let mut next_route_frame = 0;
         loop {
             self.capture_status();
@@ -1024,16 +1028,27 @@ impl LiveRun {
                 }
             } else {
                 // Fast iron content yields and depletes on the same tick.
-                // A cleared animation and new native XP identify that event,
-                // not merely the bot's intent to approach another target.
-                let depleted = self.case == Case::Iron
-                    && self.xp_gain() > 0
-                    && trace.frames.last().is_some_and(|frame| {
-                        frame
-                            .animation
-                            .is_none_or(|animation| animation.sequence == -1)
-                    });
-                let approaching = self.statuses.last().is_some_and(|status| {
+                // New native XP and a cleared animation identify that event.
+                let depleted_frame = if self.case == Case::Iron {
+                    let baseline_xp = self
+                        .baseline
+                        .as_ref()
+                        .and_then(|frame| skill_xp(frame, self.case.skill_index()))
+                        .unwrap_or(0);
+                    trace.frames.iter().find(|frame| {
+                        let elapsed = frame.game_tick.wrapping_sub(origin);
+                        elapsed > 0
+                            && elapsed <= CELL_TICK_BUDGET
+                            && skill_xp(frame, self.case.skill_index())
+                                .is_some_and(|xp| xp > baseline_xp)
+                            && frame
+                                .animation
+                                .is_none_or(|animation| animation.sequence == -1)
+                    })
+                } else {
+                    None
+                };
+                let reported_approaching = self.statuses.last().is_some_and(|status| {
                     status.last_event.as_deref() == Some("approaching target")
                 });
                 let first_arm = trace.dispatches.iter().find(|event| is_knife_arm(event));
@@ -1041,20 +1056,24 @@ impl LiveRun {
                     .map(|event| u32::try_from(event.game_tick))
                     .transpose()
                     .map_err(|error| format!("first-arm game tick: {error}"))?;
-                if self.case == Case::Net && native_approach.is_none() {
-                    native_approach = trace.wire.iter().find_map(|packet| {
+                if self.case == Case::Net && observed_route.is_none() {
+                    observed_route = trace.wire.iter().find_map(|packet| {
                         (packet.request_id.is_none()
                             && packet.opcode == ClientProt289::OPNPC1.id as u8
                             && packet.game_tick.wrapping_sub(origin) <= STARTUP_TICK_BUDGET)
                             .then(|| {
-                                NativeApproach::new(
+                                ObservedRoute::new(
                                     packet.game_tick,
                                     self.baseline.as_ref().and_then(|frame| frame.player_tile),
                                 )
                             })
                     });
                 }
-                if let Some(route) = &mut native_approach {
+                if self.case == Case::Iron && observed_route.is_none() {
+                    observed_route = depleted_frame
+                        .map(|frame| ObservedRoute::new(frame.game_tick, frame.player_tile));
+                }
+                if let Some(route) = &mut observed_route {
                     for frame in &trace.frames[next_route_frame..] {
                         if arm_tick.is_none_or(|armed| {
                             frame.game_tick.wrapping_sub(origin) <= armed.wrapping_sub(origin)
@@ -1064,13 +1083,24 @@ impl LiveRun {
                     }
                 }
                 next_route_frame = trace.frames.len();
+                let observed_route_ticks =
+                    observed_route.as_ref().map_or(0, |route| route.route_ticks);
+                let replacement_route_ticks = if self.case == Case::Iron {
+                    observed_route_ticks
+                } else {
+                    0
+                };
+                let native_route_ticks = if self.case == Case::Net {
+                    observed_route_ticks
+                } else {
+                    0
+                };
                 let armed = arm_wait.observe(
                     arm_tick.unwrap_or(current),
-                    depleted,
-                    approaching,
-                    native_approach
-                        .as_ref()
-                        .map_or(0, |route| route.route_ticks),
+                    depleted_frame.map(|frame| frame.game_tick),
+                    reported_approaching,
+                    replacement_route_ticks,
+                    native_route_ticks,
                     first_arm.is_some(),
                 );
                 self.startup_route_ticks = arm_wait.route_ticks();
@@ -1188,14 +1218,23 @@ impl LiveRun {
         let dispatches: Vec<Value> = trace.dispatches.iter().map(dispatch_json).collect();
         let wire: Vec<Value> = trace.wire.iter().map(wire_json).collect();
         let statuses: Vec<Value> = self.statuses.iter().map(status_json).collect();
+        let equipment: Vec<Value> = self
+            .setup
+            .lock()
+            .map_err(|_| "live tick setup poisoned")?
+            .equipment
+            .iter()
+            .map(|(id, count)| json!({"id": id, "count": count}))
+            .collect();
         let baseline_tick = self.started_tick.map(i64::from);
         let value = json!({
             "schema": "gatherer-tick-run/v1",
             "case": self.case.name(),
             "kind": match self.case { Case::Probe => "probe", Case::Fly => "fly", Case::Net => "net", Case::Iron => "iron", Case::Oak => "oak", Case::Rune => "rune" },
             "engine": {"host": ENGINE_HOST, "game_port": ENGINE_GAME_PORT, "http_port": ENGINE_HTTP_PORT, "tick_ms": EXPECTED_TICK_MS},
-            "runtime": {"bot_cpu": 1, "account_prefix": std::env::var("BOT_LIVE_NAME_PREFIX").ok(), "account": self.account, "profile": self.profile_identity, "world_members": self.world_members},
+            "runtime": {"commit": std::env::var("GATHERER_TICK_COMMIT").ok(), "bot_cpu": 1, "account_prefix": std::env::var("BOT_LIVE_NAME_PREFIX").ok(), "account": self.account, "profile": self.profile_identity, "world_members": self.world_members},
             "scenario": {"skill": self.case.skill(), "skill_index": self.case.skill_index(), "seed_level": self.case.level(), "target": {"x": self.case.target().x, "z": self.case.target().z, "level": self.case.target().level}, "required_cycles": self.case.required_cycles(), "tick_budget": self.case.tick_budget(), "fixed_deadline_seconds": FIXED_DEADLINE.as_secs(), "inventory_seed": self.case.seeds()},
+            "setup": {"equipment": equipment},
             "measurement": {"started_tick": baseline_tick, "baseline": self.baseline.as_ref().map(frame_json), "first_arm_native_budget": self.first_arm_budget, "startup_depleted_tick": self.startup_depleted_tick, "startup_route_ticks": self.startup_route_ticks, "xp_gain": self.xp_gain(), "logout_requested": self.logout_requested, "logout_still_connected": self.logout_still_connected},
             "timeline": {"frames": frames, "dispatches": dispatches, "wire": wire, "statuses": statuses},
             "server_acceptance": {"observed": false, "accepted_events": null, "reason": "Engine L has no independent accepted-event history in this live hook; HostQueued receipts and outbound Client packets are not acceptance evidence."}
@@ -1454,12 +1493,34 @@ mod tests {
 
     #[test]
     fn first_arm_counts_only_observed_replacement_route_ticks() {
+        let start = Case::Iron.target();
+        let mut route = ObservedRoute::new(19, Some(start));
         let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
-        assert!(!wait.observe(18, false, false, 0, false).unwrap());
-        assert!(!wait.observe(19, true, true, 0, false).unwrap());
-        assert!(!wait.observe(19, true, true, 0, false).unwrap());
-        assert!(!wait.observe(20, true, true, 0, false).unwrap());
-        assert!(wait.observe(21, true, false, 0, true).unwrap());
+        assert!(!wait.observe(18, None, false, 0, 0, false).unwrap());
+        assert!(!wait
+            .observe(19, Some(19), true, route.route_ticks, 0, false)
+            .unwrap());
+        route.observe(19, Some(start));
+        route.observe(
+            20,
+            Some(WorldTile {
+                x: start.x + 1,
+                ..start
+            }),
+        );
+        assert!(!wait
+            .observe(20, Some(19), true, route.route_ticks, 0, false)
+            .unwrap());
+        route.observe(
+            21,
+            Some(WorldTile {
+                x: start.x + 2,
+                ..start
+            }),
+        );
+        assert!(wait
+            .observe(21, Some(19), true, route.route_ticks, 0, true)
+            .unwrap());
         assert_eq!(wait.route_ticks(), 2);
         assert_eq!(wait.depleted_tick, Some(19));
     }
@@ -1467,30 +1528,48 @@ mod tests {
     #[test]
     fn approaching_without_depletion_does_not_extend_first_arm_bound() {
         let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
-        assert!(!wait.observe(19, false, true, 0, false).unwrap());
-        assert!(wait.observe(21, false, true, 0, true).is_err());
+        assert!(!wait.observe(19, None, true, 0, 0, false).unwrap());
+        assert!(wait.observe(21, None, true, 0, 0, true).is_err());
         assert_eq!(wait.route_ticks(), 0);
+    }
+
+    #[test]
+    fn approaching_without_movement_fails_first_arm_bound() {
+        let start = Case::Iron.target();
+        let mut route = ObservedRoute::new(19, Some(start));
+        for tick in 19..=21 {
+            route.observe(tick, Some(start));
+        }
+        assert_eq!(route.route_ticks, 0);
+        let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
+        assert!(!wait
+            .observe(19, Some(19), true, route.route_ticks, 0, false)
+            .unwrap());
+        let error = wait
+            .observe(21, Some(19), true, route.route_ticks, 0, false)
+            .unwrap_err();
+        assert!(error.contains("plus 0 observed approach ticks"));
+        assert!(error.contains("reported_approaching=true"));
     }
 
     #[test]
     fn depletion_does_not_excuse_a_late_or_missing_arm() {
         for armed in [false, true] {
             let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
-            assert!(!wait.observe(19, true, true, 0, false).unwrap());
-            assert!(!wait.observe(21, true, false, 0, false).unwrap());
-            assert!(wait.observe(23, true, false, 0, armed).is_err());
+            assert!(!wait.observe(19, Some(19), true, 0, 0, false).unwrap());
+            assert!(wait.observe(21, Some(19), false, 0, 0, armed).is_err());
         }
         let mut stuck = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
-        assert!(!stuck.observe(19, true, true, 0, false).unwrap());
+        assert!(!stuck.observe(19, Some(19), true, 0, 0, false).unwrap());
         assert!(stuck
-            .observe(14 + CELL_TICK_BUDGET, true, true, 0, false)
+            .observe(14 + CELL_TICK_BUDGET, Some(19), true, 0, 0, false)
             .is_err());
     }
 
     #[test]
-    fn native_npc_approach_adds_observed_motion_but_not_duplicate_polls() {
+    fn observed_route_adds_motion_but_not_duplicate_polls() {
         let start = Case::Net.target();
-        let mut route = NativeApproach::new(13, Some(start));
+        let mut route = ObservedRoute::new(13, Some(start));
         for (tick, x, z) in [
             (13, 3267, 3149),
             (14, 3269, 3149),
@@ -1506,29 +1585,29 @@ mod tests {
         assert_eq!(route.route_ticks, 5);
         let mut wait = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
         assert!(!wait
-            .observe(20, false, false, route.route_ticks, false)
+            .observe(20, None, false, 0, route.route_ticks, false)
             .unwrap());
         assert!(wait
-            .observe(23, false, false, route.route_ticks, true)
+            .observe(23, None, false, 0, route.route_ticks, true)
             .unwrap());
     }
 
     #[test]
-    fn native_approach_cannot_excuse_stationary_or_never_arming_bots() {
+    fn observed_route_cannot_excuse_stationary_or_never_arming_bots() {
         let start = Case::Net.target();
-        let mut route = NativeApproach::new(13, Some(start));
+        let mut route = ObservedRoute::new(13, Some(start));
         for tick in 13..=20 {
             route.observe(tick, Some(start));
         }
         assert_eq!(route.route_ticks, 0);
         let mut stationary = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
         assert!(stationary
-            .observe(20, false, false, route.route_ticks, false)
+            .observe(20, None, true, 0, route.route_ticks, false)
             .is_err());
         for armed in [false, true] {
             let mut wait = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
-            assert!(!wait.observe(20, false, false, 5, false).unwrap());
-            assert!(wait.observe(25, false, false, 5, armed).is_err());
+            assert!(!wait.observe(20, None, false, 0, 5, false).unwrap());
+            assert!(wait.observe(25, None, false, 0, 5, armed).is_err());
         }
     }
 
@@ -1542,7 +1621,6 @@ mod tests {
             .contains(&("logs", LOG_ID, 1 + moves as i32)));
         assert!(Case::Fly.seeds().contains(&("logs", LOG_ID, 1)));
     }
-
     #[test]
     fn iron_setup_has_a_usable_tool_and_local_replacement_rocks() {
         if !api::test_support::game_data_available() {
