@@ -28,9 +28,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   starts. Opened from Finder or the Dock, the panel still comes to the front.
   Started from Terminal, its window now opens behind Terminal without focus;
   click its Dock icon to bring it forward.
-- On macOS, after a graphics error, the panel keeps its window's visibility
-  and minimized state when it rebuilds the window, and does not take focus if
-  the window was unfocused, minimized or covered.
+- After a graphics error, the panel keeps its window's visibility and
+  minimized state when it rebuilds the window, and does not take focus if the
+  window was unfocused, minimized or covered.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 
