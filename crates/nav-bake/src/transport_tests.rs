@@ -1109,7 +1109,30 @@ fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
     derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data)).0
 }
 
+fn write_cart_route_handlers(fx: &Fixture, vigroy_gated: bool) {
+    let gate = "if (%zombiequeen < ^zombiequeen_complete) {\n\
+        ~chatnpc(\"The cart cannot leave yet.\");\n\
+        return;\n\
+        }\n";
+    fx.write(
+        "scripts/areas/area_brimhaven/scripts/hajedy.rs2",
+        &format!(
+            "[label,brimhavencartdriver_dialogue]\n{gate}\
+             def_int $amount = ~calc_shilocart_cost();\n"
+        ),
+    );
+    fx.write(
+        "scripts/areas/area_shilo/scripts/vigroy.rs2",
+        &format!(
+            "[label,shilocartdriver_dialogue]\n{}\
+             def_int $amount = ~calc_shilocart_cost();\n",
+            if vigroy_gated { gate } else { "" },
+        ),
+    );
+}
+
 fn write_static_route_journal(fx: &Fixture) {
+    write_cart_route_handlers(fx, true);
     fx.write(
         "pack/varp.pack",
         "115=runemysteries\n116=treequest\n117=zombiequeen\n",
@@ -2161,6 +2184,81 @@ fn shilo_cart_routes_require_completion_in_baked_runtime_policy() {
             "route for cart {} uses its baked hop: {route:?}",
             cart.npc_id()
         );
+    }
+}
+
+#[test]
+fn cart_gate_changes_follow_the_selected_content_dialogue() {
+    use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
+    use nav_planner::world_state::WorldState;
+
+    let fx = Fixture::new();
+    write_static_route_journal(&fx);
+    // The clean 274 Vigroy dialogue starts with the fare, without a quest
+    // refusal. This must remain usable even when the item catalog is R289.
+    write_cart_route_handlers(&fx, false);
+    write_blocked_square(&fx, 43, 50, &[(2779, 3211), (2776, 3214)], "");
+    write_blocked_square(&fx, 44, 46, &[(2834, 2951), (2834, 2954)], "");
+    let defs = loc_defs(&[]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let incomplete = WorldState {
+        inv: HashMap::from([(995, 500)]),
+        inventory_ready: true,
+        ..WorldState::empty()
+    };
+    for cart in SHILO_CART_ROUTES {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.kind == TransportKind::Npc && edge.loc_id == cart.npc_id())
+            .expect("both recognized cart dialogues produce their route");
+        let ungated = cart.npc_id() == 511;
+        assert_eq!(edge.quest_req.is_empty(), ungated);
+        assert_eq!(incomplete.allows(edge), ungated);
+        let route = find_with(
+            &collision,
+            &graph,
+            cart.origin(),
+            cart.destination(),
+            FindOptions::default(),
+            &incomplete,
+        );
+        if ungated {
+            let route = route.expect("the ungated Vigroy dialogue remains reachable");
+            assert!(route.legs.iter().any(|leg| matches!(
+                leg,
+                Leg::Transport { edge } if edge.loc_id == cart.npc_id()
+            )));
+        } else {
+            assert_eq!(route, Err(RouteError::NoPath));
+        }
+    }
+}
+
+#[test]
+fn unsupported_cart_gate_shapes_do_not_emit_an_ungated_route() {
+    for body in [
+        "if (%another_quest < 1) { ~chatnpc(\"No.\"); return; }\n\
+         def_int $amount = ~calc_shilocart_cost();",
+        "if (%zombiequeen < ^zombiequeen_complete) { ~chatnpc(\"No.\"); }\n\
+         def_int $amount = ~calc_shilocart_cost();",
+        "def_int $amount = ~calc_shilocart_cost();\n\
+         if (%zombiequeen < ^zombiequeen_complete) { return; }",
+        "",
+    ] {
+        let fx = Fixture::new();
+        write_static_route_journal(&fx);
+        fx.write(
+            "scripts/areas/area_shilo/scripts/vigroy.rs2",
+            &format!("[label,shilocartdriver_dialogue]\n{body}\n"),
+        );
+        let defs = loc_defs(&[]);
+        let collision = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &collision);
+        assert!(graph.edges.iter().any(|edge| edge.loc_id == 510));
+        assert!(!graph.edges.iter().any(|edge| edge.loc_id == 511));
+        assert_eq!(skipped.get(SKIP_SHILO_CART_HANDLER), Some(&1));
     }
 }
 
