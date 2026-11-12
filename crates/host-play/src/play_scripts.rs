@@ -618,6 +618,30 @@ impl Play {
         assert!(self.scripts.lock().unwrap().is_empty());
         self.game_data = Some(data);
     }
+    /// Bind a synthetic navigation world and selected bank facts to a test Play.
+    pub fn bind_script_test_world(&mut self, world: Arc<nav_planner::world::NavWorld>) {
+        assert!(self.scripts.lock().unwrap().is_empty());
+        let data = Arc::clone(
+            self.game_data
+                .as_ref()
+                .expect("bind selected script test data first"),
+        );
+        world
+            .bind_named_bank_facts(&data)
+            .expect("bind selected script test bank facts");
+        self.named_banks = Arc::clone(
+            world
+                .named_bank_facts()
+                .expect("selected script test bank facts"),
+        );
+        self.world = Some(world);
+    }
+    /// Clear the selected navigation world and its bank facts in a test Play.
+    pub fn clear_script_test_world(&mut self) {
+        assert!(self.scripts.lock().unwrap().is_empty());
+        self.world = None;
+        self.named_banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

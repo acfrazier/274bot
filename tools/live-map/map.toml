@@ -431,10 +431,11 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/frontend-core/src/scripts/**"]
+globs = ["crates/frontend-core/src/scripts/**", "crates/tui/src/bin.rs", "crates/tui/src/bin_tests.rs"]
 cells = [
   "frontend-core.script-selection|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib scripts::tests::",
   "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
+  "tui.compat-catalog-selected-facts|BOT_NAV_BUILD=skip COMPAT_CATALOG_ROOT=${COMPAT_CATALOG_ROOT:?} ENGINE_A_DIR=${ENGINE_A_DIR:?} NAV_PACK_289=${NAV_PACK_289:?} NAV_FLAGS_289=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib -- --ignored --exact bin::tests::compat_catalog_selected_facts_load --nocapture --test-threads=1",
 ]
 
 [[cover]]

@@ -581,6 +581,7 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("harness inject bag; no operator decision"),
     ),
     ("scripts/mod.rs::Scripts::poll", Excluded(PUMP)),
+    ("scripts/mod.rs::Scripts::poll_with_profile", Excluded(PUMP)),
     // scripts/parameter_edit.rs: the parameter editor.
     (
         "scripts/parameter_edit.rs::parse_parameter_text",

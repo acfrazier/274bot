@@ -175,7 +175,11 @@ impl Session {
     /// Fold settled script work (reload validation, Start setup, parameter
     /// writes) once per UI frame, after the core poll.
     pub fn poll_scripts(&mut self) {
-        self.scripts.poll(&mut self.core);
+        let profile = self
+            .server_profile()
+            .map(frontend_core::launch::BoundProfile::share);
+        self.scripts
+            .poll_with_profile(&mut self.core, profile.as_ref());
         #[cfg(feature = "js")]
         {
             if let Some((root, result)) = self.scripts.take_catalog_import_update() {

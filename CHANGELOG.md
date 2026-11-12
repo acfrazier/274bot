@@ -22,6 +22,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   "logged out: idle logout by the server" no longer appear. A bot you log out
   yourself stays logged out until you log it in.
 
+### Bug fixes
+
+- Compatibility catalog imports and refreshes validate new and changed
+  cards with the selected profile's game data and bank locations. Dragon
+  cards and MuleCrafter no longer fail to load because validation used empty
+  data. Validation stops with a clear message if the selected profile lacks
+  the required data.
+
 ### Developer tools
 
 - The game-data generator now accepts content where one ore row is mined by

@@ -4,11 +4,14 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use script::native::snapshot_source::StatInput;
-use script_js::{JsLibrary, LoadIsolate};
-use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
+use script::ScriptKind;
+use script_js::{CacheMeta, JsLibrary, LoadIsolate};
+use {script::ScriptSource, script_js::JsCache};
 
 mod common;
 #[path = "common/local_api_asset.rs"]
@@ -77,6 +80,29 @@ fn register_fixture(dir: &Path) -> JsLibrary {
 
 fn throw_shaped(line: &str) -> bool {
     line.contains("not impl") || line.contains("Error:") || line.contains("TypeError")
+}
+fn selected_named_banks(
+    data: &api::game_data::SelectedGameData,
+) -> Arc<api::named_banks::NamedBankFacts> {
+    if let Some(path) = std::env::var_os("WORLD_NAV_PACK").map(PathBuf::from) {
+        let world = nav_planner::world::NavWorld::load_pack(&path)
+            .expect("load selected navigation world for bank facts");
+        world
+            .bind_named_bank_facts(data)
+            .expect("bind selected bank placements to the navigation world");
+        return Arc::clone(
+            world
+                .named_bank_facts()
+                .expect("selected navigation world has named-bank facts"),
+        );
+    }
+    let catalog = api::named_banks::bank_catalog().expect("selected bank catalog");
+    Arc::new(api::named_banks::NamedBankFacts::from_banks(
+        catalog
+            .iter()
+            .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+            .collect(),
+    ))
 }
 
 #[test]
@@ -337,6 +363,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     let cache = JsCache::new(dir.join("siblings"));
     let bytes = script_js::wire::encode_snapshot(&common::ingame_snapshot());
     let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let named_banks = selected_named_banks(&content);
     let mut started = 0usize;
     for name in bright_names {
         if let Err(error) = lib.ensure_js(ScriptSource::Catalog, &name) {
@@ -380,11 +407,12 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             );
         }
         let settings = script::merge_bag(&card.settings_schema, &settings_input, None);
-        let isolate = match LoadIsolate::spawn_with_game_data(
+        let isolate = match LoadIsolate::spawn_with_content(
             card.js.clone(),
             card.shape,
             siblings,
-            content.clone(),
+            Some(Arc::clone(&content)),
+            Arc::clone(&named_banks),
         ) {
             Ok(isolate) => isolate,
             Err(error) => {
@@ -399,12 +427,6 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.on_game_tick(1);
         if let Err(probe_error) = isolate.probe("true") {
             match isolate.poll_ready() {
-                script_js::Ready::Failed(load_error)
-                    if name == "MuleCrafter"
-                        && load_error.contains("bankTile: unknown bank 'Falador East'") =>
-                {
-                    eprintln!("Frozen catalog expected baseline failure {name}: {load_error}");
-                }
                 script_js::Ready::Failed(load_error) => {
                     failures.insert(format!(
                         "{name}: loader failed after first-tick probe ({probe_error}): {load_error}"
@@ -425,6 +447,67 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.join();
         started += 1;
     }
+    let selected_names = ["JiveDragons", "GreenDragon", "MuleCrafter"];
+    let mut prepared = Vec::with_capacity(selected_names.len());
+    for name in selected_names.iter().copied() {
+        let card = lib
+            .get(ScriptSource::Catalog, name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name}: missing from frozen catalog"));
+        let siblings = script_js::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            &cache,
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::Catalog,
+                shape: Some(format!("{:?}", card.shape)),
+                api_family: None,
+            },
+        )
+        .unwrap_or_else(|error| panic!("{name}: siblings: {error}"));
+        prepared.push(script_js::PreparedCard {
+            fingerprint: card.sha256.clone(),
+            card,
+            siblings,
+        });
+    }
+    let batch = LoadIsolate::validate_prepared_batch(
+        prepared,
+        Arc::clone(&content),
+        Arc::clone(&named_banks),
+    )
+    .expect("submit selected-facts prepared-batch validation");
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let validated = loop {
+        match batch.try_recv() {
+            Ok(rows) => break rows,
+            Err(TryRecvError::Empty) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "selected-facts validation did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(TryRecvError::Disconnected) => {
+                panic!("selected-facts validation coordinator disconnected")
+            }
+        }
+    };
+    let mut validated_names = Vec::new();
+    for (card, result) in validated {
+        match result {
+            Ok(()) => validated_names.push(card.card.name),
+            Err(error) => {
+                failures.insert(format!("{}: prepared validation {error}", card.card.name));
+            }
+        }
+    }
+    assert_eq!(
+        validated_names,
+        selected_names.map(str::to_owned),
+        "all three frozen cards pass the production prepared-batch path"
+    );
     eprintln!(
         "Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped; {preexisting_unresolved} pre-existing unresolved imports skipped"
     );

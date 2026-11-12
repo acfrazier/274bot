@@ -2719,11 +2719,14 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    /// Fold settled script work (reload validation, Start setup, parameter
-    /// writes) after the core poll and show its notice. Called once per
-    /// pump.
+    /// Fold settled catalog/reload validation, Start setup and parameter
+    /// writes after the core poll. Called once per pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
-        self.scripts.poll(&mut self.core);
+        let profile = self.bound().map(frontend_core::launch::BoundProfile::share);
+        self.scripts
+            .poll_with_profile(&mut self.core, profile.as_ref());
+        #[cfg(feature = "js")]
+        let mut catalog_import_error = None;
         #[cfg(feature = "js")]
         if let Some((root, result)) = self.scripts.take_catalog_import_update() {
             match result {
@@ -2736,8 +2739,11 @@ impl TuiSession {
                     self.rs2b0t_catalog_open = false;
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
+                    if self.scripts.load_failure_count() > 0 {
+                        catalog_import_error = Some(self.scripts.named_failure_output());
+                    }
                 }
-                Err(error) => app.error = Some(error),
+                Err(error) => catalog_import_error = Some(error),
             }
         }
         #[cfg(feature = "js")]
@@ -2754,6 +2760,10 @@ impl TuiSession {
         }
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
+        #[cfg(feature = "js")]
+        if let Some(error) = catalog_import_error {
+            app.error = Some(error);
+        }
         #[cfg(feature = "js")]
         {
             app.reload_confirm = self.scripts.reload_awaiting_confirm();

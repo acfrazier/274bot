@@ -896,10 +896,13 @@ impl LoadIsolate {
 
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
+    /// Validation always uses the selected profile's content and bank facts.
     pub fn validate_prepared_batch(
         cards: Vec<crate::library::store::PreparedCard>,
+        game_data: std::sync::Arc<api::game_data::SelectedGameData>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<ValidationBatch, ValidationError> {
-        validation::validate_batch(cards)
+        validation::validate_batch(cards, game_data, named_banks)
     }
 
     #[expect(

@@ -1284,7 +1284,9 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
 #[cfg(feature = "js")]
 fn settle_catalog_work(session: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
-    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+    while (session.scripts.catalog_work_pending() || session.reload_validation_pending())
+        && Instant::now() < deadline
+    {
         session.core.poll();
         session.poll_scripts();
         thread::sleep(Duration::from_millis(5));
@@ -1292,8 +1294,8 @@ fn settle_catalog_work(session: &mut Session) {
     session.core.poll();
     session.poll_scripts();
     assert!(
-        !session.scripts.catalog_work_pending(),
-        "catalog preparation did not settle"
+        !session.scripts.catalog_work_pending() && !session.reload_validation_pending(),
+        "catalog preparation or validation did not settle"
     );
 }
 
@@ -1314,6 +1316,9 @@ fn settle_transpile_queue(session: &mut Session) {
 #[cfg(feature = "js")]
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("prebind-catalog");
     let explicit = write_looping_catalog(&iso.dir().join("explicit"), &[("Chosen", "Chosen")]);
@@ -1337,6 +1342,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
             }),
         )
         .unwrap();
+    bind_catalog_validation_context(&mut session);
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
     settle_catalog_work(&mut session);
@@ -1359,17 +1365,31 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     session.import_rs2b0t_catalog(&ambient).unwrap();
     settle_catalog_work(&mut session);
     assert!(session.scripts.card(CardSource::File, "custom").is_some());
-    assert!(session
-        .scripts
-        .card(CardSource::Catalog, "Ambient")
-        .is_some());
+    assert!(
+        session
+            .scripts
+            .card(CardSource::Catalog, "Ambient")
+            .is_some(),
+        "manual catalog import failed: {:?}",
+        session.error
+    );
 }
 
 #[cfg(feature = "js")]
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
+    let world_json = root.join("engine/data/config/world.json");
+    std::fs::create_dir_all(world_json.parent().unwrap()).unwrap();
+    std::fs::write(
+        &world_json,
+        r#"{"engine":{"revision":274},"node":{"members":false}}"#,
+    )
+    .unwrap();
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1395,6 +1415,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
             ProfileEnv::from_host(env.clone()),
         )
         .unwrap();
+    bind_catalog_validation_context(&mut session);
     session.fill_rs2b0t_cards_once();
     settle_catalog_work(&mut session);
     session
@@ -1412,14 +1433,30 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .card(CardSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
+    session.core.set_play(None);
     session.bind_profile().unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
     settle_catalog_work(&mut session);
+    assert!(
+        session
+            .scripts
+            .card(CardSource::Catalog, "Chosen")
+            .is_some(),
+        "the loaded catalog card survives profile binding"
+    );
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("missing selected named-bank facts")),
+        "profile binding has no selected navigation facts: {:?}",
+        session.error
+    );
     assert!(session
         .scripts
         .card(CardSource::Catalog, "Another")
-        .is_some());
+        .is_none());
 }
 
 #[test]
@@ -1903,6 +1940,16 @@ fn empty_play() -> host_play::Play {
         lowmem: true,
         mainland: false,
     })
+}
+#[cfg(feature = "js")]
+fn bind_catalog_validation_context(session: &mut Session) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("selected game data");
+    let mut play = empty_play();
+    play.bind_script_test_data(data);
+    let world = NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    play.bind_script_test_world(Arc::new(world));
+    session.core.set_play(Some(play));
 }
 
 /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -9920,10 +9967,14 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("import");
     let root = fake_rs2b0t_tree(iso.dir());
     let mut s = Session::new();
+    bind_catalog_validation_context(&mut s);
     s.import_rs2b0t_catalog(&root).expect("import");
     assert!(
         s.scripts.catalog_work_pending(),
@@ -9934,7 +9985,11 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         "root is persisted only after preparation settles"
     );
     settle_catalog_work(&mut s);
-    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
+    assert!(
+        iso.home().join(".274bot/rs2b0t-path").is_file(),
+        "catalog import did not persist its root: {:?}",
+        s.error
+    );
     let card = s
         .scripts
         .card(CardSource::Catalog, "BoneBurier")

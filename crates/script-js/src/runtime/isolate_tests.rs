@@ -79,6 +79,19 @@ fn startup_non_yielding_module_has_bounded_join() {
 
 #[test]
 fn validate_non_yielding_module_is_bounded() {
+    let Some(game_data) = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()
+    else {
+        return;
+    };
+    let Some(bank_catalog) = api::named_banks::bank_catalog().ok() else {
+        return;
+    };
+    let named_banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(
+        bank_catalog
+            .iter()
+            .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+            .collect(),
+    ));
     const CHILD: &str = "SCRIPT_VALIDATE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let baseline = live_runtime_count();
@@ -104,7 +117,12 @@ fn validate_non_yielding_module_is_bounded() {
                 siblings: Vec::new(),
                 fingerprint: String::new(),
             };
-            let batch = LoadIsolate::validate_prepared_batch(vec![card]).unwrap();
+            let batch = LoadIsolate::validate_prepared_batch(
+                vec![card],
+                std::sync::Arc::clone(&game_data),
+                std::sync::Arc::clone(&named_banks),
+            )
+            .unwrap();
             let result = loop {
                 match batch.try_recv() {
                     Ok(rows) => break rows.into_iter().next().unwrap().1,

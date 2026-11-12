@@ -2407,20 +2407,248 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let iso = IsolatedStores::enter("tui-import");
     let root = fake_rs2b0t_tree(iso.dir(), false);
-    let mut session = TuiSession::new(dummy_options());
-    let mut app = TuiApp::new("274bot headless");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.bind_script_test_world(std::sync::Arc::new(bank_fetch_fixtures::knife_nav_world(2)));
+    }
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
     session
         .import_rs2b0t_catalog(&mut app, &root)
         .expect("import");
     assert!(session.scripts.catalog_work_pending());
     assert!(!iso.home().join(".274bot/rs2b0t-path").exists());
-    settle_catalog_work(&mut session, &mut app);
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
         .card(CardSource::Catalog, "BoneBurier")
         .expect("catalog card");
     assert_eq!(card.description(), "Buries bones");
+    assert!(
+        card.is_transpiled(),
+        "catalog card validation did not commit"
+    );
+    assert!(
+        session.scripts.load_failure(&card.identity_key()).is_none(),
+        "catalog card validation recorded a runtime failure"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_retains_runtime_failure_for_new_card() {
+    let iso = IsolatedStores::enter("tui-import-load-failure");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    std::fs::write(
+        root.join("src/bot/scripts/BoneBurier/BoneBurier.ts"),
+        "export default class BoneBurier extends LoopingBot { constructor() { super(); throw new Error('intentional test setup failure'); } override loop() {} }",
+    )
+    .unwrap();
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.bind_script_test_world(std::sync::Arc::new(bank_fetch_fixtures::knife_nav_world(2)));
+    }
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    let card = session
+        .scripts
+        .card(CardSource::Catalog, "BoneBurier")
+        .expect("catalog card");
+    assert!(
+        session.scripts.load_failure(&card.identity_key()).is_some(),
+        "catalog import must retain the first-load failure after applying its diff"
+    );
+    let named_failures = session.scripts.named_failure_output();
+    assert!(
+        named_failures.contains("BoneBurier")
+            && named_failures.contains("intentional test setup failure"),
+        "catalog import must retain the new card's load failure: {named_failures}"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_requires_selected_game_data() {
+    let iso = IsolatedStores::enter("tui-catalog-import-missing-context");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .clear_script_test_world();
+    assert!(session.bound().is_none());
+    assert!(session.core.game_data().is_none());
+    assert!(session.core.nav_world().is_none());
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("missing selected game data"),
+        "catalog import must report missing selected game data"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_requires_selected_named_bank_facts() {
+    let iso = IsolatedStores::enter("tui-catalog-import-missing-banks");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.clear_script_test_world();
+    }
+    assert!(session.bound().is_none());
+    assert!(session.core.game_data().is_some());
+    assert!(session.core.nav_world().is_none());
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("missing selected named-bank facts"),
+        "catalog import must report missing selected named-bank facts"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+#[ignore = "requires Engine A R289 assets and an untouched ae56 catalog clone"]
+fn compat_catalog_selected_facts_load() {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    const FROZEN_REVISION: &str = "ae56ccc95ba5681b12f1f66ec2adea14427fe497";
+    let iso = IsolatedStores::enter("tui-compat-catalog-selected-facts");
+    let root = PathBuf::from(
+        std::env::var_os("COMPAT_CATALOG_ROOT")
+            .expect("COMPAT_CATALOG_ROOT points to the untouched ae56 clone"),
+    );
+    let revision = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read frozen catalog revision");
+    assert!(
+        revision.status.success(),
+        "catalog revision check failed: {}",
+        String::from_utf8_lossy(&revision.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(revision.stdout).unwrap().trim(),
+        FROZEN_REVISION
+    );
+
+    let engine_dir =
+        PathBuf::from(std::env::var_os("ENGINE_A_DIR").expect("ENGINE_A_DIR selects Engine A"));
+    let nav_pack =
+        PathBuf::from(std::env::var_os("NAV_PACK_289").expect("NAV_PACK_289 selects R289"));
+    let nav_flags = std::env::var_os("NAV_FLAGS_289").map(PathBuf::from);
+    let options = host_play::ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        engine_dir: Some(engine_dir.clone()),
+        cache_dir: Some(iso.dir().join("cache")),
+        nav_pack: Some(nav_pack.clone()),
+        nav_flags: nav_flags.clone(),
+        catalog_root: Some(root.clone()),
+        ..Default::default()
+    };
+    let environment = ProfileEnvironment {
+        home: Some(iso.home().to_path_buf()),
+        engine_dir: Some(engine_dir),
+        nav_pack: Some(nav_pack),
+        nav_flags,
+        catalog_root: Some(root.clone()),
+        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+        ..Default::default()
+    };
+    let selected = options
+        .resolve_with_env(None, &environment)
+        .expect("resolve local-289 profile")
+        .bind()
+        .expect("bind local-289 profile");
+    let template =
+        host_play::SharedClientTemplate::load(selected).expect("load Engine A profile template");
+    let mut session = TuiSession::new_bound(template);
+    session.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
+    let profile = session.bound().expect("bound local-289 profile");
+    let data = profile.game_data().expect("selected game data");
+    assert_eq!(data.revision(), 289);
+    let world = profile.world().expect("selected navigation world");
+    if world.named_bank_facts().is_none() {
+        world
+            .bind_named_bank_facts(&data)
+            .expect("bind selected named-bank facts");
+    }
+    let bank = world
+        .named_bank_facts()
+        .expect("selected named-bank facts")
+        .banks()
+        .iter()
+        .find(|bank| bank.name == "Falador East")
+        .expect("selected Falador East");
+    assert_eq!((bank.tile.x, bank.tile.z, bank.tile.level), (3013, 3355, 0));
+
+    let mut app = TuiApp::new("compat catalog selected-facts load");
+    app.names = vec!["compat_catalog_probe".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import untouched ae56 catalog through the TUI command");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(45));
+    for name in ["JiveDragons", "GreenDragon", "MuleCrafter"] {
+        let card = session
+            .scripts
+            .card(CardSource::Catalog, name)
+            .unwrap_or_else(|| panic!("missing frozen catalog card {name}"));
+        assert!(
+            card.is_transpiled(),
+            "{name}: catalog card was not compiled"
+        );
+        let identity_key = card.identity_key();
+        let failure = session.scripts.load_failure(&identity_key);
+        assert!(
+            failure.is_none(),
+            "{name}: selected-facts validation failed: {}",
+            failure
+                .map(|failure| failure.named_line())
+                .unwrap_or_default()
+        );
+    }
 }
 
 #[test]
@@ -2498,9 +2726,11 @@ fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
 }
 
 #[cfg(feature = "js")]
-fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while (session.scripts.catalog_work_pending() || session.scripts.reload_validation_pending())
+        && Instant::now() < deadline
+    {
         session.core.poll();
         session.poll_scripts(app);
         std::thread::sleep(Duration::from_millis(5));
@@ -2510,6 +2740,10 @@ fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
     assert!(
         !session.scripts.catalog_work_pending(),
         "catalog work did not settle"
+    );
+    assert!(
+        !session.scripts.reload_validation_pending(),
+        "catalog validation did not settle"
     );
 }
 
@@ -7114,6 +7348,19 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     let iso = IsolatedStores::enter("tui-bulk-scripts");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_world(Arc::clone(&world));
     let path = iso.dir().join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
     let card = session.scripts.load_card(&path).unwrap();
@@ -8052,7 +8299,7 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
         frontend_core::rs2b0t_import::Stage::Path
     );
 
-    settle_catalog_work(&mut session, &mut app);
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert!(!session.profile_import_preview_pending);
     assert_eq!(
         session.profile_import.stage(),

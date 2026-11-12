@@ -5,11 +5,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script_js::{CardPreparationOutcome, JsLibrary, LoadStage, PreparedCard};
-use {script::ScriptSource, script_js::ApiFamily, script_js::LoadIsolate};
-
+use script::{ScriptKind, ScriptSource};
+use script_js::{
+    ApiFamily, CacheMeta, CardPreparationOutcome, JsCache, JsLibrary, LoadIsolate, LoadStage,
+    PreparedCard,
+};
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const GOOD_V2: &str = "export const apiVersion = 2;\nexport function tick(api) { api._n = 1; }\n";
 const BAD_PARSE: &str =
@@ -180,13 +183,59 @@ fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     std::fs::write(scripts.join("index.ts"), index).unwrap();
 }
 
+fn selected_validation_context() -> Option<(
+    Arc<api::game_data::SelectedGameData>,
+    Arc<api::named_banks::NamedBankFacts>,
+)> {
+    let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+    let banks = api::named_banks::bank_catalog()
+        .ok()?
+        .iter()
+        .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+        .collect();
+    Some((
+        game_data,
+        Arc::new(api::named_banks::NamedBankFacts::from_banks(banks)),
+    ))
+}
+
+fn prepared_catalog_card(lib: &mut JsLibrary, cache: &JsCache, name: &str) -> PreparedCard {
+    lib.ensure_js(ScriptSource::Catalog, name)
+        .unwrap_or_else(|error| panic!("{name}: transpile: {error}"));
+    let card = lib
+        .get(ScriptSource::Catalog, name)
+        .cloned()
+        .unwrap_or_else(|| panic!("{name}: card missing after transpile"));
+    let siblings = script_js::resolve_sibling_modules(
+        &card.path,
+        &card.origin,
+        cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
+            shape: Some(format!("{:?}", card.shape)),
+            api_family: None,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{name}: siblings: {error}"));
+    PreparedCard {
+        fingerprint: card.sha256.clone(),
+        card,
+        siblings,
+    }
+}
+
 /// Drive the same cancellable validation transaction that product reload
 /// uses, rather than bypassing its bounded admission with a synchronous card.
-fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), String>)> {
+fn validate_cards(
+    cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+) -> Vec<(PreparedCard, Result<(), String>)> {
     let _guard = VALIDATION_TEST_LOCK
         .lock()
         .expect("validation test lock poisoned");
-    let batch = LoadIsolate::validate_prepared_batch(cards).unwrap();
+    let batch = LoadIsolate::validate_prepared_batch(cards, game_data, named_banks).unwrap();
     let until = Instant::now() + Duration::from_secs(45);
     loop {
         match batch.try_recv() {
@@ -224,6 +273,71 @@ fn prepare_catalogue(js: &JsLibrary, root: &Path) -> script_js::CatalogPreparati
     .join()
     .expect("worker completes")
     .expect("bounded catalogue preparation completes")
+}
+
+#[test]
+fn prepared_batch_loads_module_drop_and_constructor_bank_facts() {
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
+    let dir = scratch("prepared-content");
+    let root = dir.join("catalog");
+    fake_catalog(
+        &root,
+        &[
+            (
+                "DropReader",
+                r#"
+import { DROP_DB } from '../../data/dropdb.js';
+const drops = DROP_DB['Green dragon'] ?? [];
+if (!Array.isArray(drops) || drops.length === 0) {
+    throw new Error('selected Green dragon drop facts are missing');
+}
+export default class DropReader extends LoopingBot { loop() {} }
+"#,
+            ),
+            (
+                "BankReader",
+                r#"
+import { BANK_LOCATIONS } from '../../api/bank/BankLocations.js';
+function bankTile(name: string) {
+    const bank = BANK_LOCATIONS.find((candidate) => candidate.name === name);
+    if (!bank) throw new Error(`bankTile: unknown bank '${name}'`);
+    return bank.tile;
+}
+export default class BankReader extends LoopingBot {
+    private bank = (() => {
+        const tile = bankTile('Falador East');
+        if (tile.x !== 3013 || tile.z !== 3355) {
+            throw new Error('selected Falador East bank stand is incorrect');
+        }
+        return tile;
+    })();
+    loop() {}
+}
+"#,
+            ),
+        ],
+    );
+    let mut lib = library(&dir);
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("register prepared-batch fixture");
+    let cache = JsCache::new(dir.join("siblings"));
+    let cards = ["DropReader", "BankReader"]
+        .into_iter()
+        .map(|name| prepared_catalog_card(&mut lib, &cache, name))
+        .collect();
+
+    let results = validate_cards(cards, game_data, named_banks);
+    assert_eq!(results.len(), 2);
+    for (card, result) in results {
+        assert!(
+            result.is_ok(),
+            "{} failed with selected content: {:?}",
+            card.card.name,
+            result
+        );
+    }
 }
 
 #[test]
@@ -304,6 +418,9 @@ fn corrected_retry_clears_only_the_affected_identity() {
 
 #[test]
 fn failed_replace_preserves_working_card_and_records_attempt() {
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
     let dir = scratch("replace");
     let mut js = library(&dir);
     let path = write(&dir, "live.ts", GOOD);
@@ -323,9 +440,13 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
             panic!("changed candidate was not prepared")
         }
     };
-    let (prepared, result) = validate_cards(vec![prepared])
-        .pop()
-        .expect("one validation result");
+    let (prepared, result) = validate_cards(
+        vec![prepared],
+        Arc::clone(&game_data),
+        Arc::clone(&named_banks),
+    )
+    .pop()
+    .expect("one validation result");
     let err = result.unwrap_err();
     js.record_prepared_failure(&prepared, &err);
     assert!(err.contains("runtime boom"), "{err}");
@@ -346,6 +467,9 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
 #[test]
 fn catalog_mixed_batch_retains_named_failures() {
     let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
     let dir = scratch("catalog-mixed");
     let root = dir.join("catalog");
     fake_catalog(
@@ -408,9 +532,13 @@ fn catalog_mixed_batch_retains_named_failures() {
     }
     let mut prepared_ok = Vec::new();
     for candidate in result.prepared.into_iter().chain(result.warmed) {
-        let (candidate, result) = validate_cards(vec![candidate])
-            .pop()
-            .expect("one validation result");
+        let (candidate, result) = validate_cards(
+            vec![candidate],
+            Arc::clone(&game_data),
+            Arc::clone(&named_banks),
+        )
+        .pop()
+        .expect("one validation result");
         match result {
             Ok(()) => prepared_ok.push(candidate),
             Err(error) => js.record_prepared_failure(&candidate, &error),

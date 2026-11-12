@@ -3154,7 +3154,7 @@ impl Scripts {
             (stopped, Some(operation))
         };
         #[cfg(feature = "js")]
-        self.reload.invalidate();
+        self.invalidate_reload_work("catalog import validation was cancelled");
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_report.as_deref() != Some(report.as_str()) {
             self.last_bulk_report = Some(report);
@@ -3579,6 +3579,18 @@ impl Scripts {
     /// card's load diagnostic; a failure records it) and parameter writes.
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        self.poll_with_profile(core, None);
+    }
+
+    pub fn poll_with_profile<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: Option<&crate::launch::BoundProfile>,
+    ) {
+        #[cfg(feature = "js")]
+        self.refresh_reload_validation_context(core, profile);
+        #[cfg(not(feature = "js"))]
+        let _ = profile;
         self.settle_parameter_edits(core);
         #[cfg(feature = "js")]
         {

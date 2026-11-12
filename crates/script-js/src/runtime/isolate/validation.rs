@@ -77,12 +77,11 @@ impl Drop for ValidationBatch {
 
 struct Job {
     cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
     reply: mpsc::Sender<Batch>,
     cancelled: Arc<AtomicBool>,
 }
-
-static EMPTY_BANKS: LazyLock<std::sync::Arc<api::named_banks::NamedBankFacts>> =
-    LazyLock::new(|| std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()));
 
 static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
     let (tx, rx) = mpsc::sync_channel(QUEUE_CAP);
@@ -96,7 +95,11 @@ static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
 /// Submit one complete reload validation transaction without a per-reload
 /// thread. A full worker queue leaves the batch on its receipt for a later
 /// non-blocking poll; results return in input order.
-pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch, ValidationError> {
+pub(super) fn validate_batch(
+    cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+) -> Result<ValidationBatch, ValidationError> {
     super::super::platform::require_v8_platform()?;
     if cards.len() > BATCH_CAP {
         return Err(ValidationError::CardLimit);
@@ -124,6 +127,8 @@ pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch
     let cancelled = Arc::new(AtomicBool::new(false));
     let pending = match seat.try_send(Job {
         cards,
+        game_data,
+        named_banks,
         reply,
         cancelled: Arc::clone(&cancelled),
     }) {
@@ -151,6 +156,8 @@ fn run(rx: Receiver<Job>) {
         }
         let Job {
             cards,
+            game_data,
+            named_banks,
             reply,
             cancelled,
         } = job;
@@ -167,6 +174,8 @@ fn run(rx: Receiver<Job>) {
                     std::sync::Arc::from(card.card.name.as_str()),
                     card.card.shape,
                     card.siblings.clone(),
+                    Arc::clone(&game_data),
+                    Arc::clone(&named_banks),
                     &mut retiring,
                 )
             }
@@ -207,6 +216,8 @@ fn validate_one(
     card_name: std::sync::Arc<str>,
     shape: LoadShape,
     siblings: Vec<(String, String)>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
     retiring: &mut Option<Receiver<Vec<String>>>,
 ) -> Result<(), String> {
     let isolate = LoadIsolate::spawn_inner(
@@ -214,8 +225,8 @@ fn validate_one(
         card_name,
         shape,
         siblings,
-        None,
-        std::sync::Arc::clone(&EMPTY_BANKS),
+        Some(game_data),
+        named_banks,
         script::surface::no_wilderness(),
         None,
         None,
@@ -244,21 +255,60 @@ fn validate_one(
 mod tests {
     use super::*;
 
-    fn batch_job() -> Job {
-        let (reply, _) = mpsc::channel();
+    fn test_context() -> Option<(
+        Arc<api::game_data::SelectedGameData>,
+        Arc<api::named_banks::NamedBankFacts>,
+    )> {
+        let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+        let banks = api::named_banks::bank_catalog()
+            .ok()?
+            .iter()
+            .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+            .collect();
+        Some((
+            game_data,
+            Arc::new(api::named_banks::NamedBankFacts::from_banks(banks)),
+        ))
+    }
+
+    fn batch_job(
+        game_data: Arc<api::game_data::SelectedGameData>,
+        named_banks: Arc<api::named_banks::NamedBankFacts>,
+        reply: mpsc::Sender<Batch>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Job {
         Job {
             cards: Vec::new(),
+            game_data,
+            named_banks,
             reply,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancelled,
         }
     }
 
     #[test]
     fn pending_batch_admission_retries_without_growing_the_queue() {
+        let Some((game_data, named_banks)) = test_context() else {
+            return;
+        };
         let (seat, rx) = mpsc::sync_channel(1);
-        assert!(matches!(seat.try_send(batch_job()), Ok(())));
+        let (queued_reply, _) = mpsc::channel();
+        assert!(seat
+            .try_send(batch_job(
+                Arc::clone(&game_data),
+                Arc::clone(&named_banks),
+                queued_reply,
+                Arc::new(AtomicBool::new(false)),
+            ))
+            .is_ok());
 
-        let pending = RefCell::new(Some(batch_job()));
+        let (pending_reply, _) = mpsc::channel();
+        let pending = RefCell::new(Some(batch_job(
+            game_data,
+            named_banks,
+            pending_reply,
+            Arc::new(AtomicBool::new(false)),
+        )));
         assert_eq!(try_admit_pending(&seat, &pending), Err(TryRecvError::Empty));
 
         drop(rx.try_recv().unwrap());
@@ -269,22 +319,34 @@ mod tests {
 
     #[test]
     fn batch_receipt_holds_pending_until_seat_admits_and_cancels_on_drop() {
+        let Some((game_data, named_banks)) = test_context() else {
+            return;
+        };
         // A local 1-slot seat stands in for the process seat: no JS engine
         // and no global-seat races. The receipt under test owns its pending
         // batch and polls it through the public `try_recv` path.
         let (seat, rx) = mpsc::sync_channel(1);
-        assert!(seat.try_send(batch_job()).is_ok());
+        let (queued_reply, _) = mpsc::channel();
+        assert!(seat
+            .try_send(batch_job(
+                Arc::clone(&game_data),
+                Arc::clone(&named_banks),
+                queued_reply,
+                Arc::new(AtomicBool::new(false)),
+            ))
+            .is_ok());
 
         let (reply, receiver) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let batch = ValidationBatch {
             receiver,
             cancelled: Arc::clone(&cancelled),
-            pending: RefCell::new(Some(Job {
-                cards: Vec::new(),
+            pending: RefCell::new(Some(batch_job(
+                game_data,
+                named_banks,
                 reply,
-                cancelled: Arc::clone(&cancelled),
-            })),
+                Arc::clone(&cancelled),
+            ))),
         };
 
         // Full seat: the poll reports Empty and the owner keeps the batch.
