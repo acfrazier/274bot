@@ -1929,7 +1929,12 @@ if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
 return(true);
 `;
         files['scripts/quests/quest_cook/scripts/progress-bounds.rs2'] = `[proc,left_progress]()
-%leftgang = ^left_complete;
+switch_int(~p_choice1("Choose", 1)) {
+    case 1:
+        %leftgang = ^left_complete;
+    case 2:
+        %leftgang = 1;
+}
 [proc,right_progress]()
 %rightgang = ^right_complete;
 `;
@@ -1947,6 +1952,42 @@ if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-unbounded.rs2'] = `[proc,left_progress]()
+if (%leftgang >= ^left_complete) {
+    return;
+}
+while (%leftgang < ^left_complete) {
+    %leftgang = add(%leftgang, 1);
+}
+[proc,right_progress]()
+%rightgang = ^right_complete;
+`;
+        files['scripts/areas/area_test/scripts/unbounded-writer.rs2'] = `[opnpc1,unbounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'an unbounded prerequisite counter keeps the later reset possible');
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
 {
     const root = questFixture((files) => {
         addCookColourMetadata(files);
