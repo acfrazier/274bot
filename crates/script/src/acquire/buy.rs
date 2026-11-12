@@ -238,6 +238,10 @@ impl OpeningTrade {
             && facts.tick.is_some_and(|tick| tick > self.tick)
             && facts.cant_reach_seq > self.chat_mark
     }
+
+    fn page_ready(&self, facts: &Facts) -> bool {
+        facts.tick.is_some_and(|tick| tick > self.tick) && facts.usable && !facts.trade_taken
+    }
 }
 
 /// One keeper type and one desired backpack count.
@@ -266,20 +270,16 @@ pub struct BuyReceipt {
 #[derive(Clone, Copy)]
 enum ClosePurpose {
     Initial,
-    Retry,
     Final,
 }
 
 enum Phase {
     Close(ClosePurpose, CloseWait),
     Open,
-    Walk(Box<Walk>, api::WorldTile),
+    Walk(Box<Walk>),
     /// A failed approach eligible for the shared bounded next-tick retry,
-    /// replanned from the observed position.
-    RetryWalk(api::WorldTile),
-    /// An unanswered opening Trade must produce its page before a retry
-    /// closes it. Only a fresh engine rejection can end it without a page.
-    DrainTrade(CloseWait),
+    /// replanned from the keeper's current observed tile.
+    RetryWalk,
     Buy,
     AwaitBatch,
     /// Our local CloseModal clear must be observed before the new Trade.
@@ -304,6 +304,8 @@ pub struct BuyMachine {
     /// retry budget so the terminal failure names how the walk failed.
     last_walk_failure: Option<Arc<str>>,
     opening_trade: Option<OpeningTrade>,
+    trade_attempted: bool,
+    approach_replans: u8,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
     reconciling: bool,
@@ -346,6 +348,8 @@ impl NativeMachine for BuyMachine {
             walk_retry: WalkRetryState::default(),
             last_walk_failure: None,
             opening_trade: None,
+            trade_attempted: false,
+            approach_replans: 0,
             keeper_index: None,
             pending: None,
             reconciling: false,
@@ -388,6 +392,10 @@ impl NativeMachine for BuyMachine {
         }
         self.observe_dispatch(cx, SettlementWitness::Content)?;
         loop {
+            // Keep phase changes within the tick's shared transition budget.
+            if !cx.budget.transition() {
+                return Poll::Pending;
+            }
             match &mut self.phase {
                 Phase::Close(purpose, wait) => {
                     let purpose = *purpose;
@@ -417,7 +425,7 @@ impl NativeMachine for BuyMachine {
                     self.page_closes = closes;
                     match purpose {
                         ClosePurpose::Final => return Poll::Ready(self.receipt()),
-                        ClosePurpose::Initial | ClosePurpose::Retry => {
+                        ClosePurpose::Initial => {
                             self.opening_trade = None;
                             self.phase = Phase::Open;
                         }
@@ -430,21 +438,71 @@ impl NativeMachine for BuyMachine {
                     let facts = self.open_facts(cx);
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
-                    let decision = self
-                        .open
-                        .tick(&facts, || Self::keeper(request, keeper_index, cx));
+                    let mut selected_keeper_index = None;
+                    let decision = self.open.tick(&facts, || {
+                        let keeper = Self::keeper(request, keeper_index, cx);
+                        selected_keeper_index = keeper.as_ref().map(|keeper| keeper.index);
+                        keeper
+                    });
+                    if self.keeper_index.is_none() {
+                        self.keeper_index = selected_keeper_index;
+                    }
+                    let decision = match decision {
+                        Decision::Trade(keeper)
+                            if self.trade_attempted
+                                && Self::keeper_needs_approach(keeper.route) =>
+                        {
+                            self.replan_approach(keeper.tile)
+                        }
+                        decision => decision,
+                    };
                     if std::task::ready!(self.act(decision, &facts, cx))? {
                         self.accept_page(cx)?;
                     } else {
                         return Poll::Pending;
                     }
                 }
-                Phase::RetryWalk(target) => {
-                    let target = *target;
+                Phase::RetryWalk => {
+                    let facts = self.open_facts(cx);
+                    if self
+                        .opening_trade
+                        .is_some_and(|trade| trade.page_ready(&facts))
+                    {
+                        self.accept_page(cx)?;
+                        continue;
+                    }
                     let tick = cx.evidence().tick;
                     if self.walk_retry.waiting_for_next_tick(tick) {
                         return Poll::Pending;
                     }
+                    if cx.snapshot().npcs().is_none() {
+                        return Poll::Pending;
+                    }
+                    let Some(keeper) = Self::keeper(&self.request, self.keeper_index, cx) else {
+                        let reason = self.last_walk_failure.as_ref().map_or_else(
+                            || Arc::from("the keeper disappeared during the approach"),
+                            |detail| {
+                                Arc::from(format!(
+                                    "the keeper disappeared during the approach; last walk failure: {detail}"
+                                ))
+                            },
+                        );
+                        return Poll::Ready(Err(self.open_failure(reason)));
+                    };
+                    if !Self::keeper_needs_approach(keeper.route) {
+                        if facts.trade_taken {
+                            return Poll::Pending;
+                        }
+                        self.walk_retry.reset();
+                        let opened =
+                            std::task::ready!(self.act(Decision::Trade(keeper), &facts, cx,))?;
+                        self.phase = Phase::Open;
+                        if opened {
+                            self.accept_page(cx)?;
+                        }
+                        continue;
+                    }
+                    let target = keeper.tile;
                     let walk = match crate::native::defer_budget(Walk::begin(
                         walk_request(target, 1, None, cx.evidence()),
                         cx,
@@ -457,16 +515,23 @@ impl NativeMachine for BuyMachine {
                         Poll::Ready(Ok(walk)) => walk,
                     };
                     self.walk_retry.action_submitted();
-                    self.phase = Phase::Walk(Box::new(walk), target);
+                    self.phase = Phase::Walk(Box::new(walk));
                     return Poll::Pending;
                 }
-                Phase::Walk(walk, target) => {
-                    let target = *target;
+                Phase::Walk(walk) => {
                     let receipt = match walk.poll(cx) {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Ok(receipt)) => Some(receipt),
                         Poll::Ready(Err(_)) => None,
                     };
+                    let facts = self.open_facts(cx);
+                    if self
+                        .opening_trade
+                        .is_some_and(|trade| trade.page_ready(&facts))
+                    {
+                        self.accept_page(cx)?;
+                        continue;
+                    }
                     if let Some(receipt) = receipt.as_ref() {
                         self.last_walk_failure =
                             if matches!(&receipt.end, crate::native::WalkEnd::Arrived) {
@@ -479,14 +544,13 @@ impl NativeMachine for BuyMachine {
                         self.walk_retry
                             .observe_approach_failure(receipt, cx.evidence().tick)
                     }) {
-                        self.phase = Phase::RetryWalk(target);
+                        self.phase = Phase::RetryWalk;
                         return Poll::Pending;
                     }
                     let arrived = receipt.is_some_and(|receipt| receipt.into_arrival().is_ok());
                     if arrived {
                         self.walk_retry.reset();
                     }
-                    let facts = self.open_facts(cx);
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
                     // A failed walk is terminal only once the shared budget is
@@ -498,47 +562,18 @@ impl NativeMachine for BuyMachine {
                     } else {
                         OpenCore::walk_failed(self.last_walk_failure.as_deref())
                     };
+                    let decision = match decision {
+                        Decision::Trade(keeper) if Self::keeper_needs_approach(keeper.route) => {
+                            self.replan_approach(keeper.tile)
+                        }
+                        decision => decision,
+                    };
                     self.phase = Phase::Open;
                     if std::task::ready!(self.act(decision, &facts, cx))? {
                         self.accept_page(cx)?;
                     } else {
                         return Poll::Pending;
                     }
-                }
-                Phase::DrainTrade(wait) => {
-                    let facts = open_facts(cx);
-                    if self
-                        .opening_trade
-                        .is_some_and(|trade| trade.rejected(&facts))
-                    {
-                        self.opening_trade = None;
-                        self.phase = Phase::Open;
-                        continue;
-                    }
-                    let usable = self.opening_trade.is_some_and(|trade| {
-                        cx.evidence().tick > trade.tick && !facts.trade_taken && facts.usable
-                    });
-                    if !usable {
-                        // No second Trade is sent while the first response is
-                        // outstanding. Counts bound failure, never provenance.
-                        wait.observe(wait.closes_at, cx.evidence().tick)?;
-                        return Poll::Pending;
-                    }
-                    self.opening_trade = None;
-                    if self.reconciling {
-                        self.observe_dispatch(cx, SettlementWitness::FreshPage)?;
-                        self.reconciling = false;
-                    }
-                    let closes = cx
-                        .snapshot()
-                        .shop()
-                        .map_or(self.page_closes, |shop| shop.value.server_closes);
-                    let purpose = if self.finish.is_some() {
-                        ClosePurpose::Final
-                    } else {
-                        ClosePurpose::Retry
-                    };
-                    self.phase = Phase::Close(purpose, CloseWait::new(closes, cx.evidence().tick));
                 }
                 Phase::Buy => {
                     if self.finish.is_some() || self.held >= self.request.qty {
@@ -632,6 +667,8 @@ impl NativeMachine for BuyMachine {
                         // on the server. A foreign replacement modal must first
                         // take our CloseModal path, just like the shop page.
                         self.open = OpenCore::default();
+                        self.trade_attempted = false;
+                        self.approach_replans = 0;
                         self.opening_trade = None;
                         self.phase = Phase::Open;
                         continue;
@@ -653,7 +690,7 @@ impl NativeMachine for BuyMachine {
 
     fn cancel(&mut self) {
         self.cancelled = true;
-        if let Phase::Walk(walk, _) = &mut self.phase {
+        if let Phase::Walk(walk) = &mut self.phase {
             walk.cancel();
         }
         self.pending = None;
@@ -661,6 +698,31 @@ impl NativeMachine for BuyMachine {
 }
 
 impl BuyMachine {
+    fn keeper_needs_approach(route: shop_open::KeeperRoute) -> bool {
+        match route {
+            shop_open::KeeperRoute::Steps(steps) => steps > 0,
+            shop_open::KeeperRoute::Unreachable => true,
+            shop_open::KeeperRoute::Unknown(distance) => distance > 1,
+        }
+    }
+
+    fn replan_approach(&mut self, tile: api::WorldTile) -> Decision {
+        if self.approach_replans >= shop_open::OPEN_ATTEMPTS as u8 {
+            Decision::Failed(Arc::from(
+                "the keeper stayed out of range after all approach retries",
+            ))
+        } else {
+            self.approach_replans += 1;
+            Decision::Walk(tile)
+        }
+    }
+
+    fn open_failure(&self, reason: Arc<str>) -> ActionError {
+        ActionError::Failed(Arc::from(format!(
+            "shop did not open. Last detail: {reason}"
+        )))
+    }
+
     fn observe_dispatch(
         &mut self,
         cx: &ActionContext<'_>,
@@ -742,6 +804,8 @@ impl BuyMachine {
 
     fn accept_page(&mut self, cx: &ActionContext<'_>) -> Result<(), ActionError> {
         debug_assert!(self.opening_trade.is_some());
+        self.walk_retry.reset();
+        self.last_walk_failure = None;
         self.opening_trade = None;
         self.page_closes = cx
             .snapshot()
@@ -790,8 +854,8 @@ impl BuyMachine {
             .opening_trade
             .is_some_and(|trade| trade.rejected(&facts))
         {
-            // A fresh unreachable reply ends the opening Trade, unlike a
-            // timeout or raw close count. Retain the attempt and buy budgets.
+            // A fresh unreachable reply ends this Trade, unlike a timeout or
+            // raw close count. Retain the attempt and buy budgets.
             self.opening_trade = None;
         }
         // Idle's ready path is not page adoption: only this opening Trade's
@@ -841,19 +905,16 @@ impl BuyMachine {
         match decision {
             Decision::Wait => Poll::Ready(Ok(false)),
             Decision::Opened => Poll::Ready(Ok(true)),
-            Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(reason))),
+            Decision::Failed(reason) => Poll::Ready(Err(self.open_failure(reason))),
             Decision::Trade(keeper) => {
-                if self.opening_trade.is_some() {
-                    self.phase =
-                        Phase::DrainTrade(CloseWait::new(self.page_closes, cx.evidence().tick));
-                    return Poll::Ready(Ok(false));
-                }
                 std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Npc {
                     name: keeper.name.clone(),
                     action: keeper.action.clone(),
                     index: Some(keeper.index),
                 })))?;
-                self.keeper_index.get_or_insert(keeper.index);
+                self.opening_trade = None;
+                self.trade_attempted = true;
+                self.approach_replans = 0;
                 self.open.traded(facts, &keeper);
                 self.opening_trade = facts.tick.map(|tick| OpeningTrade {
                     tick,
@@ -864,13 +925,12 @@ impl BuyMachine {
             Decision::Walk(tile) => {
                 let walk = Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)?;
                 self.walk_retry.action_submitted();
-                self.phase = Phase::Walk(Box::new(walk), tile);
+                self.phase = Phase::Walk(Box::new(walk));
                 Poll::Ready(Ok(false))
             }
         }
     }
 }
-
 fn chat_watermark(cx: &ActionContext<'_>) -> i32 {
     cx.snapshot().chat_lines(0).map_or(0, |lines| {
         lines

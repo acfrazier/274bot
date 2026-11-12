@@ -47,8 +47,6 @@ const HARPOON_TARGET: i32 = 1;
 const BAIT_TARGET: i32 = 15;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(600);
 const CELL_DEADLINE: Duration = Duration::from_secs(180);
-/// Wait for the moving keeper to enter interaction range before the live cell starts.
-const HARRY_TRADE_RANGE_WAIT_TICKS: u32 = 120;
 const TERMINAL_CAPTURE_GRACE: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// R289 selected-content Harry placement in Catherby.
@@ -341,10 +339,6 @@ fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> S
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("account preparation has StartScript");
     scenario.steps.truncate(start + 1);
-    if kind == CellKind::Nearest {
-        // This StartScript budget also bounds the in-frame NPC wait.
-        scenario.steps[start].wait.budget_ticks = HARRY_TRADE_RANGE_WAIT_TICKS;
-    }
     scenario.steps.push(Step {
         name: "await real AcquireRun receipt",
         kind: StepKind::Await {
@@ -364,26 +358,6 @@ fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> S
     scenario.settings.deadline = PREPARATION_DEADLINE + CELL_DEADLINE;
     scenario.settings.nav.engine_speed_ms = None;
     scenario
-}
-
-fn harry_in_trade_range(snapshot: &GameSnapshot, stand: WorldTile, harry_id: i32) -> bool {
-    if snapshot.tile() != Some((stand.x, stand.z, stand.level)) {
-        return false;
-    }
-    let Ok(harry_type) = usize::try_from(harry_id) else {
-        return false;
-    };
-    snapshot.npcs().iter().any(|npc| {
-        npc.r#type == Some(harry_type)
-            // Use the path-head distance, not the rendered NPC tile.
-            && combat_proof::npc_network_distance(snapshot, npc)
-                .is_some_and(|distance| distance <= 1)
-            && npc
-                .actions
-                .iter()
-                .flatten()
-                .any(|action| action.eq_ignore_ascii_case("trade"))
-    })
 }
 
 #[derive(Default)]
@@ -464,11 +438,6 @@ impl LiveState {
         if self.snapshot.shop().open {
             return Some("shop modal was already open at StartScript".into());
         }
-        if self.kind == CellKind::Nearest
-            && !harry_in_trade_range(&self.snapshot, self.fixture.stand, self.fixture.harry.id)
-        {
-            return Some("Harry was not within one tile at StartScript".into());
-        }
         None
     }
 
@@ -512,12 +481,6 @@ impl LiveState {
 
         if self.runner.on_start_script() && !self.started {
             if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
-                return;
-            }
-            // Check range in this dispatch frame. Harry can move between steps.
-            if self.kind == CellKind::Nearest
-                && !harry_in_trade_range(&self.snapshot, self.fixture.stand, self.fixture.harry.id)
-            {
                 return;
             }
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
