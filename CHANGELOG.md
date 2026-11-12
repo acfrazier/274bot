@@ -11,10 +11,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Navigation
 
 - A danger crossing no longer stops just because one game update was missed
-  during its poison check. The bot keeps its dispatched click and waits for
-  31 continuous clean updates before it continues. The safe-tile wait permits
-  one restart, up to 63 observed game ticks. If poison stays unknown, the walk
-  stops with the last reason instead of waiting without a bound.
+  while the bot waited on a safe tile for its poison to settle. The wait now
+  starts over once after a missed update, so it can last up to 63 game ticks.
+  If the poison state still cannot be confirmed, the walk stops and shows
+  the reason, as before.
 
 ### Login
 

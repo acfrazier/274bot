@@ -721,9 +721,11 @@ fn poison_hold_gap_then_relog_does_not_admit_stale_acceptance() {
         .unwrap()
         .condition
         .session_started(3, 0, Some(tables));
-    rig.observe(4, tile(0), None, None);
+    // Skip tick 4 so the first update after the relog is a frame gap: an
+    // incomplete-fact reset at tick 4 would clear acceptance on its own.
+    rig.observe(5, tile(0), None, None);
     rig.pump(tile(0), true);
-    for tick in 5..=35 {
+    for tick in 6..=36 {
         rig.observe(tick, tile(0), None, None);
         let fact = *rig.bot()[ALICE].condition.current().unwrap();
         assert!(matches!(fact.poison, PoisonState::Unknown { .. }));
