@@ -1820,8 +1820,8 @@ fn panel_driver_shows_map_catalogue_failure() {
         &nav_planner::grid::StepGrid::fixture_open_3x3(),
     ))));
 
-    // The first frame creates the dock tree. Let the production picker draw
-    // in the next frame before checking its visible footer notice.
+    // The first frame creates the dock tree. Keep drawing until the production
+    // picker shows its map-status notice above the canvas.
     for _ in 0..3 {
         rig.frame(Pointer::Away);
         if rig.text.contains("map catalogue unavailable") {
