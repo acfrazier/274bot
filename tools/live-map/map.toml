@@ -1720,6 +1720,14 @@ cells = [
   "api.hostlog-write-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib hostlog::tests::a_failed_debug_write_is_dropped_instead_of_panicking -- --exact --nocapture --test-threads=1|--locked -p api --lib hostlog::tests::a_failed_debug_write_is_dropped_instead_of_panicking -- --exact",
 ]
 
+# Shared one-line notice limits, exercised through frontend-core's Brief tests.
+[[cover]]
+globs = ["crates/api/src/notice.rs"]
+cells = [
+  "frontend-core.notice-brief-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib brief::tests::"
+]
+
+
 # The panel facade proves form-only refusal and no-form/clean-form window
 # close. Main's headed Profiles check remains separate.
 [[cover]]
