@@ -27,6 +27,8 @@ use crate::session::OperatorSession;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
 use map_fixture::MapFixture;
+#[path = "../../host-play/tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
 
 fn t(x: i32, z: i32, level: i32) -> Tile {
     Tile { x, z, level }
@@ -112,7 +114,7 @@ fn fixture_with_world_and_snapshots(
     publish_snapshots: bool,
 ) -> Fixture {
     let map = MapFixture::new(&world, "local-289");
-    let mut play = map.play(slots[0].at);
+    let mut play = map_play_fixture::play(&map.template, slots[0].at);
     for other in &slots[1..] {
         play.attach_arm(other.name, SlotArm::new(1, false));
         play.statuses.lock().unwrap().push(SlotStatus {

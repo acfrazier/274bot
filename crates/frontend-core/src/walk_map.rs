@@ -7,6 +7,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::contract::PackId;
@@ -828,6 +829,75 @@ impl WalkReadyCatalogue {
     pub fn identity(&self) -> CatalogueIdentity {
         self.0.manifest().identity
     }
+    /// Wrap an already-opened catalogue fixture for frontend error-path tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_test_fixture(ready: Arc<host_play::map_cache::ReadyCatalogue>) -> Self {
+        Self::from_host(ready)
+    }
+}
+
+/// Inputs that determine a failed map-catalogue bind.
+///
+/// Frontends compare this key before retrying a failed build. The file stamps
+/// detect changes to either supported navpois sidecar without reading its data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkCatalogueBuildInputs {
+    profile: usize,
+    profile_nav: Option<PackId>,
+    world_nav: Option<PackId>,
+    catalogue: CatalogueIdentity,
+    navpois: NavPoisInputStamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NavPoisInputStamp {
+    beside_pack: Option<FileInputStamp>,
+    shared: Option<FileInputStamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileInputStamp {
+    length: u64,
+    modified: Option<SystemTime>,
+}
+
+impl WalkCatalogueBuildInputs {
+    /// Capture the profile, pack, catalogue and navpois inputs for one bind.
+    pub fn new(profile: &BoundProfile, world: &NavWorld, ready: &WalkReadyCatalogue) -> Self {
+        let nav_pack = profile.host().nav_pack();
+        Self {
+            profile: profile.key(),
+            profile_nav: profile.nav_pack_id(),
+            world_nav: nav_planner::producer::identity(world)
+                .ok()
+                .map(|identity| identity.pack()),
+            catalogue: ready.identity(),
+            navpois: NavPoisInputStamp {
+                beside_pack: file_input_stamp(&nav_pack.with_extension("navpois")),
+                shared: file_input_stamp(&nav_pack.with_file_name("274bot.navpois")),
+            },
+        }
+    }
+    /// Compare the non-file inputs before the next throttled navpois probe.
+    pub fn matches_binding(
+        &self,
+        profile: &BoundProfile,
+        world_nav: Option<PackId>,
+        ready: &WalkReadyCatalogue,
+    ) -> bool {
+        self.profile == profile.key()
+            && self.profile_nav == profile.nav_pack_id()
+            && self.world_nav == world_nav
+            && self.catalogue == ready.identity()
+    }
+}
+
+fn file_input_stamp(path: &std::path::Path) -> Option<FileInputStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(FileInputStamp {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
 }
 
 /// Published terrain images with the ready directory's pruning lock.

@@ -156,6 +156,17 @@ class ReleaseInputTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "dirty"):
                 release.require_clean_checkout(client, client_commit, "client")
 
+    def test_clean_checkout_rejects_a_different_head(self):
+        requested = "a" * 40
+        actual = "b" * 40
+        with mock.patch.object(release, "run_git", return_value=actual) as run_git:
+            with self.assertRaisesRegex(
+                    release.ReleaseError, f"HEAD is {actual}, expected {requested}"):
+                release.require_clean_checkout(Path("checkout"), requested, "host")
+        run_git.assert_called_once_with(
+            Path("checkout"), "rev-parse", "--verify", "HEAD^{commit}"
+        )
+
     def test_prepared_payload_is_reused_without_game_input_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1625,6 +1636,7 @@ class ControllerTests(unittest.TestCase):
             args.artifact_dir = artifacts
             workers = []
             checked_bases = []
+            events = []
             receipt = {
                 "revision": 289,
                 "entries": 3406,
@@ -1634,12 +1646,18 @@ class ControllerTests(unittest.TestCase):
             def fake_verify(worker):
                 workers.append((worker.platform, worker.worker_root))
 
+            def fake_checkout(repo, commit, label):
+                events.append(("checkout", repo, commit, label))
+
             def fake_map_check(base):
                 checked_bases.append(base)
+                events.append(("map", base))
                 return receipt
 
             output = io.StringIO()
             with mock.patch.object(release, "verify_worker", side_effect=fake_verify), \
+                    mock.patch.object(release, "require_clean_checkout",
+                                      side_effect=fake_checkout) as checkout, \
                     mock.patch.object(release, "verify_staged_map_catalogue",
                                       side_effect=fake_map_check) as map_check, \
                     mock.patch.object(release, "linux_run"), \
@@ -1653,6 +1671,15 @@ class ControllerTests(unittest.TestCase):
                 [("macos", Path(tempfile.gettempdir()))],
             )
             self.assertEqual(map_check.call_count, 3)
+            self.assertEqual(checkout.call_count, 1)
+            self.assertEqual(
+                checkout.call_args.args,
+                (Path(release.__file__).resolve().parents[2], args.commit, "host"),
+            )
+            self.assertLess(
+                next(i for i, event in enumerate(events) if event[0] == "checkout"),
+                next(i for i, event in enumerate(events) if event[0] == "map"),
+            )
             for platform in release.PLATFORMS:
                 self.assertTrue(any(platform in base.name for base in checked_bases))
             result = json.loads(output.getvalue())

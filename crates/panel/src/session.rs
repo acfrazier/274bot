@@ -240,6 +240,36 @@ const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
 /// Cadence for published-catalogue probes and failed-bind retries.
 const MAP_CATALOGUE_PROBE: Duration = Duration::from_secs(1);
 
+fn probe_published_catalogue<T>(
+    probe: &mut Option<Instant>,
+    now: Instant,
+    read: impl FnOnce() -> T,
+) -> Option<T> {
+    if probe.is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE) {
+        *probe = Some(now);
+        Some(read())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static MAP_CATALOGUE_BUILD_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_map_catalogue_build_count() {
+    MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn map_catalogue_build_count() -> usize {
+    MAP_CATALOGUE_BUILD_COUNT.with(std::cell::Cell::get)
+}
+
 /// Legacy local vault path used before a profile has been resolved.
 pub fn default_vault_path() -> PathBuf {
     frontend_core::scripts::paths::bot_file("vault")
@@ -1202,6 +1232,7 @@ pub struct Session {
     pub observed_map_services: Vec<frontend_core::walk_map::WalkObservedService>,
     map_catalogue_named: bool,
     map_catalogue_unavailable: bool,
+    map_catalogue_failed_inputs: Option<frontend_core::walk_map::WalkCatalogueBuildInputs>,
     /// Last published-catalogue probe or retry after a failed bind.
     /// The cadence prevents work on every frame.
     map_catalogue_probe: Option<Instant>,
@@ -1900,6 +1931,7 @@ impl Session {
             observed_map_services: Vec::new(),
             map_catalogue_named: false,
             map_catalogue_unavailable: false,
+            map_catalogue_failed_inputs: None,
             map_catalogue_probe: None,
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
@@ -5343,15 +5375,12 @@ impl Session {
             // for it at a coarse cadence (descriptor + directory probe),
             // not on every frame of the bake.
             let now = Instant::now();
-            if self
-                .map_catalogue_probe
-                .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE)
+            if let Some(Some(ready)) =
+                probe_published_catalogue(&mut self.map_catalogue_probe, now, || {
+                    frontend_core::walk_map::peek_walk_catalogue(&profile)
+                })
             {
-                if let Some(ready) = frontend_core::walk_map::peek_walk_catalogue(&profile) {
-                    self.bind_ready_catalogue(world.clone(), ready);
-                } else {
-                    self.map_catalogue_probe = Some(now);
-                }
+                self.bind_ready_catalogue(world.clone(), ready);
             }
         }
         self.refresh_observed_map_services(world);
@@ -5409,7 +5438,7 @@ impl Session {
         self.observed_map_services.clear();
         self.map_catalogue_named = false;
         self.map_catalogue_unavailable = false;
-        self.map_model.close();
+        self.map_catalogue_failed_inputs = None;
     }
 
     pub fn map_bind_status(&self) -> Option<String> {
@@ -5449,9 +5478,15 @@ impl Session {
         }
     }
 
-    pub(crate) fn mark_map_catalogue_unavailable(&mut self, error: impl std::fmt::Display) {
+    pub(crate) fn mark_map_catalogue_unavailable(
+        &mut self,
+        error: impl std::fmt::Display,
+        failed_inputs: frontend_core::walk_map::WalkCatalogueBuildInputs,
+    ) {
         self.map_catalogue_probe = Some(Instant::now());
-        if self.map_catalogue_unavailable {
+        if self.map_catalogue_unavailable
+            && self.map_catalogue_failed_inputs.as_ref() == Some(&failed_inputs)
+        {
             return;
         }
         api::host_log!(
@@ -5461,24 +5496,16 @@ impl Session {
             "WalkTo map catalogue: {error}"
         );
         self.map_catalogue_unavailable = true;
+        self.map_catalogue_failed_inputs = Some(failed_inputs);
         self.map_catalogue = None;
         self.map_catalogue_named = false;
         self.map_model.close();
     }
-    fn bind_ready_catalogue(
+    pub(crate) fn bind_ready_catalogue(
         &mut self,
         world: Option<Arc<NavWorld>>,
         ready: Arc<frontend_core::walk_map::WalkReadyCatalogue>,
     ) {
-        if self.map_catalogue_unavailable {
-            let now = Instant::now();
-            if self
-                .map_catalogue_probe
-                .is_some_and(|at| now.duration_since(at) < MAP_CATALOGUE_PROBE)
-            {
-                return;
-            }
-        }
         let profile = self.server_profile().map(BoundProfile::share);
         let Some(world) = world
             .or_else(|| self.core.nav_world())
@@ -5487,30 +5514,61 @@ impl Session {
         else {
             return;
         };
+        let Some(profile) = profile else {
+            return;
+        };
         let identity = ready.identity();
         let nav = nav_planner::producer::identity(world.as_ref())
             .ok()
             .map(|identity| identity.pack());
-        let data = profile
-            .as_ref()
-            .and_then(BoundProfile::game_data)
-            .or_else(|| self.core.game_data());
+        let data = profile.game_data().or_else(|| self.core.game_data());
         let same = self.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity
                 && Some(catalogue.nav_pack_id()) == nav
                 && catalogue.client_status() == WalkSourceStatus::Available
         });
-        if same && (self.map_catalogue_named || data.is_none()) {
+        if !self.map_catalogue_unavailable && same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let Some(profile) = profile.as_ref() else {
-            return;
+        let failed_inputs = if self.map_catalogue_unavailable {
+            if self
+                .map_catalogue_failed_inputs
+                .as_ref()
+                .is_some_and(|failed| failed.matches_binding(&profile, nav, &ready))
+            {
+                let now = Instant::now();
+                if self
+                    .map_catalogue_probe
+                    .is_some_and(|at| now.duration_since(at) < MAP_CATALOGUE_PROBE)
+                {
+                    return;
+                }
+                self.map_catalogue_probe = Some(now);
+                let inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+                    &profile, &world, &ready,
+                );
+                if self.map_catalogue_failed_inputs.as_ref() == Some(&inputs) {
+                    return;
+                }
+                inputs
+            } else {
+                self.map_catalogue_probe = Some(Instant::now());
+                frontend_core::walk_map::WalkCatalogueBuildInputs::new(&profile, &world, &ready)
+            }
+        } else {
+            frontend_core::walk_map::WalkCatalogueBuildInputs::new(&profile, &world, &ready)
         };
+        if self.map_catalogue_unavailable {
+            self.map_catalogue_unavailable = false;
+            self.map_catalogue_failed_inputs = None;
+        }
+        #[cfg(test)]
+        MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(count.get() + 1));
         let (catalogue, profile_named) =
-            match self.core.walk_catalogue_from_ready(profile, world, ready) {
+            match self.core.walk_catalogue_from_ready(&profile, world, ready) {
                 Ok(result) => result,
                 Err(error) => {
-                    self.mark_map_catalogue_unavailable(error);
+                    self.mark_map_catalogue_unavailable(error, failed_inputs);
                     return;
                 }
             };
@@ -5519,13 +5577,14 @@ impl Session {
             Some(data) if !profile_named => match catalogue.with_game_data(data) {
                 Ok(named) => named,
                 Err(error) => {
-                    self.mark_map_catalogue_unavailable(error);
+                    self.mark_map_catalogue_unavailable(error, failed_inputs);
                     return;
                 }
             },
             _ => catalogue,
         };
         self.map_catalogue_probe = None;
+        self.map_catalogue_failed_inputs = None;
         self.map_catalogue_unavailable = false;
         self.map_catalogue_named = profile_named || has_data;
         self.map_catalogue = Some(Arc::new(catalogue));

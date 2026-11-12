@@ -1888,7 +1888,7 @@ def render_verify_plan(args):
                     "extract into a fresh directory with traversal/link rejection",
                     "verify exact membership, byte counts, and SHA-256 release manifest",
                     "run panel-play --help and tui-play --help on the native platform",
-                    "for revision 289, build and search the runtime map catalogue",
+                    "require a clean host checkout at the requested commit before the map check",
                 ] + ([
                     "on macOS, verify all signatures, the staple, and Gatekeeper acceptance",
                 ] if platform == "macos" else []),
@@ -1919,6 +1919,7 @@ def verify_controller(args):
     verify_sha256s(artifact_dir, candidates)
     integrity_platforms = PLATFORMS if set(candidates) == set(PLATFORMS) else selected
     map_catalogues = {}
+    host_checkout_checked = False
     with tempfile.TemporaryDirectory(prefix="274bot-release-verify-") as temporary:
         for platform in integrity_platforms:
             archive = candidates[platform]
@@ -1936,6 +1937,11 @@ def verify_controller(args):
             # This parser is architecture-independent. Check each staged
             # payload here, before native workers are dispatched remotely.
             if revision == 289:
+                if not host_checkout_checked:
+                    require_clean_checkout(
+                        Path(__file__).resolve().parents[2], args.commit, "host"
+                    )
+                    host_checkout_checked = True
                 map_catalogues[platform] = verify_staged_map_catalogue(base)
     native_archives = {platform: candidates[platform] for platform in selected}
     for platform, archive in native_archives.items():

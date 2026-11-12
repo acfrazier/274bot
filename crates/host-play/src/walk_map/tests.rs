@@ -24,6 +24,14 @@ use crate as map_host;
 #[path = "../../tests/support/map_fixture.rs"]
 mod map_fixture;
 use map_fixture::MapFixture;
+#[path = "../../tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
+
+impl MapFixture {
+    fn play(&self, origin: Tile) -> crate::Play {
+        map_play_fixture::play(&self.template, origin)
+    }
+}
 
 fn bound_context(play: &crate::Play) -> MapContext {
     MapContext {

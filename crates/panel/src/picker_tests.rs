@@ -20,7 +20,7 @@ use super::{
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
-use crate::test_support::{map_fixture, TestDir};
+use crate::test_support::{map_fixture, map_play_fixture, TestDir};
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
@@ -548,7 +548,9 @@ fn probability_picker_session(
             Arc::clone(&fixture.template),
         ));
     session.set_focus_for_test("alice");
-    session.core.set_play(Some(fixture.play(origin)));
+    session
+        .core
+        .set_play(Some(map_play_fixture::play(&fixture.template, origin)));
     session.statuses.refresh_from_play(&session.core);
     let at = WorldTile {
         x: origin.x,
