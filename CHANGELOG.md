@@ -26,7 +26,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   to regenerate it with `python3 tools/local-data/build.py`.
 - Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
   with spare logs, and judge cycles without a chance XP requirement. Startup
-  counts observed approach ticks, including a replacement walk after depletion.
+  counts player-tile movement on native and replacement routes.
 
 ### Panel and terminal app
 
