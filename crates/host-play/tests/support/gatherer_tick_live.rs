@@ -78,6 +78,11 @@ const REQUIRED_CYCLES: u32 = 60;
 const PROBE_CYCLES: u32 = 300;
 const PROBE_TICK_BUDGET: u32 = 2_400;
 const CELL_TICK_BUDGET: u32 = 800;
+// fishing_movement.rs2:8-12 waits at least 280 ticks between spot moves.
+// Its current timer has an unknown phase: cover one immediate move, each
+// later move in the cell budget, and the log used by a successful arm.
+const NET_MOVE_MIN_TICKS: u32 = 280;
+const NET_LOG_COUNT: i32 = 2 + (CELL_TICK_BUDGET / NET_MOVE_MIN_TICKS) as i32;
 const RUNE_XP_TICK_BUDGET: u32 = 60;
 const FIXED_DEADLINE: Duration = Duration::from_secs(1_800);
 const FRAME_HANG_GUARD: Duration = Duration::from_secs(5);
@@ -256,7 +261,8 @@ impl Case {
     }
 
     fn seeds(self) -> Vec<(&'static str, i32, i32)> {
-        let mut items = vec![("knife", KIT_KNIFE_ID, 1), ("logs", LOG_ID, 1)];
+        let logs = if self == Self::Net { NET_LOG_COUNT } else { 1 };
+        let mut items = vec![("knife", KIT_KNIFE_ID, 1), ("logs", LOG_ID, logs)];
         let (alias, tool) = self.tool();
         items.push((alias, tool, 1));
         match self {
@@ -279,6 +285,7 @@ enum SetupPhase {
     WaitReseedTutorial,
     Seed,
     Verify,
+    WaitWornTool,
     Ready,
 }
 
@@ -414,6 +421,25 @@ impl SetupState {
             }
             SetupPhase::Verify => {
                 if self.ready_in_snapshot(&snapshot) {
+                    if self.case == Case::Oak {
+                        let sent = interact::Interactions::new(&snapshot, client).wear(IRON_AXE_ID);
+                        if matches!(&sent, interact::SendResult::Sent { .. }) {
+                            self.phase = SetupPhase::WaitWornTool;
+                        } else {
+                            self.error = Some(format!("could not wear fixture iron axe: {sent:?}"));
+                        }
+                    } else {
+                        self.phase = SetupPhase::Ready;
+                    }
+                }
+            }
+            SetupPhase::WaitWornTool => {
+                if snapshot
+                    .equipment()
+                    .iter()
+                    .any(|item| item.def.id == IRON_AXE_ID && item.count > 0)
+                    && self.ready_in_snapshot(&snapshot)
+                {
                     self.phase = SetupPhase::Ready;
                 }
             }
@@ -431,11 +457,15 @@ impl SetupState {
             .iter()
             .find(|stat| stat.index == self.case.skill_index())
             .is_some_and(|stat| stat.base >= self.case.level());
-        let items_ready = self
-            .case
-            .seeds()
-            .iter()
-            .all(|(_, id, count)| snapshot.inv_count(*id) >= *count);
+        let items_ready = self.case.seeds().iter().all(|(_, id, count)| {
+            snapshot.inv_count(*id) >= *count
+                || (self.case == Case::Oak
+                    && *id == IRON_AXE_ID
+                    && snapshot
+                        .equipment()
+                        .iter()
+                        .any(|item| item.def.id == *id && item.count >= *count))
+        });
         let loc_ready = self.case.target_loc().is_none_or(|(id, tile)| {
             snapshot
                 .locs()
@@ -508,6 +538,10 @@ impl StatusObservation {
         })
     }
 
+    fn has_required_cycles(&self, required: u32) -> Result<bool, String> {
+        Ok(self.completed_cycles()? >= required)
+    }
+
     fn counter(&self, key: &str) -> Option<i64> {
         match key {
             "tick_verified" => self.tick_verified,
@@ -544,6 +578,103 @@ fn integer_field(status: &ScriptStatus, key: &str) -> Option<i64> {
         })
 }
 
+/// Add observed native-approach ticks to the selected first-arm wait.
+/// A replacement approach requires depletion; duplicate polls add no ticks.
+struct FirstArmWait {
+    origin: u32,
+    native_budget: u32,
+    absolute_budget: u32,
+    last_tick: u32,
+    depleted_tick: Option<u32>,
+    approaching: bool,
+    replacement_route_ticks: u32,
+    native_route_ticks: u32,
+}
+
+impl FirstArmWait {
+    fn new(origin: u32, native_budget: u32, absolute_budget: u32) -> Self {
+        Self {
+            origin,
+            native_budget,
+            absolute_budget,
+            last_tick: origin,
+            depleted_tick: None,
+            approaching: false,
+            replacement_route_ticks: 0,
+            native_route_ticks: 0,
+        }
+    }
+
+    fn observe(
+        &mut self,
+        now: u32,
+        depleted: bool,
+        approaching: bool,
+        native_route_ticks: u32,
+        armed: bool,
+    ) -> Result<bool, String> {
+        if self.approaching {
+            self.replacement_route_ticks += now.wrapping_sub(self.last_tick);
+        }
+        self.native_route_ticks = native_route_ticks;
+        self.last_tick = now;
+        if depleted && self.depleted_tick.is_none() {
+            self.depleted_tick = Some(now);
+        }
+        self.approaching = self.depleted_tick.is_some() && approaching;
+        let elapsed = now.wrapping_sub(self.origin);
+        let route_ticks = self.route_ticks();
+        if elapsed > self.absolute_budget || elapsed > self.native_budget + route_ticks {
+            return Err(format!(
+                "Gatherer Start did not reach its first arm within {} native ticks plus {route_ticks} observed approach ticks (depleted={:?}, elapsed={elapsed})",
+                self.native_budget, self.depleted_tick
+            ));
+        }
+        Ok(armed)
+    }
+
+    fn route_ticks(&self) -> u32 {
+        self.replacement_route_ticks + self.native_route_ticks
+    }
+}
+
+/// A native NPC click can walk before its content handler starts. Count
+/// observed moving game ticks, not host polls or a mere walking intention.
+struct NativeApproach {
+    click_tick: u32,
+    last_tile: Option<WorldTile>,
+    last_move_tick: Option<u32>,
+    route_ticks: u32,
+}
+
+impl NativeApproach {
+    fn new(click_tick: u32, last_tile: Option<WorldTile>) -> Self {
+        Self {
+            click_tick,
+            last_tile,
+            last_move_tick: None,
+            route_ticks: 0,
+        }
+    }
+
+    fn observe(&mut self, tick: u32, tile: Option<WorldTile>) {
+        if tick.wrapping_sub(self.click_tick) > CELL_TICK_BUDGET {
+            return;
+        }
+        let Some(tile) = tile else {
+            return;
+        };
+        if tick != self.click_tick
+            && self.last_tile.is_some_and(|previous| previous != tile)
+            && self.last_move_tick != Some(tick)
+        {
+            self.route_ticks += 1;
+            self.last_move_tick = Some(tick);
+        }
+        self.last_tile = Some(tile);
+    }
+}
+
 struct LiveRun {
     _isolated_home: script::IsolatedEnv,
     _temp: TempRoot,
@@ -558,6 +689,8 @@ struct LiveRun {
     output: PathBuf,
     started_tick: Option<u32>,
     first_arm_budget: u32,
+    startup_route_ticks: u32,
+    startup_depleted_tick: Option<u32>,
     baseline: Option<FrameObservation>,
     statuses: Vec<StatusObservation>,
     logout_requested: bool,
@@ -737,6 +870,8 @@ impl LiveRun {
             output,
             started_tick: None,
             first_arm_budget,
+            startup_route_ticks: 0,
+            startup_depleted_tick: None,
             baseline: None,
             statuses: Vec::new(),
             logout_requested: false,
@@ -849,10 +984,17 @@ impl LiveRun {
             .ok_or("Gatherer Start has no baseline tick")?;
         let mut after = self.hook.observed_host_frame();
         let deadline = Instant::now() + Duration::from_secs(30);
+        let mut arm_wait =
+            FirstArmWait::new(origin, self.first_arm_budget, self.case.tick_budget());
+        let mut native_approach = None;
+        let mut next_route_frame = 0;
         loop {
             self.capture_status();
             let trace = self.hook.trace();
-            let current = self.hook.observed_game_tick();
+            let current = trace
+                .frames
+                .last()
+                .map_or_else(|| self.hook.observed_game_tick(), |frame| frame.game_tick);
             if !self.case.is_rune()
                 && current.wrapping_sub(origin) > STARTUP_TICK_BUDGET
                 && !tick_startup::native_click_within(&trace, origin, STARTUP_TICK_BUDGET)
@@ -880,17 +1022,68 @@ impl LiveRun {
                     );
                     return Ok(());
                 }
-            } else if trace.dispatches.iter().any(is_knife_arm) {
-                if self.play().script_state(&self.account) != script::RunState::Running {
-                    return Err("Gatherer native loop did not reach Running after Start".into());
+            } else {
+                // Fast iron content yields and depletes on the same tick.
+                // A cleared animation and new native XP identify that event,
+                // not merely the bot's intent to approach another target.
+                let depleted = self.case == Case::Iron
+                    && self.xp_gain() > 0
+                    && trace.frames.last().is_some_and(|frame| {
+                        frame
+                            .animation
+                            .is_none_or(|animation| animation.sequence == -1)
+                    });
+                let approaching = self.statuses.last().is_some_and(|status| {
+                    status.last_event.as_deref() == Some("approaching target")
+                });
+                let first_arm = trace.dispatches.iter().find(|event| is_knife_arm(event));
+                let arm_tick = first_arm
+                    .map(|event| u32::try_from(event.game_tick))
+                    .transpose()
+                    .map_err(|error| format!("first-arm game tick: {error}"))?;
+                if self.case == Case::Net && native_approach.is_none() {
+                    native_approach = trace.wire.iter().find_map(|packet| {
+                        (packet.request_id.is_none()
+                            && packet.opcode == ClientProt289::OPNPC1.id as u8
+                            && packet.game_tick.wrapping_sub(origin) <= STARTUP_TICK_BUDGET)
+                            .then(|| {
+                                NativeApproach::new(
+                                    packet.game_tick,
+                                    self.baseline.as_ref().and_then(|frame| frame.player_tile),
+                                )
+                            })
+                    });
                 }
-                return Ok(());
+                if let Some(route) = &mut native_approach {
+                    for frame in &trace.frames[next_route_frame..] {
+                        if arm_tick.is_none_or(|armed| {
+                            frame.game_tick.wrapping_sub(origin) <= armed.wrapping_sub(origin)
+                        }) {
+                            route.observe(frame.game_tick, frame.player_tile);
+                        }
+                    }
+                }
+                next_route_frame = trace.frames.len();
+                let armed = arm_wait.observe(
+                    arm_tick.unwrap_or(current),
+                    depleted,
+                    approaching,
+                    native_approach
+                        .as_ref()
+                        .map_or(0, |route| route.route_ticks),
+                    first_arm.is_some(),
+                );
+                self.startup_route_ticks = arm_wait.route_ticks();
+                self.startup_depleted_tick = arm_wait.depleted_tick;
+                if armed? {
+                    if self.play().script_state(&self.account) != script::RunState::Running {
+                        return Err("Gatherer native loop did not reach Running after Start".into());
+                    }
+                    return Ok(());
+                }
             }
-            if current.wrapping_sub(origin) > self.first_arm_budget {
-                return Err(format!(
-                    "Gatherer Start did not reach its first arm within the selected native-roll bound of {} ticks",
-                    self.first_arm_budget
-                ));
+            if self.case.is_rune() && current.wrapping_sub(origin) > self.first_arm_budget {
+                return Err("Gatherer Start did not publish its Rune no-gain refusal".into());
             }
             if Instant::now() >= deadline {
                 return Err("Gatherer Start exceeded its bounded 30s startup deadline".into());
@@ -920,14 +1113,14 @@ impl LiveRun {
                         }
                         return Ok(());
                     }
-                } else if status.completed_cycles()? >= required && self.xp_gain() > 0 {
+                } else if status.has_required_cycles(required)? {
                     return Ok(());
                 }
             }
             let elapsed_ticks = self.hook.observed_game_tick().wrapping_sub(start_tick);
             if elapsed_ticks > self.case.tick_budget() {
                 return Err(format!(
-                    "{} did not reach its required cycles/XP by tick {} (budget {})",
+                    "{} did not reach its required cycles (or Rune native XP) by tick {} (budget {})",
                     self.case.name(),
                     self.hook.observed_game_tick(),
                     self.case.tick_budget()
@@ -1003,7 +1196,7 @@ impl LiveRun {
             "engine": {"host": ENGINE_HOST, "game_port": ENGINE_GAME_PORT, "http_port": ENGINE_HTTP_PORT, "tick_ms": EXPECTED_TICK_MS},
             "runtime": {"bot_cpu": 1, "account_prefix": std::env::var("BOT_LIVE_NAME_PREFIX").ok(), "account": self.account, "profile": self.profile_identity, "world_members": self.world_members},
             "scenario": {"skill": self.case.skill(), "skill_index": self.case.skill_index(), "seed_level": self.case.level(), "target": {"x": self.case.target().x, "z": self.case.target().z, "level": self.case.target().level}, "required_cycles": self.case.required_cycles(), "tick_budget": self.case.tick_budget(), "fixed_deadline_seconds": FIXED_DEADLINE.as_secs(), "inventory_seed": self.case.seeds()},
-            "measurement": {"started_tick": baseline_tick, "baseline": self.baseline.as_ref().map(frame_json), "xp_gain": self.xp_gain(), "logout_requested": self.logout_requested, "logout_still_connected": self.logout_still_connected},
+            "measurement": {"started_tick": baseline_tick, "baseline": self.baseline.as_ref().map(frame_json), "first_arm_native_budget": self.first_arm_budget, "startup_depleted_tick": self.startup_depleted_tick, "startup_route_ticks": self.startup_route_ticks, "xp_gain": self.xp_gain(), "logout_requested": self.logout_requested, "logout_still_connected": self.logout_still_connected},
             "timeline": {"frames": frames, "dispatches": dispatches, "wire": wire, "statuses": statuses},
             "server_acceptance": {"observed": false, "accepted_events": null, "reason": "Engine L has no independent accepted-event history in this live hook; HostQueued receipts and outbound Client packets are not acceptance evidence."}
         });
@@ -1260,6 +1453,97 @@ mod tests {
     use super::*;
 
     #[test]
+    fn first_arm_counts_only_observed_replacement_route_ticks() {
+        let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
+        assert!(!wait.observe(18, false, false, 0, false).unwrap());
+        assert!(!wait.observe(19, true, true, 0, false).unwrap());
+        assert!(!wait.observe(19, true, true, 0, false).unwrap());
+        assert!(!wait.observe(20, true, true, 0, false).unwrap());
+        assert!(wait.observe(21, true, false, 0, true).unwrap());
+        assert_eq!(wait.route_ticks(), 2);
+        assert_eq!(wait.depleted_tick, Some(19));
+    }
+
+    #[test]
+    fn approaching_without_depletion_does_not_extend_first_arm_bound() {
+        let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
+        assert!(!wait.observe(19, false, true, 0, false).unwrap());
+        assert!(wait.observe(21, false, true, 0, true).is_err());
+        assert_eq!(wait.route_ticks(), 0);
+    }
+
+    #[test]
+    fn depletion_does_not_excuse_a_late_or_missing_arm() {
+        for armed in [false, true] {
+            let mut wait = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
+            assert!(!wait.observe(19, true, true, 0, false).unwrap());
+            assert!(!wait.observe(21, true, false, 0, false).unwrap());
+            assert!(wait.observe(23, true, false, 0, armed).is_err());
+        }
+        let mut stuck = FirstArmWait::new(13, 7, CELL_TICK_BUDGET);
+        assert!(!stuck.observe(19, true, true, 0, false).unwrap());
+        assert!(stuck
+            .observe(14 + CELL_TICK_BUDGET, true, true, 0, false)
+            .is_err());
+    }
+
+    #[test]
+    fn native_npc_approach_adds_observed_motion_but_not_duplicate_polls() {
+        let start = Case::Net.target();
+        let mut route = NativeApproach::new(13, Some(start));
+        for (tick, x, z) in [
+            (13, 3267, 3149),
+            (14, 3269, 3149),
+            (14, 3269, 3149),
+            (15, 3270, 3147),
+            (16, 3272, 3145),
+            (17, 3274, 3143),
+            (18, 3276, 3141),
+            (19, 3276, 3141),
+        ] {
+            route.observe(tick, Some(WorldTile { x, z, level: 0 }));
+        }
+        assert_eq!(route.route_ticks, 5);
+        let mut wait = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
+        assert!(!wait
+            .observe(20, false, false, route.route_ticks, false)
+            .unwrap());
+        assert!(wait
+            .observe(23, false, false, route.route_ticks, true)
+            .unwrap());
+    }
+
+    #[test]
+    fn native_approach_cannot_excuse_stationary_or_never_arming_bots() {
+        let start = Case::Net.target();
+        let mut route = NativeApproach::new(13, Some(start));
+        for tick in 13..=20 {
+            route.observe(tick, Some(start));
+        }
+        assert_eq!(route.route_ticks, 0);
+        let mut stationary = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
+        assert!(stationary
+            .observe(20, false, false, route.route_ticks, false)
+            .is_err());
+        for armed in [false, true] {
+            let mut wait = FirstArmWait::new(12, 7, CELL_TICK_BUDGET);
+            assert!(!wait.observe(20, false, false, 5, false).unwrap());
+            assert!(wait.observe(25, false, false, 5, armed).is_err());
+        }
+    }
+
+    #[test]
+    fn net_seed_covers_content_bounded_spot_moves() {
+        let moves = 1 + CELL_TICK_BUDGET / NET_MOVE_MIN_TICKS;
+        assert_eq!(moves, 3);
+        assert_eq!(NET_LOG_COUNT, 4);
+        assert!(Case::Net
+            .seeds()
+            .contains(&("logs", LOG_ID, 1 + moves as i32)));
+        assert!(Case::Fly.seeds().contains(&("logs", LOG_ID, 1)));
+    }
+
+    #[test]
     fn iron_setup_has_a_usable_tool_and_local_replacement_rocks() {
         if !api::test_support::game_data_available() {
             return;
@@ -1412,6 +1696,16 @@ mod tests {
             xp: Some(0),
         };
         assert_eq!(status.completed_cycles().unwrap(), 32);
+        assert!(status.has_required_cycles(32).unwrap());
+        assert!(!status.has_required_cycles(33).unwrap());
+        // A cycle cell must not depend on a chance catch, and XP must not
+        // substitute for missing bot-recorded cycles.
+        let mut status = status;
+        status.tick_verified = Some(48);
+        assert!(status.has_required_cycles(REQUIRED_CYCLES).unwrap());
+        status.tick_verified = Some(46);
+        status.xp = Some(280);
+        assert!(!status.has_required_cycles(REQUIRED_CYCLES).unwrap());
     }
 
     #[test]
