@@ -183,18 +183,14 @@ impl Session {
         #[cfg(feature = "js")]
         {
             if let Some((root, result)) = self.scripts.take_catalog_import_update() {
-                match result {
-                    Ok(_) => {
-                        let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                            &frontend_core::scripts::paths::rs2b0t_import_file(),
-                        );
-                        let _ =
-                            self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
-                        self.ui.script_catalog_last_dir = Some(root);
-                        self.rs2b0t_catalog_open = false;
-                        self.error = None;
-                    }
-                    Err(error) => self.error = Some(error),
+                if result.is_ok() {
+                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                        &frontend_core::scripts::paths::rs2b0t_import_file(),
+                    );
+                    let _ = self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
+                    self.ui.script_catalog_last_dir = Some(root);
+                    self.rs2b0t_catalog_open = false;
+                    self.error = None;
                 }
             }
             for (name, message) in self.scripts.take_start_failures() {

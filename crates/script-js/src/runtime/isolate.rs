@@ -9,7 +9,9 @@ mod thread;
 #[path = "isolate/validation.rs"]
 mod validation;
 pub use supervisor::{capacity_status as isolate_capacity_status, IsolateCapacityStatus};
-pub use validation::{ValidationBatch, ValidationError};
+pub use validation::{
+    validation_batch_prefix_len, ValidationBatch, ValidationError, MAX_VALIDATION_BATCH_CARDS,
+};
 
 pub use teardown::TeardownProof;
 use teardown::{TeardownPhase, TeardownState};

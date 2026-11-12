@@ -2479,6 +2479,11 @@ fn catalog_import_retains_runtime_failure_for_new_card() {
             && named_failures.contains("intentional test setup failure"),
         "catalog import must retain the new card's load failure: {named_failures}"
     );
+    assert_eq!(
+        app.error.as_deref(),
+        Some(named_failures.as_str()),
+        "the TUI must show the shared core failure notice"
+    );
 }
 
 #[cfg(feature = "js")]
@@ -2504,14 +2509,14 @@ fn catalog_import_requires_selected_game_data() {
     settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert_eq!(
         app.error.as_deref(),
-        Some("missing selected game data"),
+        Some("Import catalog: missing selected game data"),
         "catalog import must report missing selected game data"
     );
 }
 
 #[cfg(feature = "js")]
 #[test]
-fn catalog_import_requires_selected_named_bank_facts() {
+fn catalog_import_reports_unprepared_map_data() {
     let iso = IsolatedStores::enter("tui-catalog-import-missing-banks");
     let root = fake_rs2b0t_tree(iso.dir(), false);
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
@@ -2534,8 +2539,8 @@ fn catalog_import_requires_selected_named_bank_facts() {
     settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert_eq!(
         app.error.as_deref(),
-        Some("missing selected named-bank facts"),
-        "catalog import must report missing selected named-bank facts"
+        Some("Import catalog: the map data for this profile is not prepared"),
+        "catalog import must report unprepared map data"
     );
 }
 

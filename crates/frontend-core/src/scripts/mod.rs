@@ -1624,7 +1624,7 @@ impl Scripts {
     #[cfg(feature = "js")]
     /// How many load failures are recorded.
     pub fn load_failure_count(&self) -> usize {
-        self.js.load_failures().len()
+        self.js.load_failure_count()
     }
 
     #[cfg(feature = "js")]

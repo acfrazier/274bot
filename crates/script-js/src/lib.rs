@@ -53,8 +53,9 @@ pub use library::store::{
 };
 
 pub use runtime::isolate::{
-    isolate_capacity_status, IsolateCapacityStatus, LoadIsolate, LoadIsolateError, Ready,
-    TeardownProof, ValidationBatch, ValidationError,
+    isolate_capacity_status, validation_batch_prefix_len, IsolateCapacityStatus, LoadIsolate,
+    LoadIsolateError, Ready, TeardownProof, ValidationBatch, ValidationError,
+    MAX_VALIDATION_BATCH_CARDS,
 };
 
 #[cfg(feature = "test-hooks")]

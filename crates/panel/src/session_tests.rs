@@ -1449,7 +1449,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         session
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("missing selected named-bank facts")),
+            .is_some_and(|error| error.contains("map data for this profile is not prepared")),
         "profile binding has no selected navigation facts: {:?}",
         session.error
     );
@@ -9997,6 +9997,87 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(card.category(), "Prayer");
     assert_eq!(card.description(), "Buries bones");
     assert_eq!(card.tags(), vec!["bones"]);
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_validates_257_cards_in_bounded_batches() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("import-257-cards");
+    let cards: Vec<(String, String)> = (0..257)
+        .map(|index| {
+            let name = format!("Card{index:03}");
+            (name.clone(), name)
+        })
+        .collect();
+    let references: Vec<(&str, &str)> = cards
+        .iter()
+        .map(|(register, folder)| (register.as_str(), folder.as_str()))
+        .collect();
+    let root = write_looping_catalog(&iso.dir().join("many-cards"), &references);
+    let mut session = Session::new();
+    bind_catalog_validation_context(&mut session);
+
+    session
+        .import_rs2b0t_catalog(&root)
+        .expect("import 257 cards");
+    settle_catalog_work(&mut session);
+
+    let imported_count = session
+        .scripts
+        .cards()
+        .filter(|card| card.source() == CardSource::Catalog)
+        .count();
+    assert_eq!(imported_count, 257, "all catalog cards must be imported");
+    let last = session
+        .scripts
+        .card(CardSource::Catalog, "Card256")
+        .expect("the final card after the 256-card batch");
+    assert!(last.is_transpiled(), "the final card must be validated");
+    assert_eq!(session.scripts.load_failure_count(), 0);
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_runtime_failure_uses_the_shared_notice() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("import-load-failure-notice");
+    let root = write_looping_catalog(&iso.dir().join("catalog"), &[("Broken", "Broken")]);
+    std::fs::write(
+        root.join("src/bot/scripts/Broken/Broken.ts"),
+        "export default class Broken extends LoopingBot { constructor() { super(); throw new Error('intentional test setup failure'); } override loop() {} }",
+    )
+    .unwrap();
+    let mut session = Session::new();
+    bind_catalog_validation_context(&mut session);
+
+    session
+        .import_rs2b0t_catalog(&root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session);
+
+    let card = session
+        .scripts
+        .card(CardSource::Catalog, "Broken")
+        .expect("failed card remains imported");
+    assert!(session.scripts.load_failure(&card.identity_key()).is_some());
+    let named_failures = session.scripts.named_failure_output();
+    assert!(
+        named_failures.contains("Broken")
+            && named_failures.contains("intentional test setup failure"),
+        "catalog import must retain the runtime load failure: {named_failures}"
+    );
+    assert_eq!(
+        session.error.as_deref(),
+        Some(named_failures.as_str()),
+        "the panel must show the shared core failure notice"
+    );
 }
 
 #[cfg(feature = "js")]

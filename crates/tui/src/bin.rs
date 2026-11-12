@@ -2726,24 +2726,16 @@ impl TuiSession {
         self.scripts
             .poll_with_profile(&mut self.core, profile.as_ref());
         #[cfg(feature = "js")]
-        let mut catalog_import_error = None;
-        #[cfg(feature = "js")]
         if let Some((root, result)) = self.scripts.take_catalog_import_update() {
-            match result {
-                Ok(_) => {
-                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                        &frontend_core::scripts::paths::rs2b0t_import_file(),
-                    );
-                    self.rs2b0t_catalog_dir = root.clone();
-                    app.rs2b0t_catalog_dir = root;
-                    self.rs2b0t_catalog_open = false;
-                    app.rs2b0t_catalog_open = false;
-                    app.error = None;
-                    if self.scripts.load_failure_count() > 0 {
-                        catalog_import_error = Some(self.scripts.named_failure_output());
-                    }
-                }
-                Err(error) => catalog_import_error = Some(error),
+            if result.is_ok() {
+                let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                    &frontend_core::scripts::paths::rs2b0t_import_file(),
+                );
+                self.rs2b0t_catalog_dir = root.clone();
+                app.rs2b0t_catalog_dir = root;
+                self.rs2b0t_catalog_open = false;
+                app.rs2b0t_catalog_open = false;
+                app.error = None;
             }
         }
         #[cfg(feature = "js")]
@@ -2760,10 +2752,6 @@ impl TuiSession {
         }
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
-        #[cfg(feature = "js")]
-        if let Some(error) = catalog_import_error {
-            app.error = Some(error);
-        }
         #[cfg(feature = "js")]
         {
             app.reload_confirm = self.scripts.reload_awaiting_confirm();

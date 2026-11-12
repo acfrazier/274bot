@@ -30,6 +30,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   data. Validation stops with a clear message if the selected profile lacks
   the required data.
 
+- Catalog imports now validate large catalogs in bounded batches. The panel
+  and TUI show the same load-failure notice. The app reports when the
+  selected profile's map data is not prepared.
+
+- The app shows a notice when a content change cancels pending reload work.
+
 ### Developer tools
 
 - The game-data generator now accepts content where one ore row is mined by

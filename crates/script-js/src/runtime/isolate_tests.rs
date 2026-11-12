@@ -79,13 +79,12 @@ fn startup_non_yielding_module_has_bounded_join() {
 
 #[test]
 fn validate_non_yielding_module_is_bounded() {
-    let Some(game_data) = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()
-    else {
+    if !api::test_support::game_data_available() {
         return;
-    };
-    let Some(bank_catalog) = api::named_banks::bank_catalog().ok() else {
-        return;
-    };
+    }
+    let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("local R289 test data");
+    let bank_catalog = api::named_banks::bank_catalog().expect("local bank catalog");
     let named_banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(
         bank_catalog
             .iter()

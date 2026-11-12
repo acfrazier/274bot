@@ -13,7 +13,8 @@ const QUEUE_CAP: usize = 16;
 const SOURCE_CAP: usize = 4 * 1024 * 1024;
 const SIBLING_CAP: usize = 32;
 const INPUT_CAP: usize = 8 * 1024 * 1024;
-const BATCH_CAP: usize = 256;
+/// Maximum number of cards in one validation batch.
+pub const MAX_VALIDATION_BATCH_CARDS: usize = 256;
 const BATCH_BYTES_CAP: usize = 16 * 1024 * 1024;
 
 pub(super) type Batch = Vec<(PreparedCard, Result<(), String>)>;
@@ -29,6 +30,48 @@ pub enum ValidationError {
     Coordinator(String),
     #[error("validation coordinator unavailable")]
     Unavailable,
+}
+/// Return the largest prefix that fits one bounded validation batch.
+pub fn validation_batch_prefix_len(cards: &[PreparedCard]) -> Result<usize, ValidationError> {
+    let mut bytes = 0usize;
+    for (index, card) in cards.iter().take(MAX_VALIDATION_BATCH_CARDS).enumerate() {
+        let Some(card_bytes) = validation_card_bytes(card) else {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        };
+        let Some(batch_bytes) = bytes.checked_add(card_bytes) else {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        };
+        if batch_bytes > BATCH_BYTES_CAP {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        }
+        bytes = batch_bytes;
+    }
+    Ok(cards.len().min(MAX_VALIDATION_BATCH_CARDS))
+}
+
+fn validation_card_bytes(card: &PreparedCard) -> Option<usize> {
+    if card.card.js.len() > SOURCE_CAP || card.siblings.len() > SIBLING_CAP {
+        return None;
+    }
+    let bytes = card
+        .siblings
+        .iter()
+        .try_fold(card.card.js.len(), |sum, (name, js)| {
+            sum.checked_add(name.len())?.checked_add(js.len())
+        })?;
+    (bytes <= INPUT_CAP).then_some(bytes)
 }
 
 /// Owning reload receipt. A full bounded queue leaves this one transaction
@@ -101,23 +144,15 @@ pub(super) fn validate_batch(
     named_banks: Arc<api::named_banks::NamedBankFacts>,
 ) -> Result<ValidationBatch, ValidationError> {
     super::super::platform::require_v8_platform()?;
-    if cards.len() > BATCH_CAP {
+    if cards.len() > MAX_VALIDATION_BATCH_CARDS {
         return Err(ValidationError::CardLimit);
     }
     let bytes = cards.iter().try_fold(0usize, |sum, card| {
-        let total = card
-            .siblings
-            .iter()
-            .try_fold(card.card.js.len(), |n, (name, js)| {
-                n.checked_add(name.len())?.checked_add(js.len())
-            })?;
-        if card.card.js.len() > SOURCE_CAP || card.siblings.len() > SIBLING_CAP || total > INPUT_CAP
-        {
-            return None;
-        }
-        sum.checked_add(total)
+        let card_bytes = validation_card_bytes(card)?;
+        let batch_bytes = sum.checked_add(card_bytes)?;
+        (batch_bytes <= BATCH_BYTES_CAP).then_some(batch_bytes)
     });
-    if bytes.is_none_or(|bytes| bytes > BATCH_BYTES_CAP) {
+    if bytes.is_none() {
         return Err(ValidationError::ByteLimit);
     }
     let seat = SEAT
@@ -259,9 +294,13 @@ mod tests {
         Arc<api::game_data::SelectedGameData>,
         Arc<api::named_banks::NamedBankFacts>,
     )> {
-        let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+        if !api::test_support::game_data_available() {
+            return None;
+        }
+        let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("local R289 test data");
         let banks = api::named_banks::bank_catalog()
-            .ok()?
+            .expect("local bank catalog")
             .iter()
             .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
             .collect();

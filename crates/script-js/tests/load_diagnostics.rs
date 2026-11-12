@@ -187,9 +187,13 @@ fn selected_validation_context() -> Option<(
     Arc<api::game_data::SelectedGameData>,
     Arc<api::named_banks::NamedBankFacts>,
 )> {
-    let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+    if !api::test_support::game_data_available() {
+        return None;
+    }
+    let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("local R289 test data");
     let banks = api::named_banks::bank_catalog()
-        .ok()?
+        .expect("local bank catalog")
         .iter()
         .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
         .collect();

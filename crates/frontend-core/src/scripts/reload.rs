@@ -402,7 +402,7 @@ impl ValidationContext {
         let Some(world) = selected_world else {
             return Self::Missing {
                 stamp,
-                reason: "missing selected named-bank facts",
+                reason: "the map data for this profile is not prepared",
             };
         };
         stamp.world = Some(Arc::as_ptr(&world) as usize);
@@ -455,6 +455,11 @@ struct ValidationJob {
     kind: ValidationKind,
 }
 
+struct ReloadContextChange {
+    validation: Option<ValidationKind>,
+    dropped_pending_work: bool,
+}
+
 struct ManualValidation {
     source: script::ScriptSource,
     lookup: String,
@@ -462,6 +467,18 @@ struct ManualValidation {
     fingerprint: String,
     running_before: Vec<String>,
     paused_before: Vec<String>,
+}
+
+struct CatalogImportValidation {
+    root: PathBuf,
+    path_file: PathBuf,
+    diff: script_js::CatalogDiff,
+    prepared_count: usize,
+    prepare_failed: Vec<script_js::LoadFailure>,
+    remaining: Vec<script_js::PreparedCard>,
+    validated_count: usize,
+    prepared: Vec<script_js::PreparedCard>,
+    warmed: Vec<script_js::PreparedCard>,
 }
 
 enum ValidationKind {
@@ -472,13 +489,7 @@ enum ValidationKind {
         prepared_count: usize,
         prepare_failed: Vec<script_js::LoadFailure>,
     },
-    CatalogImport {
-        root: PathBuf,
-        path_file: PathBuf,
-        diff: script_js::CatalogDiff,
-        prepared_count: usize,
-        prepare_failed: Vec<script_js::LoadFailure>,
-    },
+    CatalogImport(CatalogImportValidation),
 }
 enum PreparationRequest {
     Manual {
@@ -716,7 +727,10 @@ impl ReloadState {
         self.clear_pending();
         validation
     }
-    fn set_validation_context(&mut self, context: ValidationContext) -> Option<ValidationKind> {
+    fn set_validation_context(
+        &mut self,
+        context: ValidationContext,
+    ) -> Option<ReloadContextChange> {
         let Some(current) = self.validation_context.as_ref() else {
             self.validation_context = Some(context);
             return None;
@@ -724,11 +738,18 @@ impl ReloadState {
         if current.same_as(&context) {
             return None;
         }
+        let dropped_pending_work = self.preparation.is_some()
+            || self.validation.is_some()
+            || self.pending.is_some()
+            || self.catalog_confirm;
         let validation = self.invalidate();
         self.outcome = None;
         self.catalog_report = None;
         self.validation_context = Some(context);
-        validation
+        Some(ReloadContextChange {
+            validation,
+            dropped_pending_work,
+        })
     }
 }
 
@@ -1246,9 +1267,9 @@ impl Scripts {
             warmed,
             prepare_failed,
         } = result;
-        // First-seen cards are returned as warmed, but still require runtime validation.
         let prepared_count = prepared.len();
-        let mut candidates = Vec::with_capacity(prepared_count + warmed.len());
+        let candidate_count = prepared_count + warmed.len();
+        let mut candidates = Vec::with_capacity(candidate_count);
         candidates.extend(prepared);
         candidates.extend(warmed);
         if candidates.is_empty() {
@@ -1265,36 +1286,69 @@ impl Scripts {
             self.settle_catalog_import(root, result);
             return;
         }
-        let kind = ValidationKind::CatalogImport {
-            root: root.clone(),
+        let validation = CatalogImportValidation {
+            root,
             path_file,
             diff,
             prepared_count,
             prepare_failed,
+            remaining: candidates,
+            validated_count: 0,
+            prepared: Vec::with_capacity(prepared_count),
+            warmed: Vec::with_capacity(candidate_count.saturating_sub(prepared_count)),
         };
-        match self.spawn_validation(candidates, kind) {
-            Ok(()) => self.clear_notice(),
-            Err(error) => self
-                .settle_catalog_import(root, Err(CatalogError(CatalogFailure::Validation(error)))),
+        if self.spawn_catalog_import_batch(validation) {
+            self.clear_notice();
+        }
+    }
+
+    fn spawn_catalog_import_batch(&mut self, mut validation: CatalogImportValidation) -> bool {
+        let root = validation.root.clone();
+        let batch_len = match script_js::validation_batch_prefix_len(&validation.remaining) {
+            Ok(0) => {
+                self.settle_catalog_import(
+                    root,
+                    Err(CatalogError(CatalogFailure::Validation(
+                        "catalog validation produced an empty batch".into(),
+                    ))),
+                );
+                return false;
+            }
+            Ok(batch_len) => batch_len,
+            Err(error) => {
+                self.settle_catalog_import(
+                    root,
+                    Err(CatalogError(CatalogFailure::Validation(error.to_string()))),
+                );
+                return false;
+            }
+        };
+        let remaining = validation.remaining.split_off(batch_len);
+        let batch = std::mem::replace(&mut validation.remaining, remaining);
+        match self.spawn_validation(batch, ValidationKind::CatalogImport(validation)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.settle_catalog_import(
+                    root,
+                    Err(CatalogError(CatalogFailure::Validation(error))),
+                );
+                false
+            }
         }
     }
 
     fn complete_catalog_import_validation(
         &mut self,
-        root: PathBuf,
-        path_file: PathBuf,
-        diff: script_js::CatalogDiff,
-        prepared_count: usize,
-        mut prepare_failed: Vec<script_js::LoadFailure>,
+        mut validation: CatalogImportValidation,
         batch: ValidationBatch,
     ) {
         let candidate_count = batch.len();
-        let mut prepared = Vec::with_capacity(prepared_count.min(candidate_count));
-        let mut warmed = Vec::with_capacity(candidate_count.saturating_sub(prepared_count));
         for (index, (candidate, result)) in batch.into_iter().enumerate() {
             match result {
-                Ok(()) if index < prepared_count => prepared.push(candidate),
-                Ok(()) => warmed.push(candidate),
+                Ok(()) if validation.validated_count + index < validation.prepared_count => {
+                    validation.prepared.push(candidate);
+                }
+                Ok(()) => validation.warmed.push(candidate),
                 Err(error) => {
                     self.js.record_prepared_failure(&candidate, &error);
                     if let Some(failure) = self
@@ -1302,20 +1356,26 @@ impl Scripts {
                         .load_failure(&candidate.card.identity_key())
                         .cloned()
                     {
-                        prepare_failed.push(failure);
+                        validation.prepare_failed.push(failure);
                     }
                     self.show(format!("catalog {}: {error}", candidate.card.name));
                 }
             }
         }
+        validation.validated_count += candidate_count;
+        if !validation.remaining.is_empty() {
+            self.spawn_catalog_import_batch(validation);
+            return;
+        }
+        let root = validation.root.clone();
         let result = self.apply_catalog_import(
             root.clone(),
-            path_file,
+            validation.path_file,
             script_js::CatalogPreparationResult {
-                diff,
-                prepared,
-                warmed,
-                prepare_failed,
+                diff: validation.diff,
+                prepared: validation.prepared,
+                warmed: validation.warmed,
+                prepare_failed: validation.prepare_failed,
             },
         );
         self.settle_catalog_import(root, result);
@@ -1323,6 +1383,7 @@ impl Scripts {
 
     fn settle_catalog_import(&mut self, root: PathBuf, result: Result<usize, CatalogError>) {
         match &result {
+            Ok(_) if self.js.load_failure_count() > 0 => self.show_load_failures(),
             Ok(count) => self.show(format!("Catalog imported: {count} cards")),
             Err(error) => self.show(format!("Import catalog: {error}")),
         }
@@ -1330,11 +1391,11 @@ impl Scripts {
     }
 
     fn cancel_catalog_import_validation(&mut self, kind: Option<ValidationKind>, reason: &str) {
-        let Some(ValidationKind::CatalogImport { root, .. }) = kind else {
+        let Some(ValidationKind::CatalogImport(validation)) = kind else {
             return;
         };
         self.settle_catalog_import(
-            root,
+            validation.root,
             Err(CatalogError(CatalogFailure::Validation(reason.into()))),
         );
     }
@@ -2461,13 +2522,24 @@ impl Scripts {
         core: &OperatorSession<Io>,
         profile: Option<&BoundProfile>,
     ) {
-        let invalidated = self
+        let Some(change) = self
             .reload
-            .set_validation_context(ValidationContext::resolve(core, profile));
+            .set_validation_context(ValidationContext::resolve(core, profile))
+        else {
+            return;
+        };
         self.cancel_catalog_import_validation(
-            invalidated,
+            change.validation,
             "selected content changed during catalog validation",
         );
+        if change.dropped_pending_work {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Info,
+                "Script reload work was discarded because selected content changed."
+            );
+            self.show("Selected content changed. Try the reload again.");
+        }
     }
 
     fn spawn_validation(
@@ -2537,8 +2609,8 @@ impl Scripts {
         let Some(batch) = batch else {
             let error = "script validation worker exited without a result".to_string();
             match job.kind {
-                ValidationKind::CatalogImport { root, .. } => self.settle_catalog_import(
-                    root,
+                ValidationKind::CatalogImport(validation) => self.settle_catalog_import(
+                    validation.root,
                     Err(CatalogError(CatalogFailure::Validation(error))),
                 ),
                 _ => {
@@ -2563,20 +2635,9 @@ impl Scripts {
                 prepare_failed,
                 batch,
             ),
-            ValidationKind::CatalogImport {
-                root,
-                path_file,
-                diff,
-                prepared_count,
-                prepare_failed,
-            } => self.complete_catalog_import_validation(
-                root,
-                path_file,
-                diff,
-                prepared_count,
-                prepare_failed,
-                batch,
-            ),
+            ValidationKind::CatalogImport(validation) => {
+                self.complete_catalog_import_validation(validation, batch)
+            }
         }
     }
     fn complete_manual_validation<Io>(
@@ -3331,10 +3392,16 @@ mod validation_context_tests {
     #[test]
     fn selected_context_change_invalidates_reload_results() {
         let mut state = ReloadState::default();
-        state.set_validation_context(missing_context(1, 2));
+        assert!(state
+            .set_validation_context(missing_context(1, 2))
+            .is_none());
         state.outcome = Some(ReloadOutcome::failed("stale result"));
 
-        state.set_validation_context(missing_context(4, 5));
+        let change = state
+            .set_validation_context(missing_context(4, 5))
+            .expect("the selected context changed");
+        assert!(!change.dropped_pending_work);
+        assert!(change.validation.is_none());
 
         assert_eq!(state.generation, 1);
         assert!(state.outcome.is_none());
@@ -3343,15 +3410,50 @@ mod validation_context_tests {
     #[test]
     fn identical_selected_context_keeps_reload_results() {
         let mut state = ReloadState::default();
-        state.set_validation_context(missing_context(1, 2));
+        assert!(state
+            .set_validation_context(missing_context(1, 2))
+            .is_none());
         state.outcome = Some(ReloadOutcome::failed("current result"));
 
-        state.set_validation_context(missing_context(1, 2));
+        assert!(state
+            .set_validation_context(missing_context(1, 2))
+            .is_none());
 
         assert_eq!(state.generation, 0);
         assert_eq!(
             state.outcome.as_ref().and_then(ReloadOutcome::failure),
             Some("current result")
         );
+    }
+    #[test]
+    fn context_change_reports_discarded_pending_work() {
+        let mut state = ReloadState::default();
+        assert!(state
+            .set_validation_context(missing_context(1, 2))
+            .is_none());
+        state.install(PendingReload {
+            warning: ReloadWarning {
+                identity_key: "test".into(),
+                source: script::ScriptSource::File,
+                lookup: "test".into(),
+                fingerprint: String::new(),
+                epoch: 0,
+                running: Vec::new(),
+                paused: Vec::new(),
+                paused_during_prep: Vec::new(),
+                affected_generations: Vec::new(),
+            },
+            prepared: Vec::new(),
+            warmed: Vec::new(),
+            kind: PendingReloadKind::Manual,
+        });
+
+        let change = state
+            .set_validation_context(missing_context(4, 5))
+            .expect("the selected context changed");
+
+        assert!(change.dropped_pending_work);
+        assert!(change.validation.is_none());
+        assert!(state.pending.is_none());
     }
 }
