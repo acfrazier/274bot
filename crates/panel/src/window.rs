@@ -30,7 +30,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 #[path = "work_area.rs"]
 mod work_area;
@@ -748,6 +748,45 @@ fn fit_new_window(window: &Window, event_loop: &ActiveEventLoop) {
     work_area::fit_window(window, (logical.width, logical.height), Some(event_loop));
 }
 
+struct RecreateWindowState {
+    focused: bool,
+    visible: bool,
+    minimized: bool,
+    occluded: bool,
+}
+
+impl RecreateWindowState {
+    fn read(window: &Window, occluded: bool) -> Self {
+        Self {
+            focused: window.has_focus(),
+            visible: window.is_visible().unwrap_or(true),
+            minimized: window.is_minimized().unwrap_or(false),
+            occluded,
+        }
+    }
+}
+
+fn create_panel_window<W, E>(
+    mut attributes: WindowAttributes,
+    previous: Option<RecreateWindowState>,
+    create: impl FnOnce(WindowAttributes) -> Result<W, E>,
+    minimize: impl FnOnce(&W),
+) -> Result<W, E> {
+    let minimized = if let Some(previous) = previous {
+        attributes = attributes
+            .with_active(previous.focused && !previous.minimized && !previous.occluded)
+            .with_visible(previous.visible);
+        previous.minimized
+    } else {
+        false
+    };
+    let window = create(attributes)?;
+    if minimized {
+        minimize(&window);
+    }
+    Ok(window)
+}
+
 impl AppWindow {
     fn apply_dpi_scale(&mut self, dpi: f32) {
         let base_style = self.imgui.base_style.clone();
@@ -760,17 +799,23 @@ impl AppWindow {
     /// Create the OS window and surface, then hand adapter/device creation
     /// to a worker. [`AppWindow::finish`] completes the stack on the UI
     /// thread once the worker answers.
-    fn start(event_loop: &ActiveEventLoop, cfg: &PanelConfig) -> Result<PendingGpu, PanelError> {
+    fn start(
+        event_loop: &ActiveEventLoop,
+        cfg: &PanelConfig,
+        previous: Option<RecreateWindowState>,
+    ) -> Result<PendingGpu, PanelError> {
         let window = {
             let size = LogicalSize::new(cfg.window_size.0, cfg.window_size.1);
             Arc::new(
-                event_loop
-                    .create_window(
-                        Window::default_attributes()
-                            .with_title(cfg.window_title.clone())
-                            .with_inner_size(size),
-                    )
-                    .map_err(PanelError::WindowCreation)?,
+                create_panel_window(
+                    Window::default_attributes()
+                        .with_title(cfg.window_title.clone())
+                        .with_inner_size(size),
+                    previous,
+                    |attributes| event_loop.create_window(attributes),
+                    |window| window.set_minimized(true),
+                )
+                .map_err(PanelError::WindowCreation)?,
             )
         };
         // Launch fit (M-003): shrink a launch size that exceeds this
@@ -1589,6 +1634,7 @@ where
     /// scenario sink's requests) and the render readback.
     shots: Arc<Mutex<ShotState>>,
     last_wake: Instant,
+    occluded: bool,
     /// Why the loop stopped without a window (creation or rebuild failed);
     /// [`run`] returns it, so the process exits non-zero.
     failure: Option<PanelError>,
@@ -1619,6 +1665,7 @@ where
             on_gpu_shutdown: Box::new(on_gpu_shutdown),
             shots,
             last_wake: Instant::now(),
+            occluded: false,
             failure: None,
         }
     }
@@ -1642,8 +1689,8 @@ where
 
     /// Create the window and start its GPU bring-up; the loop keeps pumping
     /// until [`App::poll_gpu`] completes it.
-    fn start_gpu(&mut self, event_loop: &ActiveEventLoop) {
-        match AppWindow::start(event_loop, &self.cfg) {
+    fn start_gpu(&mut self, event_loop: &ActiveEventLoop, previous: Option<RecreateWindowState>) {
+        match AppWindow::start(event_loop, &self.cfg, previous) {
             Ok(pending) => self.pending = Some(pending),
             Err(e) => {
                 self.failure = Some(e);
@@ -1702,7 +1749,7 @@ where
             return;
         }
         if self.window.is_none() && self.pending.is_none() {
-            self.start_gpu(event_loop);
+            self.start_gpu(event_loop, None);
         }
     }
 
@@ -1712,6 +1759,11 @@ where
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let WindowEvent::Occluded(occluded) = &event {
+            if current_os_window_id(&self.window, &self.pending) == Some(window_id) {
+                self.occluded = *occluded;
+            }
+        }
         // We may recreate the window/gpu stack on fatal GPU errors, so we avoid
         // holding a mutable borrow of self.window across the whole match.
         match event {
@@ -1761,10 +1813,14 @@ where
                 }
 
                 if need_recreate && !event_loop.exiting() {
+                    let previous = self
+                        .window
+                        .as_ref()
+                        .map(|window| RecreateWindowState::read(&window.window, self.occluded));
                     // Release owner textures while the old renderer is live,
                     // then rebuild the same GPU/window stack as startup.
                     self.drop_window();
-                    self.start_gpu(event_loop);
+                    self.start_gpu(event_loop, previous);
                 }
             }
             _ => {

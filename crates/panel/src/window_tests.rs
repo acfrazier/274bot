@@ -9,6 +9,65 @@ use crate::test_support::headless_gpu;
 use crate::theme::PANEL_FONT_SIZE;
 
 #[test]
+fn recreated_window_preserves_visibility_without_background_activation() {
+    use std::cell::RefCell;
+
+    #[derive(Debug, PartialEq)]
+    enum NativeCall {
+        Create { active: bool, visible: bool },
+        Minimize,
+    }
+
+    for (focused, visible, minimized, occluded, active) in [
+        (false, true, false, false, false),
+        (true, true, true, false, false),
+        (true, true, false, true, false),
+        (false, false, false, false, false),
+        (true, true, false, false, true),
+    ] {
+        let calls = RefCell::new(Vec::new());
+        let previous = RecreateWindowState {
+            focused,
+            visible,
+            minimized,
+            occluded,
+        };
+        create_panel_window(
+            Window::default_attributes(),
+            Some(previous),
+            |attributes| {
+                calls.borrow_mut().push(NativeCall::Create {
+                    active: attributes.active,
+                    visible: attributes.visible,
+                });
+                Ok::<_, std::convert::Infallible>(())
+            },
+            |_| calls.borrow_mut().push(NativeCall::Minimize),
+        )
+        .unwrap();
+        let mut expected = vec![NativeCall::Create { active, visible }];
+        if minimized {
+            expected.push(NativeCall::Minimize);
+        }
+        assert_eq!(*calls.borrow(), expected);
+    }
+}
+
+#[test]
+fn first_window_keeps_its_requested_activation() {
+    let attributes = Window::default_attributes();
+    let expected = (attributes.active, attributes.visible);
+    let requested = create_panel_window(
+        attributes,
+        None,
+        |attributes| Ok::<_, std::convert::Infallible>((attributes.active, attributes.visible)),
+        |_| panic!("initial creation must not request minimization"),
+    )
+    .unwrap();
+    assert_eq!(requested, expected);
+}
+
+#[test]
 fn panel_adapter_request_options_uses_the_platform_default() {
     let expected = if cfg!(target_os = "linux") {
         wgpu::PowerPreference::None

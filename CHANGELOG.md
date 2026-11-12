@@ -22,6 +22,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   "logged out: idle logout by the server" no longer appear. A bot you log out
   yourself stays logged out until you log it in.
 
+### Panel
+
+- After a graphics error, the panel keeps its window's visibility and minimized
+  state when it rebuilds the window. If the window was unfocused, minimized or
+  covered, the replacement does not request activation. First launch is unchanged.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
