@@ -784,12 +784,19 @@ fn clear_approach_aim(
         .tile;
     path.point(until_index)?;
     let (attempt_index, attempt) = (0..=clear_index).rev().find_map(|index| {
-        frames[index]
+        let attempts = frames[index]
             .get("route_execution")?
             .get("walk_attempts")?
-            .as_array()?
-            .last()
-            .map(|attempt| (index, attempt))
+            .as_array()?;
+        // Clear ends the hold, so an attempt taken on the Clear frame records no
+        // route index limit. Skip those and evaluate the newest attempt that
+        // was still under a limit; a limit-less attempt decides nothing itself.
+        let attempt = attempts.iter().rev().find(|attempt| {
+            attempt
+                .get("route_index_limit")
+                .is_some_and(|limit| !limit.is_null())
+        })?;
+        Some((index, attempt))
     })?;
     let [index] = attempt.get("aim_route_indices")?.as_array()?.as_slice() else {
         return None;
@@ -865,22 +872,26 @@ fn clear_approach_aim(
     Some(index)
 }
 
+fn unit_world() -> NavWorld {
+    NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk: vec![0; 16 * 16],
+            blocked: vec![0; (16_usize * 16).div_ceil(64)],
+            flags: None,
+        },
+        Default::default(),
+        Vec::new(),
+    )
+}
+
 mod clear_approach_tests {
     use super::*;
 
     fn fixture(aim_index: usize) -> (NavWorld, Route, Vec<Value>) {
-        let world = NavWorld::from_parts(
-            nav_planner::collision::WorldCollision {
-                origin: tile(0, 0),
-                width: 16,
-                height: 16,
-                walk: vec![0; 16 * 16],
-                blocked: vec![0; (16_usize * 16).div_ceil(64)],
-                flags: None,
-            },
-            Default::default(),
-            Vec::new(),
-        );
+        let world = unit_world();
         let tiles = vec![
             tile(2, 0),
             tile(3, 1),
@@ -990,6 +1001,103 @@ mod clear_approach_tests {
         let (world, route, mut frames) = fixture(5);
         frames[3]["route_execution"]["map_flag"] = json!({"lx": 8, "lz": 8});
         assert_eq!(proof(&world, &route, &frames), None);
+    }
+}
+
+mod recorded_clear_approach_tests {
+    use super::*;
+
+    fn receipt() -> Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/poison_long_approach_receipt.json"
+        ))
+        .unwrap()
+    }
+
+    fn proof(doc: &Value) -> Option<u16> {
+        let tiles: Vec<_> = doc["route"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tile| captured_tile(tile).unwrap())
+            .collect();
+        let route = Route {
+            dest: *tiles.last().unwrap(),
+            legs: vec![Leg::Walk { tiles }],
+            ticks: 0.0,
+        };
+        let world = unit_world();
+        let path = script::combat::risk::RoutePath::new(
+            nav_planner::producer::route_view(&world, &route).unwrap(),
+        )
+        .unwrap();
+        clear_approach_aim(
+            doc["frames"].as_array().unwrap(),
+            path,
+            u16::try_from(doc["until_index"].as_u64().unwrap()).unwrap(),
+        )
+    }
+
+    /// The recorded qualifying attempt: route index 31 under the limit of 104.
+    fn recorded_attempt(doc: &Value) -> (usize, usize) {
+        doc["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .find_map(|(frame, value)| {
+                let attempts = value["route_execution"]["walk_attempts"].as_array()?;
+                attempts
+                    .iter()
+                    .position(|attempt| {
+                        attempt["route_index_limit"] == json!(104)
+                            && attempt["aim_route_indices"] == json!([31])
+                    })
+                    .map(|attempt| (frame, attempt))
+            })
+            .expect("recorded qualifying attempt")
+    }
+
+    #[test]
+    fn recorded_long_approach_passes_on_its_qualifying_attempt() {
+        assert_eq!(proof(&receipt()), Some(31));
+    }
+
+    #[test]
+    fn recorded_long_approach_without_a_qualifying_attempt_fails() {
+        // The receipt's later attempts carry no route index limit because the
+        // hold had already ended; they must neither be evaluated nor pass.
+        let mut doc = receipt();
+        for frame in doc["frames"].as_array_mut().unwrap() {
+            if let Some(attempts) = frame["route_execution"]["walk_attempts"].as_array_mut() {
+                attempts.retain(|attempt| attempt["route_index_limit"].is_null());
+            }
+        }
+        assert_eq!(proof(&doc), None);
+        for frame in doc["frames"].as_array_mut().unwrap() {
+            frame["route_execution"]["walk_attempts"] = json!([]);
+        }
+        assert_eq!(proof(&doc), None);
+    }
+
+    #[test]
+    fn recorded_long_approach_aim_over_its_limit_fails() {
+        // A unique aim at route index 105 is over the recorded limit of 104.
+        let mut doc = receipt();
+        let aim = doc["route"][105].clone();
+        let (frame, attempt) = recorded_attempt(&doc);
+        let attempt = &mut doc["frames"][frame]["route_execution"]["walk_attempts"][attempt];
+        attempt["aim_route_indices"] = json!([105]);
+        attempt["aim"] = aim;
+        assert_eq!(proof(&doc), None);
+    }
+
+    #[test]
+    fn recorded_long_approach_route_identity_change_before_clear_fails() {
+        let mut doc = receipt();
+        let (frame, _) = recorded_attempt(&doc);
+        doc["frames"][frame + 1]["route_execution"]["route_identity"]["walk_request_id"] = json!(2);
+        assert_eq!(proof(&doc), None);
     }
 }
 
