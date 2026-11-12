@@ -855,7 +855,7 @@ impl WalkReadyCatalogue {
 ///
 /// Frontends compare this key before retrying a failed build. The file stamps
 /// detect changes to either supported navpois sidecar without reading its data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct WalkCatalogueBuildInputs {
     profile: usize,
     profile_nav: Option<PackId>,

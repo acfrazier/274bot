@@ -393,11 +393,14 @@ mod tests {
         );
     }
 
-    /// Once-per-process tables measured at 6,436,920 bytes, plus 8 bytes.
+    /// Once-per-process tables measured at 6,442,560 bytes, plus 5 % rounded up
+    /// to 8 bytes: 6,764,688. The Haunted Mine content added 5,640 bytes (the
+    /// same code on the old content, engine cc359656 / content 92649430f,
+    /// still measures 6,436,920 bytes).
     /// The v18 producer added this atlas in 4dd65ac8aa8280f4e0ee98106f069f63d9450289.
     /// Its tables are byte-identical before and after the provenance strip,
     /// so the growth predates the strip. Main approved this guard adjustment.
-    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_436_920 + 8;
+    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_764_688;
 
     #[test]
     fn real_289_atlas_stays_inside_its_size_tripwire_and_lookups_do_not_allocate() {
