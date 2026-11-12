@@ -3161,12 +3161,17 @@ const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
 }));
 assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
 
-// A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
-const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
+// A drifted fast-handler yield affects only that method; the normal iron method stays separate.
+const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript,
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);',
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
 const driftedView = gatherView(drifted);
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.targets.state, 'unknown', 'a drifted handler leaves iron unclassified, never an empty known list');
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.spots.state, 'unknown');
-assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true);
+assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.tick_arm.delay_drop, true,
+    'the unchanged normal handler stays separate');
+assert.equal(drifted.payload.methods.some((each) => each.id === 'mining.iron.get_ore_fast'), false,
+    'a drifted fast handler is not promoted');
+assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true,
+    'the changed fast-handler rock is unclassified');
 assert.equal(family289Rows(drifted, 'mining.iron'), 0);
 assert.equal(family289Rows(drifted, 'mining.copper'), 1, 'unrelated labels still classify');
 

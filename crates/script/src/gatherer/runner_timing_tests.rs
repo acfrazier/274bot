@@ -10,7 +10,15 @@ use api::snapshot::{
 };
 
 fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
-    let config = api::selected::FamilyPreparation::run(|families| {
+    fixture_with(&[])
+}
+
+fn fixture_with(overrides: &[(&str, serde_json::Value)]) -> (Gatherer, GameSnapshot, TargetPlan) {
+    let overrides: Vec<(String, serde_json::Value)> = overrides
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), value.clone()))
+        .collect();
+    let config = api::selected::FamilyPreparation::run(move |families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut settings = crate::native::SettingsBag::new();
         for (key, value) in [
@@ -20,6 +28,9 @@ fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
             ("food", serde_json::json!("Lobster")),
         ] {
             settings.insert(key.into(), value);
+        }
+        for (key, value) in &overrides {
+            settings.insert(key.clone(), value.clone());
         }
         crate::slot::prepare_config(
             families,

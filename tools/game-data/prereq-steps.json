@@ -33,7 +33,7 @@
           "sets": 3,
           "guard": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:14-22",
           "guard_text": "%priestperil > ^priestperil_killed_dog",
-          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,223"
+          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,228"
         }
       ],
       "probe": {
@@ -355,7 +355,7 @@
           "sets": 3,
           "guard": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:14-22",
           "guard_text": "%priestperil > ^priestperil_killed_dog",
-          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,223"
+          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,228"
         }
       ],
       "rules": [
