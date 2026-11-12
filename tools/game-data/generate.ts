@@ -864,7 +864,7 @@ function dropTokens(body: string) {
     return tokens;
 }
 
-const SHOP_INVENTORY_SOURCES = [
+export const SHOP_INVENTORY_SOURCES = [
     { inv: 'adventurershop', file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.inv' },
     { inv: 'magearena_runeshop', file: 'scripts/areas/area_mage_arena/configs/mage_arena.inv' },
     { inv: 'magicshop', file: 'scripts/areas/area_port_sarim/configs/port_sarim.inv' },
@@ -889,7 +889,7 @@ const SHOP_INVENTORY_SOURCES = [
     { inv: 'boozeshop', file: 'scripts/areas/area_karamja/configs/karamja.inv' },
 ] as const;
 
-const SHOP_KEEPER_SOURCES = [
+export const SHOP_KEEPER_SOURCES = [
     { file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc', configs: ['aemad', 'kortan'] },
     { file: 'scripts/areas/area_mage_arena/configs/mage_arena.npc', configs: ['magearena_runeshop'] },
     { file: 'scripts/areas/area_port_sarim/configs/port_sarim.npc', configs: ['betty', 'gerrant'] },
@@ -899,7 +899,7 @@ const SHOP_KEEPER_SOURCES = [
     { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['bob'] },
     { file: 'scripts/areas/area_falador/configs/dwarven_mine.npc', configs: ['nurmof'] },
     { file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc', configs: ['magic_store_owner'] },
-    { file: 'scripts/quests/quest_death/configs/quest_death.npc', configs: ['death_barman'] },
+    { file: 'scripts/quests/quest_death/configs/quest_death.npc', file377: 'scripts/quests/quest_death/configs/death.npc', configs: ['death_barman'] },
     { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['generalshopkeeper1'] },
     { file: 'scripts/areas/area_varrock/configs/varrock.npc', configs: ['generalshopkeeper2', 'thessalia'] },
     { file: 'scripts/areas/area_rimmington/configs/rimmington.npc', configs: ['generalshopkeeper6'] },
@@ -975,18 +975,23 @@ function parseShopInventory(text: string, inv: string): ShopInventory {
     return { inv, scope, allstock, stock: parseInvShopStock(text, inv) };
 }
 
-function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
+export function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
     const keepers: ParsedShopKeeper[] = [];
     const selectedNpcs = revision === 377
         ? fs.readFileSync(path.join(content, 'scripts/_unpack/377/all.npc'), 'utf8')
         : undefined;
+    const selectedNpcSections = selectedNpcs ? parseNpcConfigSections(selectedNpcs) : undefined;
     const selectedInventories = revision === 377
         ? contentTreeFiles(content, 'scripts', '.inv').map((file) => fs.readFileSync(path.join(content, file), 'utf8'))
         : undefined;
     for (const source of SHOP_KEEPER_SOURCES) {
         const text = selectedNpcs ?? fs.readFileSync(path.join(content, source.file), 'utf8');
         for (const config of source.configs) {
-            const values = parseNpcSection(text, config);
+            const file377 = revision === 377 && 'file377' in source ? source.file377 : undefined;
+            const values = selectedNpcSections?.get(config)
+                ?? (file377
+                    ? parseNpcSection(fs.readFileSync(path.join(content, file377), 'utf8'), config)
+                    : parseNpcSection(text, config));
             const required = (key: string) => {
                 const value = values[key];
                 if (value === undefined || value === '') throw new Error(`${config}: missing ${key}`);
@@ -1438,6 +1443,9 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
             const selected = typeof decoded === 'string' ? decoded : typeof decoded === 'number' && Number.isInteger(decoded) ? String(decoded) : undefined;
             if (selected === undefined) {
                 throw new Error(`${alias}: decoded trail_challenge_answer is missing`);
+            }
+            if (selected !== answers[answers.length - 1]!.value) {
+                throw new Error(`${alias}: decoded trail_challenge_answer does not match selected source params`);
             }
             answer = selected;
         }

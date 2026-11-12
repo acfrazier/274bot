@@ -258,6 +258,10 @@ Revision 377 resolves woodcutting animations through the selected tool struct's
 methods for the same resource. Shop keepers come from the
 selected unpacked NPC definitions. Shop inventories join their unique definitions
 in the selected content tree.
+The 377 unpacked list omits `death_barman`; its shop config comes from
+`scripts/quests/quest_death/configs/death.npc`.
+The 377 trail answer uses the engine-decoded value and refuses it when it
+differs from the last `trail_challenge_answer` in the selected object config.
 The 377 run does not rewrite the tracked historical hidden-site catalogue.
 
 Regenerate both revisions when changing this family schema. A revision 274

@@ -30,6 +30,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   gathering method, so every rock keeps its own handler's timing. Data built
   from earlier content does not change.
 
+- Revision-377 stage-1 generation reads the death pub keeper from the selected
+  `death.npc` config when `all.npc` omits it.
+
+- 377 trail challenge answers now fail generation when the decoded value
+  disagrees with the final selected content parameter.
+
 ### Gatherer
 
 - The Iron option now covers two methods: regular iron rocks keep their fast
