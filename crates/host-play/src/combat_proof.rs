@@ -636,11 +636,7 @@ fn status_field_value(value: &StatusValue) -> Value {
     }
 }
 
-/// Measure packet-time distance to an NPC's current network footprint.
-pub(super) fn npc_network_distance(
-    snapshot: &GameSnapshot,
-    npc: &api::snapshot::NpcView,
-) -> Option<i32> {
+fn npc_network_distance(snapshot: &GameSnapshot, npc: &api::snapshot::NpcView) -> Option<i32> {
     snapshot.tile().map(|(x, z, level)| {
         if level != npc.network.level {
             return i32::MAX;

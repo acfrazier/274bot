@@ -305,7 +305,8 @@ pub struct BuyMachine {
     last_walk_failure: Option<Arc<str>>,
     opening_trade: Option<OpeningTrade>,
     trade_attempted: bool,
-    approach_replans: u8,
+    approach_replans_left: u16,
+    reach_failure_pending: bool,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
     reconciling: bool,
@@ -339,6 +340,8 @@ impl NativeMachine for BuyMachine {
         } else {
             Phase::Open
         };
+        let approach_replans_left =
+            crate::quester::families::dialogue::npc_approach_replan_budget(cx, request.npc_id);
         Ok(Self {
             request,
             run: cx.run(),
@@ -349,7 +352,8 @@ impl NativeMachine for BuyMachine {
             last_walk_failure: None,
             opening_trade: None,
             trade_attempted: false,
-            approach_replans: 0,
+            approach_replans_left,
+            reach_failure_pending: false,
             keeper_index: None,
             pending: None,
             reconciling: false,
@@ -435,7 +439,8 @@ impl NativeMachine for BuyMachine {
                     if cx.snapshot().npcs().is_none() {
                         return Poll::Pending;
                     }
-                    let facts = self.open_facts(cx);
+                    let (facts, reach_failure) = self.open_facts(cx);
+                    self.reach_failure_pending |= reach_failure;
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
                     let mut selected_keeper_index = None;
@@ -448,11 +453,42 @@ impl NativeMachine for BuyMachine {
                         self.keeper_index = selected_keeper_index;
                     }
                     let decision = match decision {
-                        Decision::Trade(keeper)
-                            if self.trade_attempted
-                                && Self::keeper_needs_approach(keeper.route) =>
-                        {
-                            self.replan_approach(keeper.tile)
+                        Decision::Opened if self.reach_failure_pending => {
+                            self.reach_failure_pending = false;
+                            Decision::Opened
+                        }
+                        Decision::Trade(keeper) if self.reach_failure_pending => {
+                            self.reach_failure_pending = false;
+                            if Self::keeper_needs_approach(keeper.route) {
+                                self.replan_approach(&keeper)
+                            } else {
+                                Decision::Trade(keeper)
+                            }
+                        }
+                        Decision::Walk(tile) if self.reach_failure_pending => {
+                            self.reach_failure_pending = false;
+                            match Self::keeper(request, keeper_index, cx) {
+                                Some(keeper) if Self::keeper_needs_approach(keeper.route) => {
+                                    self.replan_approach(&keeper)
+                                }
+                                _ => Decision::Walk(tile),
+                            }
+                        }
+                        Decision::Failed(reason) if self.reach_failure_pending => {
+                            self.reach_failure_pending = false;
+                            match Self::keeper(request, keeper_index, cx) {
+                                Some(keeper) if Self::keeper_needs_approach(keeper.route) => {
+                                    self.replan_approach(&keeper)
+                                }
+                                _ => Decision::Failed(reason),
+                            }
+                        }
+                        Decision::Walk(_) if self.trade_attempted => {
+                            // A timeout is not proof that the server cannot
+                            // path the player. Retry Trade with the current
+                            // keeper before deciding to walk.
+                            Self::keeper(request, keeper_index, cx)
+                                .map_or(Decision::Wait, Decision::Trade)
                         }
                         decision => decision,
                     };
@@ -463,7 +499,7 @@ impl NativeMachine for BuyMachine {
                     }
                 }
                 Phase::RetryWalk => {
-                    let facts = self.open_facts(cx);
+                    let (facts, _) = self.open_facts(cx);
                     if self
                         .opening_trade
                         .is_some_and(|trade| trade.page_ready(&facts))
@@ -524,7 +560,7 @@ impl NativeMachine for BuyMachine {
                         Poll::Ready(Ok(receipt)) => Some(receipt),
                         Poll::Ready(Err(_)) => None,
                     };
-                    let facts = self.open_facts(cx);
+                    let (facts, _) = self.open_facts(cx);
                     if self
                         .opening_trade
                         .is_some_and(|trade| trade.page_ready(&facts))
@@ -561,12 +597,6 @@ impl NativeMachine for BuyMachine {
                             .walked(true, || Self::keeper(request, keeper_index, cx))
                     } else {
                         OpenCore::walk_failed(self.last_walk_failure.as_deref())
-                    };
-                    let decision = match decision {
-                        Decision::Trade(keeper) if Self::keeper_needs_approach(keeper.route) => {
-                            self.replan_approach(keeper.tile)
-                        }
-                        decision => decision,
                     };
                     self.phase = Phase::Open;
                     if std::task::ready!(self.act(decision, &facts, cx))? {
@@ -668,7 +698,6 @@ impl NativeMachine for BuyMachine {
                         // take our CloseModal path, just like the shop page.
                         self.open = OpenCore::default();
                         self.trade_attempted = false;
-                        self.approach_replans = 0;
                         self.opening_trade = None;
                         self.phase = Phase::Open;
                         continue;
@@ -706,14 +735,19 @@ impl BuyMachine {
         }
     }
 
-    fn replan_approach(&mut self, tile: api::WorldTile) -> Decision {
-        if self.approach_replans >= shop_open::OPEN_ATTEMPTS as u8 {
-            Decision::Failed(Arc::from(
-                "the keeper stayed out of range after all approach retries",
-            ))
+    fn replan_approach(&mut self, keeper: &shop_open::Keeper) -> Decision {
+        if self.approach_replans_left == 0 {
+            Decision::Failed(Arc::from(format!(
+                "the keeper stayed out of range after all approach retries; last keeper tile ({}, {}, level {}), route {:?}; last walk failure: {}",
+                keeper.tile.x,
+                keeper.tile.z,
+                keeper.tile.level,
+                keeper.route,
+                self.last_walk_failure.as_deref().unwrap_or("none")
+            )))
         } else {
-            self.approach_replans += 1;
-            Decision::Walk(tile)
+            self.approach_replans_left -= 1;
+            Decision::Walk(keeper.tile)
         }
     }
 
@@ -848,20 +882,19 @@ impl BuyMachine {
         })
     }
 
-    fn open_facts(&mut self, cx: &ActionContext<'_>) -> Facts {
+    fn open_facts(&mut self, cx: &ActionContext<'_>) -> (Facts, bool) {
         let mut facts = open_facts(cx);
-        if self
+        let reach_failure = self
             .opening_trade
-            .is_some_and(|trade| trade.rejected(&facts))
-        {
-            // A fresh unreachable reply ends this Trade, unlike a timeout or
-            // raw close count. Retain the attempt and buy budgets.
+            .is_some_and(|trade| trade.rejected(&facts));
+        if reach_failure {
+            // A fresh server refusal is the evidence that justifies an approach.
             self.opening_trade = None;
         }
         // Idle's ready path is not page adoption: only this opening Trade's
         // response may make the page usable to the stage.
         facts.usable &= self.opening_trade.is_some();
-        facts
+        (facts, reach_failure)
     }
 
     fn keeper(
@@ -914,7 +947,6 @@ impl BuyMachine {
                 })))?;
                 self.opening_trade = None;
                 self.trade_attempted = true;
-                self.approach_replans = 0;
                 self.open.traded(facts, &keeper);
                 self.opening_trade = facts.tick.map(|tick| OpeningTrade {
                     tick,

@@ -27,9 +27,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Native acquisition
 
-- Native shop acquisition retries a timed-out open. It walks to the keeper
-  when the keeper is out of reach. It reports "shop did not open" when its
-  Trade budget ends.
+- Native shop acquisition walks an initially blocked route, then retries a
+  timed-out Trade with the keeper's current index so the server can path the
+  player. After a Trade, only a fresh reach failure starts another walk. The
+  walk budget uses the NPC's configured wander range, and the final error
+  includes the keeper's last tile and route.
 - A purchase close starts a fresh shop-open attempt. The buy machine cannot
   loop forever inside one tick.
 
