@@ -3369,7 +3369,7 @@ fn focused_map_bot(
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add(name);
     select(&mut session, name);
-    let mut play = fixture.play(origin);
+    let mut play = map_play_fixture::play(&fixture.template, origin);
     if !matches!(slot, MapBotSlot::NoSlot) {
         let in_game = matches!(slot, MapBotSlot::NoPosition);
         play.attach_arm(name, SlotArm::new(1, false));
