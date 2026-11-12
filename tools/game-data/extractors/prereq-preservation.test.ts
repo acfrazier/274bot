@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPrereqPreservation } from './prereq-preservation.ts';
+import { assertPrereqPreservation, postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
 import type { PrereqJournalWire, PrereqRowWire } from './prereq-steps.ts';
+import { parseRs2Blocks } from './gathering-content.ts';
 
 function row(proves: [number, number], after: [number, number]): PrereqRowWire {
     return {
@@ -262,5 +263,74 @@ withContent({
         () => assertPrereqPreservation(content, [], undefined, [journal([0, 0], [0, 0])]),
         /after \[0,0\] is \[0,1\]/,
     );
+});
+
+withContent({
+    [constants]: '^left_complete = 12\n^right_complete = 34\n',
+    'scripts/quests/quest_fixture/scripts/requirements.rs2': `[proc,has_fixture_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`,
+    'scripts/guards.rs2': `[oploc1,blocked]
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    switch_int(~p_choice1("Proceed?", 1)) {
+        case 1:
+            %progress = 1;
+    }
+}
+[oploc1,reachable]
+if (%rightgang < ^right_complete) {
+    %progress = 2;
+}
+[oploc1,unknown]
+if (npc_find(coord, goblin, 10, 0) = true) {
+    %progress = 3;
+}
+`,
+}, (content) => {
+    const requirementFile = 'scripts/quests/quest_fixture/scripts/requirements.rs2';
+    const writerFile = 'scripts/guards.rs2';
+    const blocks = [
+        ...parseRs2Blocks(requirementFile, fs.readFileSync(path.join(content, requirementFile), 'utf8')),
+        ...parseRs2Blocks(writerFile, fs.readFileSync(path.join(content, writerFile), 'utf8')),
+    ];
+    const constants = new Map([['left_complete', 12], ['right_complete', 34]]);
+    const prerequisite = questCompletionPrerequisites(blocks, 'fixture', constants);
+    assert.notEqual(prerequisite, null);
+    const writerBlocks = blocks.filter((block) => block.span.file === writerFile);
+    const candidates = writerBlocks.map((block) => {
+        const assignment = block.body.find(({ text }) => /%progress\s*=/.test(text));
+        assert.ok(assignment, `${block.name} has a progress writer`);
+        return {
+            block,
+            line: assignment.line,
+            right: assignment.text.replace(/^%progress\s*=\s*(.+?)\s*;?$/, '$1').trim(),
+        };
+    });
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        constants,
+        candidates,
+        prerequisite,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['2', '3']);
+});
+
+withContent({
+    [constants]: '^left_complete = 12\n',
+    'scripts/quests/quest_fixture/scripts/requirements.rs2': `[proc,has_fixture_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & inv_total(inv, coin) > 0) {
+    return(false);
+}
+return(true);
+`,
+}, (content) => {
+    const file = 'scripts/quests/quest_fixture/scripts/requirements.rs2';
+    const blocks = parseRs2Blocks(file, fs.readFileSync(path.join(content, file), 'utf8'));
+    assert.equal(questCompletionPrerequisites(blocks, 'fixture', new Map([['left_complete', 12]])), null);
 });
 

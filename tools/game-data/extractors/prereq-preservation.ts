@@ -244,6 +244,137 @@ function dnf(expression: BoolExpr): Literal[][] {
     if (expression.kind === 'or') return [...left, ...right];
     return left.flatMap((a) => right.map((b) => [...a, ...b]));
 }
+type VariableComparison = { variable: string; operator: string; value: number };
+
+function comparisonForAnyVariable(text: string, constants: ReadonlyMap<string, number>): VariableComparison | null {
+    const value = outerParens(text);
+    const match = /^(.+?)\s*(>=|<=|!=|==|=|>|<)\s*(.+)$/.exec(value);
+    if (!match) return null;
+    const left = outerParens(match[1]);
+    const right = outerParens(match[3]);
+    const leftVariable = /^%([A-Za-z0-9_]+)$/.exec(left);
+    const rightVariable = /^%([A-Za-z0-9_]+)$/.exec(right);
+    if (leftVariable) {
+        const operand = constantValue(right, constants);
+        return operand !== undefined && Number.isSafeInteger(operand)
+            ? { variable: leftVariable[1], operator: match[2], value: operand }
+            : null;
+    }
+    if (rightVariable) {
+        const operand = constantValue(left, constants);
+        return operand !== undefined && Number.isSafeInteger(operand)
+            ? { variable: rightVariable[1], operator: reversedOperator(match[2]), value: operand }
+            : null;
+    }
+    return null;
+}
+
+function supportedBooleanExpression(expression: BoolExpr, constants: ReadonlyMap<string, number>): boolean {
+    if (expression.kind === 'atom') return comparisonForAnyVariable(expression.text, constants) !== null;
+    if (expression.kind === 'not') return supportedBooleanExpression(expression.child, constants);
+    return supportedBooleanExpression(expression.left, constants)
+        && supportedBooleanExpression(expression.right, constants);
+}
+
+function constrainedClauseCanHold(
+    clause: readonly Literal[],
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+) {
+    if (!Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max) || range.min > range.max) return true;
+    type IntegerDomain = { min: bigint | null; max: bigint | null; excluded: Set<bigint> };
+    const domains = new Map<string, IntegerDomain>();
+    const domainFor = (name: string) => {
+        let domain = domains.get(name);
+        if (!domain) {
+            domain = name === variable
+                ? { min: BigInt(range.min), max: BigInt(range.max), excluded: new Set() }
+                : { min: null, max: null, excluded: new Set() };
+            domains.set(name, domain);
+        }
+        return domain;
+    };
+    for (const literal of clause) {
+        const comparison = comparisonForAnyVariable(literal.text, constants);
+        // Unknown guards stay possible unless supported constraints contradict the path.
+        if (!comparison) continue;
+        const operator = literal.negated ? negatedOperator(comparison.operator) : comparison.operator;
+        const domain = domainFor(comparison.variable);
+        const value = BigInt(comparison.value);
+        if (operator === '=' || operator === '==') {
+            domain.min = domain.min === null || value > domain.min ? value : domain.min;
+            domain.max = domain.max === null || value < domain.max ? value : domain.max;
+        } else if (operator === '!=') {
+            domain.excluded.add(value);
+        } else if (operator === '>') {
+            const min = value + 1n;
+            domain.min = domain.min === null || min > domain.min ? min : domain.min;
+        } else if (operator === '>=') {
+            domain.min = domain.min === null || value > domain.min ? value : domain.min;
+        } else if (operator === '<') {
+            const max = value - 1n;
+            domain.max = domain.max === null || max < domain.max ? max : domain.max;
+        } else if (operator === '<=') {
+            domain.max = domain.max === null || value < domain.max ? value : domain.max;
+        } else {
+            return true;
+        }
+        if (domain.min !== null && domain.max !== null && domain.min > domain.max) return false;
+    }
+    for (const domain of domains.values()) {
+        if (domain.min === null || domain.max === null) continue;
+        const size = domain.max - domain.min + 1n;
+        const excluded = [...domain.excluded].filter((value) => value >= domain.min! && value <= domain.max!).length;
+        if (size <= BigInt(excluded)) return false;
+    }
+    return true;
+}
+
+function guardsCanHoldWithPrerequisite(
+    guards: readonly Guard[],
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    prerequisite: BoolExpr,
+) {
+    const expressions = guards.map(({ expression, polarity }) => {
+        const parsed = parseBool(expression);
+        return polarity ? parsed : negate(parsed);
+    });
+    expressions.push(prerequisite);
+    if (!supportedBooleanExpression(prerequisite, constants)) return true;
+    const combined = expressions.slice(1).reduce<BoolExpr>((left, right) => ({ kind: 'and', left, right }), expressions[0]);
+    return dnf(combined).some((clause) => constrainedClauseCanHold(clause, variable, range, constants));
+}
+
+/** Read a quest's exact boolean requirement proc as a content-derived completion constraint. */
+export function questCompletionPrerequisites(
+    blocks: readonly Rs2Block[],
+    quest: string,
+    constants: ReadonlyMap<string, number>,
+): string | null {
+    const directory = `scripts/quests/quest_${quest}/`;
+    const procedures = blocks.filter((block) =>
+        block.kind === 'proc'
+        && block.name === `has_${quest}_quest_requirements`
+        && block.span.file.replace(/\\/g, '/').startsWith(directory));
+    if (procedures.length !== 1) return null;
+    let nodes: Node[];
+    try {
+        nodes = parseBody(procedures[0].body);
+    } catch {
+        return null;
+    }
+    if (nodes.length !== 2 || nodes[0].kind !== 'if' || nodes[0].els.length !== 0 || nodes[0].then.length !== 1) return null;
+    const failed = nodes[0].then[0];
+    const success = nodes[1];
+    if (failed.kind !== 'stmt' || !/^return\s*(?:\(\s*false\s*\)|false)\s*;?$/.test(failed.text)
+        || success.kind !== 'stmt' || !/^return\s*(?:\(\s*true\s*\)|true)\s*;?$/.test(success.text)) return null;
+    const condition = parseBool(nodes[0].cond);
+    if (!supportedBooleanExpression(condition, constants)) return null;
+    return `!(${nodes[0].cond})`;
+}
 
 function literalComparison(literal: Literal, variable: string, constants: ReadonlyMap<string, number>) {
     let comparison = comparisonAt(literal.text, variable, constants);
@@ -390,13 +521,21 @@ function resolveCaseValue(text: string, constants: ReadonlyMap<string, number>) 
     return constantValue(text.trim(), constants);
 }
 
-type SwitchRange = { variable: string; start: number; end: number };
+type SwitchRange = { variable: string | null; start: number; end: number };
 function switchRanges(block: Rs2Block): SwitchRange[] {
     const ranges: SwitchRange[] = [];
     for (let index = 0; index < block.body.length; index += 1) {
         const code = stripComment(block.body[index].text).trim();
-        const start = /\bswitch_int\s*\(\s*%([A-Za-z0-9_]+)\s*\)\s*\{/.exec(code);
+        const start = /\bswitch_int\s*\(/.exec(code);
         if (!start) continue;
+        const open = code.indexOf('(', start.index);
+        const close = matchingParen(code, open);
+        if (close < 0 || !/^\s*\{/.test(code.slice(close + 1))) continue;
+        const operand = code.slice(open + 1, close).trim();
+        const variableMatch = /^%([A-Za-z0-9_]+)$/.exec(operand);
+        // Menu choices are unconstrained; other computed selectors stay opaque.
+        if (!variableMatch && !/^~p_choice[A-Za-z0-9_]*\s*\(/.test(operand)) continue;
+        const variable = variableMatch?.[1] ?? null;
         let depth = 0;
         let end = index;
         for (let current = index; current < block.body.length; current += 1) {
@@ -405,14 +544,26 @@ function switchRanges(block: Rs2Block): SwitchRange[] {
             if (depth === 0) break;
         }
         if (depth !== 0) throw new Error(`${block.span.file}:${block.body[index].line}: unclosed switch_int`);
-        ranges.push({ variable: start[1], start: index, end });
+        ranges.push({ variable, start: index, end });
     }
     return ranges;
 }
 
-function switchStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>, ranges: readonly SwitchRange[]): Statement[] {
+function switchStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>, ranges: readonly SwitchRange[], parentNodes: Node[]): Statement[] {
     const out: Statement[] = [];
     for (const range of ranges) {
+        const switchLine = block.body[range.start].line;
+        const outerGuards: Guard[] = [];
+        walkStatements(parentNodes, (statement, path) => {
+            if (statement.line === switchLine) {
+                outerGuards.push(...path.map((part) => ({ expression: part.cond, polarity: part.polarity })));
+            }
+        });
+        for (const previous of priorReturns(parentNodes)) {
+            if (previous.through < switchLine && switchLine <= previous.within) {
+                outerGuards.push({ expression: previous.condition, polarity: previous.polarity });
+            }
+        }
         const nestedSwitchLines = new Set(ranges
             .filter((nested) => nested.start > range.start && nested.end < range.end)
             .flatMap((nested) => block.body.slice(nested.start, nested.end + 1).map((line) => line.line)));
@@ -463,7 +614,7 @@ function switchStatements(block: Rs2Block, variable: string, constants: Readonly
             const prior = priorReturns(nodes);
             walkStatements(nodes, (statement, path) => {
                 if (nestedSwitchLines.has(statement.line)) return;
-                const guards = [...(guard ? [guard] : []), ...path.map((part: PathCond) => ({ expression: part.cond, polarity: part.polarity }))];
+                const guards = [...outerGuards, ...(guard ? [guard] : []), ...path.map((part: PathCond) => ({ expression: part.cond, polarity: part.polarity }))];
                 for (const previous of prior) if (previous.through < statement.line && statement.line <= previous.within) guards.push({ expression: previous.condition, polarity: previous.polarity });
                 out.push({ text: statement.text, line: statement.line, guards });
             });
@@ -476,7 +627,7 @@ function parseStatements(block: Rs2Block, variable: string, constants: ReadonlyM
     const nodes = parseBody(block.body);
     const ranges = switchRanges(block);
     const switchLines = new Set(ranges.flatMap((range) => block.body.slice(range.start, range.end + 1).map((line) => line.line)));
-    const switches = switchStatements(block, variable, constants, ranges);
+    const switches = switchStatements(block, variable, constants, ranges, nodes);
     const prior = priorReturns(nodes);
     const statements: Statement[] = [];
     walkStatements(nodes, (statement: Stmt, path: PathCond[]) => {
@@ -569,28 +720,38 @@ function hasEntryPath(writer: Pick<Writer, 'block'>, graph: ScriptGraph) {
     return visit(writer.block.id, new Set());
 }
 
-function feasiblePaths(writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
+function feasiblePaths(
+    writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>,
+    graph: ScriptGraph,
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    prerequisite: BoolExpr | null = null,
+) {
     const out: Guard[][] = [];
     const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
+    const canHold = (guards: readonly Guard[]) => prerequisite
+        ? guardsCanHoldWithPrerequisite(guards, variable, range, constants, prerequisite)
+        : guardsCanHold(guards, variable, range, constants);
     const hasPath = hasEntryPath(writer, graph);
     const visit = (blockId: string, guards: Guard[], seen: Set<string>) => {
         const block = graph.byId.get(blockId)!;
         if (block.entry) {
-            if (guardsCanHold([...guards, ...reviewedGuard], variable, range, constants)) out.push([...guards, ...reviewedGuard]);
+            if (canHold([...guards, ...reviewedGuard])) out.push([...guards, ...reviewedGuard]);
             return;
         }
         if (seen.has(blockId)) return;
         const nextSeen = new Set(seen).add(blockId);
         for (const edge of graph.reverse.get(blockId) ?? []) {
             const next = [...guards, ...edge.guards];
-            if (!guardsCanHold([...next, ...reviewedGuard], variable, range, constants)) continue;
+            if (!canHold([...next, ...reviewedGuard])) continue;
             visit(edge.caller, next, nextSeen);
         }
     };
     visit(writer.block.id, writer.guards, new Set());
     if (!hasPath && reviewedGuard.length) {
         const guards = [...writer.guards, ...reviewedGuard];
-        if (guardsCanHold(guards, variable, range, constants)) out.push(guards);
+        if (canHold(guards)) out.push(guards);
     }
     return out;
 }
@@ -602,7 +763,11 @@ export function postCompletionProgressWriters(
     completed: RangeWire,
     constants: ReadonlyMap<string, number>,
     candidates: readonly { block: Rs2Block; line: number; right: string }[],
+    completionPrerequisite?: string | null,
 ) {
+    const parsedPrerequisite = completionPrerequisite ? parseBool(completionPrerequisite) : null;
+    const prerequisite = parsedPrerequisite && supportedBooleanExpression(parsedPrerequisite, constants)
+        ? parsedPrerequisite : null;
     const graph: ScriptGraph = { ...controlGraph(blocks, variable, constants), writers: [] };
     const byBlock = new Map([...graph.byId.values()].map((block) => [block.block, block]));
     const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`);
@@ -623,7 +788,7 @@ export function postCompletionProgressWriters(
         // Expression calls may not have an edge. Missing callers cannot prove
         // that a writer is dead, just as for journal preservation.
         if (!hasEntryPath(writer, graph)) block.entry = true;
-        if (feasiblePaths(writer, graph, variable, completed, constants).length > 0) {
+        if (feasiblePaths(writer, graph, variable, completed, constants, prerequisite).length > 0) {
             possible.push(site);
         }
     }

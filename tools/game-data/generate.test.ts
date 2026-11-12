@@ -1739,6 +1739,19 @@ function questFixture(mutate?: (files: Record<string, string>) => void) {
     writeQuestFixture(rootDir, mutate);
     return rootDir;
 }
+
+function addCookColourMetadata(files: Record<string, string>) {
+    files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
+if ($progress = 0) {
+    if_setcolour($component, ^red_rgb);
+} else if ($progress >= $complete_progress) {
+    if_setcolour($component, ^green_rgb);
+} else {
+    if_setcolour($component, ^yellow_rgb);
+}
+`;
+    files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+}
 function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
     const byId = Object.fromEntries(facts.rows.map((row) => [row.id, row]));
     assert.deepEqual(['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris'].map((id) => byId[id]?.id), ['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris']);
@@ -1864,6 +1877,68 @@ if (%cookquest = 0) { %cookquest = ${maximum}; }
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+for (const [guard, authoritative, completionRange] of [
+    [
+        '%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete',
+        true,
+        { min: 2, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete',
+        false,
+        { min: 1, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete & npc_find(coord, cook, 10, 0) = true',
+        false,
+        { min: 1, max: 2 },
+    ],
+] as const) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^blackarmgang_complete = 12\n^phoenixgang_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/areas/area_test/scripts/prerequisite-writer.rs2'] = `[opnpc1,prerequisite_writer]
+if (${guard}) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, authoritative, `post-completion writer uses its full content prerequisite: ${guard}`);
+        assert.deepEqual(row?.completion_range, completionRange, `post-completion range includes reachable writes: ${guard}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/transitive-reset.rs2'] = `[opnpc1,transitive_reset]
+if (%cookquest = ^cook_complete) {
+    %cookquest = 1;
+}
+if (%cookquest = 1) {
+    %cookquest = 0;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'a reset reachable after the first post-completion reset keeps authority weak');
+        assert.deepEqual(row?.completion_range, { min: 0, max: 2 }, 'completion range closes over transitive resets');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
 const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289);
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);
@@ -2115,7 +2190,7 @@ assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'trol
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
     const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
     assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
-    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'completion_range', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
     for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
     const first = familyBytes(draft, 'quests');
     const envelope = JSON.parse(first);
