@@ -691,8 +691,10 @@ mod quest_list_tests {
             return;
         };
         // drezel.rs2:8-12,138-147 can change the completed stage from 60 to 61.
+        // temple_guardian.rs2:1-12 also has a death-event reset; its separate
+        // attack guard does not prove that event unreachable to the extractor.
         assert!(!quests.quest("priestperil").unwrap().colour_authoritative);
-        assert_window_from_colour(&quests, "priestperil", 0x00F800, 60, 61, Truth::True);
+        assert_window_from_colour(&quests, "priestperil", 0x00F800, 0, 61, Truth::True);
         assert_window_from_colour(&quests, "priestperil", 0x00F800, 61, 61, Truth::Unknown);
     }
 
