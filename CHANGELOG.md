@@ -8,6 +8,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [0.2.9.1] — 2026-11-11 — Beta 2 patch
 
+### Navigation
+
+- A danger crossing no longer stops just because one game update was missed
+  while the bot waited on a safe tile for its poison to settle. The wait now
+  starts over once after a missed update, so it can last up to 63 game ticks.
+  If the poison state still cannot be confirmed, the walk stops and shows
+  the reason, as before.
+
 ### Login
 
 - The logout of bots with no script, which 0.2.9 added, is reverted. A bot with

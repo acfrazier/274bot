@@ -97,7 +97,10 @@ impl Default for SettleWindow {
 impl SettleWindow {
     fn reset(&mut self, cause: WindowReset) {
         self.clean = 0;
-        self.accepted = false;
+        // A missed observation cannot undo an already dispatched click.
+        if cause != WindowReset::FrameGap {
+            self.accepted = false;
+        }
         self.last_reset = cause;
     }
 
