@@ -1921,6 +1921,35 @@ if (${guard}) {
 {
     const root = questFixture((files) => {
         addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-bounds.rs2'] = `[proc,left_progress]()
+%leftgang = ^left_complete;
+[proc,right_progress]()
+%rightgang = ^right_complete;
+`;
+        files['scripts/areas/area_test/scripts/bounded-writer.rs2'] = `[opnpc1,bounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, true, 'content-derived prerequisite varp domains exclude the apparent reset');
+        assert.deepEqual(row?.completion_range, { min: 2, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
         files['scripts/areas/area_test/scripts/transitive-reset.rs2'] = `[opnpc1,transitive_reset]
 if (%cookquest = ^cook_complete) {
     %cookquest = 1;

@@ -1055,6 +1055,13 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     for (const [name, value] of progressConstantMap) {
         if (value !== null) postWriterConstants.set(name, value);
     }
+    const prerequisiteDomainCache = new Map<string, ProgressMetadata['stage_domain']>();
+    const prerequisiteDomainForVariable = (variable: string) => {
+        if (prerequisiteDomainCache.has(variable)) return prerequisiteDomainCache.get(variable) ?? null;
+        const domain = stageDomain(variable, 0, progressConstantMap, progressWriterIndex);
+        prerequisiteDomainCache.set(variable, domain);
+        return domain;
+    };
     for (const row of rows) {
         const initial = row.completion_range;
         if (!initial) continue;
@@ -1067,6 +1074,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         for (;;) {
             const possible = postCompletionProgressWriters(
                 progressSources.blocks, row.varp, range, postWriterConstants, writers, completionPrerequisite,
+                prerequisiteDomainForVariable,
             );
             if (possible.length > 0) row.colour_authoritative = false;
             let min = range.min;

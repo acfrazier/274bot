@@ -281,6 +281,7 @@ function constrainedClauseCanHold(
     variable: string,
     range: RangeWire,
     constants: ReadonlyMap<string, number>,
+    domainForVariable?: (name: string) => RangeWire | null,
 ) {
     if (!Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max) || range.min > range.max) return true;
     type IntegerDomain = { min: bigint | null; max: bigint | null; excluded: Set<bigint> };
@@ -288,9 +289,12 @@ function constrainedClauseCanHold(
     const domainFor = (name: string) => {
         let domain = domains.get(name);
         if (!domain) {
-            domain = name === variable
-                ? { min: BigInt(range.min), max: BigInt(range.max), excluded: new Set() }
-                : { min: null, max: null, excluded: new Set() };
+            const bounds = name === variable ? range : domainForVariable?.(name) ?? null;
+            if (bounds === null || !Number.isSafeInteger(bounds.min) || !Number.isSafeInteger(bounds.max) || bounds.min > bounds.max) {
+                domain = { min: null, max: null, excluded: new Set() };
+            } else {
+                domain = { min: BigInt(bounds.min), max: BigInt(bounds.max), excluded: new Set() };
+            }
             domains.set(name, domain);
         }
         return domain;
@@ -337,6 +341,7 @@ function guardsCanHoldWithPrerequisite(
     range: RangeWire,
     constants: ReadonlyMap<string, number>,
     prerequisite: BoolExpr,
+    domainForVariable?: (name: string) => RangeWire | null,
 ) {
     const expressions = guards.map(({ expression, polarity }) => {
         const parsed = parseBool(expression);
@@ -345,7 +350,7 @@ function guardsCanHoldWithPrerequisite(
     expressions.push(prerequisite);
     if (!supportedBooleanExpression(prerequisite, constants)) return true;
     const combined = expressions.slice(1).reduce<BoolExpr>((left, right) => ({ kind: 'and', left, right }), expressions[0]);
-    return dnf(combined).some((clause) => constrainedClauseCanHold(clause, variable, range, constants));
+    return dnf(combined).some((clause) => constrainedClauseCanHold(clause, variable, range, constants, domainForVariable));
 }
 
 /** Read a quest's exact boolean requirement proc as a content-derived completion constraint. */
@@ -727,11 +732,12 @@ function feasiblePaths(
     range: RangeWire,
     constants: ReadonlyMap<string, number>,
     prerequisite: BoolExpr | null = null,
+    domainForVariable?: (name: string) => RangeWire | null,
 ) {
     const out: Guard[][] = [];
     const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
     const canHold = (guards: readonly Guard[]) => prerequisite
-        ? guardsCanHoldWithPrerequisite(guards, variable, range, constants, prerequisite)
+        ? guardsCanHoldWithPrerequisite(guards, variable, range, constants, prerequisite, domainForVariable)
         : guardsCanHold(guards, variable, range, constants);
     const hasPath = hasEntryPath(writer, graph);
     const visit = (blockId: string, guards: Guard[], seen: Set<string>) => {
@@ -764,6 +770,7 @@ export function postCompletionProgressWriters(
     constants: ReadonlyMap<string, number>,
     candidates: readonly { block: Rs2Block; line: number; right: string }[],
     completionPrerequisite?: string | null,
+    domainForVariable?: (name: string) => RangeWire | null,
 ) {
     const parsedPrerequisite = completionPrerequisite ? parseBool(completionPrerequisite) : null;
     const prerequisite = parsedPrerequisite && supportedBooleanExpression(parsedPrerequisite, constants)
@@ -788,7 +795,7 @@ export function postCompletionProgressWriters(
         // Expression calls may not have an edge. Missing callers cannot prove
         // that a writer is dead, just as for journal preservation.
         if (!hasEntryPath(writer, graph)) block.entry = true;
-        if (feasiblePaths(writer, graph, variable, completed, constants, prerequisite).length > 0) {
+        if (feasiblePaths(writer, graph, variable, completed, constants, prerequisite, domainForVariable).length > 0) {
             possible.push(site);
         }
     }
