@@ -72,7 +72,13 @@ impl Gatherer {
         let snapshot = cx.snapshot();
         let spec = GatherTiming::spec(method, self.tool.id)?;
         let kit = self.prepared.supply.tick_kit.as_ref()?;
-        let cycle = self.parked_cycle.take().unwrap_or_else(|| {
+        // A parked cycle carries the facts of the method it served; one resource can span methods with
+        // different tick behaviour (delayed against immediate yield), so only an identical spec may continue.
+        let parked = self
+            .parked_cycle
+            .take()
+            .filter(|cycle| cycle.spec() == spec);
+        let cycle = parked.unwrap_or_else(|| {
             TickCycle::new(
                 spec,
                 cx.evidence().tick,

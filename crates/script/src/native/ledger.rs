@@ -1410,7 +1410,8 @@ mod tests {
                     z: 200,
                     level: 0,
                 },
-                cost: 11,
+                cost: api::service_pick::RouteCost::from_ticks(11),
+                unjudged: 0,
             },
         };
         ledger.complete_bank_pick(

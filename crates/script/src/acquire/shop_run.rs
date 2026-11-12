@@ -947,7 +947,8 @@ mod tests {
         crate::native_bank::ServicePickOutcome::Routed {
             index,
             access_tile,
-            cost: 0,
+            cost: api::service_pick::RouteCost::ZERO,
+            unjudged: 0,
         }
     }
 
@@ -1462,7 +1463,10 @@ mod tests {
         complete_service_pick(
             &mut ledger,
             2,
-            crate::native_bank::ServicePickOutcome::NoPath { unresolved: None },
+            crate::native_bank::ServicePickOutcome::NoPath {
+                unresolved: None,
+                unjudged: 0,
+            },
         );
 
         with_tick_shop(&snapshot, &facts, None, &mut ledger, 3, |tick| {
@@ -1489,7 +1493,8 @@ mod tests {
             crate::native_bank::ServicePickOutcome::Routed {
                 index: 1,
                 access_tile: tile(3209),
-                cost: 9,
+                cost: api::service_pick::RouteCost::from_ticks(9),
+                unjudged: 0,
             },
         );
         with_tick_shop(&snapshot, &facts, None, &mut ledger, 5, |tick| {

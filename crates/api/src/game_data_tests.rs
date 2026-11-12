@@ -190,7 +190,8 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     let Some(catalog) = prepared_r289_gathering() else {
         return;
     };
-    assert_eq!(catalog.methods().len(), 41);
+    // Ten woodcutting, sixteen mining (iron is two: regular rocks and the Haunted Mine veins) and sixteen fishing.
+    assert_eq!(catalog.methods().len(), 42);
     for method in catalog.methods() {
         assert!(
             matches!(
@@ -296,6 +297,16 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     assert!(fast_mine.tick_arm.depletes);
     assert_eq!(normal_mine.tick_arm.native_arm, None);
     assert_eq!(fast_mine.tick_arm.native_arm, None);
+    // The Haunted Mine veins sit in the iron row but run mining_rock_normal: their own method, with the normal
+    // handler's delayed yield and the same pickaxe facts as every other normal-handler ore.
+    let haunted_iron = tick_method(&catalog, "mining.iron.get_ore_normal");
+    assert!(haunted_iron.tick_arm.delay_drop);
+    assert!(haunted_iron.tick_arm.depletes);
+    assert_eq!(haunted_iron.tick_arm.native_arm, None);
+    assert_eq!(
+        haunted_iron.tick_arm.tool_facts,
+        normal_mine.tick_arm.tool_facts
+    );
     for (alias, arm, animation, no_gain) in [
         ("bronze_pickaxe", 7, 625, false),
         ("iron_pickaxe", 6, 626, false),
@@ -2606,9 +2617,9 @@ fn melee_weapon_tier_matches_the_wield_gates() {
     // Ranged weapons tier through the ranged gate, not the melee one.
     assert!(data.melee_weapon_tier(861).is_none());
     assert!(data.melee_weapon_tier(805).is_none());
-    assert_eq!(data.melee_weapon_tier_rows().len(), 148);
+    assert_eq!(data.melee_weapon_tier_rows().len(), 149);
     // Every field of every row: a wrong tier, gate or strength fails here.
-    let expected: [(i32, u8, bool, u8); 148] = [
+    let expected: [(i32, u8, bool, u8); 149] = [
         (35, 20, false, 0),
         (278, 0, false, 0),
         (466, 0, false, 0),
@@ -2757,6 +2768,7 @@ fn melee_weapon_tier_matches_the_wield_gates() {
         (3899, 0, false, 0),
         (4037, 0, false, 0),
         (4039, 0, false, 0),
+        (4068, 0, false, 0),
     ];
     let actual: Vec<(i32, u8, bool, u8)> = data
         .melee_weapon_tier_rows()

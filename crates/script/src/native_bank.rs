@@ -348,8 +348,11 @@ pub enum ServicePickOutcome {
         index: u16,
         /// A prevalidated stand outside the selected service footprint.
         access_tile: WorldTile,
-        /// The router's accumulated tick cost.
-        cost: u32,
+        /// The router's accumulated cost in half ticks.
+        cost: api::service_pick::RouteCost,
+        /// Eligible rows that the search could not judge because their stand
+        /// coverage is unknown. Banks and shops have none.
+        unjudged: u16,
     },
     /// No account-eligible row had usable access before searching.
     NoCandidate,
@@ -357,6 +360,9 @@ pub enum ServicePickOutcome {
     NoPath {
         /// Only still-unknown gates on the cheapest relaxed diagnosis route.
         unresolved: Option<Arc<[api::selected::QuestGate]>>,
+        /// Eligible rows that the search could not judge: an absence of a path
+        /// is proven only when this is 0. Banks and shops have none.
+        unjudged: u16,
     },
     /// The search work limit was reached; reachability remains undecided.
     BudgetExhausted,
@@ -3669,10 +3675,14 @@ mod tests {
                     z: 5,
                     level: 0,
                 },
-                cost: 0,
+                cost: api::service_pick::RouteCost::ZERO,
+                unjudged: 0,
             },
             ServicePickOutcome::NoCandidate,
-            ServicePickOutcome::NoPath { unresolved: None },
+            ServicePickOutcome::NoPath {
+                unresolved: None,
+                unjudged: 0,
+            },
             ServicePickOutcome::BudgetExhausted,
             ServicePickOutcome::NotSettled,
         ] {

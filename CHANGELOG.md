@@ -24,6 +24,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
+- The game-data generator now accepts content where one ore row is mined by
+  rocks with different mining handlers (Haunted Mine veins mine with the normal
+  handler, regular iron with the fast one). It gives each handler its own
+  gathering method, so every rock keeps its own handler's timing. Data built
+  from earlier content does not change.
+
+### Gatherer
+
+- The Iron option now covers two methods: regular iron rocks keep their fast
+  method, and the Haunted Mine iron veins get their own method with the normal
+  handler's delayed yield. The Knife tick technique times each target with its
+  own method's facts and no longer carries a timing cycle from one method to a
+  target of another.
+- Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
+  with spare logs, and judge cycles without a chance XP requirement. Startup
+  counts player-tile movement on native and replacement routes.
 
 ### Panel and terminal app
 
