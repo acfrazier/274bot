@@ -510,28 +510,21 @@ pub(super) fn boat_edges(
 // Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
 // ---------------------------------------------------------------------------
 
-/// Hajedy (`pack/npc.pack` id 510). His cart requires Shilo Village complete.
-/// Vigroy (511) has no journal gate. Identify the gated row by NPC id, not
-/// table position.
-const HAJEDY_NPC_ID: i32 = 510;
-
-/// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
-/// keyed from the cart driver NPC's tile.
+/// Hajedy's handler gates its Shilo trip on Shilo Village completion
+/// (`content/scripts/areas/area_brimhaven/scripts/hajedy.rs2:17-20,26-29`).
+/// Vigroy's handler applies the same gate to Brimhaven
+/// (`content/scripts/areas/area_shilo/scripts/vigroy.rs2:17-20`).
+/// Both journeys use the completed quest-list name derived from content.
 pub(super) fn cart_edges(
     graph: &mut TransportGraph,
-    zombie_queen_name: Option<&str>,
+    shilo_village_name: Option<&str>,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
+    let Some(name) = shilo_village_name else {
+        bump(skipped, SKIP_SHILO_CART_JOURNAL_NAME, SHILO_CART_ROUTES.len());
+        return;
+    };
     for r in SHILO_CART_ROUTES {
-        let quest_req = if r.npc_id() == HAJEDY_NPC_ID {
-            let Some(name) = zombie_queen_name else {
-                bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
-                continue;
-            };
-            vec![name.to_string()]
-        } else {
-            Vec::new()
-        };
         graph.edges.push(TransportEdge {
             takeoff: None,
             worn_all_req: Vec::new(),
@@ -550,7 +543,7 @@ pub(super) fn cart_edges(
             item_req: vec![],
             consumed_req: vec![r.minimum_fare()],
             item_returns: vec![],
-            quest_req,
+            quest_req: vec![name.to_string()],
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,

@@ -10853,28 +10853,43 @@ fn nav_cart_is_a_mainland_follow_that_needs_the_cart_hop() {
         s.seed.mainland,
         "the hop lands the walker before the Shilo tele"
     );
-    assert_eq!(s.steps.len(), 2, "give the fare + tele, then follow");
-    let (tele, arm) = match &s.steps[0].kind {
+    assert_eq!(
+        s.steps.len(),
+        5,
+        "set Shilo complete, relog and verify the journal, give the fare + tele, then follow"
+    );
+    assert!(matches!(&s.steps[0].kind, StepKind::Perform { .. }));
+    assert!(matches!(&s.steps[1].kind, StepKind::Relog));
+    assert!(matches!(
+        &s.steps[1].wait.arm,
+        Proof::SideTabAvailable { index: 3 }
+    ));
+    assert!(matches!(&s.steps[2].kind, StepKind::Perform { .. }));
+    match &s.steps[2].wait.arm {
+        Proof::QuestDone { name } => assert_eq!(*name, "Shilo Village"),
+        other => panic!("Shilo completion arm must be QuestDone, got {other:?}"),
+    }
+    let (tele, arm) = match &s.steps[3].kind {
         StepKind::Perform { .. } => (
             "perform",
-            match &s.steps[0].wait.arm {
+            match &s.steps[3].wait.arm {
                 Proof::Arrived { x, z, level } => (*x, *z, *level),
                 other => panic!("tele arm must be arrived, got {other:?}"),
             },
         ),
-        _ => panic!("nav_cart step 1 must be Perform"),
+        _ => panic!("nav_cart fare and tele step must be Perform"),
     };
     assert_eq!(tele, "perform");
     assert_eq!(arm, (2834, 2954, 0), "the tele targets the Shilo driver");
-    let (dest, arm) = match &s.steps[1].kind {
+    let (dest, arm) = match &s.steps[4].kind {
         StepKind::Follow { dest } => (
             *dest,
-            match &s.steps[1].wait.arm {
+            match &s.steps[4].wait.arm {
                 Proof::Arrived { x, z, level } => (*x, *z, *level),
                 other => panic!("follow arm must be arrived, got {other:?}"),
             },
         ),
-        _ => panic!("nav_cart step 2 must be Follow"),
+        _ => panic!("nav_cart final step must be Follow"),
     };
     assert_eq!(
         dest,

@@ -235,11 +235,11 @@ fn unresolved_quest_journal_names_count_skipped_transport_hops() {
         Some(ELKOY_ESCORTS.len())
     );
     assert_eq!(
-        skipped.get(SKIP_HAJEDY_JOURNAL_NAME).copied(),
-        Some(1),
-        "the single journal-gated Hajedy cart hop is counted"
+        skipped.get(SKIP_SHILO_CART_JOURNAL_NAME).copied(),
+        Some(SHILO_CART_ROUTES.len()),
+        "every cart hop needs the Shilo Village journal name"
     );
-    for npc in [553, 300, 462, 844, 171, 473, 474, 510] {
+    for npc in [553, 300, 462, 844, 171, 473, 474, 510, 511] {
         assert!(
             !graph
                 .edges
@@ -248,13 +248,6 @@ fn unresolved_quest_journal_names_count_skipped_transport_hops() {
             "unresolved journal name must not emit gated NPC hop {npc}"
         );
     }
-    assert!(
-        graph
-            .edges
-            .iter()
-            .any(|edge| edge.kind == TransportKind::Npc && edge.loc_id == 511),
-        "the ungated return cart remains available"
-    );
 }
 
 /// The Zanaris shed door (`quest_zanaris.rs2:89-100`
@@ -2050,7 +2043,7 @@ p_telejump($dest);\n";
 }
 
 /// Derived Shilo cart edges use the planner's canonical identity and fare
-/// facts. The Zombie Queen journal gate remains a bake-time policy.
+/// facts. Both directions carry the derived Shilo Village journal gate.
 #[test]
 fn derive_transports_emits_shilo_brimhaven_cart() {
     let graph = derive_static_routes();
@@ -2076,24 +2069,111 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
             })
             .expect("derived cart edge matches planner identity");
         let (fare_item, minimum) = route.minimum_fare();
-        assert_eq!(edge.consumed_req, [(fare_item, minimum)]);
+        assert_eq!(
+            edge.quest_req,
+            [SHILO_JOURNAL_NAME],
+            "cart NPC {} carries the Shilo Village completion requirement",
+            edge.loc_id
+        );
+        assert!(edge.varp_req.is_empty(), "{edge:?}");
         assert_eq!(
             edge.consumption_count(fare_item, minimum, 1000),
             50,
             "cart fare percentage follows the live balance calculation"
         );
     }
+}
 
-    let hajedy = carts
-        .iter()
-        .find(|edge| edge.loc_id == 510)
-        .expect("Hajedy cart identified by NPC id");
-    assert_eq!(hajedy.quest_req, [SHILO_JOURNAL_NAME]);
-    let vigroy = carts
-        .iter()
-        .find(|edge| edge.loc_id == 511)
-        .expect("Vigroy cart identified by NPC id");
-    assert!(vigroy.quest_req.is_empty());
+#[test]
+fn shilo_cart_routes_require_completion_in_baked_runtime_policy() {
+    use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
+    use nav_planner::world_state::WorldState;
+    use nav_planner::EdgeAdmission;
+
+    let fx = Fixture::new();
+    write_static_route_journal(&fx);
+    write_blocked_square(
+        &fx,
+        43,
+        50,
+        &[(2779, 3211), (2776, 3214)],
+        "",
+    );
+    write_blocked_square(
+        &fx,
+        44,
+        46,
+        &[(2834, 2951), (2834, 2954)],
+        "",
+    );
+    let defs = loc_defs(&[]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let incomplete = WorldState {
+        inv: HashMap::from([(995, 500)]),
+        inventory_ready: true,
+        ..WorldState::empty()
+    };
+    let complete = WorldState {
+        quests: HashSet::from([SHILO_JOURNAL_NAME.to_string()]),
+        ..incomplete.clone()
+    };
+
+    for cart in SHILO_CART_ROUTES {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == TransportKind::Npc
+                    && edge.loc_id == cart.npc_id()
+                    && edge.at == cart.origin()
+                    && edge.to == cart.destination()
+            })
+            .expect("production transport bake emits each Shilo cart route");
+        assert_eq!(edge.quest_req, [SHILO_JOURNAL_NAME]);
+        assert_eq!(
+            incomplete.admission(edge),
+            EdgeAdmission::Denied,
+            "cart {} refuses an account without Shilo Village completion",
+            cart.npc_id()
+        );
+        assert!(!incomplete.allows(edge));
+        assert_eq!(
+            find_with(
+                &collision,
+                &graph,
+                cart.origin(),
+                cart.destination(),
+                FindOptions::default(),
+                &incomplete,
+            ),
+            Err(RouteError::NoPath),
+            "cart {} route is refused because Shilo Village is incomplete",
+            cart.npc_id()
+        );
+        let route = find_with(
+            &collision,
+            &graph,
+            cart.origin(),
+            cart.destination(),
+            FindOptions::default(),
+            &complete,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "completed Shilo Village account cannot route cart {}: {error:?}",
+                cart.npc_id()
+            )
+        });
+        assert!(
+            route.legs.iter().any(|leg| matches!(
+                leg,
+                Leg::Transport { edge } if edge.loc_id == cart.npc_id()
+            )),
+            "route for cart {} uses its baked hop: {route:?}",
+            cart.npc_id()
+        );
+    }
 }
 
 /// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /
