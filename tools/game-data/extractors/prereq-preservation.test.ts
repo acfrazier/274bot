@@ -306,7 +306,7 @@ if (npc_find(coord, goblin, 10, 0) = true) {
         return {
             block,
             line: assignment.line,
-            right: assignment.text.replace(/^%progress\s*=\s*(.+?)\s*;?$/, '$1').trim(),
+            right: assignment.text.trim().replace(/^%progress\s*=\s*(.+?)\s*;?$/, '$1').trim(),
         };
     });
     const possible = postCompletionProgressWriters(
@@ -334,3 +334,96 @@ return(true);
     assert.equal(questCompletionPrerequisites(blocks, 'fixture', new Map([['left_complete', 12]])), null);
 });
 
+for (const fixture of [
+    { call: 'queue(delayed, 0, 0);', extra: '', expected: [] },
+    { call: 'queue*(delayed, 0, 0);', extra: '', expected: [] },
+    { call: 'queue(delayed, 0, 0);', extra: 'queue($unknown_target, 0, 0);', expected: ['2'] },
+    { call: '', extra: '', expected: ['2'] },
+]) {
+    const blocks = parseRs2Blocks('scripts/queued-progress.rs2', `[opnpc1,root]
+if (%progress < 5) {
+    ${fixture.call}
+}
+${fixture.extra}
+[queue,delayed]
+%progress = 2;
+`);
+    const queued = blocks.find((block) => block.kind === 'queue')!;
+    const assignment = queued.body.find(({ text }) => text.includes('%progress ='))!;
+    const possible = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(),
+        [{ block: queued, line: assignment.line, right: '2' }],
+    );
+    assert.deepEqual(possible.map(({ right }) => right), fixture.expected);
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/menu-progress.rs2', `[opnpc1,local_menu]
+def_int $option;
+if (%progress = 1) {
+    $option = ~three_options("First", 1, "Second", 2, "Special", 3);
+} else {
+    $option = ~two_options("First, please", 1, "Second", 2);
+}
+switch_int($option) {
+    case 3:
+        %progress = 2;
+}
+[opnpc1,procedure_menu]
+switch_int(~which_option) {
+    case 4:
+        %progress = 3;
+}
+[proc,which_option]()(int)
+if (%progress >= 4) {
+    return(~two_options("First", 1, "Second", 2));
+}
+return(~three_options("First", 1, "Second", 2, "Special", 4));
+[opnpc1,label_menu]
+if (%progress = 1) {
+    @write_option(8);
+} else {
+    @write_option(1);
+}
+[label,write_option](int $option)
+switch_int($option) {
+    case 8:
+        %progress = 4;
+}
+[opnpc1,unknown_menu]
+switch_int(~unknown_option) {
+    case 7:
+        %progress = 1;
+}
+[proc,unknown_option]()(int)
+return(stat(attack));
+[opnpc1,partial_assignment]
+def_int $option;
+if (%progress = 1) {
+    $option = 1;
+}
+switch_int($option) {
+    case 8:
+        %progress = 0;
+}
+[proc,two_options](string $first, int $one, string $second, int $two)(int)
+switch_component(last_com) {
+    case menu:first: return($one);
+    case default: return($two);
+}
+[proc,three_options](string $first, int $one, string $second, int $two, string $third, int $three)(int)
+switch_component(last_com) {
+    case menu:first: return($one);
+    case menu:second: return($two);
+    case default: return($three);
+}
+`);
+    const candidates = blocks.flatMap((block) => block.body.flatMap(({ line, text }) => {
+        const assignment = /^\s*%progress\s*=\s*(.+?)\s*;?$/.exec(text);
+        return assignment ? [{ block, line, right: assignment[1] }] : [];
+    }));
+    const possible = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['1', '0']);
+}

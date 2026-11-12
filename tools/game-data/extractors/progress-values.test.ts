@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { parseRs2Blocks, type Rs2Block } from './gathering-content.ts';
 import { createProgressValueResolver, type Guard } from './progress-values.ts';
+import { parseProgressStatements } from './prereq-preservation.ts';
 
 type Statement = { text: string; line: number; guards: readonly Guard[] };
 type GuardFor = (block: Rs2Block, text: string) => readonly Guard[];
@@ -49,10 +50,11 @@ function argumentsOf(text: string, open: number) {
 
 function prepare(source: string, guardFor: GuardFor = () => [], constants = new Map<string, number>()) {
     const blocks = parseRs2Blocks('selector-test.rs2', source);
-    const statementsFor = (block: Rs2Block): readonly Statement[] => block.body.map((row) => {
-        const text = row.text.trim();
-        return { text, line: row.line, guards: guardFor(block, text) };
-    });
+    const statementsFor = (block: Rs2Block): readonly Statement[] =>
+        parseProgressStatements(block, '', constants).map((statement) => ({
+            ...statement,
+            guards: [...statement.guards, ...guardFor(block, statement.text)],
+        }));
     const resolve = createProgressValueResolver(blocks, constants, statementsFor, argumentsOf, stripStrings);
     return { blocks, resolve };
 }
@@ -300,3 +302,122 @@ const indirectSwitchLine = lineMatching(indirectReceiver, (text) => text.startsW
 const possibleIndirect = indirectLabelResolver.resolve(indirectReceiver, indirectSwitchLine, '$selection', [5], false);
 assert.ok(possibleIndirect);
 assert.ok(possibleIndirect.length > 0);
+
+for (const update of ['$selection += 1;', '$selection++;', '++$selection;']) {
+    const changed = prepare(`[opnpc1,changed_local]
+def_int $selection = 1;
+${update}
+switch_int($selection) {
+    case 2: return;
+}
+`);
+    const block = blockNamed(changed.blocks, 'opnpc1', 'changed_local');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int($selection)'));
+    const possible = changed.resolve(block, line, '$selection', [2], false);
+    assert.ok(possible === null || possible.length > 0);
+}
+
+{
+    const changed = prepare(`[opnpc1,changed_guard]
+def_int $flag = 0;
+def_int $selection;
+if ($flag = 0) {
+    $selection = 7;
+} else {
+    $selection = 1;
+}
+$flag = 1;
+if ($flag = 0) {
+    $selection = 1;
+}
+switch_int($selection) {
+    case 7: return;
+}
+`);
+    const block = blockNamed(changed.blocks, 'opnpc1', 'changed_guard');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int($selection)'));
+    const possible = changed.resolve(block, line, '$selection', [7], false);
+    assert.ok(possible === null || possible.length > 0);
+}
+
+{
+    const commented = prepare(`[proc,commented_menu](int $first, int $second)(int)
+switch_component(last_com) {
+    case panel:first: return($first);
+    case default: return($second);
+}
+/** Used for things like ladder options. **/
+[opnpc1,commented_caller]
+switch_int(~commented_menu(1, 2)) {
+    case 3: return;
+}
+`);
+    const block = blockNamed(commented.blocks, 'opnpc1', 'commented_caller');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int(~commented_menu'));
+    assert.deepEqual(commented.resolve(block, line, '~commented_menu(1, 2)', [3], false), []);
+}
+
+for (const body of [
+    `switch_component(last_com) {
+    case panel:first: return(1);
+}`,
+    `def_int $result = 1;
+switch_component(last_com) {
+    case panel:first: $result = 7;
+    case default: $result = 1;
+}
+return($result);`,
+]) {
+    const opaque = prepare(`[proc,opaque_menu]()(int)
+${body}
+[opnpc1,opaque_caller]
+switch_int(~opaque_menu) {
+    case 7: return;
+}
+`);
+    const block = blockNamed(opaque.blocks, 'opnpc1', 'opaque_caller');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int(~opaque_menu'));
+    const possible = opaque.resolve(block, line, '~opaque_menu', [7], false);
+    assert.ok(possible === null || possible.length > 0);
+}
+
+{
+    const changed = prepare(`[opnpc1,changed_varp_guard]
+def_int $selection;
+if (%flag = 0) {
+    $selection = 7;
+} else {
+    $selection = 1;
+}
+%flag = 1;
+if (%flag = 0) {
+    $selection = 1;
+}
+switch_int($selection) {
+    case 7: return;
+}
+`);
+    const block = blockNamed(changed.blocks, 'opnpc1', 'changed_varp_guard');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int($selection)'));
+    const possible = changed.resolve(block, line, '$selection', [7], false);
+    assert.ok(possible === null || possible.length > 0);
+}
+
+{
+    const changed = prepare(`[label,guarded_receiver](int $selection)
+switch_int($selection) {
+    case 7: return;
+}
+[opnpc1,changed_caller_guard]
+if (%flag = 0) {
+    %flag = 1;
+    @guarded_receiver(7);
+} else {
+    @guarded_receiver(1);
+}
+`);
+    const block = blockNamed(changed.blocks, 'label', 'guarded_receiver');
+    const line = lineMatching(block, (text) => text.startsWith('switch_int($selection)'));
+    const possible = changed.resolve(block, line, '$selection', [7], false);
+    assert.ok(possible?.some((path) => path.length === 0));
+}

@@ -49,6 +49,7 @@ import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './gather-catalog.test.ts';
+import './extractors/progress-values.test.ts';
 import './quest-junk.test.ts';
 import './extractors/prereq-preservation.test.ts';
 import './extractors/prereq-journal-proof.test.ts';
@@ -1929,14 +1930,25 @@ if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
 return(true);
 `;
         files['scripts/quests/quest_cook/scripts/progress-bounds.rs2'] = `[proc,left_progress]()
-switch_int(~p_choice1("Choose", 1)) {
+def_int $option = ~p_choice2("Choose", 1, "Other", 2);
+switch_int($option) {
     case 1:
-        %leftgang = ^left_complete;
+        if (%leftgang < ^left_complete) %leftgang = ^left_complete;
     case 2:
         %leftgang = 1;
 }
 [proc,right_progress]()
 %rightgang = ^right_complete;
+[opnpc1,old_stage_writer]
+if (%cookquest < 2) {
+    switch_int(~old_stage_choice) {
+        case 1:
+            if (%cookquest < 2) %cookquest = 1;
+    }
+}
+[proc,old_stage_choice]()(int)
+%cookquest = 1;
+return(1);
 `;
         files['scripts/areas/area_test/scripts/bounded-writer.rs2'] = `[opnpc1,bounded_writer]
 if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
@@ -1953,7 +1965,15 @@ if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
     }
 }
 
-{
+for (const progressWriter of [
+    `if (%leftgang >= ^left_complete) {
+    return;
+}
+while (true) {
+    %leftgang = add(%leftgang, 1);
+}`,
+    'if (true) { %leftgang = ^left_complete; } %leftgang += 1;',
+]) {
     const root = questFixture((files) => {
         addCookColourMetadata(files);
         files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
@@ -1964,12 +1984,7 @@ if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
 return(true);
 `;
         files['scripts/quests/quest_cook/scripts/progress-unbounded.rs2'] = `[proc,left_progress]()
-if (%leftgang >= ^left_complete) {
-    return;
-}
-while (%leftgang < ^left_complete) {
-    %leftgang = add(%leftgang, 1);
-}
+${progressWriter}
 [proc,right_progress]()
 %rightgang = ^right_complete;
 `;
@@ -1981,7 +1996,7 @@ if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
     });
     try {
         const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
-        assert.equal(row?.colour_authoritative, false, 'an unbounded prerequisite counter keeps the later reset possible');
+        assert.equal(row?.colour_authoritative, false, 'an unbounded or unaccounted prerequisite writer keeps the later reset possible');
         assert.deepEqual(row?.completion_range, { min: 1, max: 2 });
     } finally {
         fs.rmSync(root, { recursive: true, force: true });

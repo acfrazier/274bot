@@ -4,7 +4,7 @@ import path from 'node:path';
 import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type Stmt } from './gathering-rs2.ts';
-import { postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
+import { parseProgressStatements, postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
 const QUEST_IDENTITY_SEEDS = [
     { id: 'cook', component: 'cook' },
     { id: 'runemysteries', component: 'runemysteries' },
@@ -561,6 +561,7 @@ type ProgressWriterCensus = { byVariable: Map<string, ProgressWriter[]>; blocks:
 export function questProgressWriters(content: string, sourceFiles: readonly string[]): ProgressWriterCensus {
     const byVariable = new Map<string, ProgressWriter[]>();
     const blocks: Rs2Block[] = [];
+    const noConstants = new Map<string, number>();
     const add = (variable: string, block: Rs2Block, line: number, right: string, nodes: Node[] | null) => {
         const writers = byVariable.get(variable) ?? [];
         if (!writers.some((writer) => writer.block === block && writer.line === line && writer.right === right)) {
@@ -586,7 +587,9 @@ export function questProgressWriters(content: string, sourceFiles: readonly stri
             let nodes: Node[] | null = null;
             try {
                 nodes = parseBody(block.body);
-                walkStatements(nodes, (stmt) => addAssignment(block, stmt.line, stmt.text, nodes));
+                for (const statement of parseProgressStatements(block, '', noConstants, nodes)) {
+                    addAssignment(block, statement.line, statement.text, nodes);
+                }
             } catch {
                 // Physical assignment lines below still cover unparsed switch bodies.
             }
@@ -685,6 +688,7 @@ function progressWriterDomainsFromCensus(
     census: ProgressWriterCensus,
 ): ProgressWriterDomains {
     const unaccounted = new Set<string>();
+    const noConstants = new Map<string, number>();
     const possibleWrites = (text: string) => {
         const code = stripComment(text).trim().replace(/^case\s+[^:]+:\s*/, '');
         const variables = new Set<string>();
@@ -698,23 +702,27 @@ function progressWriterDomainsFromCensus(
         for (const match of code.matchAll(prefix)) variables.add(match[1]);
         return variables;
     };
-    const accountWrites = (text: string, block: Rs2Block, line: number) => {
+    const accountWrites = (text: string, block: Rs2Block, line: number, allowParsedWrites = false) => {
         const code = stripComment(text).trim().replace(/^case\s+[^:]+:\s*/, '');
         const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=(?!=)\s*(.+)$/.exec(code);
         const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
         const knownAtLine = (variable: string) => (census.byVariable.get(variable) ?? [])
             .some((writer) => writer.block === block && writer.line === line);
         for (const variable of possibleWrites(text)) {
-            if (!targets.has(variable) && !knownAtLine(variable)) unaccounted.add(variable);
+            if (!targets.has(variable) && !(allowParsedWrites && knownAtLine(variable))) unaccounted.add(variable);
         }
     };
     for (const block of census.blocks) {
         try {
-            walkStatements(parseBody(block.body), (statement) => accountWrites(statement.text, block, statement.line));
+            for (const statement of parseProgressStatements(block, '', noConstants)) {
+                accountWrites(statement.text, block, statement.line);
+            }
         } catch {
             // The physical lines below still cover direct writes in opaque control syntax.
         }
-        for (const raw of block.body) accountWrites(raw.text, block, raw.line);
+        // A parsed statement can expose another write on the same line.
+        // Only the raw control line may borrow its known AST assignments.
+        for (const raw of block.body) accountWrites(raw.text, block, raw.line, true);
     }
     return (variable: string) => {
         const writers = census.byVariable.get(variable) ?? [];

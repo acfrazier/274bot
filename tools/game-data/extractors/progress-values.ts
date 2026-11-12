@@ -1,4 +1,4 @@
-import type { Rs2Block } from './gathering-content.ts';
+import { stripComments, type Rs2Block } from './gathering-content.ts';
 
 export type Guard = { expression: string; polarity: boolean };
 export type ProgressValueResolver = (block: Rs2Block, line: number, selector: string, caseValues: readonly number[], defaultCase: boolean) => readonly (readonly Guard[])[] | null;
@@ -7,10 +7,16 @@ type Alternative = { value: number | null; guards: readonly Guard[] };
 type Bindings = ReadonlyMap<string, readonly Alternative[]>;
 type Path = readonly Guard[];
 type Context = { block: Rs2Block; line: number; beforeIndex: number | null; bindings: Bindings; visiting: ReadonlySet<number> };
-type BlockInfo = { block: Rs2Block; index: number; statements: readonly Statement[] };
+type BlockInfo = { block: Rs2Block; index: number; statements: readonly Statement[]; flow: SourceControlFlow };
 type Reference = { caller: BlockInfo; statement: Statement; statementIndex: number; args: string[] | null; bound: boolean };
 type Literal = Guard;
 type Formula = Literal[][];
+type SourceControlFlow = {
+    rows: { line: number; text: string }[];
+    switches: { start: number; end: number }[];
+    incompleteSwitch: boolean;
+    unsupportedSwitch: boolean;
+};
 
 const normalizeSpace = (text: string) => text.trim().replace(/\s+/g, ' ');
 
@@ -207,8 +213,10 @@ function uncoveredPaths(paths: readonly Path[], stripStrings: (text: string) => 
 
 function assignmentFor(statement: Statement, stripStrings: (text: string) => string) {
     const clean = stripComment(statement.text, stripStrings).trim();
-    const match = /^(?:def_int\s+)?\$([A-Za-z0-9_]+)\s*=\s*(.*?)\s*;?$/.exec(clean);
-    return match ? { name: match[1], expression: match[2].trim() } : null;
+    const prefix = /^(?:\+\+|--)\s*\$([A-Za-z0-9_]+)/.exec(clean);
+    if (prefix) return { name: prefix[1], expression: null };
+    const match = /^(?:def_int\s+)?\$([A-Za-z0-9_]+)\s*(\+\+|--|(?:<<|>>|[+\-*/%&|^])?=)\s*(.*?)\s*;?$/.exec(clean);
+    return match ? { name: match[1], expression: match[2] === '=' ? match[3].trim() : null } : null;
 }
 
 function parameterList(block: Rs2Block, argumentsOf: (text: string, open: number) => string[]) {
@@ -244,8 +252,45 @@ function statementBefore(statement: Statement, statementIndex: number, line: num
     return statement.line < line || (statement.line === line && beforeIndex !== null && statementIndex < beforeIndex);
 }
 
-function hasUnsupportedLoop(block: Rs2Block, line: number, stripStrings: (text: string) => string) {
-    return block.body.some((row) => row.line <= line && /\b(?:while|for|do)\b/.test(stripComment(row.text, stripStrings)));
+function sourceControlFlow(block: Rs2Block, stripStrings: (text: string) => string): SourceControlFlow {
+    const lines = stripComments(block.body.map((row) => row.text).join('\n')).split('\n');
+    const rows = block.body.map((row, index) => ({ line: row.line, text: stripStrings(lines[index] ?? '') }));
+    const switches: SourceControlFlow['switches'] = [];
+    const stack: { start: number; switch: boolean; default: boolean }[] = [];
+    let pending = false;
+    let incompleteSwitch = false;
+    let unsupportedSwitch = false;
+    for (const row of rows) {
+        for (const match of row.text.matchAll(/\bswitch_[A-Za-z0-9_]+\b|\bcase\s+default\s*:|^\s*default\s*:|[{}]/g)) {
+            const token = match[0].trim();
+            if (token.startsWith('switch_')) {
+                pending = true;
+                unsupportedSwitch ||= token !== 'switch_int' && token !== 'switch_component';
+            } else if (token === '{') {
+                stack.push({ start: row.line, switch: pending, default: false });
+                pending = false;
+            } else if (token === '}') {
+                const frame = stack.pop();
+                if (!frame) incompleteSwitch = true;
+                else if (frame.switch) {
+                    switches.push({ start: frame.start, end: row.line });
+                    incompleteSwitch ||= !frame.default;
+                }
+            } else if (stack.at(-1)?.switch) {
+                stack[stack.length - 1].default = true;
+            }
+        }
+    }
+    return { rows, switches, incompleteSwitch: incompleteSwitch || pending || stack.length > 0, unsupportedSwitch };
+}
+
+function mutableGuards(guards: readonly Guard[], statements: readonly Statement[], stripStrings: (text: string) => string) {
+    const variables = new Set(guards.flatMap((guard) => [...stripStrings(guard.expression).matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1])));
+    if (variables.size === 0) return false;
+    return statements.some((statement) => {
+        const write = /^((?:%[A-Za-z0-9_]+\s*,\s*)*%[A-Za-z0-9_]+)\s*(?:\+\+|--|(?:<<|>>|[+\-*/%&|^])?=)/.exec(stripComment(statement.text, stripStrings).trim());
+        return write !== null && [...write[1].matchAll(/%([A-Za-z0-9_]+)/g)].some((match) => variables.has(match[1]));
+    });
 }
 
 export function createProgressValueResolver(
@@ -255,7 +300,9 @@ export function createProgressValueResolver(
     argumentsOf: (text: string, open: number) => string[],
     stripStrings: (text: string) => string,
 ): ProgressValueResolver {
-    const infos: BlockInfo[] = blocks.map((block, index) => ({ block, index, statements: statementsFor(block) }));
+    const infos: BlockInfo[] = blocks.map((block, index) => ({
+        block, index, statements: statementsFor(block), flow: sourceControlFlow(block, stripStrings),
+    }));
     const infoByBlock = new Map(infos.map((info) => [info.block, info] as const));
     const procedures = new Map<string, BlockInfo[]>();
     const labels = new Map<string, BlockInfo[]>();
@@ -295,6 +342,7 @@ export function createProgressValueResolver(
             const tokenPattern = /[A-Za-z_][A-Za-z0-9_]*/g;
             for (const match of clean.matchAll(tokenPattern)) {
                 if (match[0] !== name) continue;
+                const previous = clean[match.index! - 1];
                 if (previous === '@' || previous === '~' || previous === '$' || previous === '%' || previous === '^') continue;
                 references.push({ caller, statement, statementIndex, args: null, bound: false });
             }
@@ -329,7 +377,11 @@ export function createProgressValueResolver(
         for (const parameter of parameters) bindings.set(parameter.name, []);
         for (const reference of references) {
             const callerBindings = entryBindings(reference.caller);
-            const guards = reference.statement.guards;
+            const before = reference.caller.statements.filter((statement, index) =>
+                statementBefore(statement, index, reference.statement.line, reference.statementIndex));
+            const stable = (guard: Guard) => !stripStrings(guard.expression).includes('$')
+                && !mutableGuards([guard], before, stripStrings);
+            const guards = reference.statement.guards.filter(stable);
             const arityMatches = reference.bound && reference.args !== null && reference.args.length === parameters.length;
             for (let position = 0; position < parameters.length; position += 1) {
                 const parameter = parameters[position];
@@ -338,9 +390,12 @@ export function createProgressValueResolver(
                     alternatives.push({ value: null, guards });
                     continue;
                 }
-                const actuals = resolveExpression(reference.caller, reference.statement.line, reference.statementIndex, reference.args![position], callerBindings, new Set());
+                const actuals = resolveExpression(reference.caller.block, reference.statement.line, reference.statementIndex, reference.args![position], callerBindings, new Set());
                 if (actuals === null) alternatives.push({ value: null, guards });
-                else for (const actual of actuals) alternatives.push({ value: actual.value, guards: [...guards, ...actual.guards] });
+                else for (const actual of actuals) alternatives.push({
+                    value: actual.value,
+                    guards: [...guards, ...actual.guards.filter(stable)],
+                });
             }
         }
         for (const parameter of parameters) {
@@ -374,14 +429,28 @@ export function createProgressValueResolver(
         return infoByBlock.get(block)?.statements ?? statementsFor(block);
     }
 
+    function flowFor(block: Rs2Block) {
+        return infoByBlock.get(block)?.flow ?? sourceControlFlow(block, stripStrings);
+    }
+
+    function hasUnsupportedLoop(block: Rs2Block, line: number) {
+        const flow = flowFor(block);
+        return flow.unsupportedSwitch || flow.rows.some((row) => row.line <= line && /\b(?:while|for|do)\b/.test(row.text));
+    }
+
     function assignmentAlternatives(context: Context, name: string): Alternative[] | null {
-        if (hasUnsupportedLoop(context.block, context.line, stripStrings)) return [{ value: null, guards: [] }];
+        if (hasUnsupportedLoop(context.block, context.line)) return [{ value: null, guards: [] }];
         const statements = expressionsForBlock(context.block);
         const writes = statements.flatMap((statement, statementIndex) => {
             if (!statementBefore(statement, statementIndex, context.line, context.beforeIndex)) return [];
             const assignment = assignmentFor(statement, stripStrings);
             return assignment?.name === name ? [{ statement, statementIndex, expression: assignment.expression }] : [];
         });
+        const before = statements.filter((statement, index) => statementBefore(statement, index, context.line, context.beforeIndex));
+        if (writes.some(({ statement }) => mutableGuards(statement.guards, before, stripStrings))) return null;
+        if (writes.some(({ statement }) => flowFor(context.block).switches.some((range) => range.start <= statement.line && statement.line <= range.end))) return null;
+        // Local predicates can change between writes and cannot cross a caller frame.
+        if (writes.some(({ statement }) => statement.guards.some((guard) => stripStrings(guard.expression).includes('$')))) return null;
         const initial = context.bindings.get(name);
         if (writes.length === 0) return initial ? [...initial] : null;
 
@@ -403,7 +472,8 @@ export function createProgressValueResolver(
                 lastWritePaths = lastWritePaths.flatMap((path) => subtractPath([path], writes[later].statement.guards, stripStrings));
                 if (lastWritePaths.length === 0) break;
             }
-            const expression = resolveExpression(context.block, write.statement.line, write.statementIndex, write.expression, context.bindings, context.visiting);
+            const expression = write.expression === null ? null
+                : resolveExpression(context.block, write.statement.line, write.statementIndex, write.expression, context.bindings, context.visiting);
             if (expression === null) {
                 for (const path of lastWritePaths) results.push({ value: null, guards: path });
             } else {
@@ -488,6 +558,7 @@ export function createProgressValueResolver(
         if (cached) return [...cached];
         if (visiting.has(info.index)) return null;
         const nextVisiting = new Set(visiting).add(info.index);
+        if (info.flow.incompleteSwitch || info.flow.unsupportedSwitch) return null;
         const statements = info.statements;
         const returns = statements.flatMap((statement, statementIndex) => {
             const clean = stripComment(statement.text, stripStrings).trim();
@@ -503,6 +574,9 @@ export function createProgressValueResolver(
             return [{ statement, statementIndex, expression }];
         });
         if (returns.length === 0) return null;
+        if (returns.some(({ statement }) => statement.guards.some((guard) => stripStrings(guard.expression).includes('$')))) return null;
+        if (returns.some(({ statement, statementIndex }) => mutableGuards(statement.guards,
+            statements.filter((candidate, index) => statementBefore(candidate, index, statement.line, statementIndex)), stripStrings))) return null;
 
         const out: Alternative[] = [];
         for (const returned of returns) {
@@ -514,7 +588,7 @@ export function createProgressValueResolver(
         }
         const uncovered = uncoveredPaths(returns.map(({ statement }) => statement.guards), stripStrings);
         for (const path of uncovered) out.push({ value: null, guards: path });
-        if (hasUnsupportedLoop(info.block, Number.POSITIVE_INFINITY, stripStrings)) out.push({ value: null, guards: [] });
+        if (hasUnsupportedLoop(info.block, Number.POSITIVE_INFINITY)) out.push({ value: null, guards: [] });
         const result = dedupeAlternatives(out);
         procedureCache.set(key, result);
         return [...result];
