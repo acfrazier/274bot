@@ -24,17 +24,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Bug fixes
 
-- Compatibility catalog imports and refreshes validate new and changed
-  cards with the selected profile's game data and bank locations. Dragon
-  cards and MuleCrafter no longer fail to load because validation used empty
-  data. Validation stops with a clear message if the selected profile lacks
-  the required data.
-
-- Catalog imports now validate large catalogs in bounded batches. The panel
-  and TUI show the same load-failure notice. The app reports when the
-  selected profile's map data is not prepared.
-
-- The app shows a notice when a content change cancels pending reload work.
+- Catalog cards that read game data or bank locations when they load, such
+  as the dragon cards and MuleCrafter, load again. Checking a catalog after
+  an import or refresh now uses the selected profile's game data and banks,
+  and the panel and the terminal app show the same notice when cards fail
+  to load.
 
 ### Developer tools
 
