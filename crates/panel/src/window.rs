@@ -767,14 +767,23 @@ impl RecreateWindowState {
 }
 
 #[cfg(target_os = "macos")]
+fn with_main_thread_marker<T>(
+    on_main_thread: impl FnOnce(objc2_foundation::MainThreadMarker) -> T,
+) -> Option<T> {
+    let main_thread = objc2_foundation::MainThreadMarker::new()?;
+    Some(on_main_thread(main_thread))
+}
+
+#[cfg(target_os = "macos")]
 fn application_is_active() -> bool {
     use objc2_app_kit::NSApplication;
-    use objc2_foundation::MainThreadMarker;
 
-    let main_thread = MainThreadMarker::new().expect("panel windows run on the main thread");
-    let application = NSApplication::sharedApplication(main_thread);
-    // SAFETY: this reads AppKit state on the window event loop's main thread.
-    unsafe { application.isActive() }
+    with_main_thread_marker(|main_thread| {
+        let application = NSApplication::sharedApplication(main_thread);
+        // SAFETY: MainThreadMarker proves this call runs on the main thread.
+        unsafe { application.isActive() }
+    })
+    .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1946,6 +1955,11 @@ fn earliest(wake: Instant, render_due: Option<Instant>) -> Instant {
     render_due.map_or(wake, |due| due.min(wake))
 }
 
+#[cfg(target_os = "macos")]
+fn macos_event_loop_activate_ignoring_other_apps() -> bool {
+    false
+}
+
 /// Run the panel window loop. `ui_frame` is called every frame with the Ui
 /// and `Gpu` handle, and returns `true` to end the loop after that frame.
 /// `on_gpu_init` fires once the device/queue/surface exist. `on_gpu_shutdown`
@@ -1967,7 +1981,7 @@ where
     #[cfg(target_os = "macos")]
     {
         use winit::platform::macos::EventLoopBuilderExtMacOS;
-        builder.with_activate_ignoring_other_apps(false);
+        builder.with_activate_ignoring_other_apps(macos_event_loop_activate_ignoring_other_apps());
     }
     let event_loop = builder.build()?;
     match cfg.redraw {

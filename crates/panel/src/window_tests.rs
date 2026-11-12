@@ -69,6 +69,30 @@ fn first_window_only_requests_activation_for_an_already_active_app() {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_event_loop_does_not_activate_ignoring_other_apps() {
+    assert!(!macos_event_loop_activate_ignoring_other_apps());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn application_active_guard_skips_appkit_off_main_thread() {
+    let (active, is_active_called) = std::thread::spawn(|| {
+        let mut is_active_called = false;
+        let active = with_main_thread_marker(|_| {
+            is_active_called = true;
+            true
+        });
+        (active, is_active_called)
+    })
+    .join()
+    .expect("the worker thread must complete");
+
+    assert_eq!(active, None);
+    assert!(!is_active_called);
+}
+
 #[test]
 fn panel_adapter_request_options_uses_the_platform_default() {
     let expected = if cfg!(target_os = "linux") {
