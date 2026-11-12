@@ -293,6 +293,15 @@ enum Finish {
     Unsettled,
 }
 
+/// Why the keeper walk now out was sent. A failed walk names it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ApproachCause {
+    /// The core's walk to a keeper that the local route cannot reach.
+    Unreachable,
+    /// A recovery walk after the server's "I can't reach that!".
+    Refusal,
+}
+
 pub struct BuyMachine {
     request: BuyRequest,
     run: RunKey,
@@ -305,7 +314,18 @@ pub struct BuyMachine {
     last_walk_failure: Option<Arc<str>>,
     opening_trade: Option<OpeningTrade>,
     trade_attempted: bool,
+    /// Wander replans left for this machine
+    /// ([`crate::quester::families::dialogue::npc_approach_replan_budget`]).
+    /// As in Dialogue (`dialogue.rs:1376-1383`), only a keeper tile that
+    /// changed since the last walk spends one.
     approach_replans_left: u16,
+    approach_replans_total: u16,
+    /// This open already sent its free recovery walk after a refusal
+    /// (`dialogue.rs:885-899`).
+    refusal_walked: bool,
+    /// The keeper tile that the last walk of this open went to.
+    walk_target: Option<api::WorldTile>,
+    walk_cause: ApproachCause,
     reach_failure_pending: bool,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
@@ -353,6 +373,10 @@ impl NativeMachine for BuyMachine {
             opening_trade: None,
             trade_attempted: false,
             approach_replans_left,
+            approach_replans_total: approach_replans_left,
+            refusal_walked: false,
+            walk_target: None,
+            walk_cause: ApproachCause::Unreachable,
             reach_failure_pending: false,
             keeper_index: None,
             pending: None,
@@ -452,46 +476,9 @@ impl NativeMachine for BuyMachine {
                     if self.keeper_index.is_none() {
                         self.keeper_index = selected_keeper_index;
                     }
-                    let decision = match decision {
-                        Decision::Opened if self.reach_failure_pending => {
-                            self.reach_failure_pending = false;
-                            Decision::Opened
-                        }
-                        Decision::Trade(keeper) if self.reach_failure_pending => {
-                            self.reach_failure_pending = false;
-                            if Self::keeper_needs_approach(keeper.route) {
-                                self.replan_approach(&keeper)
-                            } else {
-                                Decision::Trade(keeper)
-                            }
-                        }
-                        Decision::Walk(tile) if self.reach_failure_pending => {
-                            self.reach_failure_pending = false;
-                            match Self::keeper(request, keeper_index, cx) {
-                                Some(keeper) if Self::keeper_needs_approach(keeper.route) => {
-                                    self.replan_approach(&keeper)
-                                }
-                                _ => Decision::Walk(tile),
-                            }
-                        }
-                        Decision::Failed(reason) if self.reach_failure_pending => {
-                            self.reach_failure_pending = false;
-                            match Self::keeper(request, keeper_index, cx) {
-                                Some(keeper) if Self::keeper_needs_approach(keeper.route) => {
-                                    self.replan_approach(&keeper)
-                                }
-                                _ => Decision::Failed(reason),
-                            }
-                        }
-                        Decision::Walk(_) if self.trade_attempted => {
-                            // A timeout is not proof that the server cannot
-                            // path the player. Retry Trade with the current
-                            // keeper before deciding to walk.
-                            Self::keeper(request, keeper_index, cx)
-                                .map_or(Decision::Wait, Decision::Trade)
-                        }
-                        decision => decision,
-                    };
+                    let refused = !matches!(decision, Decision::Wait)
+                        && std::mem::take(&mut self.reach_failure_pending);
+                    let decision = self.adapt(decision, refused, cx);
                     if std::task::ready!(self.act(decision, &facts, cx))? {
                         self.accept_page(cx)?;
                     } else {
@@ -551,6 +538,7 @@ impl NativeMachine for BuyMachine {
                         Poll::Ready(Ok(walk)) => walk,
                     };
                     self.walk_retry.action_submitted();
+                    self.walk_target = Some(target);
                     self.phase = Phase::Walk(Box::new(walk));
                     return Poll::Pending;
                 }
@@ -593,10 +581,12 @@ impl NativeMachine for BuyMachine {
                     // spent (or the failure is not retryable); its decision
                     // keeps the last receipt's own reason.
                     let decision = if arrived {
-                        self.open
-                            .walked(true, || Self::keeper(request, keeper_index, cx))
+                        let decision = self
+                            .open
+                            .walked(true, || Self::keeper(request, keeper_index, cx));
+                        self.adapt(decision, false, cx)
                     } else {
-                        OpenCore::walk_failed(self.last_walk_failure.as_deref())
+                        self.walk_failure()
                     };
                     self.phase = Phase::Open;
                     if std::task::ready!(self.act(decision, &facts, cx))? {
@@ -698,6 +688,8 @@ impl NativeMachine for BuyMachine {
                         // take our CloseModal path, just like the shop page.
                         self.open = OpenCore::default();
                         self.trade_attempted = false;
+                        self.refusal_walked = false;
+                        self.walk_target = None;
                         self.opening_trade = None;
                         self.phase = Phase::Open;
                         continue;
@@ -735,19 +727,101 @@ impl BuyMachine {
         }
     }
 
-    fn replan_approach(&mut self, keeper: &shop_open::Keeper) -> Decision {
-        if self.approach_replans_left == 0 {
-            Decision::Failed(Arc::from(format!(
-                "the keeper stayed out of range after all approach retries; last keeper tile ({}, {}, level {}), route {:?}; last walk failure: {}",
-                keeper.tile.x,
-                keeper.tile.z,
-                keeper.tile.level,
-                keeper.route,
-                self.last_walk_failure.as_deref().unwrap_or("none")
-            )))
-        } else {
-            self.approach_replans_left -= 1;
-            Decision::Walk(keeper.tile)
+    /// Apply the engine's reach rule to one core decision. A Trade sent from
+    /// a distance makes the server walk the player and follow the keeper;
+    /// only "I can't reach that!" shows that the keeper is unreachable
+    /// (`client.rs:4244-4282`, `OpNpcHandler.ts:46-49`, `Player.ts:423`,
+    /// `Player.ts:1255-1302`). `refused` is a fresh refusal of this open's
+    /// Trade. Spent Trades and a missing keeper stay terminal.
+    ///
+    /// One open then sends at most [`shop_open::OPEN_ATTEMPTS`] Trades and
+    /// at most three walk episodes: the core's walk to a keeper that is
+    /// unreachable before the first Trade, the free recovery walk after the
+    /// first refusal, and one wander replan after the second refusal, only
+    /// when the keeper moved. The third refusal spends the last Trade, so
+    /// no walk follows it. Each episode is at most
+    /// [`crate::native::QUEST_WALK_MAX_ATTEMPTS`] walk requests.
+    fn adapt(&mut self, decision: Decision, refused: bool, cx: &ActionContext<'_>) -> Decision {
+        let trades_left = self.open.trades_left() > 0;
+        let decision = match decision {
+            Decision::Trade(_) | Decision::Walk(_) | Decision::Failed(_)
+                if refused && trades_left =>
+            {
+                match Self::keeper(&self.request, self.keeper_index, cx) {
+                    Some(keeper) if Self::keeper_needs_approach(keeper.route) => {
+                        return self.recover_from_refusal(&keeper);
+                    }
+                    _ => decision,
+                }
+            }
+            // A timeout is not proof that the server cannot path the player,
+            // and neither is a local route that is still closed after a walk.
+            // Send Trade to the keeper's current index instead of walking.
+            Decision::Walk(_) | Decision::Failed(_) if self.trade_attempted && trades_left => {
+                Self::keeper(&self.request, self.keeper_index, cx).map_or(decision, Decision::Trade)
+            }
+            decision => decision,
+        };
+        if matches!(decision, Decision::Walk(_)) {
+            self.walk_cause = ApproachCause::Unreachable;
+        }
+        decision
+    }
+
+    /// The server refused this open's Trade with "I can't reach that!" and
+    /// the keeper still needs an approach. As in Dialogue, the first refusal
+    /// gets one recovery walk (`dialogue.rs:885-899`). A later refusal gets
+    /// a walk only when the keeper's observed tile changed since the last
+    /// walk, and that walk spends one wander replan
+    /// (`dialogue.rs:1376-1383`). A refusal at an unchanged tile is terminal.
+    fn recover_from_refusal(&mut self, keeper: &Keeper) -> Decision {
+        let tile = keeper.tile;
+        if !self.refusal_walked {
+            self.refusal_walked = true;
+            self.walk_cause = ApproachCause::Refusal;
+            return Decision::Walk(tile);
+        }
+        match self.walk_target {
+            Some(last) if last != tile => {
+                if self.approach_replans_left == 0 {
+                    return Decision::Failed(Arc::from(format!(
+                        "the server refused the Trade again with \"I can't reach that!\" after the keeper moved from ({}, {}, level {}) to ({}, {}, level {}), route {:?}; no wander replan is left (the keeper's wander range allows {} in all)",
+                        last.x,
+                        last.z,
+                        last.level,
+                        tile.x,
+                        tile.z,
+                        tile.level,
+                        keeper.route,
+                        self.approach_replans_total,
+                    )));
+                }
+                self.approach_replans_left -= 1;
+                self.walk_cause = ApproachCause::Refusal;
+                Decision::Walk(tile)
+            }
+            _ => Decision::Failed(Arc::from(format!(
+                "the server refused the Trade again with \"I can't reach that!\" after the recovery walk; the keeper did not move from ({}, {}, level {}), route {:?}",
+                tile.x, tile.z, tile.level, keeper.route,
+            ))),
+        }
+    }
+
+    /// The keeper walk failed and its bounded retries are spent. The text
+    /// says why the walk went out and keeps the last receipt's reason.
+    fn walk_failure(&self) -> Decision {
+        match self.walk_cause {
+            ApproachCause::Unreachable => OpenCore::walk_failed(self.last_walk_failure.as_deref()),
+            ApproachCause::Refusal => {
+                let target = self.walk_target.map_or_else(
+                    || "an unobserved tile".to_owned(),
+                    |tile| format!("({}, {}, level {})", tile.x, tile.z, tile.level),
+                );
+                Decision::Failed(Arc::from(format!(
+                    "the recovery walk to the keeper at {target} after \"I can't reach that!\" failed; last walk failure: {}",
+                    self.last_walk_failure.as_deref().unwrap_or("none")
+                )))
+            }
         }
     }
 
@@ -957,6 +1031,7 @@ impl BuyMachine {
             Decision::Walk(tile) => {
                 let walk = Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)?;
                 self.walk_retry.action_submitted();
+                self.walk_target = Some(tile);
                 self.phase = Phase::Walk(Box::new(walk));
                 Poll::Ready(Ok(false))
             }
