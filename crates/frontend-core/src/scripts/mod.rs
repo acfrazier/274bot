@@ -42,6 +42,8 @@ pub use prestart_zones::{
     START_ZONE_PANEL_SCROLL_HINT, START_ZONE_SCOPE_TITLE, START_ZONE_TUI_SCROLL_HINT,
     START_ZONE_UNAVAILABLE_NOTICE,
 };
+#[cfg(feature = "js")]
+pub use script_js::UnloadReason;
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView, StatusView,
@@ -585,11 +587,11 @@ impl<'a> BrowseCard<'a> {
         }
     }
 
-    pub fn unloadable(self) -> Option<&'a str> {
+    #[cfg(feature = "js")]
+    pub fn unloadable(self) -> Option<&'a UnloadReason> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
-            #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => card.unloadable.as_deref(),
+            BrowseCardKind::Loaded(card) => card.unloadable.as_ref(),
         }
     }
 
@@ -2369,7 +2371,7 @@ impl Scripts {
                 let values = match settings.script_settings.get(&key) {
                     Some(entry) => {
                         let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
-                        if version != card.schema_version {
+                        if !card.reads_saved_schema(version) {
                             return None;
                         }
                         values.clone()
@@ -2445,7 +2447,7 @@ impl Scripts {
                 let overrides = match row.settings.script_settings.get(&identity) {
                     Some(entry) => {
                         let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
-                        if version != card.schema_version {
+                        if !card.reads_saved_schema(version) {
                             return None;
                         }
                         values.clone()

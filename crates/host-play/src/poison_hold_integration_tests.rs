@@ -1,6 +1,7 @@
 use super::HoldWait;
 use crate::admission::{self, Admission, RiskPolicy, WalkAllow, WalkRefusal};
 use crate::script_runtime::NavBot;
+use crate::DangerDecision;
 use api::condition::{PoisonState, WindowReset};
 use api::interact::Driver;
 use api::snapshot::{
@@ -128,8 +129,11 @@ impl HoldRig {
         );
         assert_eq!(input.poison, PoisonState::Unknown { since: 0 });
         let admission = Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                permitted: false,
+                policy: RiskPolicy::Avoid,
+                enforce: true,
+            },
             grants: nav_planner::zones::ZoneExempt::NONE,
             allow: WalkAllow::default(),
             input,
@@ -235,8 +239,11 @@ impl HoldRig {
         let request_id = bot.walk_request_id.wrapping_add(1);
         let input = admission::capture(&self.snapshot, false, bot.condition.current(), false, None);
         let admission = Admission {
-            policy: RiskPolicy::Avoid,
-            enforce: true,
+            decision: DangerDecision {
+                permitted: false,
+                policy: RiskPolicy::Avoid,
+                enforce: true,
+            },
             grants: nav_planner::zones::ZoneExempt::NONE,
             allow: WalkAllow::default(),
             input,

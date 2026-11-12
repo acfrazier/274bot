@@ -1,9 +1,49 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Next — Unreleased
+## [Unreleased]
+
+### Breaking changes
+
+- 274bot no longer checks that game data, navigation packs and map files
+  match the game content they were built from. If you build from changed
+  game content, regenerate the data from that content; data built from other
+  content can make bots behave wrongly. Release builds still check that the
+  navigation and map files they ship are intact.
+- Map images and the map catalogue saved by 0.2.9 are not reused. Release
+  builds install the shipped map again; other builds rebuild the map images
+  and the catalogue once after you upgrade. This is the only saved data that
+  does not carry over; every other 0.2.9 saved format still loads.
+- Direct navigation-pack builds now require `--engine` with the engine checkout
+  for the selected game revision. The local-data builder supplies it automatically.
+
+### Developer tools
+
+- A generated game data file that fails to decode now names the file and says
+  to regenerate it with `python3 tools/local-data/build.py`.
+- The game-data generator now accepts content where one ore row is mined by
+  rocks with different mining handlers (Haunted Mine veins mine with the normal
+  handler, regular iron with the fast one). It gives each handler its own
+  gathering method, so every rock keeps its own handler's timing. Data built
+  from earlier content does not change.
+
+### Gatherer
+
+- The Iron option now covers two methods: regular iron rocks keep their fast
+  method, and the Haunted Mine iron veins get their own method with the normal
+  handler's delayed yield. The Knife tick technique times each target with its
+  own method's facts and no longer carries a timing cycle from one method to a
+  target of another.
+- Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
+  with spare logs, and judge cycles without a chance XP requirement. Startup
+  counts player-tile movement on native and replacement routes.
+
+### Panel and terminal app
+
+- The TUI keeps every Quester start-zone row reachable with PageUp and
+  PageDown. The unqualified-guide warning stays visible while the list scrolls.
 
 ### Scenario receipts
 
@@ -12,7 +52,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Manifests bind run, actor and session identities; PNG sidecars include durable
   artifact SHA-256 hashes. Disarmed recording adds no tick or paint allocations.
 
-## [0.2.9] — Unreleased
+## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
 
@@ -20,394 +60,91 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Saved data in formats from before 0.2.8 no longer upgrades. Interactive users
   can move refused files aside and start fresh. Noninteractive runs stop without
   changing files. Supported 0.2.8 formats still load.
+- By default, release builds start only Quester guides that passed a full live
+  run. In this release there are fourteen: Cook's Assistant, Demon Slayer,
+  Doric's Quest, Goblin Diplomacy, Hazeel Cult, Imp Catcher, Monk's Friend,
+  Priest in Peril, The Restless Ghost, Romeo & Juliet, Rune Mysteries, Sheep
+  Shearer, Vampire Slayer and Witch's Potion. Seven guides that 0.2.8 released
+  are now drafts: Prince Ali Rescue, Pirate's Treasure, The Knight's Sword,
+  Death Plateau, The Tourist Trap, Clock Tower and Plague City. By default, the
+  quest picker does not offer drafts. Start refuses a saved draft choice and
+  names the guide. To select and run drafts, turn on **Allow unqualified
+  guides** in Script prefs with the Quester picked. It is off by default.
+  Before Start, a warning names the unqualified guides. Known issues lists
+  the draft guides.
 
-### Gatherer
+### Panel and terminal app
 
-- Knife arm stays off by default. The built-in Gatherer arms only an ordinary
-  NPC type and its fishing operation observed at the click tick; a same-tick
-  transform remains possible. Whirlpool and Big fish types stay unarmed; other
-  callers still need complete transform-closure proof.
-- NPC Knife tests cover the built-in fishing exception and its refusal paths.
-  Runtime content validation rejects every whirlpool type, including 404–406.
-- The host's disposal integration tests now use Gatherer's protected-item bound,
-  so the optional knife and log supply does not break their compilation.
-- Fishing at a fixed loc spot now selects the observed loc, approaches it when
-  unloaded, and returns to it after banking. Moving NPC spots keep their own
-  observation and return paths.
-- A successful depleting Knife cycle survives a skipped edge while a live
-  replacement is selected. Gatherer arms a live loc immediately only from an
-  exact current stand. For a remote loc, Gatherer keeps the cycle parked while
-  it completes the ordinary approach walk, then re-adopts the cycle after
-  arrival.
-- A continuing Knife cycle that needs a recovery Act cannot count as verified,
-  even when the native success roll arrives before the Act receipt. It remains
-  a slip and keeps the pending receipt's owner through depletion handoff.
-- Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
-  position against `PLAYER_INFO`. A chat-only close no longer requires a
-  main-modal transition, and a retained close count cannot stand for a new one.
-- Knife engine tests use actual ordinary-click packet pairs, keep foreign
-  event walks on the same tile, and prepare adjacent resource positions before
-  the measured Start. The free-world refusal window starts at its real arm.
+- Cards that the script catalog retires no longer read as failed imports. The
+  panel and the terminal app now say **failed import: <specifier>** only when
+  a script's import is unsupported, and **unavailable: <reason>** when the
+  card is retired or outside supported scope. Retirement messages now name
+  the native replacement or the unsupported feature: the Gatherer for
+  Woodcutter, Miner and Fisher; the Gatherer's Mining and Rune essence
+  resource with a Custom location for EssMiner; and the Quester for AIOQuester
+  and Barcrawl (as part of Scorpion Catcher). ArravSupplier, RoguesPurse and
+  MarketMaker say which unsupported training or trading loop keeps them
+  unavailable. A retired card is not a failed script: a catalog refresh
+  neither records nor counts a load failure for it, even when its source
+  changed.
+- The panel wraps the global danger warning at the docked Nav window width.
+- Profiles and Fleet now share one saved order. The **Profiles** window
+  lists your profiles in your saved Load order (not alphabetically), and
+  dragging a row there changes the same order as a Fleet drag in the panel
+  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
+  works while the Fleet is sorted by Name or Status, and leaves that sort
+  alone. While an order change saves, the Profiles list and the Fleet
+  table show **Saving…**; if the save fails, both show the reason and
+  your last saved order comes back. A line on the row under your drag
+  marks where the profile will land, and a name too long for its row is
+  cut with a "…" (hover shows the whole name). Importing rs2b0t
+  profiles now keeps the export file's order: new profiles join the end
+  of your saved order in the file's sequence, and a profile you already
+  have keeps its place.
+- **Profiles** now closes when you press its ✕ or **Close** while no profile is
+  open for editing. Before, it stayed open and could not be closed. If a save of
+  the open profile is still being written, the panel still asks **Discard** or
+  **Keep editing** first.
+- The panel and TUI now keep a quest run's final status after it completes.
 
-### Combat
+### Login
 
-- When single-way combat refuses an attack on an NPC with "I'm already under
-  attack" because another NPC is hitting the bot, the fight now attacks the NPC
-  that hit it most recently if it may, or holds the attack for the game's
-  8-tick window. The first attack also takes an NPC that is already hitting the
-  bot over a nearer idle one. Refusals inside one 8-tick window count once;
-  after three windows in a row with a refusal and no hit landing on the target
-  (about 24 ticks), the fight ends with `single-way-blocked` instead of
-  repeating the click without end.
+- A bot with no script now behaves like a normal client. The game's idle
+  timer runs for it: after about 90 seconds without input (the Java client's
+  idle counter of 4500 cycles at its 20 ms cycle) the client asks the server to
+  log it out, and the bot stays logged out. A mouse or key press counts as
+  input, and so does a command you send to the bot (a walk, a route step or a
+  command you type). A bot with a running or paused script keeps the timer
+  switched off, as before.
+- A bot with no script no longer reconnects by itself after a disconnect (a
+  connection reset, a server restart, a missing server answer or a server
+  logout). It stays logged out until you log it in, and its status says why:
+  "logged out: disconnected while idle", "logged out: idle logout by the
+  server" (only when the client had asked for the idle logout) or "logged out
+  by the server". Starting a script on that bot logs it in. If the script
+  stops before the bot is back, the bot stays logged out; stopping a script
+  also cancels a reconnect that is under way. Bots running a script reconnect
+  as before, with the same back-off and the same stop after three unexpected
+  exits in ten minutes.
 
-### API and native dispatch
+### Client
 
-- Ordered input uses the raw Client `PLAYER_INFO` generation for both clock
-  guards. The session-relative snapshot tick and native completion tick stay
-  separate after relog. Stale generations and earlier-session owners are still
-  refused; no owner or event-budget check is bypassed.
-- A continuing KnifeArm routes its exact resource click as `MOVE_OPCLICK`,
-  not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
-  unchanged.
+- After the server restarts, the "System update in" countdown no longer
+  stays on screen once the bot logs back in. The client clears the countdown
+  on a successful login, as the Java 289 client does.
 
-### Quester
+### Host
 
-- Quester combat steps that need several chance drops keep fighting after a
-  kill without the drop, up to a limit of 281 kills, instead of stopping. This
-  fixes Doric's Quest stopping after the first iron ore. The step still fails
-  at the limit and reports the last combat result.
-
-### Memory diagnostics
-
-- Fatal memory TUI errors use the central password-redacting host log.
-  Their error text and exit code are unchanged.
-
-### Fixed during development
-
-- Failed development checks now print the last 200 log lines, so hosted CI
-  errors show the cause instead of only an exit code.
-- Tests that require generated game data now use the local-asset policy:
-  hosted CI prints a skip reason when the data is absent, while local runs
-  still fail with the generation command.
-- The whole-frame allocation test waits on the resource meter's published
-  probe generation instead of a thread-local allocation event.
-- The native Quester route-budget regression drains bounded worker stages
-  before checking exact request outcomes. Debug-test wall time is not a search
-  limit; production node, memory and goal budgets are unchanged.
-- Gatherer Knife requests now refuse NPC references captured before a later
-  `NPC_INFO` packet. Published snapshots carry the current packet generation,
-  including updates that leave the NPC's index, type and tile unchanged.
-- Development checks now run the isolated script-value shape test under its
-  current module name. They still refuse a child process that runs no test.
-- Game-data fixture tests accept valid stock rows without publication-count
-  pins. They still reject missing decoded NPC joins.
-- Shop vendors join the content keeper config, not only the display name.
-  An unrelated NPC named Bob no longer becomes a bronze-axe vendor.
-- Compiled scripts keep the requested settings revision separate from the
-  selected game-client revision during configuration preparation.
-- Compatibility content keeps an empty shop object before a game revision is
-  selected. Selected-fact errors still propagate instead of becoming empty data.
-- Shop publication borrows the selected shop rows without requiring unrelated
-  NPC keeper joins. Missing shops still fail, and vendor joins stay unchanged.
-- Radius-104 routes use compact zone partitions. Preferred and fallback goal
-  sets, the settle limit, and the memory limit remain unchanged.
-  Host requests also avoid the excluded-target table when bank planning cannot
-  use it. Captured inputs and reachable diagnostics remain charged.
-  Candidate storage stays charged once as input across initial and continuation
-  admissions. Missing-supply result storage grows only for actual diagnosed
-  rows, within its existing bound, instead of reserving it before every search.
-- Host route and bank diagnostics use the data-only quest-gate API. Their
-  existing evidence, prerequisite handover and search-budget outcomes remain.
-  Hosted regression tests keep explicit guards for absent local data.
-- Runtime resource-root setup no longer compiles into the navigation build
-  module. Test helpers compile only where used, without new dead-code allowances.
-  Tick-cycle tests retain their module and protocol in a separate test file;
-  the lint baseline records the approved production and test expectations.
-- Vault commands, panel preferences and walk-map fixtures use their current
-  shared interfaces.
-  Saved-settings fixtures keep current envelopes and explicit malformed-format
-  refusal checks.
-  Picker fixtures use the decoded world owned by their checked profile.
-- The Quester's Tourist Trap guide no longer walks to the rocks of the slope
-  outside the cell. It sends the "Climb-to" action from where it stands, and
-  the game walks the player, as it does for a human player. Before, the guide
-  asked for a walk that cannot exist and stopped on the first rock.
-- Random-event detection avoids temporary lowercase names for non-matching
-  NPCs and hazard locs. Matching and event handling are unchanged.
-
-### Not in this release
-
-- Legends Guild bank gate is conservative (completion instead of the door's
-  stage-50 threshold). This is a navigation correctness follow-up for work
-  after 0.2.9.
-
-- Caller-supplied bank-cost routers (`nearestWalkableBank`,
-  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
-  the random pause length (`bankPaceTicks`) remain deliberately unavailable: the
-  host does not recreate the foreign router or random pacing. These private
-  exports reported `not impl` in earlier releases and are removed in 0.2.9.
-  `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick pause.
-  0.2.4 to 0.2.8 have the same problem.
-- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
-  bones reliably. In long fights it can run out of food before the dragon dies
-  and return to the bank without the bones. A fix is planned with the native
-  hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
-- A bot can't get through a door that another player closes again on every tick,
-  when that player's moves are handled before the bot's. The bot tries the door
-  until its retries run out and then stops at the door. Finding another way
-  around, changing worlds when allowed, and a clear "door held shut" result are
-  planned for a later release. 0.2.5 to 0.2.8 have the same problem.
-- Sherlock was meant to be a native clue solver. In practice it runs on the clue
-  machine ported for rs2b0t clue scripts, so it is available only in builds that
-  include the JS script runtime (every release build does). A native clue solver
-  is planned. 0.1.8 to 0.2.8 have the same problem.
-- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
-  and a chance-gated crossing that the bot does not yet support. There are still
-  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.8 have
-  the same problem.
-- After a super antipoison the bot counts only the ordinary immunity time (120
-  game ticks instead of 570), so it may drink again sooner than needed. It is
-  still immune for the real time. Counting the super immunity is planned for a
-  later release. 0.2.7 to 0.2.8 have the same problem.
-- Fetching a cure or food when the bot would otherwise die is planned for a
-  later release. In this release a native script that would die of poison with
-  no cure held pauses its work and names what it needs.
-- Buying a cure from a shop is planned, not included here.
-- Taking a cure from a ground spawn, or making one from held supplies, is
-  planned for a later release.
-- The serialization and date libraries retain compatibility versions until the
-  JavaScript runtime libraries can be updated together. The recorded date-parser
-  advisory is not reachable: the calendar dependency does not enable date
-  parsing or formatting.
-- The Knife tick technique is offered for oak and higher trees only. Normal
-  trees still use the ordinary gathering cadence.
-- Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
-  applies; the Gatherer fishes it at the ordinary cadence.
-- A sustained tick schedule based on auto-retaliate flinches is not offered. An
-  NPC hit can change the skill delay, but that schedule has not been traced or
-  designed.
-- The rs2b0t four-tick fly re-click and iron-cadence re-click methods give no
-  gain in revision 289 and are not offered.
-- A rune pickaxe already mines every three ticks, which matches the Knife cycle.
-  Knife turns itself off with no-gain for that tool; ordinary mining continues.
-- Eating uses the existing checked eat action and pauses the Knife technique for
-  one cycle. A food-based tick arm is not offered; it needs per-food delay facts
-  and a live probe before its design is complete.
-
-### Known issues
-
-- **Navigation:** With the default Danger routing setting, **When survivable**,
-  bots can refuse walks and bank trips through dangerous monsters instead of
-  checking whether the account can survive the trip. For example, a bot at Rock
-  Crabs can report that no bank is reachable instead of walking to Seers'
-  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
-  zones). This permits dangerous routes. Use it only when the account can handle
-  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
-- **Quester:** The following Quester guides are drafts. Release builds do not
-  support them: - Cook's Assistant - Sheep Shearer - Rune Mysteries - Romeo &
-  Juliet - Imp Catcher - Vampire Slayer - Doric's Quest - Goblin Diplomacy -
-  Witch's Potion - Prince Ali Rescue - Pirate's Treasure - Demon Slayer - The
-  Knight's Sword - Death Plateau - The Tourist Trap - Priest in Peril - Clock
-  Tower - Monk's Friend - Hazeel Cult - Plague City - Druidic Ritual -
-  Gertrude's Cat - Jungle Potion - Sea Slug Quest - Tribal Totem - Black
-  Knight's Fortress - Ernest the Chicken - Fishing Contest - Elemental Workshop
-  - Merlin's Crystal - Lost City - Tree Gnome Village - Scorpion Catcher -
-  Observatory Quest - Shield of Arrav - Hero's Quest - Temple of Ikov - Holy
-  Grail - Watch Tower - Digsite Quest - Biohazard - Murder Mystery - Witch's
-  House - Big Chompy Bird Hunting - Dwarf Cannon - Family Crest - Fight Arena -
-  The Grand Tree - Dragon Slayer - Horror from the Deep - Shilo Village - Tai
-  Bwo Wannai Trio - Nature Spirit - In Search of the Myreque - Troll Stronghold
-  - Eadgar's Ruse - Troll Romance - Throne of Miscellania - Waterfall Quest -
-  Legends Quest - Sheep Herder - Underground Pass - Regicide - Shades of
-  Mort'ton - The Fremennik Trials - Monkey Madness 0.2.0 to 0.2.8 have the same
-  problem.
-- **Quester:** When the Quester cannot start a walk between quest steps, it can
-  stop the quest at once instead of trying again, and asks you to resolve the
-  condition and restart the Quester. 0.2.0 to 0.2.8 have the same problem.
-- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
-  it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
-  problem.
-- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
-  than the game requires after each stun, so it gains Thieving XP more slowly
-  than it could. A fix is planned with the native thieving rework. 0.2.4 to
-  0.2.8 have the same problem.
-- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
-  requires The Tourist Trap complete. Bank mode refuses this site because the
-  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.8 have the
-  same problem.
-- **Scripts:** With "Pause script on manual movement" off, a script that acts in
-  place can continue after you move the bot yourself. This affects rs2b0t
-  scripts without a Gather or Combat session and built-in scripts other than
-  Quester fights. With the setting on, any running rs2b0t script pauses. A
-  built-in script pauses while it walks or acts, but not between actions. 0.2.6
-  to 0.2.8 have the same problem.
-- **Scripts:** A green poison hitsplat that the game shows without poison makes
-  the bot keep a poison reserve until the next poison message, poison tick or
-  cure. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** Strange fruit is recognized as a held cure and never fetched.
-  0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** When the game reports poison and the bot cannot see which
-  creature poisoned it, when the poison message and the creatures' update
-  arrived together so the bot cannot tell which game tick the message belongs
-  to, or when a poisoned bot takes any hit, the bot assumes the strongest poison
-  in the game (330 damage) until the next poison tick shows the real value. Each
-  poison tick then shows the true remaining value. A bot with a cure may drink
-  it earlier than it strictly needed to. A script with no cure held can pause on
-  a poison it would have survived. The pause ends within five poison ticks
-  (about 150 game ticks) of the first poison tick at which the bot's hitpoints
-  and food would have carried it through, which can be later than the message
-  when the bot is eating as it waits, and then the script continues on its own.
-  0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** When the game reports poison in a frame before its creatures'
-  update, the bot waits for that update before it decides which creature
-  poisoned it. A cure that is needed only for the worst case is then drunk one
-  game tick later. A cure that is needed at once is drunk at once. 0.2.7 to
-  0.2.8 have the same problem.
-- **Scripts:** The game does not say when a poison has ended. A paused script
-  whose hitpoints plus food are at or below the last poison tick's worst case (4
-  after the weakest tick) stays paused after the poison ran out, until it heals
-  past that or gets a cure.
-- **Scripts:** A paused script that is being hit by any creature stays paused
-  while the hits continue, because any hit can be a fresh poisoning. It does not
-  flee or fight back for that reason in this release.
-- **Scripts:** A native script that needs a cure while a bank deposit or
-  withdrawal is in flight lets that one transfer settle or time out first: eight
-  observed game ticks, without an elapsed-time minimum (twice that for a deposit
-  the game did not apply the first time). Then it closes the bank and drinks.
-  The Quester's own provisioning trips follow the same rule.
-- **Scripts:** When the bot reconnects while it is poisoned, it does not know it
-  is poisoned until the next poison tick, up to 30 game ticks later: the game
-  keeps the poison but does not repeat the poison message. In that time the bot
-  does not drink a held cure for that poison and does not eat early for it. A
-  bot whose hitpoints are at or below one poison tick's damage can die in that
-  tick. 0.2.7 to 0.2.8 have the same problem.
-- **Combat:** In a fight with no food left, a poisoned bot that holds an
-  antipoison can retreat or end the fight when its hitpoints are near the
-  poison-raised stop line, even though it drinks the antipoison in the same game
-  tick and would then be safe. 0.2.7 to 0.2.8 have the same problem.
-- **Navigation:** During a walk, a dialogue page that is open (for example a
-  level-up page or a gate's dialogue) can delay a drink or a bite until the walk
-  moves on and the page closes. An ordinary bite during a walk can go out in the
-  same game tick as a door or gate click. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** In Power mode, a Gatherer that finishes its last dose of an
-  antipoison keeps the empty vial. The vial takes a pack slot until you drop it.
-  Bank mode deposits it on the next bank trip.
-- **Panel and terminal app:** During a walk or a fight, the status row shows
-  that a cure or food is needed while the walk or the fight drinks or eats; it
-  does not show the drink or the bite itself.
-- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
-  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
-  that!" when the bot approaches Luthas or after he pays and before the boat
-  boards. The bot makes up to three attempts each time the bot goes to talk to
-  Luthas. If all three fail, the fare is not paid and the trip does not cross.
-  After payment, the fare is paid. In observed cases, the bot still boards. No
-  workaround is known. 0.2.8 has the same problem.
-- **Scripts:** When a script starts a trip to the mainland without the boat fare
-  from some places on Karamja, for example near the Brimhaven cart, the first
-  walk can fail at once. The bot then does not earn the fare and does not cross.
-  No workaround is known. 0.2.8 has the same problem.
-- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
-  last piece of food instead of leaving to bank, and it can attack a giant other
-  than the one hitting it. The bot can die in the fire giant room with an empty
-  pack. Watch the bot's food and stop the script when it runs low until the
-  script is fixed upstream. 0.2.6 to 0.2.8 have the same problem.
-- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
-  Strange fruit from a random event fills the last free backpack slot before it
-  holds a Magic log: it only goes to the bank when it holds logs. Clear one
-  backpack slot and the script resumes. The fix is in review upstream; update
-  your rs2b0t folder once it is merged. 0.2.7 to 0.2.8 have the same problem.
-- **Scripts:** `ClientAdapter` readers that search interface components see only
-  the side tab that is open. For example, a button search by varp
-  (`reader.selectButtonByVarp`) on a side tab other than the combat tab finds
-  nothing while that tab is closed. The combat tab is not affected: combat style
-  reads (`Game.combatStyles`, `Game.setCombatMode`) work while another tab is
-  open. Open the side tab before you read it.
-- **Scripts:** `reader.locBox`, `reader.overlayPosWorld` and
-  `reader.projectAreaGameWorld` can return `null` once when a script reaches
-  them without their names in its code (for example through a computed property
-  name). A script that names the reader gets correct values from its first game
-  tick. Call the reader by its name.
-- **Host:** Background work can stop for the rest of the session after one disk
-  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
-  planned for 0.2.9. 0.2.4 to 0.2.8 have the same problem.
-- **Audio:** When music is on, a bot reads the music font once, at its first
-  song. Music is off in the default low-memory mode. 0.1.0 to 0.2.8 have the
-  same problem.
-- **Combat:** A combat step can end at its start with `prep-failed:weapon` even
-  though the weapon is in the pack. The server moves a worn weapon in one step,
-  but the game client applies the pack update and the worn update in separate
-  packets, so one frame can show the weapon in neither place. The machine reads
-  that frame as a missing weapon. A live run of the style switch showed the same
-  client behaviour; preparation has the same exposure and has not been seen to
-  fail yet. **Workaround:** run the combat step again; the weapon is worn by
-  then. 0.2.0 to 0.2.8 have the same problem.
-
-### Fixed during development
-
-- Native Gatherer, acquisition and bank-opening selection can read a supported
-  quest journal when unknown access gates prevent every eligible bank route.
-  They then reselect with fresh evidence through the existing prerequisite owner.
-  Proven-false gates stay closed. Journal and reissue limits remain unchanged,
-  and a genuine route failure keeps its detail. This fixes a development regression
-  exposed by the corrected Priest in Peril colour-authority data.
-  A refused prerequisite keeps the existing opening fallback and bank backoff.
-  On Linux and macOS, the typed result adds eight bytes to each allocated native
-  ledger and eight bytes to each bot's host navigation state.
-
-- The Gatherer live bank tests now observe decoded bank closure within the same
-  login session. A missed status message no longer hides a completed bank trip.
-  This changes test observations only. All gameplay completion requirements remain.
-
-- A Quester trade between two of your own accounts (the Arrav shield halves and
-  certificate, for example) no longer fails with "partner offers changed after
-  agreement". When both accounts accept, the game empties both offer lists
-  before it opens the confirm screen, and the Quester took that for a changed
-  offer. It now waits for the confirm screen and checks the items on that
-  screen against what the two accounts agreed before it makes the final accept.
-  Each active trade retains 16 bytes more for its observed clock.
-  The decoded confirm lists exist only while the confirm screen is open.
-- When a Quester trade fails, the Quester now closes the trade screen with the
-  one request the game honours. Before, it clicked the Decline button, which
-  does nothing, and the trade screen stayed open for about a second more.
-- The Quester's trade waits (for the other account's accept, for the screen to
-  close, and the trade's own limit, `timeout_ticks`) now count game ticks, as
-  the other Quester waits do. Before, they counted clock time, so on a server
-  that runs faster than 600 ms per tick a trade got more game ticks than its
-  limit. A hold on either account (guardian, readiness, welcome) spends none of
-  those ticks, so a trade that was held for longer than its limit carries on
-  when the hold ends. An explicit Pause still ends the trade.
-- A conversation script's pause after a page now keeps the run button held
-  when the host had already ended the hold on the wait before it. The host
-  ends a hold one game tick after the script's time limit when the script
-  stopped checking it (for example while the script was paused). Before, the
-  pause that follows the conversation page was the same wait with a later time
-  limit, so the host did not hold it and could press the run button while the
-  script still waited. The host now holds a wait again when the script moves
-  its time limit later. A repeat of the same time limit and a relog do not
-  hold it again.
-  A script's quest-journal read (the native reader) holds the run button for
-  10 seconds from each click it sends, not only from its start. Before, a read
-  that had been paused could send its click in the frame where the 10 seconds
-  from its start ran out; the host then no longer held the run button, pressed
-  it right after the click, and the press closed the journal page the click
-  had opened. The page still stops being hidden 10 seconds after the read
-  starts. A click (or close) that is still waiting to be sent when the 10
-  seconds of its hold run out is never sent: the computer may have been
-  suspended or asleep between the script's step and the host's reading of the
-  clock, and the click would have gone out with no hold. The read then fails as
-  expired and the script's own retry applies. This holds for the native reader
-  and for the compatibility reader; a click that was already sent is not
-  changed, and only the read's own click or close is held back, not an equal
-  one that another call of the same script sends (such as `Modals.close()`).
-- The development hold model now represents the conversation's actual clocks:
-  Open and Continue use game ticks, Choice and Main use active time, and a
-  queued Talk has no page deadline before acceptance. Native conformance
-  checks exercise these cases through the real lease API.
-
-#### Compatibility repairs
-
-- Compat loading now provides every named selected object row to the adapter.
-- Paint wrapping now indents only continuation lines.
+- A slow disk operation no longer makes background work unavailable. Before, one
+  operation that took longer than one minute made 274bot show "Background work
+  is unavailable" and ask for a restart. Now 274bot logs one warning for a slow
+  step and carries on when the operation finishes. An operation that never
+  returns still leaves its work waiting until you quit, and 274bot shows no
+  banner for it. This closes the known issue that 0.2.8 listed.
+- A debug log line that cannot be written, for example because the disk behind a
+  redirected error stream is full, no longer stops every bot. Before, the failed
+  write left the shared navigation state unusable and every bot stopped with a
+  panic.
 
 ### Combat
 
@@ -432,10 +169,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   configured loot radius. If a missing drop still leaves the step's `until`
   condition false, the attempt now counts as a step failure instead of
   restarting combat without limit.
-- Once a visible drop starts a Take, quest combat now waits for that pickup
-  to settle even if it finishes after the six-tick appearance window. The loot
-  row advances only after the pickup settles, so a slow successful pickup is
-  not reported as a missing drop.
+- Once a visible drop starts a Take, quest combat now waits for that pickup to
+  settle even if it finishes after the six-tick appearance window. The loot row
+  advances only after the pickup settles, so a slow successful pickup is not
+  reported as a missing drop. A visible drop that does not bring the held count
+  to the target ends at the Take's four-game-tick settlement bound and is
+  recorded as missed; required loot then follows the existing step-failure path.
 - Scripts can now start fights with other players where the game allows it:
   in the Wilderness and in a Duel Arena fight pen. A script starts such a
   fight only when it asks for it (`pvp: true` on the request) or the new
@@ -480,20 +219,540 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and ring slots to the wear positions the game uses. Before, the machine
   looked for those items in the wrong positions, never saw them worn, and the
   step could end as unresponsive.
+- When single-way combat refuses an attack on an NPC with "I'm already under
+  attack" because another NPC is hitting the bot, the fight now attacks the NPC
+  that hit it most recently if it may, or holds the attack for the game's
+  8-tick window. The first attack also takes an NPC that is already hitting the
+  bot over a nearer idle one. Refusals inside one 8-tick window count once;
+  after three windows in a row with a refusal and no hit landing on the target
+  (about 24 ticks), the fight ends with `single-way-blocked` instead of
+  repeating the click without end.
 
-### Scripting
+### Survival
 
-- Prerequisite conversations now count an arrived re-approach as a failed
-  attempt when the NPC moved away or disappeared. The next attempt waits for
-  a later game tick and keeps the conversation's existing four-attempt limit.
-- Routes that cannot fetch from a bank no longer reserve unreachable bank
-  planning buffers. The route work limit and diagnostic coverage are unchanged.
+- Gatherer and Quester check for a needed poison cure while they work. They can
+  drink a held antipoison during a walk, even when eating is disabled. Outside a
+  walk or a fight, they cancel the current step to drink, close a dialogue page
+  or an "Enter amount" prompt first when one is open, and then start the step
+  again. An active bank transfer first settles or reaches its limit, then they
+  close the bank, drink and resume work. When poison makes survival unsafe and
+  no cure is held, or when hitpoints are at or below the eat line and no food is
+  held, they pause work without ending the run and show the needed cure or food
+  in the status row.
+  Exhausted combat escapes retain that held-cure guard without restoring food
+  permission, including when the walk crosses a named danger zone.
+- A Gatherer bank trip keeps held antipoison and super antipoison doses in the
+  pack, so a later poison still finds them.
+- The panel and terminal app show the same status row when poison means the bot
+  needs a cure or food, and clear it when that need passes.
+- When the game ignores a survival drink (for example in the tick after a
+  mining success, when the game drops item clicks), Gatherer and Quester click
+  the dose again after 3 game ticks with no dose used, and then go back to
+  work. After a drink they wait out the game's short drink delay before the
+  next bite or work click, and a second bite waits for the game's next-food
+  delay, so the game does not drop either click. Both waits count from the
+  game tick in which the game used the dose or the food, so they stay right
+  when the game applies a click late.
+- After a bite or a closed page that leaves nothing more to do, the Quester
+  goes back to its step in the same game tick.
+- A survival bite no longer wastes food while the next hit cannot kill. Eating
+  has two tiers, in the Quester, the Gatherer, the walk guard and combat. When
+  hitpoints are at or below the danger plus one (the next hit can kill), the
+  bot eats the held food that best fits the missing hitpoints, even if it
+  overheals. Above that, up to the eat line (twice the danger plus one, half
+  the maximum when the danger is unknown, or the step's or caller's own
+  floor), it eats only a food whose heal fits the missing hitpoints, and
+  waits when none fits. With an unknown danger the critical line is a quarter
+  of the maximum. At 37 of 40 hitpoints with a danger of 18 it no longer
+  spends a lobster for 3 hitpoints. The same two tiers now also decide the
+  food bite that comes with a combat prayer-potion recovery and the bite the
+  Gatherer takes after a death (its `eatBelow` setting stays the line that
+  triggers it), so no bite overheals above the critical line.
+- After a bite, the next bite waits until the heal shows in hitpoints (a rise,
+  or a fall when a hit lands first) or until the food's own delay has passed.
+  The lost food item shows that the bite ran; the heal must show before the
+  next bite. The critical line is the exception: at or below it the bot eats
+  again as soon as the food's delay allows, whether or not the last heal has
+  shown.
+- Every bite writes one `survival eat` line to the session log with the owner,
+  the outcome, the food and its heal, the hitpoints before, the maximum, the
+  danger, the critical line and the hitpoints seen afterwards.
+
+### Gatherer
+
+- The Gatherer has a new restart-required setting, `tickMethod`, for
+  Woodcutting, Mining and Fishing. It is **Off** by default. **Knife** shortens
+  supported gathering cycles to three game ticks when its inputs land on
+  schedule. It supports fly and net fishing, woodcutting from oak upward, and
+  mining with bronze to adamant pickaxes. Whirlpool and Big fish spots are never
+  armed. A rune pickaxe gives no gain and karambwan fishing has no usable delay,
+  so those gather normally. Knife needs a members world, one knife and at least
+  one normal log. The Gatherer keeps both through bank trips and tops them up
+  only when it can meet both minimums, and gathering carries on without them.
+  Eating pauses the technique for one cycle. The status shows the method and its
+  counters. Not in this release lists what Knife does not cover.
+- Fishing at a fixed loc spot now selects the observed loc, approaches it when
+  unloaded, and returns to it after banking. Moving NPC spots keep their own
+  observation and return paths.
+- After a death, the Gatherer no longer stops on the first blocked step of its
+  way back to the resource area. It plans that return again once, as on a
+  normal return trip, and stops only if the retry also fails, with the last
+  failure's reason.
+- This change addresses a lost connection during a bank trip (for example when
+  the server restarts). After the new login, the Gatherer now starts the trip
+  again at the walk to the bank, with a new plan from the character's
+  position, when the connection was lost during the walk to the bank, the
+  opening of the bank, the deposit or the withdrawal. It does this up to three
+  times in one trip. This limit is a policy choice, not a game rule: after
+  three restarts the Gatherer stops, and the message keeps the last reason.
+  The report that led to this change was not reproduced.
+- A bank window that was still open after a reconnect, but had no item list,
+  was waited on again and again. The Gatherer now clicks the booth once to open
+  the bank again. A teller bank (for example in the Mage Arena) with such a
+  window still stops after three tries, with the last reason.
+- The walk to the bank no longer stops on its first failure. When the walk
+  finds no route, fails, is blocked or stalls, the Gatherer plans again from
+  the character's position, first to the same bank, then to another bank when
+  there is one. After that it stops, and the message keeps the last walk
+  failure's detail. A walk you cancel by moving, and a refused walk, still
+  stop at once.
+- When the bank does not open after three tries, the stop message now includes
+  the last reason instead of only "bank did not open".
+- Gatherer can buy a missing gathering tool or bait from a reachable shop.
+  The new `buyTools` setting is on by default. A usable tool in the pack,
+  equipment or observed bank is used first; the bot does not buy an upgrade in
+  its place. A purchase picks the best tier your skill level can use that a
+  reachable shop sells within your budget. A tool bought for wearing must also
+  meet your wield requirement. Prices follow the game's own rule.
+- A supply shortage now parks the running Gatherer instead of stopping it.
+  The panel, terminal and fleet show the reason and the bank information used.
+  The Gatherer closes the bank and waits without repeated trips or purchase
+  clicks. New supply information, Resume, or a change to a relevant setting
+  starts one new plan. A saved bank hint alone does not. Pause, Stop, relog
+  handling and connection checks keep working while it is parked.
+- Bank-only navigation no longer loads the shop data. A script that uses shops
+  loads it before its first purchase.
+- When the server says "I can't reach that!" during a shop purchase, the bot
+  now tries the purchase again. A timeout alone still does not start another
+  trade while the first reply is unconfirmed.
+- Gatherer tries a failed walk again from the character's position when the
+  failure can be retried. Walks back to the bank and walks to a resource share
+  a budget of four failures across targets. A successful arrival or gather
+  resets the budget. When the budget ends, Gatherer stops with the last walk
+  failure's detail. When the game moves the character out of the way, Gatherer
+  waits for a newer game tick before it walks again, without skipping any
+  target or using up the budget. A target that the game refuses because of
+  poison is skipped for the rest of the session.
+- Walks to a bank or a shop share the same bounded retry for failures that can
+  be retried, each starting from the character's position. When the walk to a
+  shop uses up its budget, Gatherer can still try another reachable shop. A
+  clear refusal from the game and a walk blocked by a danger zone still stop
+  the trip.
+
+### Quester
+
+- The Quester supports **The Restless Ghost**. Each of its fourteen release
+  guides now passes a full run on a live server. By default, the quest picker
+  offers only those guides. A saved draft choice still loads. Start refuses it
+  unless **Allow unqualified guides** is on, and says how to allow it.
+- The Quester setting that 0.2.8 called "Include draft guides when no quests are
+  picked" is back as **Allow unqualified guides**, in Script prefs of the panel
+  and of the terminal app. It is off by default. When you turn it on, Start runs
+  guides that have not passed a full live run: the quests you picked, the Order
+  override, and, when you picked no quest, every draft guide. This lets a quest
+  list that you saved in 0.2.8 start again. Before Start, the Quester panel
+  shows one warning that names those guides, and the log records it. A 0.2.8
+  setting file that had this setting on keeps it on. Live testing has not shown
+  that a draft guide works.
+- The Quester's blocked message now ends "then start the Quester again": the
+  Stop button is unavailable once the run has ended, so the message names the
+  action you can take.
+- The Quester now closes the bank when it has finished taking what a quest
+  needs. Before, the bank window stayed open until the next step happened to
+  walk. The bot now waits until the bank window is gone before it starts the
+  next step. It closes only a bank that it opened itself. A bank that you
+  opened stays open.
+- The same close now also happens when a bank trip fails, when you pause and
+  resume the bot, and when the watchdog restarts the script. In each case the
+  bank window is closed before the bot reads the quest journal. The bot sends
+  no input while you hold control or while it is at zero hitpoints. If the
+  window does not close after three tries, the bot logs this and goes on.
+  Stop does not send a close.
+- A bank that you close and open again while the bot is closing its own bank,
+  or between two bank trips, is no longer closed by the bot. The bot closes a
+  new bank window only when its own bank trip opened it. A bank that you open
+  while the bot waits for a banker, or before the bot could send its click, is
+  also yours: the bot does not close it.
+- When a quest starts without something the bot only wanted to carry (for
+  example the coins it keeps for buying things), the log now has one line that
+  names the item and how many are missing. The bot does the same as before.
+- A fight with a distant stand now starts its 15-tick no-target search only
+  after observed arrival within one tile. Before, the fight could report "no
+  target" while the bot was still walking. Exhausted approach retries return
+  the last walk failure. The fight's budget still limits the walk and fight
+  together.
+- A Quester fight now retakes its drop when the game reloads the scene just as
+  the take starts. It waits for a later observed game tick before it takes the
+  same item once more. Evidence wakes within the cancelled tick cannot send a
+  retake. A second scene reload skips that item. Required-loot checks still apply.
+  Before, the whole step failed with "step error" and the item was left behind.
+- Quester's Blocked status keeps the quest stage, step and last failure after
+  a parked executor stops. A park with no selected step reports an empty
+  `step_id`. A row that becomes Done or Blocked discards its old parked detail.
+- A fixed-destination Quester walk retries `NoPath`, `RouteEnded`, `Stalled`
+  and `Failed` receipts only when they have no typed refusal or blocked zones.
+  Each retry waits for a later observed game tick and starts a fresh route
+  from the player's latest observed position. `Refused`, any typed refusal,
+  blocked danger zones and `Blocked` entrance requirements stop at once.
+  `Aborted`, `UserInput`, `NeedsEvidence` and `Cancelled` also stop at once.
+  The walk stops after three attempts and keeps the last failure detail.
+- Quester now retries approach walks for `interact`, `use_on`, `buy`, `make`,
+  bank access, `talk`, dialogue pre-walks, gathering, partner trades, thieving,
+  the totem security-door handler, shared `Reach` actions, combat approaches
+  and combat return-to-stand. Each retry makes a fresh route from the latest
+  observed tile on a later game tick. The shared three-attempt limit matches
+  `walk`. Danger refusals, blocked zones, user input, cancellation and missing
+  evidence still stop at once. Exhaustion keeps the last failure detail.
+- A random event no longer restarts the Quester's step. About 500 game ticks
+  after login the server can spawn a random event beside the player. Before,
+  the Quester then dropped its quest progress, read the quest journal and began
+  the step it was running again from the top of its sequence, with no failure
+  shown. Now the step, the quest progress and the place in an ordered sequence
+  stay. The Quester no longer goes by the event's name. A step is dropped only
+  when the player was teleported while the random-event handler held the
+  script: a plane change, or a jump between two observed frames that running
+  cannot cover in the ticks between them. The Maze and Mime events, the
+  teleport of an ignored Genie or Mysterious Old Man and the return to
+  Lumbridge are such cases; a few tiles of walking away from a hostile event are
+  not. The Quester then goes on from the same place in the sequence, and a step
+  that had finished keeps waiting for its own check.
+  With the setting for random events off the handler does not act, nothing
+  holds the script, and the Quester keeps its step.
+- A Talk, Use-on, Thieve or walk step that a random event interrupted now
+  sends its request again, once. The event's handler sends its own
+  interactions and the host drops the script's queued requests while it holds
+  the script. Before, a Use-on dropped this way waited for a receipt that never
+  came, a Thieve attempt ended at its receipt deadline, and a Talk whose
+  dialogue never opened failed at its deadline. Now the action waits one game
+  tick after the hold, checks its goal again, and sends its request again only if
+  the goal is not met: a Use-on checks its `until` count or product first, and
+  a Talk still walking to its NPC plans its route again only when the route
+  was lost or ran out of time during the hold. The log shows one line for
+  each resume.
+- The log now names the reason each time the Quester drops its step or
+  progress (a teleport during a random event, a new run, a death, a pause and
+  resume, or a session end).
+- A Talk step no longer fails when the NPC is out of view for a moment while
+  the bot walks to it, for example while it wanders. The bot keeps walking
+  to where it last saw the NPC and talks to it when it sees it again. If the
+  NPC is still not in view after three walk attempts, the step
+  stops with an error that names the NPC and the tile where it was last
+  seen.
+- After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
+  sends one more Talk-to request. This recovery also applies when the NPC's
+  wander range is zero. If the recovery walk fails or the server refuses the
+  next Talk-to request, the error keeps the refusal text.
+- Starting Quester now shows each target's declared danger zones before a
+  fleet Start. The plan asks for confirmation and checks each saved queue
+  again before Start. It skips a bot if its queue changed. A bulk Start
+  without a plan does not start Quester.
+- Starting one Quester shows its declared danger zones in the Script section
+  before Start. Selecting a card in Browse closes Browse, and Start will not
+  run Quester while Browse hides that list. The TUI palette opens that section
+  first; the user must select Start after reviewing the zones.
+- The Quester card no longer offers the blanket `Allow danger zones` setting.
+  The old saved value still loads, but it no longer affects Quester routes.
+  Guides use
+  `cross` to declare stage and step zones. A declared crossing arms the food
+  guard for the walk. Protect stays active only on steps that request it.
+  Even a Quester scope with no grants avoids every danger zone, even when the
+  global setting allows danger routing. Desert Rescue declares the same zones
+  for both walks to the captain.
+- Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
+  Use `cross` to declare the danger zones that a step may cross.
+- A Quester trade between two of your own accounts (the Arrav shield halves and
+  certificate, for example) no longer fails with "partner offers changed after
+  agreement". When both accounts accept, the game empties both offer lists
+  before it opens the confirm screen, and the Quester took that for a changed
+  offer. It now waits for the confirm screen and checks the items on that
+  screen against what the two accounts agreed before it makes the final accept.
+- When a Quester trade fails, the Quester now closes the trade screen with the
+  one request the game honours. Before, it clicked the Decline button, which
+  does nothing, and the trade screen stayed open for about a second more.
+- The Quester's trade waits (for the other account's accept, for the screen to
+  close, and the trade's own limit, `timeout_ticks`) now count game ticks, as
+  the other Quester waits do. Before, they counted clock time, so on a server
+  that runs faster than 600 ms per tick a trade got more game ticks than its
+  limit. A hold on either account (guardian, readiness, welcome) spends none of
+  those ticks, so a trade that was held for longer than its limit carries on
+  when the hold ends. An explicit Pause still ends the trade.
+- Quest guides now respond to an NPC's "I can't reach that!" message at once:
+  they recover from the NPC's current location when possible, or report the
+  refusal.
+- Quest guides can now kill until a required item drops, with a total kill
+  budget and a named stop. The final allowed kill still gets its loot wait.
+  The receipt records confirmed kills across re-engagements.
+- Quester combat steps that need several chance drops keep fighting after a
+  kill without the drop, up to a limit of 281 kills, instead of stopping. This
+  fixes Doric's Quest stopping after the first iron ore. The step still fails
+  at the limit and reports the last combat result.
+- After an advancing step's settle timeout, the Quester rereads quest progress
+  before it retries. Steps can also set their own attempt limit and a named
+  stop.
+- Quest guides can now select a product and quantity from a production menu
+  opened by using an item on another item or on a location. Fixed menu buttons
+  count processes, while `qty` counts output items; guides select the smallest
+  whole-process quantity that reaches the held target when the content allows
+  it. If a loc-triggered batch closes before the target is met, the guide uses
+  the item on the loc again.
+- Loc-triggered production walks to its anchor when the player starts more than
+  six tiles away. The menu wait starts after that walk and an accepted click,
+  with one tick of margin for the server's update order.
+- Make-X production allows five game ticks for each spinning output: the
+  game adds one ball of wool every three ticks, plus one tick for the order in
+  which the server's updates arrive and one tick of margin.
+- Non-kill combat re-engagements are bounded by the 700-tick maximum NPC
+  respawn in revision 289 and the engine's three-tick target-gone end. The
+  request tick budget adjusts the bound. `until_drop` uses its authored
+  `max_kills`; `until` and `win` use the content-derived bound. Exhaustion
+  keeps the last combat report in the failure detail.
+- Ground-item Take steps can now use an observed game-tick budget. This
+  lets a guide collect a temporary scripted drop such as the Jailer's key,
+  without a wall-clock spawn wait.
+- Quest guides can now opt in to answering a repeated menu question once and
+  then moving on. `answer_once: true` skips a `prefer` entry that already
+  answered an accepted page in the same conversation and falls through to the
+  next entry in order, so a guide can answer a repeated menu such as Nature
+  Spirit's Filliman Tarlock conversation once and leave. It defaults to false
+  and no bundled guide sets it, so every shipped guide keeps its answers.
+  With the option on, `prefer` holds at most 32 entries.
+- Talk steps now approach NPCs within the configured interaction distance
+  before opening their dialogue. The approach budgets one observed tick per
+  planned walking tile, plus two slack ticks. When the live reach map cannot
+  reach the NPC, the budget is the route length that the route planner reports
+  for the same walk, plus the two slack ticks. A request with no route fails
+  with a named reason after the shared three-attempt approach budget. A route
+  planner that gives no answer within eight observed ticks counts the same way.
+  A route that ends short while the NPC stands still uses the same budget. A
+  replan, one for
+  each tile other than the NPC's home tile in its legal wander square, is spent
+  only when the NPC has moved. The first-page clock counts four observed ticks
+  from the engine's read of the accepted Talk-to click, or from the bot's
+  arrival beside the NPC if that comes later. The NPC's first game message
+  restarts it. A page on the deadline tick is accepted.
+- A failed walk also reports where its route ended.
+- Thieving steps now walk to the guide's anchor while the target NPC is out
+  of sight, instead of waiting beside the anchor for a target that the bot
+  never approached. The required level comes from the selected game content
+  whenever no NPC is visible, so a bot below it refuses before walking or
+  stealing. Failed approach walks are replanned from the observed tile within
+  the shared three-attempt limit, with the last failure ending the step.
+  Inside the anchor, the bot waits one NPC respawn window for a target and then stops
+  with "no thieving target appeared at the anchor".
+- Anchor walks in thieving, gather, use-on and the Tribal Totem door steps now
+  accept any standable tile inside the authored radius. Before, the walk
+  required a path onto the anchor tile itself, so a bot that stopped short could
+  end with "walk route ended before arrival" while already inside the area. The
+  thieving approach settles the route end through the shared walk adapter, so it
+  accepts the area and goes on to look for a workman there. The anchored walk
+  for a loc that is not yet in view follows the same rule, and the final
+  approach to the loc picks an accessible side.
+- Quest dialogue no longer stops at two identical pages in a row. Merlin's
+  Crystal shows `And wait...` twice, and the guide used to wait for the page
+  to change, so it reported `dialogue failed` while the server had already
+  accepted the Continue. The guide now counts a Continue as done when the
+  host accepted it and a later game tick was observed, or when the page
+  changes. The guide presses Continue again on an identical page, but only
+  within the 10 observed game ticks that its first Continue on that page got.
+  A page that never changes ends the wait at that bound, not after 3 seconds
+  of clock time, even when the guide did not observe every tick (for example
+  during a hold) or had to delay the repeated press to a later tick.
+- When a step with a dialogue fails while a dialogue page is still open, its
+  retry continues that page from the player's current tile. It no longer
+  walks back to the step's start position first. This matters where the
+  quest's script moves the player during the dialogue, as the Merlin's
+  Crystal crate does. The retry still counts against the step's attempt limit.
+  When the attempts run out, the step stops with the reason of the last
+  failure.
+- Quest dialogue no longer reports `expected dialogue did not open` while the
+  host has not yet sent the Talk-to click. The wait for the first page starts
+  when the host accepts the click. While the host cannot send it (not
+  connected, or holding the bot), the guide waits. When a hold drops the
+  click unsent, the guide sends it again. When the host refuses the click,
+  the guide stops at once with `expected dialogue did not open`, the NPC, the
+  tick of the refusal and the last game message.
+- A Quester conversation that follows a fight no longer stops with "dialogue
+  interrupted by combat" when nothing attacked the bot during the
+  conversation. After a fight, the game keeps the health-bar window raised for
+  a few seconds, and an NPC that only faces the bot, such as the Sir Mordred
+  that the Merlin's Crystal guide spares, also looked like an attacker. The
+  Quester now counts a closed chat as combat only when an attack reaches the
+  bot after the conversation began. Almost every attack that closes a chat
+  sends the bot a mark in the same game cycle: a hit (also a miss or
+  poison), an animation, a spot animation (a magic splash) or a projectile
+  (a ranged attack or a breath). A hit is not required. There are two rare
+  exceptions: an attack by a monster that is already dying, whose own
+  handler sends no defend animation, and an attack whose animation the
+  bot's own protection discards. In those cases the attack is still
+  noticed, but only after a short wait. This fixes the Merlin's Crystal
+  guide, which could stop at Morgan Le Faye's first page or at her last
+  page. A real attack during a conversation still stops it. The scripting
+  compatibility layer's chat dialogue (`openDialogue`, `driveDialog`,
+  `talkThrough`) applies the same rule, so a script that talks to Sir Mordred
+  or Morgan Le Faye no longer gets `false` from a conversation that ended
+  normally.
+- The Quester log now keeps a long stage's step lines. Each stage of a guide
+  has its own trace budget, sized from that stage's steps and the steps of the
+  collection recipes those steps run, so a stage logs its own start, skip and
+  finish lines instead of being dropped after the run's first 32 different
+  lines. A new run starts that budget again for the current stage. Repeated
+  lines still fold into one line with a count.
+- The Quester now eats during quest steps with declared damage, including
+  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
+  Each guide cites the game's own script for its damage bound.
+- The Quester waits for Hitpoints data before it checks if a step hazard is
+  survivable.
+- The Quester clears the old hazard after a run change, a death, a session end,
+  or when no step is selected.
+- Added stock and pricing data for ten more shops that Quester paths use.
+
+### Navigation
+
+- The default Danger routing setting, **When survivable**, still acts as Never.
+  This does not fix that known issue; see Known issues. Explicit danger-zone
+  grants now check an upper bound on the chance of death. The limit is 1%,
+  without credit for food, prayer or escape. Those grants no longer bypass this
+  check. Unknown poison can hold a walk before exposure
+  for the rest of one 31-tick clean window. Always and rs2b0t-compatible walks
+  keep their existing permission contract and show the bound as information.
+  Known poison remains in the bound and reason when a walk crosses no NPC zone.
+  Admission still permits those walks.
+  Incomplete route geometry stays unassessable.
+  Dormant NPCs use their awake combat facts only when selected content proves
+  the transition. Unresolved transitions stay unassessable.
+- The route-risk model uses normal melee facts for a bespoke NPC only when
+  extracted combat content proves its shared melee routine, damage, and timing,
+  with no poison or multi-hit effect. Other bespoke attacks remain unknown.
+- Quest walks can use the quest-list colour to place a quest at progress 0
+  or at its content-declared completion value. An in-progress colour proves
+  a window only when the full in-progress value range lies inside it. A walk
+  reports the quest, window bounds and unknown evidence state.
+- When a walk needs quest evidence, the bot waits up to one game tick for
+  the quest list. Once the needed rows arrive, it plans the route once more.
+- Failed walks now check for missing items and entrance requirements before
+  broader route checks. The checks stop at a shared search limit, instead of
+  continuing through each full search allowance. Scorpion Catcher reports
+  the missing Dusty key. Boat-fare and Shantay-pass recovery keep their missing
+  item results. If the check reaches the limit before it finds the cause, the
+  result says how many places it examined. The Quester keeps its existing
+  bounded walk retries.
+- Bots now find long walks to an area that the route planner gave up on
+  before, such as the walk to the Waterfall Quest start. When the planner
+  cannot tell early whether an area is reachable, it now keeps searching up
+  to its normal limit. A walk to a place that cannot be reached can take
+  longer to fail.
+- Two default-on navigation settings allow prerequisite dialogue and quest
+  starts. Global, script and guide-level `true` grants are additive. A
+  guide-level `false` adds no grant; a per-walk `false` forbids it. Combat
+  escapes and other safety walks never stop to talk.
+  Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
+  including after the existing boat-fare recovery.
+  Scripted walks retain their original walk identity during a prerequisite
+  step, including scene reloads, and release it when the walk ends or a
+  handover is refused.
+  Food from Drezel remains ordinary inventory and follows existing bank
+  behavior. No prerequisite step drops it.
+- Normal walks can now obtain Drezel's advice for the holy barrier and start
+  Nature Spirit before entering Mort Myre. The walker first checks the
+  crossing when its state is unknown. It remembers witnessed passes,
+  dialogue effects and refusals for the current run, then resumes the
+  original walk. Stop cancels the current walk or conversation.
+  Bank choices use the same remembered crossing state.
+  Manual map walks can check these crossings without a running script.
+  The manual walker uses the same quest evidence for planning and crossing.
+  Earlier quest-gated ladders no longer discard a later barrier's refusal check.
+  Dialogue pages do not need a duplicate chat message to stop a refused crossing.
+  Refusal checks also match sentences split across adjacent dialogue lines.
+  Scene reloads no longer discard a manual walk's crossing observations.
+  The crossing check uses the packed legal interaction stand. For the barrier,
+  the route planner chooses between both legal stands instead of committing
+  to a side the account cannot reach. It never walks onto the blocked tile.
+  Walks from Morytania can reach the barrier through the east trapdoor.
+  The Brimhaven restaurant kitchen door admits Phoenix Gang members from
+  the Heroes' Quest stage after they speak to Alfonse. It still refuses
+  Black Arm Gang members. Walks without available prerequisite steps skip
+  the extra prerequisite search.
+- Walks can now read the Shield of Arrav journal to identify completed
+  Phoenix Gang membership for the Brimhaven kitchen door. A shared green
+  quest-list row alone remains insufficient. Black Arm members stay refused.
+  An on-demand Heroes' Quest page also proves eligibility after Alfonse,
+  before quest completion, without starting dialogue or a quest.
+  If the page times out, the walker retries once on a later observed game
+  tick. A failed retry keeps the gate closed and reports the terminal failure.
 - Walking to Drezel can now read the Priest in Peril journal when quest colour
   does not prove access through the mausoleum. The holy barrier still requires
   Drezel's advice, rather than a guess from the completed quest colour.
 - A walk can now complete a journal read and both distinct prerequisite
   conversations before it resumes. Reissues share the existing three-row
   budget. Repeated rows and a fourth source still stop the walk.
+- Navigation keeps quest-gated crossings without a proven stage range (the
+  Legends' Guild barrier, the Desert Rescue mining camp, the Routequest
+  trapdoor) for accounts whose quest list shows the quest complete. A
+  completed-quest gate whose quest-list colour is not proven to follow that
+  quest's own progress stays unknown.
+- A green quest row no longer grants a stage-gated crossing when content can
+  change progress after completion. Crossings with an unknown stage domain
+  require progress evidence instead of assuming quest completion. Exact-value
+  exits remain available when that progress is observed.
+- Long walks that bend around walls no longer stall when running is off.
+- Bots now cross an open door when its shifted leaf blocks the packed
+  approach tile. They no longer wait for that door to reset before leaving
+  the Wizards' Tower basement. The walker still checks the next door's
+  identity and follows its normal crossing rules.
+- A walk with no tile progress for 10 observed game ticks now logs one
+  info line. The line identifies the current route, door, scene, or stall
+  wait and its target. Movement, a new request, or the walk ending resets
+  this log limit.
+- Walk budgets now include the planned path length at one walking tick
+  per step. They count observed game ticks, not repeated status polls.
+  They count from the player's tile even when click-ahead advances the cursor.
+  Movement can extend a walk by 25% of its original allowance, rounded up
+  to a whole tick, and retains at least the previous 60-tick limit.
+  This lets the server finish turns without letting pacing or movement
+  away keep a walk alive forever.
+  A stopped walk keeps its original finite budget, including recovery attempts.
+- Bots no longer plan the boat from Port Sarim to Entrana while they carry
+  or wear an item the monks refuse: weapons, armour, axes, pickaxes or
+  cannon parts. A bot plans that boat only after it has seen its inventory
+  and equipment.
+- Navigation now maps both directions of the Legends Guild gate after the quest
+  starts. It also maps Kharazi jungle crossings. A jungle map or completed
+  Legends unlocks each crossing. The player must also have a machete and an
+  axe. Both tools can be carried. The player can also wear one tool in the right
+  hand and carry the other.
+  A successful bush crossing costs at least 3 game ticks; a tree crossing
+  costs at least 5. The script also uses a Woodcutting roll and a
+  tree-depletion roll. The pack does not model the chance of either roll.
+- Walk failure details and debug logs now name the search result. A walk
+  that stops at its node budget reports `search_result=BudgetExhausted`. Script
+  and native walks also report the settled-node count. When no more specific
+  cause is found, native walk receipts report `Refused` with a typed
+  `SearchIncomplete` refusal, not `NoPath`. An incomplete search does not
+  publish a missing-supply list. A complete `NoPath` can still report missing
+  supplies when an item-gated route was found.
+- After an incomplete route search, a straight-wall approach can try its
+  wall-side fallback within the Quester's existing three-attempt limit.
+  It still stops for blocked danger zones and does not retry an incomplete
+  search when that target has no wall-side fallback.
+- Navigation packs are now `274V19`. They include the multiway combat-cell list
+  and a baked reachability atlas (movement components, directed links, loc
+  stands), without a quest-family header. Older incompatible packs are refused
+  with a rebake error. 274bot does not convert an old pack at run time.
+- A walk along a route now sends at most one movement packet per game tick. A
+  click that the game refuses, so that no packet goes out, does not use up that
+  tick's allowance.
+
+### Scripting
 
 - `api.questIdentity` now returns the state variable and completion value for
   four quests whose row held a script procedure name or zero. The Digsite Quest
@@ -503,27 +762,34 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - JavaScript `ChatDialog` calls now report a combat close as failure only when
   a visible NPC or player targets the bot. Damage without an observed attacker
   no longer fails the dialogue.
-- A green quest row no longer grants a stage-gated crossing when content can
-  change progress after completion. Crossings with an unknown stage domain
-  require progress evidence instead of assuming quest completion. Exact-value
-  exits remain available when that progress is observed.
-- A prerequisite conversation now keeps its content row's full first-page
-  allowance when that is longer than the shared dialogue default. This
-  prevents an early timeout while keeping ordinary dialogue deadlines and
-  cancelled-Talk retries unchanged.
-
+- While a script waits for the window its own action opens (a quest journal page
+  or a conversation page), the host does not press the run button. The script
+  ends this wait when it sees the result, reaches its own time limit, or stops.
+  A queued Talk holds the press before it is sent. Actions that open no window,
+  such as walks, take no hold. If a script stops checking its time limit, the
+  host ends the hold one game tick after it and logs a failure. A compatibility
+  quest journal read sends its click only while the run button is held, also
+  after a long pause.
+- A script that waits for its bank no longer waits for an extra game tick. When
+  the bank answers a script's request, the script's next step now runs at the
+  tick that saw the answer. That step may publish the next prompt or the end
+  of the request in the same tick. Before, the answer reached the script only
+  at the next game tick or the next change in the game, so a script that
+  tests items one by one in `Bank.depositAllMatching` could handle only about
+  one item per tick, or stall when the game stood still. Only the script
+  that waits for the answer runs: the wake dispatches no other hook, resumes
+  no other waiting script step and spends none of the tick's interaction
+  budget. This closes the known issue "`Bank.depositAllMatching` checks about
+  one item per game tick".
 - Selected rs2b0t compatibility helpers now support GatheringBot anchors,
   Jive bank restocking, MarketMaker name resolution, and paint rendering.
 - Native compatibility shop actions now use measured settle bounds for item
   acquisition, by-ID purchases and closing the shop.
-
 - Compatibility `probeDest` calls now use the host's full route-search
   budget; an upstream `maxExpansions` argument cannot lower it.
-
 - `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
   bank session and item generation. Their arrays, rows, and nested `ops`
   lists are read-only; `Bank.ready()` still returns a boolean.
-
 - rs2b0t scripts can use four more banking helpers. `purgePackAtBank` empties
   the pack of everything except the item names you keep: the bot opens the
   bank, deposits, closes the bank and then checks the pack. `withdrawCoins`
@@ -622,452 +888,397 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   clock that you give it, or game ticks.
 - Removed `Shop.player`, which only reported `not impl`.
 
-### Developer tools
-
-- The shared live-cell runner now copies each pass's cache into that pass's
-  evidence directory. Native navigation tests no longer refuse the runner's
-  cache path before login. Each pass gets its own copy; the throwaway-cache
-  guard, selected commands, goals and budgets are unchanged.
-
-- World-probe preservation checks accept a known server-only progress domain
-  even when quest colour cannot prove progress. They still reject missing
-  domains, transmitted variables, and ranges or writers outside the domain.
-- A separate benchmark adapter records the full frozen NPR proof workload's
-  search-only timing and committed memory. It compares with the development
-  base only when that base has the proof path; otherwise it supplies an
-  absolute cost diagnostic. The published pre-FLOOR cases are unchanged.
-- `seed-calc` computes no-food fight seeds from revision-289 combat formulas.
-  Consecutive-kill queries carry remaining Hitpoints without healing.
-  It also finds crossing seeds through the product route planner and admission code.
-  The tool reports unsupported combat instead of assigning a guessed seed.
-- The `seed-calc` food model supplies an empty avoid list to its food-only
-  walk guard, so it builds with the current native walk request.
-- Crossing seeds now bind queried Defence and signed worn-armour bonuses to
-  the current product risk input. A rune kiteshield no longer counts as an
-  anti-dragon shield. The developer-output verdict format removes the obsolete
-  `fixable_with` kind; named zone grants still require a survivable assessment.
-- Current-data API regressions keep revision-289 PvP facts distinct from
-  their absence on revision274. Quest-window tests retain Unknown for
-  non-authoritative colours and keep authoritative positive/refusal controls
-  through both the API and the host's captured route evidence.
-  Paired-duel regressions also keep revision274 admission refused for absent
-  rule buttons and preserve all fourteen revision289 positive mappings.
-  Navigation extractor tests retain Hero's exact stage 15 and Grand Tree's
-  stage range 80 to 160, including raw completion and colour-only refusal, while
-  controlled true-authority fixtures keep canonical completion paths covered.
-  No-domain entrance tests retain the raw progress threshold with either a
-  direct-varp or procedure-based journal expression; a green row alone does
-  not replace that threshold or remove the crossing.
-- The route-corpus exporter and navigation regression fixtures now use
-  stamped quest observations from the current evidence API. A stale
-  observation keeps its original timestamp and does not authorize a gate.
-- Obstacle regression fixtures now check every content-bounded progress
-  alternative. A synthetic future varp writer also updates that fixture's
-  test-side domain; it does not change the generated content facts.
-- Quester's live bank ownership checks now use the selected revision's law-rune
-  alias for both the item check and bank seed. The three real-bank fixtures
-  also construct in the normal test suite, so a fixture alias error cannot
-  remain hidden behind ignored live tests.
-- Admission regression tests distinguish an all-zone grant from endpoint
-  completion on a crossing with no on-foot exit. Covering every zone removes
-  only the no-exit refusal, not the probability-bound check.
-- A headless WalkTo regression drives the panel's actual danger-zone checkbox
-  and confirmation through the host's probability assessment. It checks
-  checkbox off and on, reset on the next picker open, and escape from a danger
-  zone with the checkbox off. Real Engine L probability cells remain separate.
-- Admission fixture callers now retain the current typed poison refusal and
-  its detail without copying prerequisite ownership. Bank-access search
-  refusals also retain their available world through the admission cutover.
-- The bank ownership probes finish only after observing the withdrawn rune.
-  Their terminal recipe no longer repeats an already-settled wait until the
-  no-progress guard fires.
-- The Duel Arena bank probe binds both real closed chest candidates before
-  Start. It rejects an already-open site and accepts only the same previously
-  closed lid opening without a bank session.
-- The Gundai player-open bank probe checks the full seed before Talk-to and
-  again at the stand reached by the real opening dialogue. A changed or forced
-  stand is rejected without moving the player or closing the bank.
-- The Jonny stand smoke uses two real reciprocal Arrav accounts. Phoenix
-  gathers its own fight food and advances through Jonny; its Black Arm partner
-  follows the real Tramp/Katrine dialogue. No report or goal items are seeded.
-  Both roles use their own explicit starting varp, and the normal regression
-  invokes each role's stateful Start observer.
-- Quester's bank ownership probe selects the session that actually transferred
-  its rune. Stock and inventory must move in that same generation, followed by
-  Quester's Closing phase and Close. An earlier failed session no longer hides
-  a later successful owned withdrawal.
-- Contributors can run the same checks as GitHub CI with
-  `cargo run --locked -p xtask -- ci --all`. The command writes a log and exit
-  code for each step.
-
-### Panel and terminal app
-
-- 274bot no longer shows "Background work is unavailable" and asks for a
-  restart when one disk operation takes longer than one minute. Background
-  work continues when that operation finishes.
-
-- Live catalog runs now report a JavaScript Start failure even if the
-  frontend already read its result. A script that remains idle no longer
-  counts as a settled Start. Start holds now log their reason once per
-  change at info level, with the bot name and current tick.
-- Live terminal and Quester test runs stop scripts before logout. If the engine
-  refuses logout because combat is still active, fixture teardown teleports only
-  that account to the safe mainland tile, waits 16 observed game ticks after
-  arrival, then retries logout within the original fixed 30-second deadline.
-- Profiles and Fleet now share one saved order. The **Profiles** window
-  lists your profiles in your saved Load order (not alphabetically), and
-  dragging a row there changes the same order as a Fleet drag in the panel
-  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
-  works while the Fleet is sorted by Name or Status, and leaves that sort
-  alone. While an order change saves, the Profiles list and the Fleet
-  table show **Saving…**; if the save fails, both show the reason and
-  your last saved order comes back. A line on the row under your drag
-  marks where the profile will land, and a name too long for its row is
-  cut with a "…" (hover shows the whole name). Importing rs2b0t
-  profiles now keeps the export file's order: new profiles join the end
-  of your saved order in the file's sequence, and a profile you already
-  have keeps its place.
-
 ### Grinch
 
 - Grinch now retries failed ground-item approaches before running its own
   fallback, using the same bounded walk-retry behavior as Quester.
-
-### Quester
-
-- The Quester supports The Restless Ghost. The quest picker now offers only
-  guides that passed live qualification. Saved draft choices show why they cannot start.
-- The Quester's blocked message now ends "then start the Quester again": the
-  Stop button is unavailable once the run has ended, so the message names the
-  action you can take.
-- The Quester now closes the bank when it has finished taking what a quest
-  needs. Before, the bank window stayed open until the next step happened to
-  walk. The bot now waits until the bank window is gone before it starts the
-  next step. It closes only a bank that it opened itself. A bank that you
-  opened stays open.
-- The same close now also happens when a bank trip fails, when you pause and
-  resume the bot, and when the watchdog restarts the script. In each case the
-  bank window is closed before the bot reads the quest journal. The bot sends
-  no input while you hold control or while it is at zero hitpoints. If the
-  window does not close after three tries, the bot logs this and goes on.
-  Stop does not send a close.
-- A bank that you close and open again while the bot is closing its own bank,
-  or between two bank trips, is no longer closed by the bot. The bot closes a
-  new bank window only when its own bank trip opened it. A bank that you open
-  while the bot waits for a banker, or before the bot could send its click, is
-  also yours: the bot does not close it.
-- When a quest starts without something the bot only wanted to carry (for
-  example the coins it keeps for buying things), the log now has one line that
-  names the item and how many are missing. The bot does the same as before.
-- A fight with a distant stand now starts its 15-tick no-target search only
-  after observed arrival within one tile. Before, the fight could report "no
-  target" while the bot was still walking. Exhausted approach retries return
-  the last walk failure. The fight's budget still limits the walk and fight
-  together.
-- A Quester fight now retakes its drop when the game reloads the scene just as
-  the take starts. It waits for a later observed game tick before it takes the
-  same item once more. Evidence wakes within the cancelled tick cannot send a
-  retake. A second scene reload skips that item. Required-loot checks still apply.
-  Before, the whole step failed with "step error" and the item was left behind.
-- Quester's Blocked status keeps the quest stage, step and last failure after
-  a parked executor stops. A park with no selected step reports an empty
-  `step_id`. A row that becomes Done or Blocked discards its old parked detail.
-- A fixed-destination Quester walk retries `NoPath`, `RouteEnded`, `Stalled`
-  and `Failed` receipts only when they have no typed refusal or blocked zones.
-  Each retry waits for a later observed game tick and starts a fresh route
-  from the player's latest observed position. `Refused`, any typed refusal,
-  blocked danger zones and `Blocked` entrance requirements stop at once.
-  `Aborted`, `UserInput`, `NeedsEvidence` and `Cancelled` also stop at once.
-  The walk stops after three attempts and keeps the last failure detail.
-- Quester now retries approach walks for `interact`, `use_on`, `buy`, `make`,
-  bank access, `talk`, dialogue pre-walks, gathering, partner trades, thieving,
-  the totem security-door handler, shared `Reach` actions, combat approaches
-  and combat return-to-stand. Each retry makes a fresh route from the latest
-  observed tile on a later game tick. The shared three-attempt limit matches
-  `walk`. Danger refusals, blocked zones, user input, cancellation and missing
-  evidence still stop at once. Exhaustion keeps the last failure detail.
-- A random event no longer restarts the Quester's step. About 500 game ticks
-  after login the server can spawn a random event beside the player. Before,
-  the Quester then dropped its quest progress, read the quest journal and began
-  the step it was running again from the top of its sequence, with no failure
-  shown. Now the step, the quest progress and the place in an ordered sequence
-  stay. The Quester no longer goes by the event's name. A step is dropped only
-  when the player was teleported while the random-event handler held the
-  script: a plane change, or a jump between two observed frames that running
-  cannot cover in the ticks between them. The Maze and Mime events, the
-  teleport of an ignored Genie or Mysterious Old Man and the return to
-  Lumbridge are such cases; a few tiles of walking away from a hostile event are
-  not. The Quester then goes on from the same place in the sequence, and a step
-  that had finished keeps waiting for its own check.
-  With the setting for random events off the handler does not act, nothing
-  holds the script, and the Quester keeps its step.
-- A Talk, Use-on, Thieve or walk step that a random event interrupted now
-  sends its request again, once. The event's handler sends its own
-  interactions and the host drops the script's queued requests while it holds
-  the script. Before, a Use-on dropped this way waited for a receipt that never
-  came, a Thieve attempt ended at its receipt deadline, and a Talk whose
-  dialogue never opened failed at its deadline. Now the action waits one game
-  tick after the hold, checks its goal again, and sends its request again only if
-  the goal is not met: a Use-on checks its `until` count or product first, and
-  a Talk still walking to its NPC plans its route again only when the route
-  was lost or ran out of time during the hold. The log shows one line for
-  each resume.
-- The log now names the reason each time the Quester drops its step or
-  progress (a teleport during a random event, a new run, a death, a pause and
-  resume, or a session end).
-- A Talk step no longer fails when the NPC is out of view for a moment while
-  the bot walks to it, for example while it wanders. The bot keeps walking
-  to where it last saw the NPC and talks to it when it sees it again. If the
-  NPC is still not in view after three walk attempts, the step
-  stops with an error that names the NPC and the tile where it was last
-  seen.
-- After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
-  sends one more Talk-to request. This recovery also applies when the NPC's
-  wander range is zero. If the recovery walk fails or the server refuses the
-  next Talk-to request, the error keeps the refusal text.
-- Starting Quester now shows each target's declared danger zones before a
-  fleet Start. The plan asks for confirmation and checks each saved queue
-  again before Start. It skips a bot if its queue changed. A bulk Start
-  without a plan does not start Quester.
-
-- Starting one Quester shows its declared danger zones in the Script section
-  before Start. Selecting a card in Browse closes Browse, and Start will not
-  run Quester while Browse hides that list. The TUI palette opens that section
-  first; the user must select Start after reviewing the zones.
-- The Quester card no longer offers the blanket `Allow danger zones` setting.
-  The old saved value still loads, but it no longer affects Quester routes.
-  The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use
-  `cross` to declare stage and step zones. A declared crossing arms the food
-  guard for the walk. Protect stays active only on steps that request it.
-  Even a Quester scope with no grants avoids every danger zone, even when the
-  global setting allows danger routing. Desert Rescue declares the same zones
-  for both walks to the captain.
-- Guide `walk` steps that set `args.allow_danger_zones` now fail to compile.
-  Use `cross` to declare the danger zones that a step may cross.
-- The quest campaign harness can now seed an exact authored account, run a
-  staged folder guide headlessly, and record game-tick stage changes,
-  completion, debug logs and CPU screenshots. It reuses the quest-watch
-  seed checks and the existing single-account and partner live drivers. Receipts
-  measure observed tick intervals. Engine Q uses fixed 300 ms ticks with no
-  world-speed commands.
-  Partial guides can declare an exact boundary and record a distinct
-  `gap-reached` result only when the boundary and prior settlements match.
-  Matching native park traces are retained in the boundary proof.
-  Boundary checks accept advancing journal stages and queue-only Blocked
-  statuses without weakening death checks. Solo receipts preserve cross-run
-  death totals. Campaign runs now avoid danger zones by default.
-
-- Quest guides now respond to an NPC's "I can't reach that!" message at once:
-  they recover from the NPC's current location when possible, or report the
-  refusal.
-- Quest guides can now kill until a required item drops, with a total kill
-  budget and a named stop. The final allowed kill still gets its loot wait.
-  The receipt records confirmed kills across re-engagements.
-- After an advancing step's settle timeout, the Quester rereads quest progress
-  before it retries. Steps can also set their own attempt limit and a named
-  stop.
-- Quest guides can now select a product and quantity from a production menu
-  opened by using an item on another item or on a location. Fixed menu buttons
-  count processes, while `qty` counts output items; guides select the smallest
-  whole-process quantity that reaches the held target when the content allows
-  it. If a loc-triggered batch closes before the target is met, the guide uses
-  the item on the loc again.
-- Loc-triggered production approaches its anchor when the player starts more
-  than six tiles away. The menu clock starts after the approach and an
-  accepted click. Its one-tick observation window includes a one-tick
-  packet-order margin for the engine's next-tick input and interface update
-  (`E: engine/src/engine/World.ts:350-355,
-  engine/src/engine/entity/NetworkPlayer.ts:171-177`).
-- Make-X production allows five game ticks for each spinning output: the
-  game adds one ball of wool every three ticks, plus one tick for the order in
-  which the server's updates arrive and one tick of margin.
-- Non-kill combat re-engagements are bounded by the 700-tick maximum NPC
-  respawn in revision 289 and the engine's three-tick target-gone end. The
-  request tick budget adjusts the bound. `until_drop` uses its authored
-  `max_kills`; `until` and `win` use the content-derived bound. Exhaustion
-  keeps the last combat report in the failure detail.
-- Ground-item Take steps can now use an observed game-tick budget. This
-  lets a guide collect a temporary scripted drop such as the Jailer's key,
-  without a wall-clock spawn wait.
-- The panel and TUI now keep a quest run's final status after it completes.
-- Quest guides can now opt in to answering a repeated menu question once and
-  then moving on. `answer_once: true` skips a `prefer` entry that already
-  answered an accepted page in the same conversation and falls through to the
-  next entry in order, so a guide can answer a repeated menu such as Nature
-  Spirit's Filliman Tarlock conversation once and leave. It defaults to false
-  and no bundled guide sets it, so every shipped guide keeps its answers.
-  With the option on, `prefer` holds at most 32 entries.
-- Quester's anchored prewalk for an unseen loc now accepts any standable tile
-  within the anchor radius, leaving the final, live-loc approach to select an
-  accessible interaction side.
-- Talk steps now approach NPCs within the configured interaction distance
-  before opening their dialogue. The approach budgets one observed tick per
-  planned walking tile, plus two slack ticks. When the live reach map cannot
-  reach the NPC, the budget is the route length that the route planner reports
-  for the same walk, plus the two slack ticks. A request with no route fails
-  with a named reason after the shared three-attempt approach budget. A route
-  planner that gives no answer within eight observed ticks counts the same way.
-  A route that ends short while the NPC stands still uses the same budget. A
-  replan, one for
-  each tile other than the NPC's home tile in its legal wander square, is spent
-  only when the NPC has moved. The first-page clock counts four observed ticks
-  from the engine's read of the accepted Talk-to click, or from the bot's
-  arrival beside the NPC if that comes later. The NPC's first game message
-  restarts it. A page on the deadline tick is accepted.
-- Damage from quest dialogue no longer looks like an attack when no visible
-  NPC or player targets the bot.
-- A failed walk also reports where its route ended.
-- Thieving steps now walk to the guide's anchor while the target NPC is out
-  of sight, instead of waiting beside the anchor for a target that the bot
-  never approached. The required level comes from the selected game content
-  whenever no NPC is visible, so a bot below it refuses before walking or
-  stealing. Failed approach walks are replanned from the observed tile within
-  the shared three-attempt limit, with the last failure ending the step.
-  Inside the anchor, the bot waits one NPC respawn window for a target and then stops
-  with "no thieving target appeared at the anchor".
-- Anchor walks in thieving, gather, use-on and the Tribal Totem door steps now
-  accept any standable tile inside the authored radius. Before, the walk
-  required a path onto the anchor tile itself, so a bot that stopped short
-  could end with "walk route ended before arrival" while already inside the
-  area. The thieving approach settles the route end through the shared walk
-  adapter, so it accepts the area and goes on to look for a workman there.
-- Quest dialogue no longer stops at two identical pages in a row. Merlin's
-  Crystal shows `And wait...` twice, and the guide used to wait for the page
-  to change, so it reported `dialogue failed` while the server had already
-  accepted the Continue. The guide now counts a Continue as done when the
-  host accepted it and a later game tick was observed, or when the page
-  changes. The guide presses Continue again on an identical page, but only
-  within the 10 observed game ticks that its first Continue on that page got.
-  A page that never changes ends the wait at that bound, not after 3 seconds
-  of clock time, even when the guide did not observe every tick (for example
-  during a hold) or had to delay the repeated press to a later tick.
-- When a step with a dialogue fails while a dialogue page is still open, its
-  retry continues that page from the player's current tile. It no longer
-  walks back to the step's start position first. This matters where the
-  quest's script moves the player during the dialogue, as the Merlin's
-  Crystal crate does. The retry still counts against the step's attempt limit.
-  When the attempts run out, the step stops with the reason of the last
-  failure.
-- Quest dialogue no longer reports `expected dialogue did not open` while the
-  host has not yet sent the Talk-to click. The wait for the first page starts
-  when the host accepts the click. While the host cannot send it (not
-  connected, or holding the bot), the guide waits. When a hold drops the
-  click unsent, the guide sends it again. When the host refuses the click,
-  the guide stops at once with `expected dialogue did not open`, the NPC, the
-  tick of the refusal and the last game message.
-- A Quester conversation that follows a fight no longer stops with "dialogue
-  interrupted by combat" when nothing attacked the bot during the
-  conversation. After a fight, the game keeps the health-bar window raised for
-  a few seconds, and an NPC that only faces the bot, such as the Sir Mordred
-  that the Merlin's Crystal guide spares, also looked like an attacker. The
-  Quester now counts a closed chat as combat only when an attack reaches the
-  bot after the conversation began. Almost every attack that closes a chat
-  sends the bot a mark in the same game cycle: a hit (also a miss or
-  poison), an animation, a spot animation (a magic splash) or a projectile
-  (a ranged attack or a breath). A hit is not required. There are two rare
-  exceptions: an attack by a monster that is already dying, whose own
-  handler sends no defend animation, and an attack whose animation the
-  bot's own protection discards. In those cases the attack is still
-  noticed, but only after a short wait. This fixes the Merlin's Crystal
-  guide, which could stop at Morgan Le Faye's first page or at her last
-  page. A real attack during a conversation still stops it. The scripting
-  compatibility layer's chat dialogue (`openDialogue`, `driveDialog`,
-  `talkThrough`) applies the same rule, so a script that talks to Sir Mordred
-  or Morgan Le Faye no longer gets `false` from a conversation that ended
-  normally.
-- The Quester now eats during quest steps with declared damage, including
-  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
-  Each guide cites the game's own script for its damage bound.
-- The Quester waits for Hitpoints data before it checks if a step hazard is
-  survivable.
-- The Quester clears the old hazard after a run change, a death, a session end,
-  or when no step is selected.
-
-### Fixed (panel)
-
-- **Profiles** now closes when you press its ✕ or **Close**, also when you
-  have not opened a profile for editing. Before, it stayed open and could not
-  be closed. If a save of the open profile is still being written, the panel
-  still asks **Discard** or **Keep editing** first.
-
-### Login
-
-- A bot with no script now behaves like a normal client. The game's idle
-  timer runs for it: after about 90 seconds without input (the Java client's
-  idle counter of 4500 cycles at its 20 ms cycle) the client asks the server to
-  log it out, and the bot stays logged out. A mouse or key press counts as
-  input, and so does a command you send to the bot (a walk, a route step or a
-  command you type). A bot with a running or paused script keeps the timer
-  switched off, as before.
-- A bot with no script no longer reconnects by itself after a disconnect (a
-  connection reset, a server restart, a missing server answer or a server
-  logout). It stays logged out until you log it in, and its status says why:
-  "logged out: disconnected while idle", "logged out: idle logout by the
-  server" (only when the client had asked for the idle logout) or "logged out
-  by the server". Starting a script on that bot logs it in. If the script
-  stops before the bot is back, the bot stays logged out; stopping a script
-  also cancels a reconnect that is under way. Bots running a script reconnect
-  as before, with the same back-off and the same stop after three unexpected
-  exits in ten minutes.
-
-### Gatherer
-
-- After a death, the Gatherer no longer stops on the first blocked step of its
-  way back to the resource area. It plans that return again once, as on a
-  normal return trip, and stops only if the retry also fails, with the last
-  failure's reason.
-- This change addresses a lost connection during a bank trip (for example when
-  the server restarts). After the new login, the Gatherer now starts the trip
-  again at the walk to the bank, with a new plan from the character's
-  position, when the connection was lost during the walk to the bank, the
-  opening of the bank, the deposit or the withdrawal. It does this up to three
-  times in one trip. This limit is a policy choice, not a game rule: after
-  three restarts the Gatherer stops, and the message keeps the last reason.
-  The report that led to this change was not reproduced.
-- A bank window that was still open after a reconnect, but had no item list,
-  was waited on again and again. The Gatherer now clicks the booth once to open
-  the bank again. A teller bank (for example in the Mage Arena) with such a
-  window still stops after three tries, with the last reason.
-- The walk to the bank no longer stops on its first failure. When the walk
-  finds no route, fails, is blocked or stalls, the Gatherer plans again from
-  the character's position, first to the same bank, then to another bank when
-  there is one. After that it stops, and the message keeps the last walk
-  failure's detail. A walk you cancel by moving, and a refused walk, still
-  stop at once.
-- When the bank does not open after three tries, the stop message now includes
-  the last reason instead of only "bank did not open".
+- Grinch's bank trip no longer waits for fixed amounts of time. The bank
+  steps of the compiled scripts (open, withdraw, deposit, select, close) now
+  end a wait only by counting game ticks that the bot has seen. Before, a
+  wait also needed a minimum of real time to pass, so a slow or paused
+  computer could hold a wait open after its tick count was reached. The
+  bounds come from the game, not from a clock: 8 ticks for a transfer, 1 tick
+  for the bank's side view (the game sends it in the same tick as the bank
+  itself), and 9 ticks, counted from the request, before the bot picks the
+  nearest bank itself when the host's bank search gives no answer. The
+  JavaScript `Bank` API still keeps the millisecond minimum that its frozen
+  documentation states for its own waits. This closes the known issue
+  "Grinch's bank trip still waits up to a fixed time".
 
 ### Music
 
 - Negative attenuation in a SoundFont no longer causes extreme music volume.
 - Music can load SoundFonts whose sample-loop start is after the loop end.
-### Navigation
 
-- Navigation packs are now `274V19`. They include the multiway combat-cell list
-  and a baked reachability atlas (movement components, directed links, loc
-  stands), without a quest-family header. Older incompatible packs are refused
-  with a rebake error. 274bot does not convert an old pack at run time.
+### Developer tools
+
+- Contributors can run the same checks as GitHub CI with one command (see
+  `CONTRIBUTING.md`). The command writes a log and exit code for each step.
+- A seed calculator for quest fixtures computes no-food fight seeds from revision-289 combat formulas and
+  carries remaining Hitpoints across consecutive kills without healing. It also
+  finds crossing seeds through the product route planner and admission code,
+  with the queried Defence and worn-armour bonuses bound to the current risk
+  input; a rune kiteshield no longer counts as an anti-dragon shield. The tool
+  reports unsupported combat instead of assigning a guessed seed, and its
+  verdict output no longer has the obsolete `fixable_with` kind.
+- The quest campaign harness can seed an exact authored account, run a staged
+  folder guide headlessly and record game-tick stage changes, completion, debug
+  logs and CPU screenshots. A partial guide can declare an exact boundary and
+  record a `gap-reached` result. Campaign runs avoid danger zones by default.
+
+### Not in this release
+
+- Legends Guild bank gate is conservative (completion instead of the door's
+  stage-50 threshold). This is a navigation correctness follow-up for work after
+  0.2.9.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  the random pause length (`bankPaceTicks`) remain deliberately unavailable: the
+  host does not recreate the foreign router or random pacing. These private
+  exports reported `not impl` in earlier releases and are removed in 0.2.9.
+  `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick pause.
+  0.2.4 to 0.2.8 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 to 0.2.8 have the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.8 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.8 have
+  the same problem.
+- After a super antipoison the bot counts only the ordinary immunity time (120
+  game ticks instead of 570), so it may drink again sooner than needed. It is
+  still immune for the real time. Counting the super immunity is planned for a
+  later release. 0.2.7 to 0.2.8 have the same problem.
+- Fetching a cure or food when the bot would otherwise die is planned for a
+  later release. In this release a native script that would die of poison with
+  no cure held pauses its work and names what it needs.
+- Buying a cure from a shop is planned, not included here.
+- Taking a cure from a ground spawn, or making one from held supplies, is
+  planned for a later release.
+- A quest step without a declared damage source uses only the fallback: the bot
+  eats at half its Hitpoints on the tick that the damage lands. A first
+  undeclared hit larger than its current Hitpoints is not prevented. The Tourist
+  Trap guide declares its cell climb and mine cart damage.
+- Damage from a game area while the bot stands in it is not a step hazard. This
+  includes the Underground Pass spear and spring traps, desert heat, and
+  Trollweiss cold. Outside fights and walks the bot does not eat for this
+  damage. A bot holding for food on such a tile keeps taking damage. The
+  Underground Pass guide is not covered by this release.
+- The serialization and date libraries retain compatibility versions until the
+  JavaScript runtime libraries can be updated together. The recorded date-parser
+  advisory is not reachable: the calendar dependency does not enable date
+  parsing or formatting.
+- Danger checks can count a monster that walls prevent from reaching the route.
+  A more exact reachability check is deferred until route evidence shows that
+  this count alone refuses a safe quest walk. This work returns for review in
+  0.3.0.
+- The Knife tick technique is offered for oak and higher trees only. Normal
+  trees still use the ordinary gathering cadence.
+- Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
+  applies; the Gatherer fishes it at the ordinary cadence.
+- A sustained tick schedule based on auto-retaliate flinches is not offered. An
+  NPC hit can change the skill delay, but that schedule has not been traced or
+  designed.
+- The rs2b0t four-tick fly re-click and iron-cadence re-click methods give no
+  gain in revision 289 and are not offered.
+- A rune pickaxe already mines every three ticks, which matches the Knife cycle.
+  Knife turns itself off with no-gain for that tool; ordinary mining continues.
+- Eating uses the existing checked eat action and pauses the Knife technique for
+  one cycle. A food-based tick arm is not offered; it needs per-food delay facts
+  and a live probe before its design is complete.
+- The planned connection rewrite is not included. This release keeps the
+  existing connection code. The rewrite and event-driven content downloads move
+  to a later 0.3.x release.
+- The planned move of preferences to a SQLite database is not included. Settings
+  keep their existing file storage. The database work moves to a later 0.3.x
+  release.
+- Automatic protection-prayer flicking is not included. It moves to a later
+  0.3.x release.
+- Choosing every gathering, combat and service target by a route that the
+  account can use is not complete. Shop vendor choice and fixed fishing spots
+  have their existing checks. Other target choices can still select a target
+  behind a fence or gate. The remaining work moves to a later 0.3.x release.
+- The planned Bullroarer gathering technique is not included. It moves to a
+  later 0.3.x release. The separate Knife technique remains available.
+- Fair, nonblocking sharing of the graphics renderer across bots is not active.
+  Bots keep the existing blocking render admission. The remaining work moves to
+  a later 0.3.x release.
+- Further reductions in work when the host publishes world snapshots are not
+  included. The planned snapshot optimizations move to a later 0.3.x release.
+- The planned background queue for runtime log messages is not included. The
+  existing optional session-file queue remains. Further runtime logging changes
+  move to a later 0.3.x release.
+- The final separation of route planning from route execution is not included.
+  This internal code change moves to a later 0.3.x release.
+- Route admission checks the chance of death without credit for eating,
+  protection prayers or escape. The planned more accurate policy calculation and
+  fight estimates move to a later 0.3.x release. This does not fix the default
+  **When survivable** setting, which remains a known issue.
+
+### Known issues
+
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
+- **Quester:** These Quester guides are drafts, and live testing has not shown
+  that they work. Release builds do not start them unless you turn on Allow
+  unqualified guides in Script prefs with the Quester picked. The guides are:
+  Prince Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The
+  Tourist Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle
+  Potion, Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the
+  Chicken, Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City,
+  Tree Gnome Village, Scorpion Catcher, Observatory Quest, Shield of Arrav,
+  Hero's Quest, Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest,
+  Biohazard, Murder Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf
+  Cannon, Family Crest, Fight Arena, The Grand Tree, Dragon Slayer, Horror from
+  the Deep, Shilo Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the
+  Myreque, Troll Stronghold, Eadgar's Ruse, Troll Romance, Throne of
+  Miscellania, Waterfall Quest, Legends Quest, Sheep Herder, Underground Pass,
+  Regicide, Shades of Mort'ton, The Fremennik Trials and Monkey Madness. 0.2.0
+  to 0.2.8 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
+  problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.8 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.8 have the
+  same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions. 0.2.6
+  to 0.2.8 have the same problem.
+- **Scripts:** A green poison hitsplat that the game shows without poison makes
+  the bot keep a poison reserve until the next poison message, poison tick or
+  cure. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** Strange fruit is recognized as a held cure and never fetched.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison and the bot cannot see which
+  creature poisoned it, when the poison message and the creatures' update
+  arrived together so the bot cannot tell which game tick the message belongs
+  to, or when a poisoned bot takes any hit, the bot assumes the strongest poison
+  in the game (330 damage) until the next poison tick shows the real value. Each
+  poison tick then shows the true remaining value. A bot with a cure may drink
+  it earlier than it strictly needed to. A script with no cure held can pause on
+  a poison it would have survived. The pause ends within five poison ticks
+  (about 150 game ticks) of the first poison tick at which the bot's hitpoints
+  and food would have carried it through, which can be later than the message
+  when the bot is eating as it waits, and then the script continues on its own.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison in a frame before its creatures'
+  update, the bot waits for that update before it decides which creature
+  poisoned it. A cure that is needed only for the worst case is then drunk one
+  game tick later. A cure that is needed at once is drunk at once. 0.2.7 to
+  0.2.8 have the same problem.
+- **Scripts:** The game does not say when a poison has ended. A paused script
+  whose hitpoints plus food are at or below the last poison tick's worst case (4
+  after the weakest tick) stays paused after the poison ran out, until it heals
+  past that or gets a cure.
+- **Scripts:** A paused script that is being hit by any creature stays paused
+  while the hits continue, because any hit can be a fresh poisoning. It does not
+  flee or fight back for that reason in this release.
+- **Scripts:** A native script that needs a cure while a bank deposit or
+  withdrawal is in flight lets that one transfer settle or time out first: eight
+  observed game ticks, without an elapsed-time minimum (twice that for a deposit
+  the game did not apply the first time). Then it closes the bank and drinks.
+  The Quester's own provisioning trips follow the same rule.
+- **Scripts:** When the bot reconnects while it is poisoned, it does not know it
+  is poisoned until the next poison tick, up to 30 game ticks later: the game
+  keeps the poison but does not repeat the poison message. In that time the bot
+  does not drink a held cure for that poison and does not eat early for it. A
+  bot whose hitpoints are at or below one poison tick's damage can die in that
+  tick. 0.2.7 to 0.2.8 have the same problem.
+- **Combat:** In a fight with no food left, a poisoned bot that holds an
+  antipoison can retreat or end the fight when its hitpoints are near the
+  poison-raised stop line, even though it drinks the antipoison in the same game
+  tick and would then be safe. 0.2.7 to 0.2.8 have the same problem.
+- **Navigation:** During a walk, a dialogue page that is open (for example a
+  level-up page or a gate's dialogue) can delay a drink or a bite until the walk
+  moves on and the page closes. An ordinary bite during a walk can go out in the
+  same game tick as a door or gate click. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** In Power mode, a Gatherer that finishes its last dose of an
+  antipoison keeps the empty vial. The vial takes a pack slot until you drop it.
+  Bank mode deposits it on the next bank trip.
+- **Panel and terminal app:** During a walk or a fight, the status row shows
+  that a cure or food is needed while the walk or the fight drinks or eats; it
+  does not show the drink or the bite itself.
+- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
+  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot makes up to three attempts each time the bot goes to talk to
+  Luthas. If all three fail, the fare is not paid and the trip does not cross.
+  After payment, the fare is paid. In observed cases, the bot still boards. No
+  workaround is known. 0.2.8 has the same problem.
+- **Scripts:** When a script starts a trip to the mainland without the boat fare
+  from some places on Karamja, for example near the Brimhaven cart, the first
+  walk can fail at once. The bot then does not earn the fare and does not cross.
+  No workaround is known. 0.2.8 has the same problem.
+- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
+  last piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an empty
+  pack. Watch the bot's food and stop the script when it runs low until the
+  script is fixed upstream. 0.2.6 to 0.2.8 have the same problem.
+- **Quester:** Without food, the Quester holds at a step that can hurt it until
+  its Hitpoints recover enough to clear that step's eat line, then tries again.
+  Hitpoints recover at one point per 100 game ticks. It does not fetch food. If
+  a game page stays open for 24 ticks while it holds, it stops with a clear
+  reason instead of waiting.
+- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
+  Strange fruit from a random event fills the last free backpack slot before it
+  holds a Magic log: it only goes to the bank when it holds logs. Clear one
+  backpack slot and the script resumes. The fix is in review upstream; update
+  your rs2b0t folder once it is merged. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** `ClientAdapter` readers that search interface components see only
+  the side tab that is open. For example, a button search by varp
+  (`reader.selectButtonByVarp`) on a side tab other than the combat tab finds
+  nothing while that tab is closed. The combat tab is not affected: combat style
+  reads (`Game.combatStyles`, `Game.setCombatMode`) work while another tab is
+  open. Open the side tab before you read it.
+- **Scripts:** `reader.locBox`, `reader.overlayPosWorld` and
+  `reader.projectAreaGameWorld` can return `null` once when a script reaches
+  them without their names in its code (for example through a computed property
+  name). A script that names the reader gets correct values from its first game
+  tick. Call the reader by its name.
+- **Audio:** When music is on, a bot reads the music font once, at its first
+  song. Music is off in the default low-memory mode. 0.1.0 to 0.2.8 have the
+  same problem.
+- **Combat:** A combat step can end at its start with `prep-failed:weapon` even
+  though the weapon is in the pack. The server moves a worn weapon in one step,
+  but the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by
+  then. 0.2.0 to 0.2.8 have the same problem.
+- **Terminal app:** Stopping the two bots after a paired Duel Arena fight can
+  time out before both clean logouts are acknowledged. The fight can work before
+  this stop failure. No verified workaround is recorded.
+- **Quester:** In Imp Catcher, the Quester can wrongly report that it has no way
+  out when it walks near the caged Lesser demon in the Wizards' Tower. The route
+  check treats the caged demon as free to chase the bot across a wide area, and
+  it ignores the cage, so it can refuse a walk that is safe. This does not
+  happen on every run; the release qualification run finished the quest. No
+  workaround is known. A fix is planned for after 0.2.9.
+- **Gatherer:** After Gatherer detects a gas hazard while mining, it can choose
+  another nearby rock without first walking away if that rock is ready to mine.
+  Do not rely on automatic escape from a gas hazard; stop the mining card if one
+  appears. A fix moves to a later 0.3.x release.
+
+### Fixed during development
+
+#### Saved data
+
+- 0.2.9 again reads all saved data that 0.2.8 read. Earlier 0.2.9 builds
+  offered to move these files aside as older than 0.2.8:
+  - bank memory files saved by older releases, which 0.2.8 still read;
+  - a vault last saved by an older release (for example, one without the
+    Cure poison setting);
+  - loadouts that hold worn gear as a plain list or carried items without a
+    quantity.
+- Gatherer again starts with settings saved by 0.2.8. Earlier 0.2.9 builds
+  refused them with "compiled schema 4 unavailable for Gatherer". The new
+  Buy tools setting is on for these settings until you change it.
+
+#### Navigation
+
+- Native Gatherer, acquisition and bank-opening selection can read a supported
+  quest journal when unknown access gates prevent every eligible bank route.
+  They then choose again with fresh evidence. Proven-false gates stay closed,
+  and a genuine route failure keeps its detail. This fixes a regression found in
+  this cycle after the Priest in Peril quest-colour data was corrected.
+- Prerequisite conversations now count an arrived re-approach as a failed
+  attempt when the NPC moved away or disappeared. The next attempt waits for
+  a later game tick and keeps the conversation's existing four-attempt limit.
+- A prerequisite conversation now keeps its content row's full first-page
+  allowance when that is longer than the shared dialogue default. This
+  prevents an early timeout while keeping ordinary dialogue deadlines and
+  cancelled-Talk retries unchanged.
+- A prerequisite conversation that the server cancels with "I can't reach
+  that!" no longer waits out its page bound. The bot ends the wait at once,
+  walks to the NPC again if it is more than two tiles away, and talks again.
+  If that walk ends after the NPC has moved on, the bot walks to the NPC
+  again too. One conversation makes up to four attempts in all. If every
+  attempt fails, the step fails and reports the last attempt's cause and tiles.
 - The baked loc stands follow the game's own reach rules. A wall corner
   (shapes 1 and 3) and a straight wall decoration (shapes 4 and 5) can be
   operated only from their own tile, as in the game. The first v18 bake listed
   stands for them on the far side of the wall (552 on revision 289).
 - A pack bake with overflow checks on no longer stops at a movement label of
   zero, and a bad packed coordinate in a source table is a typed bake error.
-- Pack-bound searches keep the bounded unreachable-goal proof until a
-  reachability-atlas proof replaces it, so an unreachable goal is refused after
-  the same few thousand nodes as with a `274V17` pack.
-- The pack baker and the pack reader now check every atlas table with the same
-  functions, so the baker cannot write a pack that the reader refuses. This
-  includes a missing or short chunk directory, a chunk bit width above the
-  minimum for its palette, a chunk palette range past the palette, and an empty
-  paint run. Developer and CI test packs use the same current-format local
-  payloads. They do not need a published reference bake.
 
-### Client (`FR-client-bothost` `multirev-bh-modular`)
+#### Gatherer
 
-- After the server restarts, the "System update in" countdown no longer
-  stays on screen once the bot logs back in. The client clears the countdown
-  on a successful login, as the Java 289 client does.
+- With the Knife technique on, the Gatherer finishes its walk to a replacement
+  tree or rock before it arms the technique again. It arms at once when it
+  already stands where the replacement can be worked.
+- Shop purchases no longer pick up an unrelated shop that is already open, and
+  no longer repeat a purchase whose result is unknown. After an unclear result
+  the bot talks to the same shopkeeper again and checks the fresh shop page
+  before it buys more. The quantity reported counts the units it saw arrive,
+  including purchases of more than 255 units.
+- Before it walks to a seller of bait, Gatherer now checks that the bait is
+  affordable at its lowest price. It no longer requires the full refill money
+  first.
+- When every shop that could sell an item is out of reach, the message now says
+  the shop cannot be reached from here and asks you to move closer. Before, it
+  said nobody sells the item.
+- Gatherer now shows whether its bank information was seen in this session or
+  saved from an earlier one, with its age at the last status update.
+- Supply trips use the same shared flow as other bank and shop work. A full
+  pack is still deposited before a missing supply is reported, and a tool in
+  the pack that can be wielded is wielded without a bank trip. A bank refusal
+  keeps its own reason. A refill can withdraw a lower usable tool tier when
+  that is what the bank holds.
+- Gatherer's bank status keeps the route kind and access tile it chose during
+  a supply trip.
+
+#### Quester
+
+- The Quester's Tourist Trap guide no longer walks to the rocks of the slope
+  outside the cell. It sends the "Climb-to" action from where it stands, and
+  the game walks the player, as it does for a human player. Before, the guide
+  asked for a walk that cannot exist and stopped on the first rock.
+- The Quester's status and its Start log line now include the comment of the
+  current step of the active Path.
+
+#### Scripting
+
+- A script's quest-journal read keeps the run button held from each click it
+  sends, for 10 seconds, not only from the start of the read. Before, a read
+  that had been paused could send its click just as the first hold ran out. The
+  run button then pressed right after the click and closed the journal page the
+  click had opened. A click that is still waiting when its hold runs out is
+  never sent; the read fails as expired and the script's own retry applies. The
+  pause that follows a conversation page also keeps the run button held when the
+  host had already ended the hold on the wait before it. This holds for the
+  native reader and for the compatibility reader.
+- A native script that asked the host for a route assessment could wait for
+  an answer that never came. This happened when the script's earlier walk had
+  just ended: the host cleared the old walk and, with it, the new assessment.
+  The host now clears only the old walk's own work, so the assessment still
+  answers once. If the host itself cancels a live assessment (a pause or a
+  relog), the script now gets one refusal that says so.
+- Compat loading now provides every named selected object row to the adapter.
+- Paint wrapping now indents only continuation lines.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
@@ -1076,8 +1287,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - In the panel, **Copy settings** now follows a bot if you rename it in
   **Profiles** before **Confirm**. The copy is still cancelled if the
   target is deleted or the vault becomes unavailable.
-
-- The panel wraps the global danger warning at the docked Nav window width.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
@@ -1118,23 +1327,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Combat
 
-- The route-risk model uses normal melee facts for a bespoke NPC only when
-  extracted combat content proves its shared melee routine, damage, and timing,
-  with no poison or multi-hit effect. Other bespoke attacks remain unknown.
-- Selected combat facts now include all NPC combat levels, signed bonuses,
-  player defence inputs, weapon style slots, and declared NPC damage defaults.
-  Missing required defaults stop data generation.
-- Route admission now checks an upper bound on the chance of death. The limit
-  is 1%, without credit for food, prayer or escape. Declared danger-zone grants
-  no longer bypass this check. Unknown poison can hold a walk before exposure
-  for the rest of one 31-tick clean window. Always and rs2b0t-compatible walks
-  keep their existing permission contract and show the bound as information.
-  Known poison remains in the bound and reason when a walk crosses no NPC zone.
-  Admission still permits those walks.
-  Incomplete route geometry stays unassessable.
-  Dormant NPCs use their awake combat facts only when selected content proves
-  the transition. Unresolved transitions stay unassessable.
-
 - Bots now drink their boost potion before the first hit even when the target
   starts out of reach.
 - Bots now know how hard common monsters such as cows, chickens, rats and
@@ -1173,117 +1365,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Navigation
 
-- Quest walks can use the quest-list colour to place a quest at progress 0
-  or at its content-declared completion value. An in-progress colour proves
-  a window only when the full in-progress value range lies inside it. A walk
-  reports the quest, window bounds and unknown evidence state.
-
-- A profile no longer loads if its navigation pack was built from different
-  quest data. The error identifies the mismatch and asks you to rebuild or
-  replace the pack, instead of reporting missing quest evidence.
-
-- When a walk needs quest evidence, the bot waits up to one game tick for
-  the quest list. Once the needed rows arrive, it plans the route once more.
-
-- Failed walks now check for missing items and entrance requirements before
-  broader route checks. The checks stop at a shared search limit, instead of
-  continuing through each full search allowance. Scorpion Catcher reports
-  the missing Dusty key. Boat-fare and Shantay-pass recovery keep their missing
-  item results. If the check reaches the limit before it finds the cause, the
-  result says how many places it examined. The Quester keeps its existing
-  bounded walk retries.
-
-- Bots now find long walks to an area that the route planner gave up on
-  before, such as the walk to the Waterfall Quest start. When the planner
-  cannot tell early whether an area is reachable, it now keeps searching up
-  to its normal limit. A walk to a place that cannot be reached can take
-  longer to fail.
-
-- Normal walks can now obtain Drezel's advice for the holy barrier and start
-  Nature Spirit before entering Mort Myre. The walker first checks the
-  crossing when its state is unknown. It remembers witnessed passes,
-  dialogue effects and refusals for the current run, then resumes the
-  original walk. Stop cancels the current walk or conversation.
-  Bank choices use the same remembered crossing state.
-  Manual map walks can check these crossings without a running script.
-  The manual walker uses the same quest evidence for planning and crossing.
-  Earlier quest-gated ladders no longer discard a later barrier's refusal check.
-  Dialogue pages do not need a duplicate chat message to stop a refused crossing.
-  Refusal checks also match sentences split across adjacent dialogue lines.
-  Scene reloads no longer discard a manual walk's crossing observations.
-  The crossing check uses the packed legal interaction stand. For the barrier,
-  the route planner chooses between both legal stands instead of committing
-  to a side the account cannot reach. It never walks onto the blocked tile.
-  Walks from Morytania can reach the barrier through the east trapdoor.
-  The Brimhaven restaurant kitchen door admits Phoenix Gang members from
-  the Heroes' Quest stage after they speak to Alfonse. It still refuses
-  Black Arm Gang members. Walks without available prerequisite steps skip
-  the extra prerequisite search.
-- Walks can now read the Shield of Arrav journal to identify completed
-  Phoenix Gang membership for the Brimhaven kitchen door. A shared green
-  quest-list row alone remains insufficient. Black Arm members stay refused.
-  An on-demand Heroes' Quest page also proves eligibility after Alfonse,
-  before quest completion, without starting dialogue or a quest.
-  If the page times out, the walker retries once on a later observed game
-  tick. A failed retry keeps the gate closed and reports the terminal failure.
-
-- Navigation keeps quest-gated crossings without a proven stage range (the
-  Legends' Guild barrier, the Desert Rescue mining camp, the Routequest
-  trapdoor) for accounts whose quest list shows the quest complete. A
-  completed-quest gate whose quest-list colour is not proven to follow that
-  quest's own progress stays unknown.
-
-- Two default-on navigation settings allow prerequisite dialogue and quest
-  starts. Global, script and guide-level `true` grants are additive. A
-  guide-level `false` adds no grant; a per-walk `false` forbids it. Combat
-  escapes and other safety walks never stop to talk.
-  Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
-  including after the existing boat-fare recovery.
-  Scripted walks retain their original walk identity during a prerequisite
-  step, including scene reloads, and release it when the walk ends or a
-  handover is refused.
-  Food from Drezel remains ordinary inventory and follows existing bank
-  behavior. No prerequisite step drops it.
-- Long walks that bend around walls no longer stall when running is off.
-
-- Bots now cross an open door when its shifted leaf blocks the packed
-  approach tile. They no longer wait for that door to reset before leaving
-  the Wizards' Tower basement. The walker still checks the next door's
-  identity and follows its normal crossing rules.
-- A walk with no tile progress for 10 observed game ticks now logs one
-  info line. The line identifies the current route, door, scene, or stall
-  wait and its target. Movement, a new request, or the walk ending resets
-  this log limit.
-- Walk budgets now include the planned path length at one walking tick
-  per step. They count observed game ticks, not repeated status polls.
-  They count from the player's tile even when click-ahead advances the cursor.
-  Movement can extend a walk by 25% of its original allowance, rounded up
-  to a whole tick, and retains at least the previous 60-tick limit.
-  This lets the server finish turns without letting pacing or movement
-  away keep a walk alive forever.
-  A stopped walk keeps its original finite budget, including recovery attempts.
-- Bots no longer plan the boat from Port Sarim to Entrana while they carry
-  or wear an item the monks refuse: weapons, armour, axes, pickaxes or
-  cannon parts. A bot plans that boat only after it has seen its inventory
-  and equipment.
-- While a script waits for the window its own action opens (a quest journal
-  page or a conversation page), the host does not press the run button. The
-  script ends this wait when it sees the result, reaches its own time limit,
-  or stops. A queued Talk holds the press before dispatch; its page deadline
-  starts only when the host accepts the click. A guardian reissue takes a
-  fresh wait. Actions that open no window, such as walks, take no hold.
-  The lease follows its owner's clock: dialogue page, Continue and end-gap
-  waits count observed ticks and can expire during a pause; Choice and Main
-  acknowledgement waits exclude paused time. If an owner stops checking a
-  bound, the host ends the hold one game tick after that bound and logs a
-  failure. A compatibility quest journal read sends its click only while the
-  run button is held, also after a long pause.
-- A prerequisite conversation that the server cancels with "I can't reach
-  that!" no longer waits out its page bound. The bot ends the wait at once,
-  walks to the NPC again if it is more than two tiles away, and talks again.
-  If that walk ends after the NPC has moved on, the bot walks to the NPC
-  again too. One conversation makes up to four attempts in all. If every
-  attempt fails, the step fails and reports the last attempt's cause and tiles.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
@@ -1295,36 +1376,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Transport time limits now count game ticks instead of polls, so a burst
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
-- Navigation now maps both directions of the Legends Guild gate after the quest
-  starts. It also maps Kharazi jungle crossings. A jungle map or completed
-  Legends unlocks each crossing. The player must also have a machete and an
-  axe. Both tools can be carried. The player can also wear one tool in the right
-  hand and carry the other.
-  A successful bush crossing costs at least 3 game ticks; a tree crossing
-  costs at least 5. The script also uses a Woodcutting roll and a
-  tree-depletion roll. The pack does not model the chance of either roll.
-
-
-- Walk failure details and debug logs now name the search result. A walk
-  that stops at its node budget reports `search_result=BudgetExhausted`. Script
-  and native walks also report the settled-node count. When no more specific
-  cause is found, native walk receipts report `Refused` with a typed
-  `SearchIncomplete` refusal, not `NoPath`. An incomplete search does not
-  publish a missing-supply list. A complete `NoPath` can still report missing
-  supplies when an item-gated route was found.
-
-- After an incomplete route search, a straight-wall approach can try its
-  wall-side fallback within the Quester's existing three-attempt limit.
-  It still stops for blocked danger zones and does not retry an incomplete
-  search when that target has no wall-side fallback.
 
 ### Scripts
 
-- The default-off Knife setting supports fly and net fishing, woodcutting from
-  oak upward, and gainful mining with bronze-to-adamant pickaxes. Its optional
-  kit can supply the knife and logs; rune pickaxes do not arm because they give
-  no gain. Live fly-fishing, net-fishing, oak-chopping and iron-mining checks
-  passed the fixed cadence gate.
 - Bank opening now waits for its own walk to finish. Before, a walk that a
   script had finished could be taken for the end of the bank walk, and the bank
   walk then ended before the bot reached the bank.
@@ -1340,75 +1394,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   see Known issues.
 
 ### Documentation
-
-- A native script that asked the host for a route assessment could wait for
-  an answer that never came. This happened when the script's earlier walk had
-  just ended: the host cleared the old walk and, with it, the new assessment.
-  The host now clears only the old walk's own work, so the assessment still
-  answers once. If the host itself cancels a live assessment (a pause or a
-  relog), the script now gets one refusal that says so.
-
-- Rust integrations now use the native script crate for interaction, paint and
-  snapshot types. JavaScript runtime types stay in the separate JS crate.
-  This removes the temporary import aliases without changing script behavior.
-
-- A script that waits for its bank no longer waits for an extra game tick. When
-  the bank answers a script's request, the script's next step now runs at the
-  tick that saw the answer. That step may publish the next prompt or the end
-  of the request in the same tick. Before, the answer reached the script only
-  at the next game tick or the next change in the game, so a script that
-  tests items one by one in `Bank.depositAllMatching` could handle only about
-  one item per tick, or stall when the game stood still. Only the script
-  that waits for the answer runs: the wake dispatches no other hook, resumes
-  no other waiting script step and spends none of the tick's interaction
-  budget. This closes the known issue "`Bank.depositAllMatching` checks about
-  one item per game tick".
-
-- Grinch's bank trip no longer waits for fixed amounts of time. The bank
-  steps of the compiled scripts (open, withdraw, deposit, select, close) now
-  end a wait only by counting game ticks that the bot has seen. Before, a
-  wait also needed a minimum of real time to pass, so a slow or paused
-  computer could hold a wait open after its tick count was reached. The
-  bounds come from the game, not from a clock: 8 ticks for a transfer, 1 tick
-  for the bank's side view (the game sends it in the same tick as the bank
-  itself), and 9 ticks, counted from the request, before the bot picks the
-  nearest bank itself when the host's bank search gives no answer. The
-  JavaScript `Bank` API still keeps the millisecond minimum that its frozen
-  documentation states for its own waits. This closes the known issue
-  "Grinch's bank trip still waits up to a fixed time".
-### Survival
-
-- Gatherer and Quester check for a needed poison cure while they work. They can
-  drink a held antipoison during a walk, even when eating is disabled. Outside a
-  walk or a fight, they cancel the current step to drink, close a dialogue page
-  or an "Enter amount" prompt first when one is open, and then start the step
-  again. An active bank transfer first settles or reaches its limit, then they
-  close the bank, drink and resume work. When poison makes survival unsafe and
-  no cure is held, or when hitpoints are at or below the eat line and no food is
-  held, they pause work without ending the run and show the needed cure or food
-  in the status row.
-  Exhausted combat escapes retain that held-cure guard without restoring food
-  permission, including when the walk crosses a named danger zone.
-- A Gatherer bank trip keeps held antipoison and super antipoison doses in the
-  pack, so a later poison still finds them.
-- The panel and terminal app show the same status row when poison means the bot
-  needs a cure or food, and clear it when that need passes.
-- When the game ignores a survival drink (for example in the tick after a
-  mining success, when the game drops item clicks), Gatherer and Quester click
-  the dose again after 3 game ticks with no dose used, and then go back to
-  work. After a drink they wait out the game's short drink delay before the
-  next bite or work click, and a second bite waits for the game's next-food
-  delay, so the game does not drop either click. Both waits count from the
-  game tick in which the game used the dose or the food, so they stay right
-  when the game applies a click late.
-- After a bite or a closed page that leaves nothing more to do, the Quester
-  goes back to its step in the same game tick.
-
-- Route planning now reuses each bot's unchanged eligibility facts between
-  observations. It refreshes those facts when their source data changes.
-  Queued routes keep the facts captured when they start.
-
-### Scripting
 
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
@@ -1512,25 +1497,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   holds a Magic log: it only goes to the bank when it holds logs. Clear one
   backpack slot and the script resumes. The fix is in review upstream; update
   your rs2b0t folder once it is merged. 0.2.7 has the same problem.
-- **Scripts:** Some rs2b0t catalog scripts call script API members that 274bot
-  does not implement yet: `SettingsStore.save` and `onChange`,
-  `Bank.backpackReady` and `normalBackpackSnapshot`, `Reachability.probeable`,
-  `ScriptRunner.pause`, `resume`, `state` and `ctx`, and
-  `BotHost.addFrameListener`. Such a script stops with "not implemented" when it
-  reaches that call; for example, the current AutoFighter cannot start fighting.
-  Support is planned for 0.2.9. 0.2.0 to 0.2.7 have the same problem.
 - **Host:** Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9. 0.2.6 to 0.2.7 have the same problem.
-
-### Quester
-
-- The Quester log now keeps a long stage's step lines. Each stage of a guide
-  has its own trace budget, sized from that stage's steps and the steps of the
-  collection recipes those steps run, so a stage logs its own start, skip and
-  finish lines instead of being dropped after the run's first 32 different
-  lines. A new run starts that budget again for the current stage. Repeated
-  lines still fold into one line with a count.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
@@ -1713,13 +1682,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - A terminal-app preference error now clears after 15 seconds without returning
   on the next refresh. Recovery clears that error without erasing a newer
   message.
-
-#### Combat
-
-- A visible quest drop that does not reach the held count now ends at the
-  ground Take's existing four-game-tick settlement bound and is recorded as
-  missed. Required loot then follows the existing step-failure path, while a
-  successful pickup may still settle after the six-tick appearance window.
 
 #### Survival
 

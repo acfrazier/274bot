@@ -6,6 +6,36 @@
 follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
+## Nearest-service search
+
+`api::service_pick::ServiceCandidate` borrows a resolved row's access tiles.
+The bank and shop-keeper bindings share the same footprint access rule:
+standable tiles outside the footprint, on an open side, with no wall on the
+shared edge. A keeper placement is a one-tile footprint with all sides open.
+`NavWorld` resolves every pinned keeper placement once when selected-content
+facts are bound. All bots share those rows and their inline access rings.
+
+`nearest_service_air` is a test-only ordering oracle over borrowed candidates
+with no heap allocation.
+Its order is same level, footprint Chebyshev distance, access distance, then
+access x and z. Air order is not a route-cost decision.
+
+A routed pick searches **every access tile of every eligible row in one
+first-goal search**. It never pages the domain by air distance. Teleports and
+bank fetching are disabled. The host uses the same admitted cooperative
+cursor and cancellation fences as native bank selection. An established
+`NoPath` is distinct from `BudgetExhausted` or `NotSettled`; the latter two
+leave reachability undecided. Unknown quest facts close their route edges.
+
+The current native host supplies the same empty avoid-rectangle set as its
+bank picks, while preserving wilderness and danger permission bits. A future
+owner-supplied avoid set enters the typed service request and the existing
+cooperative request's `avoid` input; it needs no second search implementation.
+Cooking adds its own resolved facts binding and service kind, not a fork of
+the geometry or search.
+
+## Pack bake
+
 ## Product staging and local generation
 
 Product builds do not run `nav-bake`. The host build stages existing payloads
@@ -34,11 +64,14 @@ command uses the local revision-289 content and client cache:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 289 \
+  --engine "$GAME_DATA_289_ENGINE" \
   --content "$GAME_DATA_289_CONTENT" \
   --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \
   --out target/local-data/nav/289/274bot.navpack
 ```
+
+`--engine` names the selected engine checkout and is required for each bake.
 
 `--cache` supplies the local client-cache directory. Revisions 289 and 377 read
 its `config`. Revision 274 reads the server `config` beside that directory.
@@ -60,6 +93,7 @@ Use the explicit server table when you rebake revision 377:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 377 \
+  --engine "$GAME_DATA_377_ENGINE" \
   --content "$GAME_DATA_377_CONTENT" \
   --cache "$GAME_DATA_377_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \
@@ -270,7 +304,7 @@ supplies nor equips these strict pieces; the Quester loadout handles
 equipping. A held `item_req` is never budgeted as spent.
 
 An explicitly selected revision-377 bake also runs `vertical_377.rs`.
-It prices the renamed `ladder_1755` from the canonical climb helper while
+It prices the renamed `ladder_1755` from the climb helper's literal delay while
 preserving its coordinate-specific landing and relative fallback. That return
 connects the Varrock sewer to the otherwise walled-in palace coin alcove.
 Renamed `scenery_*` stairs are priced from canonical coordinate-switch
@@ -347,7 +381,7 @@ Only the two Entrana board locs are modeled in this slice. Locs 2081, 2083,
 2085, and 2087 are omitted; their handler crosses before printing `board_message`.
 
 Direct ladder/stair ops are also scanned across area and quest scripts.
-Unconditional `p_telejump`, `p_teleport`, and the canonical `climb_ladder`
+Unconditional `p_telejump`, `p_teleport`, and the `climb_ladder`
 helper can derive fixed `movecoord(coord, dx, dlevel, dz)` landings, including
 horizontal offsets such as the Mage Arena bank cellar. Presentation and
 literal delays are allowed; branches, dialogs, queues, dynamic destinations,
@@ -358,6 +392,10 @@ New direct climbs price literal script/helper delays plus the interaction.
 Named quest/guild door and secret-wall openers are interpreted from their
 RuneScript control flow, requirements, and movement behavior. Crossings derive
 from the parsed content; no canonical source-body identity is required.
+Engine door, ladder and movement procs, the guild-door, brass-key, gate,
+member-gate and glider handlers, and the obstacle handlers below are modelled
+by name. The bake uses their known behaviour when the content defines them
+exactly once. It does not compare their bodies with copied source.
 Conjunctive worn checks become strict `worn_all_req` gates, including exact
 primary-slot `inv_getobj` checks; carrying the disguise does not authorize the
 crossing. Named doors use a unique completed-journal proof for an untransmitted
@@ -412,7 +450,7 @@ content tool selectors produce separate carried-tool and strictly-worn-tool
 variants with their source skill/use-level gates. The selected tool identity
 remains opaque, so priority-dependent tool choices cannot invent a trajectory.
 Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
-without a real requirement are refused. The reviewed obstacle rules below are
+without a real requirement are refused. The named obstacle handlers below are
 the only exceptions for ungated movement and random failure branches.
 
 The `agility_force_move` primitive shares this machine with exact
@@ -456,8 +494,8 @@ failure-risk field. This table records the source risk without changing the wire
 | Upper `_top` rocks | `stat_random(agility, 170, 253) = false` | The preceding exact move already reaches the destination. The player receives `floor(hitpoints * 5 / 100) + 1` damage. |
 | Upper `_bottom` rocks | `stat_random(agility, 170, 253) = false` | A reverse exact move returns the player two tiles to the origin. The player receives the same percentage damage. |
 
-These rules omit only those complete, reviewed failure branches. They do not
-admit other random tests or damage calls.
+These rules omit only the `stat_random` failure branches of the named rocks
+handlers. They do not admit random tests or damage calls in other handlers.
 Troll progress and the pre-completion ladder use typed `QuestGate::Window`
 conditions, not hidden snapshot varps or completed-quest substitutes.
 The ordinary runtime journal provider returns `Unknown` for windows.
@@ -975,23 +1013,44 @@ activation predicate, carves and stationary shapes. Pursuit continues through
 the engagement envelope, with transport holds and projectile tails included.
 Retreat stays in the same walk leg, and teleports are never credited as
 on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
-`NoWayOut` in its reason unless the request covers every zone by name or by an
-all-zone exemption. An implicit endpoint-completion grant never removes that refusal.
+`NoWayOut` in its reason unless the walk has danger permission. An implicit
+endpoint-completion grant never removes that refusal.
 
 Live and estimated attackers are always summed, even when their identities may
 overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
 distance-limited or count-limited scene cannot certify coverage or erase a
-retained live row. Single-way flags stay false (no eligibility source yet).
+retained live row. The per-row single-way flags stay false; single-way combat
+is counted in the timeline instead (below).
 
 Admission builds one attack timeline and computes an upper bound on death.
 Each exposed NPC contributes one attack per its own attack interval, including
-the first exposed tick. All zones and retained live attackers are summed.
+the first exposed tick. All zones and retained live attackers are summed,
+except where single-way combat applies (below).
 Curated hazards and already-launched hits contribute certain damage.
 The check credits no food, protection prayer, or escape action. It admits a
 crossing when the bound is at most 1%. Display-only damage and floor totals
 saturate at their field limits; they do not turn a numeric bound into overflow.
 Unsupported facts, missing input, input locks, and a schedule above the event
 limit remain explicit `Unknown` verdicts.
+
+In single-way combat the content lets one NPC at a time attack a player:
+`npc_check_notcombat` and `npc_check_notcombat_self`
+(`npc_combat.rs2:372-389`) run at the start of every shared melee, ranged and
+magic attack and refuse it while the player was in combat within 8 ticks and
+`%aggressive_npc` is another NPC. They do nothing on a multiway map cell
+(`maps/multiway.csv`, in the pack's multiway section) or for an NPC with
+`npc_forcemulti`. The timeline counts this when the pack carries a multiway
+table. Rows of one NPC kind (same maximum hit, hit chance and attack interval,
+interval of at most 8 ticks) whose intervals overlap become one cluster that
+attacks once per interval over the union of its intervals, if every route tile
+it can hit the player on, widened by the NPC's reach, lies on a cell outside the
+table. A cluster of an NPC that records combat variables only on a hit
+(`combat_vars_on_hit`, the Mort'ton shades) rolls its damage on every one of
+those slots, because a second NPC may attack after misses and hits stay at
+least one interval apart. Admission takes the smaller of this bound and the
+all-summed bound; both are upper bounds. A pack without a multiway table, a
+multiway cell near the route, a `forcemulti` NPC, a bespoke attack and a ninth
+overlapping kind keep their own schedules.
 
 Known poison retains its largest observed pulse until a confirmed cure or
 death and respawn. An onset line invalidates an older severity. The live
@@ -1051,6 +1110,19 @@ maximum severity of 55 and a bound of 11 damage per pulse.
 If any selected NPC row lacks poison severity, the bound is `u8::MAX` and that
 kind is `MissingFacts`; an absent schema field never means zero poison.
 
+The extractor recognizes Mort'ton's shade family from pinned content: the
+`[ai_opplayer2,_shade]` handler and the `shade_attack`, `shade_meleeattack`,
+`shade_playerhit` and `npc_melee_attack_roll` routines of
+`minigames/game_mortton/scripts/mortton_shades.rs2` and
+`npc_combat_melee.rs2`, compared by normalized text. A Loar, Phrin, Riyl, Asyn
+or Fiyr Shadow (`next_npc_type` set) has `combat_transform` of its Shade, and
+the Shade attacks in place with the shared melee roll: it is not bespoke, and
+`combat_vars_on_hit` is true because `shade_playerhit` records combat variables
+only on a hit. A changed routine leaves both rows bespoke and the awakening
+unknown (`MissingFacts` at admission). The shade's hunt rule
+(`huntmode=shades`, `mortton_shades.hunt`) is not modeled: a shadow counts as
+attacking wherever the model already counts an aggressive NPC.
+
 | Revision 289 NPC | Maximum event | Attack interval |
 | --- | ---: | ---: |
 | Ice warrior | 6 | 4 ticks |
@@ -1073,32 +1145,24 @@ unknown. The hazard's nonzero rate sentinel is not a repeat interval.
 Native/v2 walks, manual WalkTo, bulk WalkTo and BankBudget sub-routes use
 one assessment/admission seam. It preserves the original route/prefix and
 teleport, wilderness, explicit avoid and quest authority across refreshes.
-No named grant or survivability retry relaxes a hard constraint.
-Proceed (including compat v1) uses the ordinary all-zone search and retains
-the honest assessment; compat publishes it only to hostlog. Avoid uses
-strict/endpoint routing. Effective Inherit may diagnose one witness and,
-only for at most eight known keys, try one named re-search.
-The host binds each witness key to the world's zone view
-(`nav_planner::producer::bind_key`; a group's members through
-`nav_planner::producer::group_members`) and reads its facts through `ZoneKindView`,
-as the estimate does. Every member of a group must have supported facts;
-an empty group refuses.
-It is bounded best effort, not a search over survivability. Actual kernel
-searches include endpoint/area/bank diagnosis paths and are counted in tests.
-One top-level all-zone call can still run the router's safe and granted
-stages; it is not a claim of one Dijkstra kernel. Refusal diagnosis repeats
-the strict call before its all-zone witness, and a named retry keeps the
-same staged routing. Both the top-level retry count and actual kernels are
-recorded, including reverse-proof shortcuts.
-Named grants permit the router to enter zones; they do not omit attacks or
-bypass the death-bound check. `Estimate.grants` carries those names into the
-assessment solely to distinguish a deliberately named no-exit endpoint.
-A crossing counts as named when the request's grants cover every zone in it,
-by name or by an all-zone exemption. Router endpoint completion does not count
-as a named exemption. Tests cover both cases on the same no-exit route and
-retain death-bound refusal when an all-zone grant covers a lethal crossing.
+No survivability retry relaxes a hard constraint, and no zone name is matched.
+Proceed uses the ordinary all-zone search and retains the honest assessment
+for information only. Avoid uses strict/endpoint routing and enforces the
+death bound when the walk's decision says so. It never re-searches by zone name.
+Actual kernel searches include endpoint/area/bank diagnosis paths and are
+counted in tests. One top-level all-zone call can still run the router's safe
+and granted stages; it is not a claim of one Dijkstra kernel. Refusal
+diagnosis repeats the strict call before its all-zone witness.
+Permission lets the router enter zones; it never omits attacks or bypasses the
+death-bound check. `Estimate.permitted` only tells the assessment that the walk
+has danger permission, so a deliberately requested no-exit endpoint is not
+refused as `NoWayOut`. Router endpoint completion is not permission. Tests
+cover both cases on the same no-exit route and retain death-bound refusal when
+a permitted walk crosses a lethal zone.
 
-Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose the same way: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
+Danger permission for a script walk is one decision: `permitted = global override || script request`. The global override is the Danger routing level `Always` in Nav config; it has no exception and applies to every walk, Quester included. A compat v1 (rs2b0t-compatible) script counts as the global override: it walks as if the user set `Always`, with no guard and no check (its frozen behavior). A script requests through its Script prefs (**Allow danger zones** on a native card, granting that script's own walks), a walk option `Allow`, or a named crossing: a Quester stage or step `cross`, or a compat `crossZones`. A walk option `Forbid` has no danger effect. A permitted walk may cross any zone, with no limit on how many zones a script names. The two sources differ in how the walk is judged. With the global override (or compat v1) the walk uses `Proceed`: it goes, and the model's bound is logged for information. With a script request and the override off, the walk uses enforced `Avoid`: survival admission refuses the walk when the 1% death bound fails, using whatever food credit the assessment carries. Every permitted native crossing, from either source, arms the walk's food guard (eating refuses nothing); a compat v1 walk gets no guard. The WalkTo-only **Route through danger zones** checkbox is a separate user action: one admission for the current picker opening, never persisted; it is the user's own override for that walk (`Proceed`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose differently: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
+
+One function owns the danger decision: `DangerLevel::decide` in `host_play::walk_permissions` returns a `DangerDecision` (permitted, policy, enforce). Native and Quester walks (`native_admission`), compat, compiled and watchdog walks (`compiled_options`) and manual WalkTo (`WalkGlobals::manual_decision`) consume it; each walk's zone grant (`DangerDecision::zones`) and its admission (`Admission::from_decision`) come from that value, and no route path rebuilds permission or enforcement. A compat walk's `crossZones` reaches the decision as a request, also when a machine-owned native walk (for example Banking.open's stand walk) runs inside it.
 
 The headless `panel.survivable-checkbox-default-escape` cell drives the actual
 ImGui checkbox and panel confirmation into a profile-bound host. It checks
@@ -1139,24 +1203,27 @@ freezes manual/scenario movement during script Starting/Running/Paused/
 Stopping, native movement or an existing escape obligation.
 Advisory `assess_walk` never acquires that movement ownership.
 
-The stored default is **When survivable**, but the survivable-routing change's single
-`NET_AVAILABLE=false` gate makes it effective Never for every preference
-source, including migration and explicit selection. While held, default and
-inherited walks keep exactly the pre-survivable-routing router outcome and route, including
-origin-inside walks and destination-zone completion. Their assessments are
-informational, not new admission refusals; a held manual NoPath neither
-creates a walk arm nor stops the one already walking. Explicit script/per-walk
-overrides and named grants keep their survivable-routing semantics. Panel and TUI display the
-held middle level as **When survivable (not available yet: acts as Never)**; the
-host emits one informational held-state note per slot session, not a warning on
-every walk.
-The hold lasts until the bot can track poison live: until then the middle level behaves like Never.
+Danger routing has three levels: **Never**, the default; **When survivable**;
+and **Always**, the global override. The middle level stores
+`nav.allow_danger_zones=false` and `nav.survivable_routing=true`. A saved
+middle-level pair remains selected when read. Reading it does not rewrite the
+file. If both stored bits are true, **Always** takes precedence.
 
+While `NET_AVAILABLE` is false, **When survivable** behaves exactly like
+**Never** for every script, walk and crossing combination. It uses the
+runtime safety net only when that net is available. Changing the level writes
+both stored bits together.
+
+With **Never** or **When survivable** and `NET_AVAILABLE` false, a walk with
+no danger request keeps exactly the router's outcome and route, including
+origin-inside walks and destination-zone completion. Its assessment is
+informational, not a new admission refusal; a manual NoPath neither creates a
+walk arm nor stops the one already walking. A script's request is enforced.
 The live observer, ordinary-walk safety behavior and escape execution belong
 to integrated acceptance; no Clear poison state or preflight movement is invented.
 Only the integrated gate, with the required live cells, v17 cutover and
-full FLOOR, may flip availability; a poison-observer merge by itself does not enable
-the middle level.
+full FLOOR, may flip `NET_AVAILABLE`; a poison-observer merge by itself does
+not enable it.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.

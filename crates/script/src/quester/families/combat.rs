@@ -838,7 +838,10 @@ fn compile_kits(
     Ok(kits)
 }
 
-fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, CompileError> {
+pub(crate) fn compile_kit(
+    name: &str,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<CompiledKit>, CompileError> {
     if name.trim().is_empty() {
         return Err(CompileError::code("unknown-loadout"));
     }
@@ -996,6 +999,10 @@ struct CombatPlan {
 }
 
 impl StepPlan for CombatPlan {
+    fn combat_request(&self) -> Option<&CombatRequest> {
+        Some(&self.request)
+    }
+
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let mut run = CombatRun {
             request: Arc::clone(&self.request),

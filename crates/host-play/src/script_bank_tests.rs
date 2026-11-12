@@ -1159,7 +1159,11 @@ mod bank_pick_capture {
         match index {
             Some(index) => {
                 out.push(1);
-                let bank = request.facts.banks()[index];
+                let bank = request
+                    .facts
+                    .as_ref()
+                    .expect("bank request retains its facts")
+                    .banks()[index];
                 append_blob(&mut out, bank.name.as_bytes());
                 append_tile(&mut out, bank.tile);
                 append_tile(&mut out, bank.air_tile());
@@ -1747,7 +1751,11 @@ mod bank_pick_capture {
             .order
             .iter()
             .filter_map(|candidate| {
-                let bank = &request.facts.banks()[candidate.index];
+                let bank = &request
+                    .facts
+                    .as_ref()
+                    .expect("bank request retains its facts")
+                    .banks()[candidate.index];
                 bank.routable.then_some(bank.tile)
             })
             .collect::<Vec<_>>();
@@ -2438,6 +2446,7 @@ mod bank_pick_capture {
                 walking,
                 None,
                 None,
+                None,
             ));
             let all = navs.lock().unwrap();
             let bot = &all["test"];
@@ -2882,6 +2891,777 @@ mod bank_pick_capture {
         invalidation_does_not_wait_for_work_service(PickInvalidation::RouteReplacement);
         invalidation_does_not_wait_for_work_service(PickInvalidation::OwnerDrop);
     }
+    fn shop_facts_with_access(
+        rows: impl IntoIterator<Item = (WorldTile, Vec<WorldTile>)>,
+    ) -> Arc<api::service_pick::ShopKeeperFacts> {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let keeper = api::shop_facts::keepers(&data)
+            .expect("generated shop facts")
+            .next()
+            .expect("selected revision retains a pinned shop keeper");
+        let rows = rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, (tile, access))| {
+                api::service_pick::ResolvedShopKeeper::new(
+                    u16::try_from(index).unwrap(),
+                    keeper,
+                    tile,
+                    access,
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Arc::new(api::service_pick::ShopKeeperFacts::from_rows(rows))
+    }
+
+    fn shop_request(
+        facts: Arc<api::service_pick::ShopKeeperFacts>,
+        eligible: Vec<u16>,
+        from: WorldTile,
+    ) -> script::native_bank::ServicePickRequest {
+        script::native_bank::ServicePickRequest {
+            kind: api::service_pick::ServiceKind::ShopKeeper,
+            from,
+            options: script::native::WalkOptions::default(),
+            facts: script::native_bank::ServiceFacts::ShopKeeper(facts),
+            eligible: Arc::from(eligible),
+            prefer_order: true,
+        }
+    }
+
+    fn native_service_input(
+        request: script::native_bank::ServicePickRequest,
+    ) -> (script::SlotScript, super::super::NativeServicePickInput) {
+        use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
+        use script::native_bank::{SelectService, ServicePickRequest};
+
+        struct Selecting {
+            request: Option<ServicePickRequest>,
+            handle: Option<ActionHandle<SelectService>>,
+        }
+        impl Script for Selecting {
+            fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+                if let Some(request) = self.request.take() {
+                    self.handle = Some(
+                        tick.actions
+                            .begin::<SelectService>(request, &mut tick.cx)
+                            .unwrap(),
+                    );
+                }
+                assert!(tick
+                    .actions
+                    .poll(self.handle.as_ref().unwrap(), &mut tick.cx)
+                    .is_pending());
+                Ok(ScriptFlow::Continue)
+            }
+        }
+
+        let mut slot = script::SlotScript::new();
+        slot.start_test_script(
+            Box::new(Selecting {
+                request: Some(request),
+                handle: None,
+            }),
+            None,
+        )
+        .unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut HeldDriver,
+            tick: 1,
+            here: Some((1, 1, 0)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        let action = slot
+            .take_native_action()
+            .expect("live native SelectService action");
+        let authority = action.authority();
+        let script::native::HostEffect::ServicePick(request) = action.effect else {
+            panic!("SelectService must emit the typed service pick");
+        };
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        (
+            slot,
+            super::super::NativeServicePickInput {
+                request,
+                authority,
+                evidence,
+                session_permissions: None,
+            },
+        )
+    }
+
+    fn service_world_with_graph(
+        width: usize,
+        height: usize,
+        blocked_tiles: &[(usize, usize)],
+        graph: TransportGraph,
+    ) -> Arc<NavWorld> {
+        let mut flags = vec![0; 4 * width * height];
+        for &(x, z) in blocked_tiles {
+            flags[z * width + x] =
+                CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        }
+        let (walk, blocked) = pack_walk(&flags);
+        Arc::new(NavWorld::from_parts(
+            WorldCollision {
+                origin: tile(0, 0),
+                width,
+                height,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            vec![],
+        ))
+    }
+
+    fn service_worker(
+        world: &Arc<NavWorld>,
+        input: super::super::NativeServicePickInput,
+        state: WorldState,
+        generation: u64,
+        exclusions: Option<Arc<super::super::super::script_nav::ScriptRouteExclusions>>,
+    ) -> (Arc<BankPickRequest>, super::super::CooperativeBankPickJob) {
+        let candidates =
+            super::super::service_candidates(world, &input.request).expect("eligible service rows");
+        let request = super::super::make_service_pick_request(
+            input.authority.request_id().get(),
+            nav_planner::producer::lease(world).unwrap(),
+            None,
+            input.request.from,
+            FindOptions::default(),
+            Arc::new(state.clone()),
+            candidates.order,
+            candidates.target_count,
+            super::super::service_pick_context(input),
+            exclusions,
+        );
+        let (work_input, preflights) = request
+            .work_input(generation, false, "test")
+            .expect("service route and bounded diagnosis preflight");
+        let job = BankPickJob {
+            generation,
+            request: Arc::clone(&request),
+            deadline: None,
+        };
+        (
+            request,
+            super::super::CooperativeBankPickJob::new(job, work_input, preflights),
+        )
+    }
+
+    fn finish_service_worker(mut worker: super::super::CooperativeBankPickJob) -> PickResult {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+        use std::num::NonZeroU32;
+
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        for _ in 0..100_000 {
+            let budget = SliceBudget::new(
+                NonZeroU32::new(64).unwrap(),
+                Deadline::after(clock.now(), Duration::from_millis(10)),
+            );
+            let mut context = StepContext::new(&clock, budget, &cancellation);
+            match worker.step(&mut context) {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => return result,
+                StepOutcome::Failed(never) => match never {},
+            }
+        }
+        panic!("cooperative service pick exceeded its bounded slice count");
+    }
+
+    fn gated_service_world(
+        from: WorldTile,
+        to: WorldTile,
+    ) -> (Arc<NavWorld>, api::selected::QuestGate) {
+        use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
+        use nav_planner::quest_gates::QuestGates;
+        use nav_planner::transport::{TransportEdge, TransportKind};
+
+        let gate = QuestGate::Window(StageWindow {
+            quest: FactKey::new("service-test-quest"),
+            signal: FactKey::new("service-test-stage"),
+            values: InclusiveRange {
+                min: Some(2),
+                max: Some(4),
+            },
+        });
+        let gates = QuestGates::new([gate.clone()]).unwrap();
+        let mut graph = TransportGraph::default();
+        graph.at.entry(from).or_default().push(0);
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at: from,
+            to,
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            player_delta: None,
+            loc_id: 1,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(gates),
+        });
+        let blocked = (0..16).map(|z| (6, z)).collect::<Vec<_>>();
+        (service_world_with_graph(16, 16, &blocked, graph), gate)
+    }
+
+    #[test]
+    fn shop_keeper_service_pick_searches_all_rows_and_allocates_only_order_and_targets() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let from = tile(1, 1);
+        let mut rows = Vec::with_capacity(71);
+        let mut eligible = Vec::with_capacity(71);
+        for index in 0..70 {
+            let access = tile(8 + (index % 8), 5 + (index / 8));
+            rows.push((tile(access.x, access.z + 1), vec![access]));
+            eligible.push(u16::try_from(index).unwrap());
+        }
+        let chosen = tile(4, 1);
+        rows.push((tile(4, 2), vec![chosen]));
+        eligible.push(70);
+        let facts = shop_facts_with_access(rows);
+        let request = shop_request(Arc::clone(&facts), eligible.clone(), from);
+        let (mut slot, input) = native_service_input(request);
+        let world = world(false);
+
+        let mut candidates = None;
+        let order_allocation = allocation_counter::measure(|| {
+            candidates = Some(
+                super::super::service_candidates(&world, &input.request)
+                    .expect("complete eligible ShopKeeper domain"),
+            );
+        });
+        assert_eq!(order_allocation.count_total, 1, "one ordered candidate Vec");
+        let candidates = candidates.unwrap();
+        assert_eq!(candidates.order.len(), 71);
+        assert_eq!(
+            candidates
+                .order
+                .iter()
+                .map(|candidate| candidate.index)
+                .collect::<Vec<_>>(),
+            (0..71).collect::<Vec<_>>(),
+            "candidate order is the owner's complete index order"
+        );
+        assert_eq!(candidates.target_count, 71);
+        let expected_targets = facts
+            .rows()
+            .iter()
+            .map(|row| row.access()[0])
+            .collect::<Vec<_>>();
+        let request = super::super::make_service_pick_request(
+            input.authority.request_id().get(),
+            nav_planner::producer::lease(&world).unwrap(),
+            None,
+            from,
+            FindOptions::default(),
+            Arc::new(WorldState::empty()),
+            candidates.order,
+            candidates.target_count,
+            super::super::service_pick_context(input),
+            None,
+        );
+        let script::native_bank::ServiceFacts::ShopKeeper(retained) =
+            &request.service.as_ref().unwrap().request.facts
+        else {
+            panic!("ShopKeeper request keeps its shared facts");
+        };
+        assert!(
+            Arc::ptr_eq(&facts, retained),
+            "the request borrows shared facts"
+        );
+
+        let job = BankPickJob {
+            generation: 1,
+            request: Arc::clone(&request),
+            deadline: None,
+        };
+        let (work_input, preflights) = request
+            .work_input(1, false, "test")
+            .expect("bounded service search preflight");
+        let mut worker = super::super::CooperativeBankPickJob::new(job, work_input, preflights);
+        let target_allocation = allocation_counter::measure(|| {
+            worker
+                .begin_search_materialization(super::super::BankPickSearchKind::First)
+                .unwrap();
+        });
+        assert_eq!(target_allocation.count_total, 1, "one exact target buffer");
+        assert_eq!(worker.target_buffer.as_ref().unwrap().capacity(), 71);
+        let materialize = allocation_counter::measure(|| {
+            while worker.build_order < worker.job.request.order.len() {
+                worker
+                    .materialize_target_or_row(super::super::BankPickSearchKind::First)
+                    .unwrap();
+            }
+            worker
+                .finish_target_materialization(super::super::BankPickSearchKind::First)
+                .unwrap();
+        });
+        assert_eq!(
+            materialize.count_total, 0,
+            "retained access rows are borrowed while filling the one target buffer"
+        );
+        assert_eq!(
+            order_allocation.count_total + target_allocation.count_total,
+            2
+        );
+        match worker.search_request.as_ref().unwrap() {
+            SearchRequest::First { targets, .. } => {
+                assert_eq!(targets.as_ref(), expected_targets.as_slice());
+                assert_eq!(targets.len(), 71);
+            }
+            _ => panic!("service candidates use one complete First target set"),
+        }
+        worker.stage = super::super::BankPickStage::StartSearch;
+        let result = finish_service_worker(worker);
+        assert_eq!(
+            result.service_outcome,
+            Some(script::native_bank::ServicePickOutcome::Routed {
+                index: 70,
+                access_tile: chosen,
+                // Three run steps are 1.5 ticks. The old whole-tick cost rounded
+                // this to 2; the route is the same.
+                cost: api::service_pick::RouteCost::from_half_ticks(3),
+                unjudged: 0,
+            }),
+            "the cheapest route wins even when it is after the former 64-row page"
+        );
+        slot.stop();
+    }
+
+    #[test]
+    fn service_pick_excludes_quest_gated_keeper_and_chooses_nearer_reachable_keeper() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let from = tile(2, 2);
+        let gated_access = tile(8, 2);
+        let near_access = tile(2, 6);
+        let far_access = tile(2, 12);
+        let (world, _) = gated_service_world(from, gated_access);
+        let facts = shop_facts_with_access([
+            (tile(8, 3), vec![gated_access]),
+            (tile(2, 13), vec![far_access]),
+            (tile(2, 7), vec![near_access]),
+        ]);
+        let (mut slot, input) = native_service_input(shop_request(facts, vec![0, 1, 2], from));
+        let (request, worker) = service_worker(&world, input, WorldState::empty(), 1, None);
+        assert_eq!(
+            request.order.len(),
+            3,
+            "all item-eligible keepers enter one complete gated search"
+        );
+        let result = finish_service_worker(worker);
+        assert_eq!(
+            result.service_outcome,
+            Some(script::native_bank::ServicePickOutcome::Routed {
+                index: 2,
+                access_tile: near_access,
+                cost: api::service_pick::RouteCost::from_ticks(2),
+                unjudged: 0,
+            }),
+            "the closed one-tick quest gate cannot beat the nearer reachable keeper"
+        );
+        slot.stop();
+    }
+
+    #[test]
+    fn service_pick_cost_keeps_half_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::RouteCost;
+        let from = tile(2, 2);
+        // One run step is half a tick. The old whole-tick cost rounded 0.5 and
+        // 1.0 ticks to the same value, which made a shop and a spawn tie.
+        for (steps, half_ticks) in [(1, 1), (2, 2), (3, 3), (4, 4)] {
+            let access = tile(2, 2 + steps);
+            let facts = shop_facts_with_access([(tile(2, 3 + steps), vec![access])]);
+            let (mut slot, input) = native_service_input(shop_request(facts, vec![0], from));
+            let world = world(false);
+            let (_, worker) = service_worker(&world, input, WorldState::empty(), 1, None);
+            assert_eq!(
+                finish_service_worker(worker).service_outcome,
+                Some(script::native_bank::ServicePickOutcome::Routed {
+                    index: 0,
+                    access_tile: access,
+                    cost: RouteCost::from_half_ticks(half_ticks),
+                    unjudged: 0,
+                }),
+                "{steps} run steps cost {half_ticks} half ticks"
+            );
+            slot.stop();
+        }
+        assert_eq!(
+            super::super::route_cost_from_ticks(0.5),
+            Some(RouteCost::from_half_ticks(1))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(1.0),
+            Some(RouteCost::from_half_ticks(2))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(2.5),
+            Some(RouteCost::from_half_ticks(5))
+        );
+        assert_eq!(
+            super::super::route_cost_from_ticks(0.0),
+            Some(RouteCost::ZERO)
+        );
+        for refused in [f64::NAN, f64::INFINITY, -0.5, f64::from(u32::MAX)] {
+            assert_eq!(
+                super::super::route_cost_from_ticks(refused),
+                None,
+                "{refused} is not a route cost"
+            );
+        }
+    }
+
+    #[test]
+    fn service_pick_distinguishes_empty_access_no_path_and_closed_unknown_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::selected::QuestGate;
+
+        let from = tile(1, 1);
+        let empty_facts = shop_facts_with_access([(tile(4, 4), Vec::<WorldTile>::new())]);
+        let (mut empty_slot, empty_input) =
+            native_service_input(shop_request(Arc::clone(&empty_facts), vec![0], from));
+        let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+        let open_world = Some(world(false));
+        super::super::queue_native_service_pick_scoped(
+            &navs,
+            "test",
+            scope(),
+            &open_world,
+            Some(&Arc::new(WorldState::empty())),
+            &GameSnapshot::new(),
+            empty_input,
+        );
+        let empty = navs
+            .lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_service_receipt()
+            .expect("empty-access domain settles inline")
+            .1;
+        assert_eq!(
+            empty.outcome,
+            script::native_bank::ServicePickOutcome::NoCandidate
+        );
+        empty_slot.stop();
+
+        let from = tile(2, 2);
+        let to = tile(8, 2);
+        let (gated_world, gate) = gated_service_world(from, to);
+        let facts = shop_facts_with_access([(tile(8, 3), vec![to])]);
+        let (mut slot, input) =
+            native_service_input(shop_request(Arc::clone(&facts), vec![0], from));
+        let (_, worker) = service_worker(&gated_world, input, WorldState::empty(), 1, None);
+        let result = finish_service_worker(worker);
+        let Some(script::native_bank::ServicePickOutcome::NoPath {
+            unresolved: Some(unresolved),
+            ..
+        }) = result.service_outcome
+        else {
+            panic!("closed quest-gated route reports established NoPath with its diagnostic");
+        };
+        assert_eq!(unresolved.as_ref(), std::slice::from_ref(&gate));
+        assert!(matches!(gate, QuestGate::Window(_)));
+        slot.stop();
+    }
+
+    #[test]
+    fn service_route_search_respects_per_bot_avoid_rectangles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
+        let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
+        let bot = crate::NavBot {
+            requested_exclusions: Some(Arc::new(
+                super::super::super::script_nav::ScriptRouteExclusions {
+                    avoid: vec![nav_planner::router::AvoidRect {
+                        min_x: 2,
+                        max_x: 2,
+                        min_z: 0,
+                        max_z: 15,
+                        level: Some(0),
+                    }],
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        let exclusions = bot.requested_exclusions.clone().unwrap();
+        let world = world(false);
+        let (request, worker) = service_worker(
+            &world,
+            input,
+            WorldState::empty(),
+            1,
+            Some(Arc::clone(&exclusions)),
+        );
+        assert!(Arc::ptr_eq(
+            request.exclusions.as_ref().unwrap(),
+            &exclusions
+        ));
+        assert_eq!(
+            finish_service_worker(worker).service_outcome,
+            Some(script::native_bank::ServicePickOutcome::NoPath {
+                unresolved: None,
+                unjudged: 0,
+            })
+        );
+        slot.stop();
+    }
+
+    #[test]
+    fn service_pick_mismatch_and_missing_world_are_not_settled() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
+        let request = shop_request(Arc::clone(&facts), vec![0], tile(1, 1));
+        let world = Some(world(false));
+        for missing_world in [false, true] {
+            let (mut slot, mut input) = native_service_input(request.clone());
+            if !missing_world {
+                input.request.kind = api::service_pick::ServiceKind::Bank;
+            }
+            let selected_world = if missing_world { None } else { world.clone() };
+            let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+            super::super::queue_native_service_pick_scoped(
+                &navs,
+                "test",
+                scope(),
+                &selected_world,
+                Some(&Arc::new(WorldState::empty())),
+                &GameSnapshot::new(),
+                input,
+            );
+            let receipt = navs
+                .lock()
+                .unwrap()
+                .get_mut("test")
+                .unwrap()
+                .bank_pick
+                .take_service_receipt()
+                .expect("refusal settles as a typed service result")
+                .1;
+            assert_eq!(
+                receipt.outcome,
+                script::native_bank::ServicePickOutcome::NotSettled
+            );
+            slot.stop();
+        }
+    }
+
+    #[test]
+    fn superseded_cancelled_or_revoked_service_receipts_are_not_delivered() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
+        let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
+        let request_id = input.authority.request_id().get();
+        let context = super::super::service_pick_context(input);
+        let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+        let pending = super::super::pending_service_pick(
+            1,
+            request_id,
+            scope(),
+            context.clone(),
+            script::native_bank::ServicePickOutcome::NotSettled,
+        );
+        let bytes = pending.result.owner_result_bytes().unwrap();
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        let reservation = ledger.try_reserve_bytes(bytes).unwrap();
+        let (commit, owner) = super::super::pending_owner_result(pending, reservation);
+        {
+            let mut all = navs.lock().unwrap();
+            all.entry("test".to_string())
+                .or_default()
+                .bank_pick
+                .generation = 2;
+        }
+        super::super::apply_bank_pick_result(&navs, "test", commit, owner);
+        assert_eq!(ledger.used_bytes(), 0);
+        assert!(
+            navs.lock()
+                .unwrap()
+                .get_mut("test")
+                .unwrap()
+                .bank_pick
+                .take_service_receipt()
+                .is_none(),
+            "superseded generation cannot publish its result"
+        );
+
+        for generation in [2, 3, 4] {
+            let pending = super::super::pending_service_pick(
+                generation,
+                request_id,
+                scope(),
+                context.clone(),
+                script::native_bank::ServicePickOutcome::NotSettled,
+            );
+            {
+                let mut all = navs.lock().unwrap();
+                let pick = &mut all.entry("test".to_string()).or_default().bank_pick;
+                pick.generation = generation;
+                pick.pending_inline = Some(Box::new(pending));
+            }
+            super::super::publish_pending_inline(&navs, "test");
+            if generation == 2 {
+                navs.lock()
+                    .unwrap()
+                    .get_mut("test")
+                    .unwrap()
+                    .bank_pick
+                    .reset_for_route_replacement();
+            } else if generation == 3 {
+                navs.lock()
+                    .unwrap()
+                    .get_mut("test")
+                    .unwrap()
+                    .bank_pick
+                    .reset();
+            } else {
+                slot.stop();
+            }
+            assert!(navs
+                .lock()
+                .unwrap()
+                .get_mut("test")
+                .unwrap()
+                .bank_pick
+                .take_service_receipt()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn service_search_failure_and_budget_exhaustion_remain_undecided() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let facts = shop_facts_with_access([(tile(4, 4), vec![tile(4, 3)])]);
+        let world = world(false);
+        let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
+        let (_, mut worker) = service_worker(&world, input, WorldState::empty(), 1, None);
+        worker.search_preflights.primary = None;
+        let result = finish_service_worker(worker);
+        assert_eq!(
+            result.service_outcome,
+            Some(script::native_bank::ServicePickOutcome::NotSettled),
+            "a failed/unavailable cooperative cursor is not reported as NoPath"
+        );
+        assert_eq!(
+            super::super::service_first_route_error(
+                nav_planner::router::RouteError::BudgetExhausted
+            ),
+            Some(script::native_bank::ServicePickOutcome::BudgetExhausted)
+        );
+        assert_eq!(
+            super::super::service_first_route_error(nav_planner::router::RouteError::NoPath),
+            None,
+            "NoPath requires the separate relaxed-gate diagnosis"
+        );
+        slot.stop();
+    }
+    #[expect(
+        dead_code,
+        reason = "The regression test measures the former state layout without constructing or reading its obsolete fields."
+    )]
+    struct FormerBankPickStateShape {
+        generation: u64,
+        last_id: u64,
+        current: Option<super::super::ActivePick>,
+        pending_cancel: Option<(
+            script::work_admission::cancellation::WorkCancellation<super::super::BankPickSpec>,
+            api::identity::Cancellation,
+        )>,
+        pending_inline: Option<Box<super::super::PendingInlinePick>>,
+        owner_result: Option<Arc<nav_planner::producer::OwnerResult<super::super::PickResult>>>,
+        retired_owner: Option<Arc<nav_planner::producer::OwnerResult<super::super::PickResult>>>,
+        posted: script::native::snapshot_source::BankSelectionInput,
+        native_receipt: Option<(
+            script::native::HostAuthority,
+            script::native_bank::BankPickReceipt,
+        )>,
+        service_receipt: Option<(
+            script::native::HostAuthority,
+            script::native_bank::ServicePickReceipt,
+        )>,
+        facts: Option<Arc<api::named_banks::NamedBankFacts>>,
+    }
+
+    #[repr(C)]
+    struct FormerSplitReceiptSlots {
+        bank: Option<(
+            script::native::HostAuthority,
+            script::native_bank::BankPickReceipt,
+        )>,
+        service: Option<(
+            script::native::HostAuthority,
+            script::native_bank::ServicePickReceipt,
+        )>,
+    }
+
+    #[test]
+    fn bank_pick_host_state_uses_one_typed_receipt_slot() {
+        use std::mem::size_of;
+
+        let state_bytes = size_of::<super::super::BankPickState>();
+        let shared_slot_bytes = size_of::<super::super::HostPickReceipt>();
+        let former_split_bytes = size_of::<FormerSplitReceiptSlots>();
+        let former_state_bytes = size_of::<FormerBankPickStateShape>();
+        assert!(
+            state_bytes < former_state_bytes,
+            "BankPickState {state_bytes} must remain smaller than the former dual-slot shape {former_state_bytes}"
+        );
+        assert!(
+            shared_slot_bytes < former_split_bytes,
+            "typed shared slot {shared_slot_bytes} must be smaller than the former dual slots {former_split_bytes}"
+        );
+        println!(
+            "bank_pick_state_bytes={state_bytes} former_state_bytes={former_state_bytes} typed_receipt_slot_bytes={shared_slot_bytes} former_split_receipt_slots_bytes={former_split_bytes}"
+        );
+    }
 }
 
 #[cfg(feature = "js")]
@@ -3251,7 +4031,11 @@ mod journal_diagnosis {
                         Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
                         result,
                     );
-                    let (_, receipt) = pending.native_receipt.unwrap();
+                    let super::super::HostPickReceipt::Bank(_, receipt) =
+                        pending.pick_receipt.unwrap()
+                    else {
+                        panic!("a native bank pick publishes a bank receipt");
+                    };
                     slot.stop();
                     return receipt.outcome;
                 }

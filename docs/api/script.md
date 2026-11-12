@@ -326,13 +326,18 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 Release builds accept only rows with `"status": "qualified"`. Currently, only
 The Restless Ghost is qualified. `quests` selects quest IDs. An empty list
 queues all qualified Paths in roster order. An explicit draft quest or
-priority pick refuses Start with the typed `unqualified-path` reason.
+priority pick refuses Start with the typed `unqualified-path` reason. The
+reason names every refused guide and the setting that allows them.
 `order_override` prioritizes selected IDs and `skip` excludes IDs.
 
-The former `include_draft_guides` setting is no longer offered. Saved values
-still load, but cannot enable drafts in a release build. Qualification tests
-can admit drafts through `host-play/test-support`, which enables
-`script/test-hooks`. Interactive quest pickers remain qualified-only.
+The `include_draft_guides` setting (label "Allow unqualified guides", off when
+absent, the key that 0.2.8 saved) lets Start run unqualified guides. With it
+on, explicit `quests` and `order_override` picks start, and an empty `quests`
+list queues every draft guide too. `prepare` then logs one `Warn` line that
+names the unqualified guides (`unqualified_warning`), and the pre-start
+disclosure shows the same text. The quest pickers offer draft rows while it is
+on. Qualification tests can also admit drafts through `host-play/test-support`,
+which enables `script/test-hooks`.
 
 `partner_account` and `gang` are per-account settings, not bulk-copy settings.
 Partner selection uses configured vault identities, including saved accounts
@@ -1268,8 +1273,8 @@ fishing bait and other non-products are kept. If protected items fill the pack
 and no selected product can be dropped, the card stops with `inventory-blocked`
 rather than gathering against a full inventory. Clear space and **Start** again.
 
-Fishing requires the selected method's tool and bait before gathering; missing
-bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
+Fishing requires the selected method's tool and bait before gathering. A missing
+required supply parks the running card while it waits for evidence. Moving fishing spots are re-acquired by NPC
 identity. Depleted resources are not clicked: a live lower-tier resource can
 be selected while the higher tier respawns. Wait deadlines use the observed
 group's respawn bound, capped at eight minutes since gameplay progress, and do
@@ -1358,9 +1363,10 @@ Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
 the combined held and loaded-bank stock. A usable partial refill continues
 gathering; `supply-missing` means a required tool, bait, configured food or a
-complete reserve cast is unavailable. Coins never gate a trip. Available
-withdrawals, including the tool, settle before another unavailable supply is
-reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
+complete reserve cast is unavailable. An optional coin top-up never gates a
+trip. A shop purchase does need enough coins for its quoted quantity.
+Available withdrawals settle before another unavailable supply is reported.
+Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Gatherer deposits succeed only
 after inventory confirms that no eligible deposit candidates remain.
 
@@ -1382,11 +1388,51 @@ A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory
 decides what the trip will find. A bank never seen is learned by walking to it,
 and a shortage predicted only by the saved hint still earns one verifying trip.
-Only a bank seen open this login that cannot serve a required tool, bait,
-configured food or complete reserve cast fails in place with `supply-missing`,
-without a walk. At the open bank the live rows are planned afresh and win over
-the memory. A wielded tool counts as carried, and so does a worn required item;
+Only a bank seen open this login can prove that a required supply is absent.
+With no admitted shop source, that shortage parks in place with
+`supply-missing`, without a walk. At the open bank the live rows are planned afresh and win over
+the memory. A lower usable tool tier uses that item's selected-cache name for
+its withdrawal, even when the trip was admitted before the bank was known.
+A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
+
+The `bank_seen` status field states where that bank information came from
+and its age when the status was last updated: `Session, 12 min ago, n rows`,
+`Hint (saved), 3 days ago, n rows`, or `unknown` before an observation.
+If the observation time cannot be compared with the current time, only the
+origin and row count are shown. A full pack is deposited before a missing
+supply is reported at the open bank. A usable axe or pickaxe already in the
+pack is equipped without a bank trip when its wield requirements are met;
+fishing tools remain carried.
+
+`buyTools` defaults to `true`. It admits shops only for the selected method's
+gathering tools and bait, not food, runes or optional coin top-ups. Gatherer
+uses a usable held, worn or session-banked tool before it considers a purchase.
+It does not buy an upgrade to replace a usable tool. When none is owned,
+shared acquisition chooses the best tier that the skill permits, a reachable
+vendor stocks, and the run budget can afford. A plan that wears the tool also
+requires the account to meet its wield requirement. Axes have no Woodcutting
+use gate. Shop choice uses the nearest reachable keeper for the chosen tier.
+Route permissions and access gates still apply. An undecided route search does
+not prove that a keeper is unreachable. The content price rule determines the
+coin reserve, capped by coins in the pack and observed bank. A usable partial
+refill can still continue gathering. A `no-vendor` refusal names the best tier
+found and the condition that failed. Coin, route and stock refusals retain
+their specific codes.
+
+Supply refusals keep the slot `Running` with native phase `Blocked` and no
+terminal failure. `block_reason` names the refused need and the evidence
+**when blocked**. These seven codes park: `supply-missing`, `too-few-coins`,
+`vendor-unreachable`, `vendor-pick-undecided`, `no-vendor`, `no-stock` and
+`no-space`. Gatherer closes an open bank, then waits without repeated walks,
+bank opens or planner calls. Fresh pack, worn or session-bank evidence can
+resolve the original need; a saved bank hint alone cannot. A usable held
+tool can wake a wielded need with one wear action and no bank trip.
+`no-stock` can also wake at its observed-tick revisit time, and `no-space`
+when enough slots are free. Resume or a relevant supply-setting change
+allows one new plan. Relog retains the park. Pause and Stop still work.
+Only gameplay recovery waits: scheduler, transport and session checks stay
+active. The panel, terminal and fleet show the parked reason and bank origin.
 
 `tickMethod` is one restart-required setting for Woodcutting, Mining and
 Fishing. It defaults to `Off`; the other value is `Knife`. `Knife` prepares
@@ -1467,12 +1513,11 @@ bank trip if needed, verifies equipment and requires an arrived return walk.
 Only a fresh product **and** XP gain increments `recoveries`. `recovery_step`
 reports 1–5 for the pending sequence, 6 while proving yield and 0 when idle.
 A second death before recovery and a completed disposal blocks with `died-again`.
-A blocked recovery stops the run, including a refused return. Watchdog recreation
-and reconnect retain both the step and chat watermark only while recovery is
-live, so old deaths cannot
-re-latch and gap deaths are still detected. No-stock failures remain
-`supply-missing`; missing respawn evidence is `respawn-not-observed`.
-Shop provisioning and self-defence are not offered.
+A refused return stops recovery. Supply shortages instead keep the recovery
+parked until its original need can be served. Watchdog recreation and reconnect
+retain the live recovery step and chat watermark, so old deaths cannot
+re-latch and gap deaths are still detected. Missing respawn evidence is
+`respawn-not-observed`. Self-defence is not offered.
 Skill, resource and location changes remain pending until the slot restarts.
 Bank and supply settings apply at a pending boundary, never midway through a
 bank batch.
@@ -1621,7 +1666,11 @@ their exact-name lookup.
 
 Native settings use the same per-account map, under `compiled_identity_key`,
 with envelopes `{"schema_version":N,"values":{...}}` (N is the card's schema
-version: 3 for Quester, 4 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+version: 3 for Quester, 5 for Gatherer, 1 for Sherlock); JS bags are unchanged.
+A card also reads the older versions it lists in `reads_schema_versions`: their
+values load unchanged, and a setting they lack takes its default. Gatherer
+reads 0.2.8's schema 4 this way (schema 5 added `buyTools`). The next save
+stamps the current version.
 Missing entries use current defaults; legacy empty native entries mean schema
 1. Malformed or unknown versions remain unavailable and are never overwritten
 with defaults. Merge precedence remains defaults → account overrides → explicit
@@ -1799,18 +1848,20 @@ grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 `panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
-walks. Danger has three levels: **Never**, **When survivable** (the stored
-default), and **Always**. The middle level stores `allow_danger_zones=false`
-and `survivable_routing=true`; Always stores the danger grant, and Never
-clears both. **The survivable-routing change keeps `host_play::NET_AVAILABLE=false`**: every middle-level
-source resolves to Never, displayed as “When survivable (not available yet:
-acts as Never)”. Default/inherited walks preserve the pre-survivable-routing router result,
+walks. Danger routing has three levels: **Never** (the default), **When
+survivable**, and **Always** (the global override). The middle level stores
+`allow_danger_zones=false` and `survivable_routing=true`. Reading a saved
+middle pair keeps it selected and does not rewrite the file. **Always** wins
+if both danger bits are true.
+
+With `host_play::NET_AVAILABLE` false, **When survivable** behaves exactly
+like **Never** for every script, walk and crossing combination. It uses the
+runtime safety net only when that net is available. With Never, a script walk
+crosses danger zones only when the script requests it, and the 1% death bound
+is enforced on that walk. Walks with no request keep the router's result,
 including origin-inside escapes and endpoint completion, with assessments
-informational only. A held-state informational note is logged once per session.
-Explicit script/per-walk overrides retain their survivable-routing admission semantics.
-Only the integrated acceptance gate can enable the middle level.
-The map danger control remains an explicit grant for this walk, independent
-of the middle-level gate. Native scripts cannot use BankBudget, even when
+informational only.
+The map danger control remains an explicit grant for this walk only. Native scripts cannot use BankBudget, even when
 global bank fetch is enabled. Native bank selection ranks walking routes
 without teleports; the walk to the chosen bank may still use granted teleports.
 Compat v1 uses Proceed through derived danger zones, with assessment logged
@@ -1825,8 +1876,9 @@ too long for one row, such as the saved Load order) lands together, or
 none does. Both frontends refresh a
 shared durable walk-permission projection for danger controls and inherited
 script rows (re-read from the file at most once a second), and manual
-admission reads it again. An absent file or a valid old file without the new
-key uses the middle-level default. A file that is not a JSON object clears
+admission reads it again. An absent file defaults to **Never**. If an older
+file lacks `survivable_routing`, that bit defaults to false; `allow_danger_zones`
+still selects **Never** or **Always**. A file that is not a JSON object clears
 every grant until the next preference save moves it aside, byte for byte,
 to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
 audit line) and starts fresh preferences. A file refused for itself (owner,
@@ -1842,23 +1894,23 @@ Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.
 
-Path `cross` names danger-zone exemptions for that walk; it is independent of
+Path `cross` names the danger zones a walk asks to cross; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may
-be used with or without that guard.
+be used with or without that guard. A non-empty `cross` is the script's
+request for danger permission on that walk: the walk may cross any zone, and
+the list has no length limit. The global Danger routing level `Always` gives
+the same permission to every walk with no request.
 
 Host walking returns the estimate through the same admission seam for native,
-v2 and manual callers. The existing tri-state derives `RiskPolicy`:
-walk-local Allow is Proceed, Forbid is Avoid, and Inherit uses script/global
-grants or the gated global level. Hard teleport/wilderness/avoid/quest
-authority is never broadened. Named `cross` grants bless only their zones:
-known granted damage still affects later crossings; a granted Unknown kind
-does not make an overlapping ungranted crossing safe. A walk that names
-grants also has the zones engaged at its route's endpoint granted, because
-the router's endpoint completion takes it into the zone it ends in. A
-`cross` walk is enforcing even while activation is held, so with Unknown
-poison this is what admits the destination zone. Any other zone crossed on
-the way is still judged, and a walk without named grants still has its
-endpoint crossing judged.
+v2 and manual callers. The decision is `permitted = global override || script
+request`. The global level `Always`, a script's card setting, a walk-local
+Allow and a non-empty `cross` all permit the walk. With the global override
+(or compat v1, which counts as the override) the walk is Proceed and the bound
+is informational. With only a script request the walk is enforced Avoid: the
+1% death bound applies to its route, judged on the route and not on zone names.
+Every permitted native crossing arms the walk's food guard; a compat v1 walk
+gets none. A walk-local Forbid has no danger effect. Hard
+teleport/wilderness/avoid/quest authority is never broadened.
 
 `WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed
 `refusal`, and optional passive `escape` data. `Refused` and `Aborted` map to
@@ -2023,10 +2075,13 @@ those approach endpoints directly.
   `avoidZones` accepts up to 16 rectangles or the known catalog ids
   `white-wolf-mountain` and `draynor-jail-guards`; unknown ids, invalid
   rectangles or too many entries are refused by the host. `crossZones`
-  accepts up to eight named danger zones to exempt for this walk and its
-  verify probe; unknown names, excessive counts or an unavailable zone
-  catalog are refused as well. `bankItemCounts` is not an input (the host
-  bank fetch reads the bank).
+  names danger zones the walk asks to cross. A non-empty list is the
+  script's request for danger permission on this walk and its verify
+  probe: the walk may then cross any danger zone, with no limit on the
+  list length, and the survival check stays on. The global Danger routing
+  setting `Always` gives the same permission to every walk. Unknown names
+  or an unavailable zone catalog are refused. `bankItemCounts` is not an
+  input (the host bank fetch reads the bank).
 - **`Traversal.walkTo`** is one Rust walk: radius 2 and 300 s by default,
   the same teleport, `avoidZones` and `crossZones` rules as
   `walkResilient`, `maxExpansions` accepted as `maxBudget` is, and the

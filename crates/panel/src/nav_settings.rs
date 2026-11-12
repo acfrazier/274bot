@@ -20,12 +20,10 @@ pub struct NavSettings {
     pub allow_quest_start: bool,
     /// Durable global override for every walk to route through danger zones.
     pub allow_danger_zones: bool,
-    /// Allow admission of survivable crossings once the runtime net is available.
+    /// Durable middle-level bit, paired with `allow_danger_zones`.
     pub survivable_routing: bool,
     /// The shared one-time script-scope explanation was dismissed.
     pub script_scope_notice_ack: bool,
-    /// The one-time danger-routing migration explanation was dismissed.
-    pub survivable_routing_notice_ack: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     /// 11px default; the settings UI clamps writes to 8..=28.
@@ -60,9 +58,8 @@ impl Default for NavSettings {
             allow_prereq_dialogue: true,
             allow_quest_start: true,
             allow_danger_zones: false,
-            survivable_routing: true,
+            survivable_routing: false,
             script_scope_notice_ack: false,
-            survivable_routing_notice_ack: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -91,10 +88,10 @@ impl NavSettings {
             self.allow_wilderness,
             self.allow_bank_fetch,
             self.allow_danger_zones,
-            self.survivable_routing,
             self.allow_prereq_dialogue,
             self.allow_quest_start,
         )
+        .with_survivable_routing(self.survivable_routing)
     }
 
     pub fn danger_level(&self) -> frontend_core::DangerLevel {
@@ -121,7 +118,6 @@ impl NavSettings {
         self.allow_danger_zones = globals.allow_danger_zones();
         self.survivable_routing = globals.survivable_routing();
         self.script_scope_notice_ack = view.script_scope_notice_ack();
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         Ok(())
     }
 }
@@ -262,17 +258,27 @@ mod tests {
     }
 
     #[test]
-    fn danger_level_round_trips_through_both_stored_booleans_and_partial_nav() {
+    fn danger_level_keeps_both_saved_bits_and_round_trips() {
         use frontend_core::DangerLevel;
 
-        assert_eq!(
-            NavSettings::default().danger_level(),
-            DangerLevel::WhenSurvivable
-        );
+        assert_eq!(NavSettings::default().danger_level(), DangerLevel::Never);
         let partial: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
-        assert!(partial.survivable_routing);
-        assert_eq!(partial.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(!partial.survivable_routing_notice_ack);
+        assert_eq!(partial.danger_level(), DangerLevel::Never);
+
+        let middle_json = r#"{"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_danger_zones":false}"#;
+        let middle: NavSettings = serde_json::from_str(middle_json).unwrap();
+        assert_eq!(middle.danger_level(), DangerLevel::WhenSurvivable);
+        assert!(!middle.allow_danger_zones);
+        assert!(middle.survivable_routing);
+        let written = serde_json::to_value(&middle).unwrap();
+        assert_eq!(written["allow_danger_zones"], false);
+        assert_eq!(written["survivable_routing"], true);
+
+        let both: NavSettings =
+            serde_json::from_str(r#"{"allow_danger_zones":true,"survivable_routing":true}"#)
+                .unwrap();
+        assert_eq!(both.danger_level(), DangerLevel::Always);
+        assert!(both.allow_danger_zones && both.survivable_routing);
 
         for level in [
             DangerLevel::Never,
@@ -282,6 +288,10 @@ mod tests {
             let mut settings = NavSettings::default();
             settings.set_danger_level(level);
             assert_eq!(settings.danger_level(), level);
+            assert_eq!(
+                settings.survivable_routing,
+                level == DangerLevel::WhenSurvivable
+            );
             let saved = serde_json::to_vec(&settings).unwrap();
             let loaded: NavSettings = serde_json::from_slice(&saved).unwrap();
             assert_eq!(loaded.danger_level(), level);

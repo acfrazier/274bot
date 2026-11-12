@@ -50,7 +50,7 @@ pub fn observed_wait_expired_with_time_bound(
 pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 /// Frozen `for (let guard = 0; guard < 32; guard++)` deposit rounds.
 pub const MAX_DEPOSITS: u8 = 32;
-/// Cap on caller id lists (keep, only, memo, withdrawals).
+/// Cap on bounded transfer lists; shared capacity-deposit keeps are exempt.
 pub const MAX_MEMO: usize = 64;
 
 /// A deposit dispatch or content refusal, distinct from an observed transfer.
@@ -788,6 +788,7 @@ fn same_item_slot<R: BankRow>(main: &R, side: &R) -> bool {
 /// use Deposit-All; unstackables use Deposit-1 so one inventory row is freed.
 pub fn deposit_capacity_next<R: BankRow>(
     keep: &[i32],
+    extra_keep: Option<i32>,
     side: Option<&[R]>,
     pack: Option<&[R]>,
     same_session: bool,
@@ -803,10 +804,9 @@ pub fn deposit_capacity_next<R: BankRow>(
     };
     let mut candidate = false;
     let mut matching_side_row = false;
-    for item in pack
-        .iter()
-        .filter(|item| item.count() > 0 && !keep.contains(&item.id()))
-    {
+    for item in pack.iter().filter(|item| {
+        item.count() > 0 && !keep.contains(&item.id()) && extra_keep != Some(item.id())
+    }) {
         candidate = true;
         let has_side_row = side
             .iter()

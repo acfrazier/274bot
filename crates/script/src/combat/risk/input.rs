@@ -24,6 +24,10 @@ pub enum UnknownWhy {
     NoZoneTable,
     #[error("required combat facts are unavailable")]
     MissingFacts,
+    #[error("mixed survival food is not supported by the current sizing model")]
+    MixedFood,
+    #[error("carried survival food has unsupported eating timing")]
+    UnsupportedFood,
     #[error("player input is locked")]
     InputLock,
     #[error("selected poison facts are missing or invalid")]
@@ -253,6 +257,19 @@ impl RiskInput {
         poison: PoisonState,
         off_debt: bool,
     ) -> Self {
+        Self::capture_excluding(frame, tables, threats, poison, off_debt, &[])
+    }
+
+    /// Reserve declared Path quantities before food validation and selection.
+    /// Reserved units still occupy pack slots but cannot supply healing.
+    pub fn capture_excluding(
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        threats: &ThreatSet,
+        poison: PoisonState,
+        off_debt: bool,
+        protected_food: &[super::super::FoodReserve],
+    ) -> Self {
         let mut input = Self {
             pos: frame.here,
             tick: frame.tick,
@@ -357,7 +374,7 @@ impl RiskInput {
             input.set_missing_facts(true);
         }
 
-        capture_inventory(frame, tables, &mut input);
+        capture_inventory(frame, tables, &mut input, protected_food);
         capture_live(frame, threats, &mut input);
         input
     }
@@ -493,7 +510,12 @@ impl FoodCandidate {
     };
 }
 
-fn capture_inventory(frame: &Frame<'_>, tables: &CombatTables, input: &mut RiskInput) {
+fn capture_inventory(
+    frame: &Frame<'_>,
+    tables: &CombatTables,
+    input: &mut RiskInput,
+    protected_food: &[super::super::FoodReserve],
+) {
     const INVENTORY_SLOTS: usize = 28;
     let mut occupied = [false; INVENTORY_SLOTS];
     for item in frame.inventory {
@@ -530,6 +552,29 @@ fn capture_inventory(frame: &Frame<'_>, tables: &CombatTables, input: &mut RiskI
         if item.count <= 0 {
             continue;
         }
+        if frame.inventory[..index]
+            .iter()
+            .any(|previous| previous.def.id == item.def.id && previous.count > 0)
+        {
+            continue;
+        }
+        let total = frame
+            .inventory
+            .iter()
+            .filter(|row| row.def.id == item.def.id)
+            .try_fold(0u32, |sum, row| {
+                let count = u32::try_from(row.count.max(0)).ok()?;
+                sum.checked_add(count)
+            });
+        let reserved = u32::try_from(super::super::FoodReserve::reserved(
+            protected_food,
+            item.def.id,
+        ))
+        .unwrap_or(u32::MAX);
+        let total = total.map(|total| total.saturating_sub(reserved));
+        if total == Some(0) {
+            continue;
+        }
         let Some(food) = tables.food(item.def.id) else {
             if item
                 .actions
@@ -545,20 +590,6 @@ fn capture_inventory(frame: &Frame<'_>, tables: &CombatTables, input: &mut RiskI
             input.set_missing_facts(true);
             continue;
         }
-        if frame.inventory[..index]
-            .iter()
-            .any(|previous| previous.def.id == item.def.id && previous.count > 0)
-        {
-            continue;
-        }
-        let total = frame
-            .inventory
-            .iter()
-            .filter(|row| row.def.id == item.def.id)
-            .try_fold(0u32, |sum, row| {
-                let count = u32::try_from(row.count.max(0)).ok()?;
-                sum.checked_add(count)
-            });
         let count = match total {
             Some(total) if total <= u32::from(u8::MAX) => u8::try_from(total).unwrap_or(u8::MAX),
             Some(_) | None => {

@@ -259,12 +259,20 @@ fn stage_edges_for_facts(
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let quests = QuestSource { facts };
-    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None)
-        .0
-        .edges
-        .into_iter()
-        .filter(|edge| edge.loc_id == 6000)
-        .collect()
+    derive_transports_with_audit(
+        fx.path(),
+        &defs,
+        &collision,
+        None,
+        Some(&quests),
+        None,
+        None,
+    )
+    .0
+    .edges
+    .into_iter()
+    .filter(|edge| edge.loc_id == 6000)
+    .collect()
 }
 
 fn window_covers(edge: &TransportEdge, quest: &str, signal: &str, value: i32) -> bool {

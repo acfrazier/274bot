@@ -150,7 +150,6 @@ fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     ));
     let identity = CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     };
     let booth = poi_record(
@@ -736,21 +735,23 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::Always);
-    app.script_scope_notice_ack = true;
-    app.survivable_routing_notice_ack = true;
     app.settings_state.row = 8;
-    let rows = draw(&mut app, 60, 14);
-    let (col, row) = find(&rows, "Danger routing:")
-        .expect("the selected global remains visible in a compact terminal");
-    app.on_click(col, row + 1);
-    assert_eq!(
-        app.nav.danger_level(),
+    app.script_scope_notice_ack = true;
+    for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
+        frontend_core::DangerLevel::Always,
         frontend_core::DangerLevel::Never,
-        "the wrapped continuation cycles the danger setting"
-    );
+    ] {
+        let rows = draw(&mut app, 60, 14);
+        let (col, row) = find(&rows, "Danger routing:")
+            .expect("the selected global remains visible in a compact terminal");
+        app.on_click(col, row + 1);
+        assert_eq!(
+            app.nav.danger_level(),
+            expected,
+            "the wrapped continuation cycles the danger setting"
+        );
+    }
     assert!(
         app.pause_script_on_manual_walk_abort,
         "a continuation never activates the next setting"
@@ -758,15 +759,33 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
 }
 
 #[test]
-fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projection() {
+fn danger_routing_cycles_all_three_levels_without_a_migration_notice() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_some());
-    assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
-    assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
-    assert!(app.walk_permissions.survivable_routing_notice_ack());
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_none());
+    app.settings_state.row = 8;
+    assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Never);
+    let first = draw(&mut app, 100, 24);
+    assert!(find(&first, "Danger routing: Never").is_some());
+    assert!(find(&first, "dismiss this notice").is_none());
+    for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
+        frontend_core::DangerLevel::Always,
+        frontend_core::DangerLevel::Never,
+    ] {
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        assert_eq!(app.nav.danger_level(), expected);
+        assert_eq!(
+            app.nav_preferences_dirty,
+            [frontend_core::NavPreference::AllowDangerZones],
+            "one queued write carries the level"
+        );
+        assert!(find(
+            &draw(&mut app, 100, 24),
+            &format!("Danger routing: {}", expected.label())
+        )
+        .is_some());
+    }
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out
@@ -824,7 +843,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(
@@ -863,12 +882,19 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(
+        app.nav.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert!(!app.nav.allow_danger_zones());
+    assert!(
+        app.map_route_through_zones,
+        "the held middle level keeps the Never-level one-shot control"
+    );
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
     assert!(app.nav.allow_danger_zones());
@@ -1948,6 +1974,16 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             .collect()
     }
 
+    fn flattened_text(shown: &str) -> String {
+        shown
+            .chars()
+            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     for (width, height) in [(120, 40), (80, 24)] {
@@ -1974,18 +2010,25 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             shown.contains("Start zone scope"),
             "{width}x{height}: {shown}"
         );
+        // The disclosure wraps at the pane width: test its words, not its
+        // line breaks or the pane border.
+        let flat = flattened_text(&shown);
         assert!(
-            shown.contains("Start accepts only these zones."),
-            "{width}x{height}: {shown}"
+            flat.contains(
+                "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+            ),
+            "{width}x{height}: the unqualified-guide warning stays visible: {shown}"
         );
-        assert!(
-            shown.contains("The food guard is armed for the whole walk"),
-            "{width}x{height}: {shown}"
-        );
-        assert!(
-            shown.contains("protection runs only where a step requests it."),
-            "{width}x{height}: {shown}"
-        );
+        for sentence in [
+            "The guide asks to cross these zones.",
+            "The food guard is armed for the whole walk",
+            "protection runs only where a step requests it.",
+        ] {
+            assert!(
+                flat.contains(sentence),
+                "{width}x{height}: {sentence}: {shown}"
+            );
+        }
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
         assert!(
             !shown.contains("Prince Ali Rescue"),
@@ -2018,9 +2061,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             page_index += 1;
             rows = draw(&mut app, width, height);
             shown = text(&rows);
+            let flat = flattened_text(&shown);
             assert!(
-                shown.contains("Start zone scope") && shown.contains("[Start t]"),
-                "{width}x{height}: controls stay visible while scrolling: {shown}"
+                shown.contains("Start zone scope")
+                    && shown.contains("[Start t]")
+                    && flat.contains(
+                        "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+                    ),
+                "{width}x{height}: controls and warning stay visible while scrolling: {shown}"
             );
             pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {
@@ -2121,7 +2169,7 @@ fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, hei
         "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
     );
     assert!(
-        shown.contains("Start accepts only these zones."),
+        shown.contains("The guide asks to cross these zones."),
         "{width}x{height}: the shared Start notice is shown: {shown}"
     );
     assert!(
@@ -2188,6 +2236,77 @@ fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
     assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
 }
 
+fn assert_start_screen_warns_about_unqualified_guides_only_when_allowed(width: u16, height: u16) {
+    let evidence_root =
+        std::env::var_os("UNQUALIFIED_OPTIN_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    let flat = |shown: &str| shown.split_whitespace().collect::<Vec<_>>().join(" ");
+    for allowed in [false, true] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            (
+                "include_draft_guides".to_owned(),
+                serde_json::json!(allowed),
+            ),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-unqualified-warning"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Script), AppAction::None);
+
+        let shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height} allowed={allowed}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        let flat_shown = flat(&shown);
+        if allowed {
+            assert!(
+                flat_shown.contains("Warning: these guides are unqualified."),
+                "{width}x{height}: the warning is shown before Start: {shown}"
+            );
+            assert!(
+                flat_shown.contains("arthur"),
+                "{width}x{height}: the warning names the guide: {shown}"
+            );
+        } else {
+            assert!(
+                !flat_shown.contains("unqualified"),
+                "{width}x{height}: no warning while the setting is off: {shown}"
+            );
+        }
+        if let Some(root) = &evidence_root {
+            let directory = root.join("UNQUALIFIED-OPTIN");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!(
+                    "tui-start-{width}x{height}-allow-{}.txt",
+                    if allowed { "on" } else { "off" }
+                )),
+                &shown,
+            )
+            .expect("write TUI capture");
+        }
+    }
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_120x40() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(120, 40);
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_80x24() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(80, 24);
+}
+
 #[test]
 fn palette_start_opens_quester_zone_scope_before_start() {
     let evidence_root =
@@ -2234,7 +2353,7 @@ fn palette_start_opens_quester_zone_scope_before_start() {
             "{width}x{height}: {shown}"
         );
         assert!(
-            shown.contains("Start accepts only these zones."),
+            shown.contains("The guide asks to cross these zones."),
             "{width}x{height}: {shown}"
         );
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");

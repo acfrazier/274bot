@@ -364,8 +364,17 @@ impl FollowRun {
         here: WorldTile,
     ) -> Poll {
         let aim = hop.aim;
-        let mut ix = Interactions::new(snapshot, d);
-        let result = ix.walk(aim);
+        let before = d.packet_commit_count();
+        if !self.walk_packet_budget.allows(snapshot.tick(), before) {
+            self.walk = Some(hop);
+            return Poll::Watching;
+        }
+        let result = {
+            let mut ix = Interactions::new(snapshot, d);
+            ix.walk(aim)
+        };
+        self.walk_packet_budget
+            .record(snapshot.tick(), before, d.packet_commit_count());
         report_walk(options, snapshot, here, aim, &result);
         match result {
             SendResult::Sent { .. } => {
@@ -519,8 +528,18 @@ impl FollowRun {
                 self.walk = Some(hop);
                 return Poll::Watching;
             }
-            let mut ix = Interactions::new(snapshot, d);
-            let result = ix.walk(aim);
+            let before = d.packet_commit_count();
+            if !self.walk_packet_budget.allows(snapshot.tick(), before) {
+                (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
+                self.walk = Some(hop);
+                return Poll::Watching;
+            }
+            let result = {
+                let mut ix = Interactions::new(snapshot, d);
+                ix.walk(aim)
+            };
+            self.walk_packet_budget
+                .record(snapshot.tick(), before, d.packet_commit_count());
             report_walk(options, snapshot, here, aim, &result);
             match result {
                 SendResult::Sent { .. } => {

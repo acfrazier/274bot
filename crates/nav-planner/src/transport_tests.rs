@@ -137,3 +137,73 @@ fn crossing_identity_distinguishes_exact_takeoffs_on_both_sides_of_one_anchor() 
     }
     assert_ne!(identities[0], identities[1]);
 }
+
+/// The service-pick cost unit is half a tick (`api::service_pick::RouteCost`).
+/// The router adds 0.5 per run step, the walk rate of 1.0 per walked step, and
+/// each transport edge's `ticks` (an `i32`). A route is therefore a whole
+/// count of half ticks only while every edge of the shipped graph carries a
+/// non-negative whole tick count whose double fits the cost range.
+#[test]
+fn every_transport_cost_is_whole_half_ticks() {
+    use crate::essence::ESSENCE_MINE_EXIT_TICKS;
+    use crate::router::{PER_STEP_RUN, PER_STEP_WALK};
+
+    for rate in [PER_STEP_RUN, PER_STEP_WALK] {
+        assert_eq!(
+            (rate * 2.0).fract(),
+            0.0,
+            "a walked step is whole half ticks"
+        );
+    }
+    const {
+        assert!(ESSENCE_MINE_EXIT_TICKS >= 0);
+    }
+
+    let default_pack = crate::world::NavWorld::default_pack_path();
+    let default_pack = default_pack.to_string_lossy();
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &default_pack,
+        "revision-289 navigation pack",
+    ) else {
+        return;
+    };
+    let world = crate::world::NavWorld::load_pack(&path)
+        .unwrap_or_else(|error| panic!("could not load nav pack at {}: {error}", path.display()));
+    let mut checked = 0_usize;
+    for (set, edges) in [
+        ("edges", &world.graph.edges),
+        ("teleports", &world.graph.teleports),
+    ] {
+        for edge in edges {
+            let cost = f64::from(edge.ticks);
+            assert!(
+                edge.ticks >= 0,
+                "{set} edge {:?} at {:?} has the negative cost {}",
+                edge.kind,
+                edge.at,
+                edge.ticks
+            );
+            assert_eq!(
+                (cost * 2.0).fract(),
+                0.0,
+                "{set} edge {:?} at {:?} costs {cost} ticks, not whole half ticks",
+                edge.kind,
+                edge.at
+            );
+            assert!(
+                u32::try_from(edge.ticks).is_ok_and(|ticks| ticks.checked_mul(2).is_some()),
+                "{set} edge {:?} at {:?} costs {} ticks, past the half-tick range",
+                edge.kind,
+                edge.at,
+                edge.ticks
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 1_000,
+        "the real pack must carry its transport graph, saw {checked} edges"
+    );
+    println!("transport edges checked: {checked}");
+}

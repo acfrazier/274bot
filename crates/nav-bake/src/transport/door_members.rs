@@ -6,52 +6,29 @@ use super::*;
 
 /// The generic closed-door categories of `scripts/doors/scripts/doors.rs2`,
 /// `doubledoors.rs2`, `open_and_close_doors.rs2` and
-/// `open_and_close_double_doors.rs2`: `(category, exact category handler
-/// body with all whitespace removed, the proc it forwards to)`. The engine
-/// resolves a loc's open script as loc-specific `[oploc1,<name>]` >
-/// category `[oploc1,_<category>]`, so a member with no loc-specific block
-/// runs this body. The open-and-close procs walk the player through either
-/// way (`~check_axis` only picks the side) and shut the door behind them.
-pub(super) const DOOR_CATEGORY_HANDLERS: [(&str, &str, &str); 9] = [
-    ("door_closed", "~open_door(500);", "open_door"),
-    (
-        "reverse_door_closed",
-        "~open_door_reversed(500);",
-        "open_door_reversed",
-    ),
-    (
-        "door_left_closed",
-        "~open_double_doors_left(500,door_right_closed,loc_param(open_sound));",
-        "open_double_doors_left",
-    ),
-    (
-        "door_right_closed",
-        "~open_double_doors_right(500,door_left_closed,loc_param(open_sound));",
-        "open_double_doors_right",
-    ),
-    (
-        "reverse_door_left_closed",
-        "~open_reverse_double_doors_left(500,reverse_door_right_closed,loc_param(open_sound));",
-        "open_reverse_double_doors_left",
-    ),
+/// `open_and_close_double_doors.rs2`, with the proc each category handler
+/// forwards to, modelled by name. The engine resolves a loc's open script as
+/// loc-specific `[oploc1,<name>]` > category `[oploc1,_<category>]`, so a
+/// member with no loc-specific block runs the category handler. The
+/// open-and-close procs walk the player through either way (`~check_axis`
+/// only picks the side) and shut the door behind them.
+pub(super) const DOOR_CATEGORY_HANDLERS: [(&str, &str); 9] = [
+    ("door_closed", "open_door"),
+    ("reverse_door_closed", "open_door_reversed"),
+    ("door_left_closed", "open_double_doors_left"),
+    ("door_right_closed", "open_double_doors_right"),
+    ("reverse_door_left_closed", "open_reverse_double_doors_left"),
     (
         "reverse_door_right_closed",
-        "~open_reverse_double_doors_right(500,reverse_door_left_closed,loc_param(open_sound));",
         "open_reverse_double_doors_right",
     ),
-    (
-        "door_open_and_close",
-        "if(string_length(loc_param(game_message))!0){mes(loc_param(game_message));}~open_and_close_door(loc_param(next_loc_stage),~check_axis(coord,loc_coord,loc_angle),false);",
-        "open_and_close_door",
-    ),
+    ("door_open_and_close", "open_and_close_door"),
     (
         "double_door_open_and_close_left",
-        "~open_and_close_double_door(~check_axis_locactive(coord),^left);",
         "open_and_close_double_door",
     ),
     (
         "double_door_open_and_close_right",
-        "~open_and_close_double_door(~check_axis_locactive(coord),^right);",
         "open_and_close_double_door",
     ),
 ];
@@ -64,39 +41,45 @@ pub(super) const DOOR_CATEGORY_HANDLERS: [(&str, &str, &str); 9] = [
 /// double-door procs always add a `wall_straight`.
 pub(super) const DOOR_CLOSED: &str = "door_closed";
 
-/// The door categories whose generic handler is verified in this content:
-/// every `[oploc1,_<category>]` block is exactly the forwarding call and the
-/// forwarded `[proc,…]` exists. A category with a differently shaped or
-/// disagreeing handler, or a missing proc, supports nothing.
+/// The door categories whose generic handler is present in this content:
+/// exactly one `[oploc1,_<category>]` block and exactly one forwarded
+/// `[proc,…]` are declared. A category with a missing or duplicate handler or
+/// proc supports nothing.
 pub(super) fn generic_door_handlers(content_root: &Path) -> HashSet<&'static str> {
-    let mut bodies: HashMap<&'static str, bool> = HashMap::new();
-    let mut procs: HashSet<&'static str> = HashSet::new();
+    let mut handlers: HashMap<&'static str, usize> = HashMap::new();
+    let mut procs: HashMap<&'static str, usize> = HashMap::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
-        for (category, body) in oploc1_category_bodies(text) {
-            let Some(&(name, expected, _)) = DOOR_CATEGORY_HANDLERS
+        for (category, _) in oploc1_category_bodies(text) {
+            if let Some(&(name, _)) = DOOR_CATEGORY_HANDLERS
                 .iter()
-                .find(|(name, _, _)| *name == category)
-            else {
-                continue;
-            };
-            let ok = normalized_body(&body) == expected;
-            bodies
-                .entry(name)
-                .and_modify(|prev| *prev &= ok)
-                .or_insert(ok);
-        }
-        for (_, _, proc) in DOOR_CATEGORY_HANDLERS {
-            if !proc_bodies(text, proc).is_empty() {
-                procs.insert(proc);
+                .find(|(name, _)| *name == category)
+            {
+                *handlers.entry(name).or_default() += 1;
             }
+        }
+        // Two categories can forward to one proc: count each proc once.
+        let distinct: HashSet<&'static str> = DOOR_CATEGORY_HANDLERS
+            .iter()
+            .map(|&(_, proc)| proc)
+            .collect();
+        for proc in distinct {
+            *procs.entry(proc).or_default() += proc_bodies(text, proc).len();
         }
     });
     DOOR_CATEGORY_HANDLERS
         .iter()
-        .filter(|(name, _, proc)| {
-            bodies.get(name).copied().unwrap_or(false) && procs.contains(proc)
+        .filter(|(name, proc)| {
+            let handler = declared_once(
+                &format!("[oploc1,_{name}]"),
+                handlers.get(name).copied().unwrap_or(0),
+            );
+            let proc = declared_once(
+                &format!("[proc,{proc}]"),
+                procs.get(proc).copied().unwrap_or(0),
+            );
+            handler && proc
         })
-        .map(|(name, _, _)| *name)
+        .map(|(name, _)| *name)
         .collect()
 }
 
@@ -141,8 +124,8 @@ pub(super) fn door_blocks(text: &str, ids: &HashMap<String, i32>) -> Vec<(i32, D
         } else if let Some(value) = line.strip_prefix("category=") {
             block.category = DOOR_CATEGORY_HANDLERS
                 .iter()
-                .find(|(name, _, _)| *name == value.trim())
-                .map(|(name, _, _)| *name);
+                .find(|(name, _)| *name == value.trim())
+                .map(|(name, _)| *name);
         } else if let Some(rest) = line.strip_prefix("param=") {
             if let Some((key, value)) = rest.split_once(',') {
                 if key.trim() == "next_loc_stage" {

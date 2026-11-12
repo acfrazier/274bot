@@ -156,6 +156,12 @@ pub enum GenerationError {
         doors_dir: std::path::PathBuf,
         gates: std::path::PathBuf,
     },
+    /// The client config archive lacks varbit data required by nav-shadow.
+    #[error("nav-shadow requires varbit.dat in client config archive {path}")]
+    NavShadowVarbitsMissing { path: std::path::PathBuf },
+    /// The optional interpreter shadow failed at its typed boundary.
+    #[error(transparent)]
+    NavShadow(#[from] transport::NavShadowError),
     /// A transport-content validation failed.
     #[error("{detail}")]
     TransportValidation {

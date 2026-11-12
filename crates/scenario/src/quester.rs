@@ -319,6 +319,161 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Alfred Grimhand's Barcrawl",
         profile: TestProfile::Base40,
     },
+    QuestFixtureProfile {
+        quest: "fortress",
+        display: "Black Knight's Fortress",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "haunted",
+        display: "Ernest the Chicken",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "fishingcompo",
+        display: "Fishing Contest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "zanaris",
+        display: "Lost City",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "tree",
+        display: "Tree Gnome Village",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "scorpcatcher",
+        display: "Scorpion Catcher",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "itgronigen",
+        display: "Observatory Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "grail",
+        display: "Holy Grail",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "itwatchtower",
+        display: "Watch Tower",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "biohazard",
+        display: "Biohazard",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "murder",
+        display: "Murder Mystery",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "ball",
+        display: "Witch's House",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "chompybird",
+        display: "Big Chompy Bird Hunting",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mcannon",
+        display: "Dwarf Cannon",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "crest",
+        display: "Family Crest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "arena",
+        display: "Fight Arena",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "grandtree",
+        display: "The Grand Tree",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "zombiequeen",
+        display: "Shilo Village",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "tbwt",
+        display: "Tai Bwo Wannai Trio",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "druidspirit",
+        display: "Nature Spirit",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "routequest",
+        display: "In Search of the Myreque",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "troll",
+        display: "Troll Stronghold",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "eadgar",
+        display: "Eadgar's Ruse",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "troll_love",
+        display: "Troll Romance",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "misc",
+        display: "Throne of Miscellania",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "waterfall",
+        display: "Waterfall Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "sheepherder",
+        display: "Sheep Herder",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "regicide",
+        display: "Regicide",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mortton",
+        display: "Shades of Mortton",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "viking",
+        display: "The Fremennik Trials",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "mm",
+        display: "Monkey Madness",
+        profile: TestProfile::Base40,
+    },
 ];
 
 pub fn fixture_profile(quest: &str) -> Result<TestProfile, String> {
@@ -410,6 +565,8 @@ pub struct QuesterStage<'a> {
     pub stage: &'a str,
     pub loadout: Option<FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
+    /// Skill levels that replace the profile level, from a seed file.
+    pub skills: &'a [(&'a str, i32)],
     pub stand: WorldTile,
 }
 
@@ -434,6 +591,7 @@ struct FixtureSeed<'a> {
     extra_items: &'a [(&'a str, i32)],
     stand: WorldTile,
     seed_vars: &'a [(&'a str, i32)],
+    skills: &'a [(&'a str, i32)],
     proof: Proof,
 }
 
@@ -448,6 +606,10 @@ pub struct QuesterPathSeeds {
     pub extra_items: Vec<(String, i32)>,
     #[serde(default)]
     pub seed_vars: Vec<(String, i32)>,
+    /// Skill name and level (1-99) that replace the profile level for that
+    /// skill. The planned stats, and so the exact Start check, include them.
+    #[serde(default)]
+    pub skills: Vec<(String, i32)>,
     #[serde(default)]
     pub before_relog: Vec<String>,
     #[serde(default)]
@@ -494,6 +656,13 @@ impl QuesterPathSeeds {
             .collect()
     }
 
+    pub fn skill_refs(&self) -> Vec<(&str, i32)> {
+        self.skills
+            .iter()
+            .map(|(skill, level)| (skill.as_str(), *level))
+            .collect()
+    }
+
     pub fn before_relog_steps(&self) -> Vec<Step> {
         self.before_relog
             .iter()
@@ -522,6 +691,7 @@ pub struct QuesterPathFixture<'a> {
     pub stage: Option<&'a str>,
     pub loadout: Option<FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
+    pub skills: &'a [(&'a str, i32)],
     pub seed_vars: &'a [(&'a str, i32)],
     pub stand: WorldTile,
     pub before_relog: Vec<Step>,
@@ -540,6 +710,8 @@ pub struct QuesterFixture {
 pub struct QuesterSeed {
     pub profile: TestProfile,
     pub stats: Vec<SkillMinimum>,
+    /// Seed-file skill levels already merged into `stats`.
+    pub skills: Vec<SkillMinimum>,
     pub loadout: Option<QuestLoadoutDocument>,
     pub stand: WorldTile,
     expected_inventory: Vec<(i32, i32)>,
@@ -594,9 +766,13 @@ impl QuesterSeed {
                 json!({"skill": minimum.skill, "base": stat.base, "effective": stat.effective})
             })
             .collect();
-        json!({"profile": self.profile, "stats": observed,
+        let mut receipt = json!({"profile": self.profile, "stats": observed,
             "loadout": self.loadout, "inventory": self.expected_inventory,
-            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}})
+            "equipment": self.expected_equipment, "tile": {"x": x, "z": z, "level": level}});
+        if !self.skills.is_empty() {
+            receipt["seeded_skills"] = json!(self.skills);
+        }
+        receipt
     }
 }
 
@@ -711,6 +887,41 @@ fn stats_for(path: &PathDocument, profile: TestProfile) -> Result<Vec<SkillMinim
         .collect())
 }
 
+/// Lay seed-file skill levels over the planned profile stats. A seed level
+/// replaces the profile level for that skill. Returns the seeded minimums.
+fn apply_skill_seeds(
+    stats: &mut Vec<SkillMinimum>,
+    skills: &[(&str, i32)],
+) -> Result<Vec<SkillMinimum>, String> {
+    let mut seeded: Vec<SkillMinimum> = Vec::with_capacity(skills.len());
+    for (name, level) in skills {
+        let index = Skill::names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("unknown seed skill {name:?}"))? as u8;
+        if !(1..=99).contains(level) {
+            return Err(format!("seed skill {name:?} level {level} is outside 1-99"));
+        }
+        if seeded.iter().any(|done| done.skill == index) {
+            return Err(format!("duplicate seed skill {name:?}"));
+        }
+        let level = *level as u16;
+        seeded.push(SkillMinimum {
+            skill: index,
+            level,
+        });
+        match stats.iter_mut().find(|stat| stat.skill == index) {
+            Some(stat) => stat.level = level,
+            None => stats.push(SkillMinimum {
+                skill: index,
+                level,
+            }),
+        }
+    }
+    stats.sort_by_key(|stat| stat.skill);
+    Ok(seeded)
+}
+
 fn command_step(name: &'static str, command: String, proof: Proof) -> Step {
     Step {
         name,
@@ -792,6 +1003,7 @@ pub fn build_quester_path_fixture(
                 stage,
                 loadout: request.loadout,
                 extra_items: request.extra_items,
+                skills: request.skills,
                 stand: request.stand,
             },
             request.seed_vars,
@@ -809,6 +1021,7 @@ pub fn build_quester_path_fixture(
             selected: request.selected,
             loadout: request.loadout,
             extra_items: request.extra_items,
+            skills: request.skills,
             stand: request.stand,
             seed_vars: request.seed_vars,
             proof: Proof::QuestDone {
@@ -989,6 +1202,7 @@ fn build_quest_fixture(
         selected: request.selected,
         loadout: request.loadout,
         extra_items: request.extra_items,
+        skills: request.skills,
         stand: request.stand,
         seed_vars: &seed_vars,
         proof: Proof::QuestDone {
@@ -1015,6 +1229,7 @@ pub fn miniquest_stage(request: MiniquestStage<'_>) -> Result<QuesterFixture, St
         selected: request.selected,
         loadout: request.loadout,
         extra_items: request.extra_items,
+        skills: &[],
         stand: request.stand,
         seed_vars: request.seed_vars,
         proof: request.proof,
@@ -1028,6 +1243,7 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
         selected,
         loadout,
         extra_items,
+        skills,
         stand,
         seed_vars,
         proof,
@@ -1039,7 +1255,8 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
         return Err("fixture stand is outside world coordinates".into());
     }
     let profile = fixture_profile(path.id.0.as_ref())?;
-    let stats = stats_for(path, profile)?;
+    let mut stats = stats_for(path, profile)?;
+    let seeded_skills = apply_skill_seeds(&mut stats, skills)?;
     let header = path
         .quest
         .as_ref()
@@ -1267,6 +1484,7 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
             loadout,
             stand,
             expected_inventory,
+            skills: seeded_skills,
             expected_equipment,
         },
         seed_commands,
@@ -1558,6 +1776,10 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
         .as_ref()
         .map(QuesterPathSeeds::seed_var_refs)
         .unwrap_or_default();
+    let skills = seeds
+        .as_ref()
+        .map(QuesterPathSeeds::skill_refs)
+        .unwrap_or_default();
     let before_relog = seeds
         .as_ref()
         .map(QuesterPathSeeds::before_relog_steps)
@@ -1570,6 +1792,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
         stage: seeds.as_ref().map(|seeds| seeds.stage.as_str()),
         loadout,
         extra_items: &extra_items,
+        skills: &skills,
         seed_vars: &seed_vars,
         stand,
         before_relog,
@@ -1697,6 +1920,7 @@ mod tests {
                 stage: None,
                 loadout: None,
                 extra_items: &[],
+                skills: &[],
                 seed_vars: &[],
                 stand: start,
                 before_relog: Vec::new(),
@@ -1780,6 +2004,37 @@ mod tests {
             stage: "cook:0",
             loadout: Some(loadout),
             extra_items,
+            skills: &[],
+            stand: WorldTile {
+                x: 3209,
+                z: 3215,
+                level: 0,
+            },
+        })
+    }
+
+    fn fixture_with_skills(
+        path: &PathDocument,
+        skills: &[(&str, i32)],
+    ) -> Result<QuesterFixture, String> {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let identity = selected
+            .quest_identity()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.id == "cook")
+            .unwrap();
+        quester_stage(QuesterStage {
+            name: "quester_skill_seed_test",
+            quest_display: "Cook's Assistant",
+            path,
+            identity,
+            selected: &selected,
+            stage: "cook:0",
+            loadout: None,
+            extra_items: &[],
+            skills,
             stand: WorldTile {
                 x: 3209,
                 z: 3215,
@@ -1958,6 +2213,143 @@ mod tests {
         assert_eq!(stats_for(&path, TestProfile::Base60).unwrap()[0].level, 60);
     }
 
+    fn skill_index(name: &str) -> u8 {
+        Skill::names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .unwrap() as u8
+    }
+
+    #[test]
+    fn seed_skills_replace_and_add_levels_in_the_planned_stats() {
+        let mut stats = stats_for(&document(), TestProfile::Base40).unwrap();
+        let seeded = apply_skill_seeds(
+            &mut stats,
+            &[("Agility", 50), ("attack", 70), ("crafting", 31)],
+        )
+        .unwrap();
+        let level = |name: &str| {
+            stats
+                .iter()
+                .find(|stat| stat.skill == skill_index(name))
+                .map(|stat| stat.level)
+        };
+        assert_eq!(level("agility"), Some(50));
+        assert_eq!(level("crafting"), Some(31));
+        // The seed replaces the profile's Attack 40, in either direction.
+        assert_eq!(level("attack"), Some(70));
+        assert_eq!(level("defence"), Some(40));
+        assert!(stats.windows(2).all(|pair| pair[0].skill < pair[1].skill));
+        assert_eq!(
+            seeded
+                .iter()
+                .map(|stat| (stat.skill, stat.level))
+                .collect::<Vec<_>>(),
+            vec![
+                (skill_index("agility"), 50),
+                (skill_index("attack"), 70),
+                (skill_index("crafting"), 31)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_seed_without_skills_leaves_the_planned_stats_unchanged() {
+        let before = stats_for(&document(), TestProfile::Base40).unwrap();
+        let mut stats = before.clone();
+        assert!(apply_skill_seeds(&mut stats, &[]).unwrap().is_empty());
+        assert_eq!(stats, before);
+        let seeds = parse_quester_path_seeds(r#"{"stage":"cook:0","stand":[1,2,0]}"#, "t").unwrap();
+        assert!(seeds.skills.is_empty());
+    }
+
+    #[test]
+    fn seed_skills_refuse_unknown_names_bad_levels_and_duplicates() {
+        let plan = |skills: &[(&str, i32)]| {
+            let mut stats = stats_for(&document(), TestProfile::Base40).unwrap();
+            apply_skill_seeds(&mut stats, skills)
+        };
+        assert!(plan(&[("sailing", 50)])
+            .unwrap_err()
+            .contains("unknown seed skill"));
+        for level in [0, 100, -3] {
+            assert!(plan(&[("agility", level)])
+                .unwrap_err()
+                .contains("outside 1-99"));
+        }
+        assert!(plan(&[("agility", 50), ("agility", 50)])
+            .unwrap_err()
+            .contains("duplicate seed skill"));
+        assert!(plan(&[("agility", 50), ("Agility", 60)])
+            .unwrap_err()
+            .contains("duplicate seed skill"));
+    }
+
+    #[test]
+    fn seed_skills_parse_from_the_seed_file() {
+        let seeds = parse_quester_path_seeds(
+            r#"{"stage":"cook:0","stand":[1,2,0],"skills":[["agility",50],["crafting",31]]}"#,
+            "t",
+        )
+        .unwrap();
+        assert_eq!(seeds.skill_refs(), vec![("agility", 50), ("crafting", 31)]);
+        assert!(parse_quester_path_seeds(
+            r#"{"stage":"cook:0","stand":[1,2,0],"skills":[["agility","fifty"]]}"#,
+            "t"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn seeded_skills_reach_the_commands_and_the_exact_start_check() {
+        use api::snapshot::StatView;
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let fixture = fixture_with_skills(&document(), &[("agility", 50), ("attack", 70)]).unwrap();
+        let level = |name: &str| {
+            fixture
+                .seed
+                .stats
+                .iter()
+                .find(|stat| stat.skill == skill_index(name))
+                .map(|stat| stat.level)
+        };
+        assert_eq!(level("agility"), Some(50));
+        assert_eq!(level("attack"), Some(70));
+        assert_eq!(fixture.seed.skills.len(), 2);
+        assert!(fixture.seed_commands.iter().any(|command| command
+            == &format!(
+                "setstat {} 50",
+                Skill::names[usize::from(skill_index("agility"))]
+            )));
+        let stat_view = |skill: u8, level: i32| StatView {
+            index: i32::from(skill),
+            name: Skill::names[usize::from(skill)].into(),
+            effective: level,
+            base: level,
+            xp: 0,
+            used: true,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut views: Vec<_> = fixture
+            .seed
+            .stats
+            .iter()
+            .map(|stat| stat_view(stat.skill, i32::from(stat.level)))
+            .collect();
+        snapshot.seed_stats(views.clone());
+        assert!(validate_start_seed(&snapshot, &fixture.seed.stats, &[], &[]).is_ok());
+        let agility = views
+            .iter_mut()
+            .find(|view| view.index == i32::from(skill_index("agility")))
+            .unwrap();
+        *agility = stat_view(skill_index("agility"), 40);
+        snapshot.seed_stats(views);
+        assert!(validate_start_seed(&snapshot, &fixture.seed.stats, &[], &[]).is_err());
+    }
+
     #[test]
     fn unknown_profile_and_loadout_fail_closed() {
         if !api::test_support::game_data_available() {
@@ -1989,6 +2381,7 @@ mod tests {
             stage: "cook:0",
             loadout: Some(FixtureLoadout::Path("broken")),
             extra_items: &[],
+            skills: &[],
             stand: WorldTile {
                 x: 3209,
                 z: 3215,
@@ -2166,6 +2559,7 @@ mod tests {
                 stage: "cook:0",
                 loadout: None,
                 extra_items: &[],
+                skills: &[],
                 stand: WorldTile {
                     x: 3209,
                     z: 3215,
@@ -2283,6 +2677,7 @@ mod tests {
             stage: None,
             loadout: None,
             extra_items: &[],
+            skills: &[],
             seed_vars: &[],
             stand,
             before_relog: vec![command_step(

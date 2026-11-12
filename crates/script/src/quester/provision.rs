@@ -265,8 +265,14 @@ pub struct Provisioner {
     bank_run: Option<AcquireRun>,
     acquire_run: Option<Box<dyn StepRun>>,
     acquire_finished: bool,
+    /// The active bank trip serves only automatic stage survival supplies.
+    survival_bank: bool,
     coin_drawn: bool,
     carry_drawn: u64,
+    /// `usize::MAX` is outside every compiled stage slice.
+    survival_stage: usize,
+    gear_stage: usize,
+    gear_run: Option<Box<dyn StepRun>>,
     attempts: u32,
     status: Status,
     revision: u64,
@@ -286,6 +292,11 @@ pub struct Provisioner {
     unmet_logged: Vec<UnmetNeed>,
 }
 
+// Measured 1,120 B on Linux. The 1,184 B ceiling includes 64 B headroom.
+// Growth is 240 B: 208 B for the inline protected snapshot and 32 B for
+// survival/gear stage state. No copied Path keep list is retained.
+const _: () = assert!(std::mem::size_of::<Provisioner>() <= 1184);
+
 impl Default for Provisioner {
     fn default() -> Self {
         Self::new()
@@ -299,8 +310,12 @@ impl Provisioner {
             bank_run: None,
             acquire_run: None,
             acquire_finished: false,
+            survival_bank: false,
             coin_drawn: false,
             carry_drawn: 0,
+            survival_stage: usize::MAX,
+            gear_stage: usize::MAX,
+            gear_run: None,
             attempts: 0,
             status: Status::default(),
             revision: 0,
@@ -362,18 +377,21 @@ impl Provisioner {
                 Closed::Done => {}
             }
         }
+        if let Some(run) = self.gear_run.as_mut() {
+            match run.poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(result) => {
+                    self.gear_run = None;
+                    result?;
+                    self.gear_stage = stage_index(plan, current_stage).unwrap_or(usize::MAX);
+                }
+            }
+        }
         if self.bank_run.is_some() {
-            return self.poll_bank(cx);
+            return self.poll_bank(cx, plan, current_stage);
         }
         if self.acquire_run.is_some() {
             return self.poll_acquire(cx);
-        }
-        if plan.owns_inventory {
-            if let Some(ended) = self.end_session(cx) {
-                return ended;
-            }
-            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
-            return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
 
         let prepared = self.poll_prepare(cx, plan, active_loadout, current_stage);
@@ -381,7 +399,7 @@ impl Provisioner {
         // starting it spent nothing (TICK-FIX #4/#7, E-Q7/E-Q8a).
         if prepared.is_pending() && cx.tick.cx.may_continue_this_tick() {
             if self.bank_run.is_some() {
-                return self.poll_bank(cx);
+                return self.poll_bank(cx, plan, current_stage);
             }
             if self.closer.active() {
                 return match self.closer.drive(cx.tick, &mut self.lease) {
@@ -404,7 +422,9 @@ impl Provisioner {
     /// was cancelled before any frame showed its bank open owns nothing.
     pub fn cancel(&mut self) {
         self.bank_run = None;
+        self.survival_bank = false;
         self.acquire_run = None;
+        self.gear_run = None;
         self.closer.cancel();
         self.in_session = false;
         self.opening = false;
@@ -426,6 +446,12 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
+        if let Some(mut run) = self.gear_run.take() {
+            run.cancel(actions);
+        }
+        self.gear_stage = usize::MAX;
+        self.survival_stage = usize::MAX;
+        self.survival_bank = false;
         self.closer.cancel();
         self.in_session = false;
         self.opening = false;
@@ -451,7 +477,8 @@ impl Provisioner {
     }
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
-        (self.bank_run.is_some() || self.closer.active()).then_some(self.status.phase)
+        (self.bank_run.is_some() || self.gear_run.is_some() || self.closer.active())
+            .then_some(self.status.phase)
     }
 
     pub(super) fn bank_starts(&self) -> u32 {
@@ -514,10 +541,11 @@ impl Provisioner {
     pub(super) fn run_live(&self) -> bool {
         self.bank_run.is_some()
             || self.closer.active()
+            || self.gear_run.is_some()
             || (self.acquire_run.is_some() && !self.acquire_finished)
     }
     pub(super) fn has_run(&self) -> bool {
-        self.bank_run.is_some() || self.acquire_run.is_some()
+        self.bank_run.is_some() || self.acquire_run.is_some() || self.gear_run.is_some()
     }
 
     pub(super) fn transfer_in_flight(&self) -> bool {
@@ -528,12 +556,18 @@ impl Provisioner {
                 .acquire_run
                 .as_ref()
                 .is_some_and(|run| run.transfer_in_flight())
+            || self
+                .gear_run
+                .as_ref()
+                .is_some_and(|run| run.transfer_in_flight())
     }
 
     pub(super) fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
         if let Some(run) = &mut self.bank_run {
             run.interrupt_transfer(actions);
         } else if let Some(run) = &mut self.acquire_run {
+            run.interrupt_transfer(actions);
+        } else if let Some(run) = &mut self.gear_run {
             run.interrupt_transfer(actions);
         }
     }
@@ -557,6 +591,20 @@ impl Provisioner {
         active_loadout: Option<&str>,
         current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        let current = stage_index(plan, current_stage);
+        if plan.owns_inventory
+            && !plan
+                .survival
+                .as_ref()
+                .zip(current)
+                .is_some_and(|(survival, stage)| survival.stage_has_risk(stage))
+        {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
+            self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
+            return Poll::Ready(Ok(ProvisionEvent::Ready));
+        }
         let snapshot = cx.tick.cx.snapshot();
         let stock = snapshot.stock();
         let known = stock.banked_origin() != Origin::Unknown;
@@ -571,9 +619,120 @@ impl Provisioner {
         let inventory = inventory.value;
         let capacity = i32::from(capacity.value);
         let mut needs = Planner::new(&stock, WorldFacts::default());
-        let current = stage_index(plan, current_stage);
+        let spillover_keep = if plan.owns_inventory {
+            &plan.managed_items
+        } else {
+            &plan.base_spillover_keep
+        };
+        let survival = if let (Some(survival), Some(stage)) = (&plan.survival, current) {
+            if self.survival_stage != stage && survival.stage_has_risk(stage) {
+                let Some(frame) = crate::combat::frame::Frame::borrow(snapshot) else {
+                    return Poll::Pending;
+                };
+                let poison = cx.tick.cx.condition().map_or(
+                    api::condition::PoisonState::Unknown { since: frame.tick },
+                    |condition| condition.poison,
+                );
+                let input = crate::combat::risk::RiskInput::capture_excluding(
+                    &frame,
+                    survival.tables(),
+                    &crate::combat::ThreatSet::default(),
+                    poison,
+                    false,
+                    plan.food_reserves.as_deref().unwrap_or(&[]),
+                );
+                let target = survival
+                    .plan(stage, stock, input, Some(plan))
+                    .unwrap_or_else(|why| super::survival::SurvivalNeed {
+                        food: None,
+                        gear: Vec::new(),
+                        bound: 1.0,
+                        unknown: Some(why),
+                    });
+                if self.gear_stage != stage {
+                    if target.gear.iter().any(|item| {
+                        stock.carried(item.id).unwrap_or(0) == 0 && stock.banked(item.id).is_none()
+                    }) {
+                        self.start_bank(
+                            cx,
+                            plan,
+                            BankAction::Scan,
+                            ProvisionPhase::Scanning,
+                            target.gear.first().map(|item| Arc::clone(&item.name)),
+                            1,
+                            0,
+                            None,
+                        );
+                        self.survival_bank = true;
+                        return Poll::Pending;
+                    }
+                    let gear: Vec<_> = target
+                        .gear
+                        .iter()
+                        .filter(|item| {
+                            stock
+                                .total(item.id)
+                                .or_else(|| stock.carried(item.id))
+                                .is_some_and(|count| count > 0)
+                        })
+                        .cloned()
+                        .collect();
+                    if gear
+                        .iter()
+                        .any(|item| stock.worn(item.id).unwrap_or(0) == 0)
+                        && (stock.free_slots().unwrap_or(0) > 0
+                            || gear.iter().any(|item| stock.held(item.id).unwrap_or(0) > 0)
+                            || inventory
+                                .iter()
+                                .any(|row| !spillover_keep.contains(&row.def.id)))
+                    {
+                        self.gear_run = Some(super::families::begin_survival_loadout(
+                            super::families::s2::SurvivalLoadoutRequest {
+                                items: &gear,
+                                bank: plan.bank,
+                                bank_required: plan.bank_required,
+                                keep_ids: super::compile::inventory::capacity_keep_with_held_foods(
+                                    stock,
+                                    spillover_keep,
+                                    |id| survival.tables().food(id).is_some(),
+                                ),
+                                carried_ids: Arc::clone(&plan.carried_items),
+                                equipment_slots: survival.equipment_slots(),
+                                protect_worn: true,
+                            },
+                            cx,
+                        )?);
+                        self.in_session = true;
+                        self.opening = !bank_open(&cx.tick.cx);
+                        self.bank_starts = self.bank_starts.wrapping_add(1);
+                        self.set_status(ProvisionPhase::Withdrawing, None, 0, 0, None, known);
+                        return Poll::Pending;
+                    }
+                    self.gear_stage = stage;
+                }
+                for item in &target.gear {
+                    if stock.carried(item.id).unwrap_or(0) == 0 {
+                        needs.note_unmet(UnmetNeed {
+                            item: Arc::clone(&item.name),
+                            need: 1,
+                            have: 0,
+                            cause: if stock.banked(item.id).unwrap_or(0) > 0 {
+                                UnmetCause::NoRoom
+                            } else {
+                                UnmetCause::NoSupply
+                            },
+                        });
+                    }
+                }
+                Some(target)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        for item in plan.items.iter() {
+        for item in plan.items.iter().filter(|_| !plan.owns_inventory) {
             if !item_due(item, current) {
                 // The quest has not reached this item's stage yet: no need,
                 // and no Unknown-bank scan, until it is due.
@@ -599,7 +758,11 @@ impl Provisioner {
             }
             needs.require(&need)?;
         }
-        for need in plan.gather_tool_needs.iter() {
+        for need in plan
+            .gather_tool_needs
+            .iter()
+            .filter(|_| !plan.owns_inventory)
+        {
             let Some(stats) = snapshot.stats() else {
                 continue;
             };
@@ -681,13 +844,31 @@ impl Provisioner {
                 })
             })
             .transpose()?;
-        let safe_slots = safe_deposit_rows(inventory, &plan.base_spillover_keep) as i32;
+        let safe_slots = inventory
+            .iter()
+            .filter(|row| {
+                row.count > 0
+                    && !spillover_keep.contains(&row.def.id)
+                    && !(survival.is_some()
+                        && plan
+                            .survival
+                            .as_ref()
+                            .is_some_and(|model| model.tables().food(row.def.id).is_some()))
+                    && !survival.as_ref().is_some_and(|need| {
+                        need.gear.iter().any(|item| item.id == row.def.id)
+                            || need
+                                .food
+                                .as_ref()
+                                .is_some_and(|(item, _)| item.id == row.def.id)
+                    })
+            })
+            .count() as i32;
 
         // Optional floats can be deferred, so account for the active recipe
         // before admitting them to the withdrawal plan. The fit is exact once
         // the bank is known; an `Unknown` bank admits the need so the scan
         // learns it (design-bank-snapshot §4 F2).
-        if plan.coin_float <= 0 {
+        if plan.owns_inventory || plan.coin_float <= 0 {
             self.set_coin_drawn(true);
         } else if let Some(coin) = plan.coin.as_ref() {
             if !self.coin_drawn {
@@ -733,7 +914,10 @@ impl Provisioner {
             }
         }
 
-        if let Some(carry) = active_loadout.and_then(|name| plan.loadout_carry.get(name)) {
+        if let Some(carry) = active_loadout
+            .filter(|_| !plan.owns_inventory)
+            .and_then(|name| plan.loadout_carry.get(name))
+        {
             for row in carry.iter() {
                 let bit = 1u64 << row.latch_index;
                 if self.carry_drawn & bit != 0 {
@@ -781,6 +965,85 @@ impl Provisioner {
             }
         }
 
+        // Gear is now worn and required quest items have reserved their slots.
+        // Food takes only the space left; an optional shortfall never grants or
+        // refuses movement. Route admission owns that decision.
+        if let Some(target) = &survival {
+            if let Some((item, count)) = &target.food {
+                let reserved = planned_survival_slots(
+                    plan,
+                    &needs,
+                    inventory,
+                    current,
+                    active_need,
+                    active_recipe,
+                );
+                let held = stock.held(item.id).unwrap_or(0);
+                let quest_food = if plan.owns_inventory {
+                    plan.survival
+                        .as_ref()
+                        .and_then(|survival| {
+                            current.and_then(|stage| survival.stage_inventory(stage))
+                        })
+                        .and_then(|stage| stage.items.iter().find(|row| row.item.id == item.id))
+                        .map_or(held, |row| held.max(row.qty))
+                } else {
+                    held
+                };
+                let room = capacity
+                    .saturating_add(if plan.owns_inventory { safe_slots } else { 0 })
+                    .saturating_sub(reserved)
+                    .saturating_add(quest_food)
+                    .max(held);
+                let fits = (*count).min(room);
+                if fits > 0 || stock.banked(item.id).is_none() {
+                    // Draw the attainable target. Record one shortfall below,
+                    // rather than a second target from Planner::require.
+                    let attainable = stock.total(item.id).map_or(*count, |have| fits.min(have));
+                    needs.require(&bank_need(
+                        item.id,
+                        &item.name,
+                        attainable,
+                        NeedKind::Optional,
+                        Presence::Held,
+                    ))?;
+                }
+                let cause = if target.unknown.is_some() {
+                    Some(UnmetCause::AssessmentUnavailable)
+                } else if stock
+                    .total(item.id)
+                    .is_some_and(|have| have < *count && have <= fits)
+                {
+                    Some(UnmetCause::NoSupply)
+                } else if fits < *count {
+                    Some(UnmetCause::NoRoom)
+                } else if target.bound > crate::combat::risk::consts::DEATH_BOUND {
+                    Some(UnmetCause::SurvivalBound)
+                } else {
+                    None
+                };
+                if let Some(cause) = cause {
+                    let label = survival_label(plan, current, &item.name, target.unknown);
+                    needs.note_unmet(UnmetNeed {
+                        item: label,
+                        need: *count,
+                        have: held,
+                        cause,
+                    });
+                }
+            }
+            if target.food.is_none() {
+                if let Some(why) = target.unknown {
+                    needs.note_unmet(UnmetNeed {
+                        item: survival_label(plan, current, "survival supplies", Some(why)),
+                        need: 0,
+                        have: 0,
+                        cause: UnmetCause::AssessmentUnavailable,
+                    });
+                }
+            }
+        }
+
         if let Some(recipe) = active_recipe {
             for input in recipe.peak_items.iter() {
                 needs.require(&bank_need(
@@ -796,6 +1059,7 @@ impl Provisioner {
             .items
             .iter()
             .filter(|item| item.kind == CompiledItemKind::Acquirable && item.acquire.is_none())
+            .filter(|_| !plan.owns_inventory)
             .filter(|item| item_due(item, current))
         {
             let target = i32::try_from(item.qty).map_err(|_| {
@@ -846,6 +1110,10 @@ impl Provisioner {
                 pack,
                 bank,
             );
+            self.survival_bank = survival
+                .as_ref()
+                .and_then(|target| target.food.as_ref())
+                .is_some_and(|(item, _)| item.id == scan.id);
             return Poll::Pending;
         }
         if let Some(missing) = needs.blocked() {
@@ -868,8 +1136,11 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
         }
 
-        let mut required_slots =
-            planned_required_slots(plan, &needs, inventory, active_need, active_recipe);
+        let mut required_slots = if plan.owns_inventory && needs.withdrawal_count() > 0 {
+            planned_survival_slots(plan, &needs, inventory, current, active_need, active_recipe)
+        } else {
+            planned_required_slots(plan, &needs, inventory, active_need, active_recipe)
+        };
         if required_slots.saturating_sub(capacity) > safe_slots {
             // Keep an impossible speculative peak out of the fallback, but
             // preserve immediate withdrawals and the active need's final slot.
@@ -904,11 +1175,29 @@ impl Provisioner {
             let status = needs
                 .first_withdrawal()
                 .or_else(|| active_need.map(|need| &need.need));
+            let keep = if survival.is_some() {
+                super::compile::inventory::capacity_keep_with_held_foods(
+                    stock,
+                    spillover_keep,
+                    |id| {
+                        plan.survival
+                            .as_ref()
+                            .is_some_and(|model| model.tables().food(id).is_some())
+                    },
+                )
+            } else {
+                Arc::clone(spillover_keep)
+            };
+            let extra_keep = survival
+                .as_ref()
+                .and_then(|target| target.food.as_ref())
+                .map(|(item, _)| item.id);
             self.start_bank(
                 cx,
                 plan,
                 BankAction::DepositCapacity {
-                    keep: Arc::clone(&plan.base_spillover_keep),
+                    keep,
+                    extra_keep,
                     slots,
                 },
                 ProvisionPhase::Spillover,
@@ -967,17 +1256,65 @@ impl Provisioner {
             }
         }
 
+        // Equipment was handled before quest items and food, by LoadoutRun.
         if let Some(ended) = self.end_session(cx) {
             return ended;
         }
-        self.log_unmet(plan, needs.unmet());
-        self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
+        if survival.is_some()
+            || plan.survival.is_none()
+            || self.survival_stage != current.unwrap_or(usize::MAX)
+        {
+            self.log_unmet(plan, needs.unmet());
+        }
+        if survival.is_some() {
+            if let Some(target) = &survival {
+                let label = survival_label(plan, current, "survival target", target.unknown);
+                if target.unknown.is_none() {
+                    api::host_log!(
+                        api::hostlog::Category::BankOp,
+                        api::hostlog::Level::Info,
+                        "quester {}: {} computed food count {} ({}, bound {:.6})",
+                        plan.path.0,
+                        label,
+                        target.food.as_ref().map_or(0, |(_, count)| *count),
+                        target
+                            .food
+                            .as_ref()
+                            .map_or("no extra food", |(item, _)| item.name.as_ref()),
+                        target.bound,
+                    );
+                }
+            }
+            self.survival_stage = current.unwrap_or(usize::MAX);
+        }
+        let shortfall = self.unmet_logged.first().cloned();
+        self.set_status(
+            ProvisionPhase::Ready,
+            shortfall.as_ref().map(|need| Arc::clone(&need.item)),
+            shortfall.as_ref().map_or(0, |need| need.need),
+            shortfall.as_ref().map_or(0, |need| need.have),
+            shortfall.as_ref().and_then(|need| {
+                survival
+                    .as_ref()
+                    .and_then(|target| {
+                        target.food.as_ref().filter(|(item, _)| {
+                            need.item == item.name
+                                || need.item
+                                    == survival_label(plan, current, &item.name, target.unknown)
+                        })
+                    })
+                    .and_then(|(item, _)| stock.banked(item.id))
+            }),
+            bank_known(cx),
+        );
         Poll::Ready(Ok(ProvisionEvent::Ready))
     }
 
     fn poll_bank(
         &mut self,
         cx: &mut StepContext<'_, '_>,
+        plan: &CompiledProvisioning,
+        current_stage: Option<&FactKey>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let result = self
             .bank_run
@@ -987,11 +1324,36 @@ impl Provisioner {
         match result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => {
+                let optional_unreachable = self.survival_bank
+                    && self
+                        .bank_run
+                        .as_ref()
+                        .is_some_and(AcquireRun::bank_unavailable);
                 self.bank_run = None;
+                self.survival_bank = false;
+                if let Some(stage) =
+                    stage_index(plan, current_stage).filter(|_| optional_unreachable)
+                {
+                    let unmet = UnmetNeed {
+                        item: survival_label(
+                            plan,
+                            Some(stage),
+                            self.status.item.as_deref().unwrap_or("survival supplies"),
+                            None,
+                        ),
+                        need: self.status.need,
+                        have: self.status.pack,
+                        cause: UnmetCause::NoReachableBank,
+                    };
+                    self.log_unmet(plan, &[unmet]);
+                    self.survival_stage = stage;
+                    return Poll::Pending;
+                }
                 Poll::Ready(Err(error))
             }
             Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
                 self.bank_run = None;
+                self.survival_bank = false;
                 let receipt = receipt.last_bank.unwrap_or(BankReceipt {
                     complete: receipt.complete,
                     deposited: receipt.deposited,
@@ -1062,6 +1424,7 @@ impl Provisioner {
         bank: Option<i32>,
     ) {
         self.in_session = true;
+        self.survival_bank = false;
         self.opening = !bank_open(&cx.tick.cx);
         let request = AcquireRequest::bank_actions(
             plan.bank,
@@ -1141,6 +1504,19 @@ impl Provisioner {
             return;
         }
         for need in unmet {
+            if self.unmet_logged.contains(need) {
+                continue;
+            }
+            if need.cause == UnmetCause::AssessmentUnavailable && need.need == 0 {
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester {}: provisioning ready with an optional need unmet: {} (target unavailable)",
+                    plan.path.0,
+                    need.item,
+                );
+                continue;
+            }
             api::host_log!(
                 api::hostlog::Category::BankOp,
                 api::hostlog::Level::Info,
@@ -1199,6 +1575,24 @@ impl Provisioner {
     }
 }
 
+fn survival_label(
+    plan: &CompiledProvisioning,
+    current: Option<usize>,
+    item: &str,
+    why: Option<crate::combat::risk::UnknownWhy>,
+) -> Arc<str> {
+    let stage = current.and_then(|stage| plan.stages.get(stage));
+    let targets = plan.survival.as_ref().zip(current).map_or_else(
+        || "unknown exposure".to_owned(),
+        |(model, stage)| model.stage_targets(stage),
+    );
+    Arc::from(format!(
+        "{item} [stage {}; {targets}]{}",
+        stage.map_or("unknown", |stage| stage.0.as_ref()),
+        why.map_or_else(String::new, |why| format!(": {why}")),
+    ))
+}
+
 struct RecipeNeed {
     need: NeedObservation,
     recipe: Arc<str>,
@@ -1237,13 +1631,6 @@ fn stage_index(plan: &CompiledProvisioning, current_stage: Option<&FactKey>) -> 
 fn item_due(item: &super::compile::CompiledQuestItem, current: Option<usize>) -> bool {
     item.from_stage_index
         .is_none_or(|gate| current.is_some_and(|stage| stage >= gate))
-}
-
-fn safe_deposit_rows(inventory: &[ItemView], keep: &[i32]) -> usize {
-    inventory
-        .iter()
-        .filter(|row| row.count > 0 && !keep.contains(&row.def.id))
-        .count()
 }
 
 fn has_withdrawal(needs: &Planner<'_>, id: i32) -> bool {
@@ -1460,6 +1847,43 @@ fn planned_required_slots(
     }
 }
 
+fn planned_survival_slots(
+    plan: &CompiledProvisioning,
+    needs: &Planner<'_>,
+    inventory: &[ItemView],
+    current: Option<usize>,
+    active_need: Option<&RecipeNeed>,
+    recipe: Option<&CompiledAcquireRecipe>,
+) -> i32 {
+    let mut slots = planned_required_slots(plan, needs, inventory, active_need, recipe);
+    if !plan.owns_inventory {
+        return slots;
+    }
+    let Some(stage) = plan
+        .survival
+        .as_ref()
+        .and_then(|survival| current.and_then(|stage| survival.stage_inventory(stage)))
+    else {
+        return slots;
+    };
+    for row in stage.items.iter() {
+        let held = ops::count_id(inventory, row.item.id);
+        let planned = needs
+            .withdrawals()
+            .find(|withdrawal| withdrawal.id == row.item.id)
+            .map_or(held, |withdrawal| held.max(withdrawal.target));
+        slots = slots.saturating_add(
+            Stock::slots_for(planned.max(row.qty), row.stackable)
+                .saturating_sub(Stock::slots_for(planned, row.stackable)),
+        );
+    }
+    slots
+}
+
+#[cfg(test)]
+#[path = "provision_ownership_tests.rs"]
+mod ownership_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1483,7 +1907,7 @@ mod tests {
         QuestCatalog::from_identity(data.quest_identity()).unwrap()
     }
 
-    fn item_view(id: i32, name: &str, count: i32, container: ItemContainer) -> ItemView {
+    pub(super) fn item_view(id: i32, name: &str, count: i32, container: ItemContainer) -> ItemView {
         ItemView {
             def: def(id, name),
             container,
@@ -1589,6 +2013,7 @@ mod tests {
         bank: Option<NamedBank>,
     ) -> CompiledProvisioning {
         let keep: Vec<_> = items.iter().map(|item| item.id).collect();
+        let food_reserves = super::super::compile::food_reserves(&items);
         CompiledProvisioning {
             path: FactKey::new("provision-test"),
             owns_inventory: false,
@@ -1602,8 +2027,12 @@ mod tests {
             coin_float: 0,
             coin: None,
             loadout_carry: HashMap::new(),
+            managed_items: Arc::from(keep.clone()),
+            carried_items: Arc::from([]),
+            food_reserves,
             base_spillover_keep: Arc::from(keep),
             recipes: HashMap::new(),
+            survival: None,
         }
     }
 
@@ -1634,7 +2063,7 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
-    fn poll_once_at(
+    pub(super) fn poll_once_at(
         provisioner: &mut Provisioner,
         snapshot: &GameSnapshot,
         ledger: &mut Option<Box<ledger::Ledger>>,
@@ -1660,7 +2089,10 @@ mod tests {
         })
     }
 
-    fn snapshot_view(snapshot: &GameSnapshot, tick: u64) -> api::snapshot::SnapshotView<'_> {
+    pub(super) fn snapshot_view(
+        snapshot: &GameSnapshot,
+        tick: u64,
+    ) -> api::snapshot::SnapshotView<'_> {
         api::snapshot::SnapshotView::new(
             Some(snapshot),
             api::quest_progress::EvidenceStamp {
@@ -1680,6 +2112,1206 @@ mod tests {
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(items, 28);
         snapshot
+    }
+
+    fn survival_fixture(crossing: bool) -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot) {
+        survival_fixture_with_gear(crossing, false)
+    }
+
+    fn survival_fixture_with_gear(
+        crossing: bool,
+        gear: bool,
+    ) -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot) {
+        survival_fixture_document(crossing, gear, |_| {})
+    }
+
+    pub(super) fn survival_fixture_document(
+        crossing: bool,
+        gear: bool,
+        customize: impl FnOnce(&mut super::super::path::PathDocument),
+    ) -> (Arc<CompiledPath>, QuestCatalog, GameSnapshot) {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = quest_catalog();
+        let (lease, zone) = crate::combat::risk::provisioning_cross_fixture();
+        let mut document = compile::decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items.clear();
+        header.tools.clear();
+        header.coin_float = 0;
+        header.loadouts.clear();
+        header.owns_inventory = false;
+        if gear {
+            header.loadouts.insert(
+                "survival".into(),
+                super::super::path::QuestLoadoutDocument {
+                    worn: [
+                        ("hat", "bronze_full_helm"),
+                        ("torso", "bronze_platebody"),
+                        ("legs", "bronze_platelegs"),
+                        ("lefthand", "bronze_kiteshield"),
+                        ("righthand", "bronze_sword"),
+                    ]
+                    .into_iter()
+                    .map(|(slot, name)| (slot.into(), name.into()))
+                    .collect(),
+                    carry: Vec::new(),
+                },
+            );
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            fight.kind = "combat".into();
+            fight.args = serde_json::json!({
+                "target": {
+                    "npc": "jailguard",
+                    "pick": "nearest",
+                    "not_targeting_others": true
+                },
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+                "lost_radius": 16,
+                "kill_budget_ticks": 400,
+                "loadout": "survival",
+                "until": {"Any": []}
+            });
+        }
+        if crossing {
+            document.roles[0].sequences[0].cross = vec![super::super::path::RequiredZoneDocument {
+                id: zone,
+                name: "Ice warrior crossing".into(),
+                reason: "Exercise food-aware preparation before crossing.".into(),
+            }];
+        }
+        customize(&mut document);
+        let mut path = compile::compile_uncached_for_test_with_zones(
+            &document,
+            &selected,
+            &quests,
+            lease.zones().unwrap(),
+        )
+        .unwrap();
+        Arc::get_mut(&mut path).unwrap().provisioning.bank = None;
+        let (mut snapshot, _, _) = openable_bank_fixture();
+        snapshot.seed_tile(tile(3210, 3210));
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot.seed_stats(
+            [
+                (3, "hitpoints", 20, 40),
+                (1, "defence", 1, 1),
+                (5, "prayer", 1, 1),
+            ]
+            .into_iter()
+            .map(|(index, name, effective, base)| StatView {
+                index,
+                name: name.into(),
+                effective,
+                base,
+                xp: 0,
+                used: true,
+            })
+            .collect(),
+        );
+        snapshot.seed_world(WorldStateView {
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_varps(vec![api::snapshot::VarpView {
+            index: 173,
+            value: 0,
+        }]);
+        (path, quests, snapshot)
+    }
+
+    pub(super) fn survival_input(
+        snapshot: &GameSnapshot,
+        survival: &super::super::survival::CompiledSurvival,
+    ) -> crate::combat::risk::RiskInput {
+        let frame = crate::combat::frame::Frame::borrow(snapshot_view(snapshot, 1)).unwrap();
+        crate::combat::risk::RiskInput::capture(
+            &frame,
+            survival.tables(),
+            &crate::combat::threats::ThreatSet::default(),
+            api::condition::PoisonState::Clear,
+            false,
+        )
+    }
+
+    #[test]
+    fn planner_error_reports_shortfall_and_preparation_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture_document(true, true, |document| {
+            document.quest.as_mut().unwrap().owns_inventory = true;
+        });
+        // This real worn observation has no wear-slot fact. It forces the
+        // owned_defence planner error without replacing the planner.
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let bread = selected.item_by_alias("bread").unwrap();
+        snapshot.seed_equipment(vec![item_view(
+            bread.id,
+            bread.name.as_deref().unwrap(),
+            1,
+            ItemContainer::Equipment,
+        )]);
+        let plan = &path.provisioning;
+        let survival = plan.survival.as_ref().unwrap();
+        let memory = BankMemory::default();
+        let view = snapshot_view(&snapshot, 1);
+        assert!(survival
+            .plan(
+                0,
+                Stock {
+                    bank: Some(&memory),
+                    ..view.stock()
+                },
+                survival_input(&snapshot, survival),
+                Some(plan),
+            )
+            .is_err());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        for tick in 1..=2 {
+            assert!(matches!(
+                poll_once_at(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    plan,
+                    None,
+                    Some(&plan.stages[0]),
+                    &memory,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+        }
+        assert_eq!(provisioner.unmet_logged.len(), 1);
+        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(unmet.cause, UnmetCause::AssessmentUnavailable);
+        assert!(unmet.item.contains("stage "));
+        assert!(unmet.item.contains("Jail guard"));
+        assert!(unmet.item.contains("required combat facts are unavailable"));
+        assert_eq!(provisioner.survival_stage, 0);
+    }
+
+    #[test]
+    fn survival_plan_tick_cost_is_measured_and_latched() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture_with_gear(true, true);
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let food = selected.item_by_alias("lobster").unwrap();
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| {
+                    let mut row = item_view(
+                        food.id,
+                        food.name.as_deref().unwrap(),
+                        1,
+                        ItemContainer::Inventory,
+                    );
+                    row.slot = slot;
+                    row
+                })
+                .collect(),
+            28,
+        );
+        snapshot.seed_equipment(
+            [
+                "bronze_full_helm",
+                "bronze_platebody",
+                "bronze_platelegs",
+                "bronze_kiteshield",
+                "bronze_sword",
+            ]
+            .into_iter()
+            .map(|alias| {
+                let item = selected.item_by_alias(alias).unwrap();
+                item_view(
+                    item.id,
+                    item.name.as_deref().unwrap(),
+                    1,
+                    ItemContainer::Equipment,
+                )
+            })
+            .collect(),
+        );
+        let plan = &path.provisioning;
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let memory = BankMemory::seeded(&[], Origin::Session);
+        let mut elapsed = Duration::ZERO;
+        let mut maximum = Duration::ZERO;
+        for _ in 0..5 {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let start = std::time::Instant::now();
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            let cost = start.elapsed();
+            elapsed += cost;
+            maximum = maximum.max(cost);
+            assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+            assert_eq!(provisioner.survival_stage, 0);
+            let start = std::time::Instant::now();
+            assert!(matches!(
+                poll_once_at(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    2,
+                    plan,
+                    None,
+                    Some(&plan.stages[0]),
+                    &memory,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+            eprintln!("SURVIVAL_LATCHED_POLL_NS={}", start.elapsed().as_nanos());
+        }
+        eprintln!(
+            "SURVIVAL_PLAN_TICK_CALLS=5 MEAN_NS={} MAX_NS={}",
+            elapsed.as_nanos() / 5,
+            maximum.as_nanos()
+        );
+    }
+
+    #[test]
+    #[ignore = "release timing measurement; run explicitly in a release build"]
+    fn survival_empty_pack_all_food_kinds_release_timing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture_with_gear(true, true);
+        let plan = &path.provisioning;
+        let survival = plan.survival.as_ref().unwrap();
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let mut bank_rows = Vec::new();
+        for item in selected.items() {
+            if survival.tables().food(item.id).is_some_and(|fact| {
+                fact.heal > 0
+                    && fact.eat_delay_arg == Some(2)
+                    && fact.message_delay.is_none_or(|delay| delay <= 0)
+            }) && item.name.is_some()
+            {
+                bank_rows.push((item.id, 28));
+            }
+        }
+        assert_eq!(bank_rows.len(), 54, "revision 289 usable food kinds");
+        snapshot.seed_inventory(Vec::new(), 28);
+        let memory = BankMemory::seeded(&bank_rows, Origin::Session);
+        let banks = Arc::new(NamedBankFacts::empty());
+        let mut plan_total = Duration::ZERO;
+        let mut plan_max = Duration::ZERO;
+        let mut planned = None;
+        for _ in 0..5 {
+            let view = snapshot_view(&snapshot, 1);
+            let start = std::time::Instant::now();
+            let need = survival
+                .plan(
+                    0,
+                    Stock {
+                        bank: Some(&memory),
+                        ..view.stock()
+                    },
+                    survival_input(&snapshot, survival),
+                    Some(plan),
+                )
+                .unwrap();
+            let elapsed = start.elapsed();
+            plan_total += elapsed;
+            plan_max = plan_max.max(elapsed);
+            planned = Some(need.food.map(|(item, count)| (item.id, count)));
+        }
+        let mut poll_total = Duration::ZERO;
+        let mut poll_max = Duration::ZERO;
+        for _ in 0..5 {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let start = std::time::Instant::now();
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            let elapsed = start.elapsed();
+            poll_total += elapsed;
+            poll_max = poll_max.max(elapsed);
+            let _ = std::hint::black_box(result);
+        }
+        eprintln!(
+            "SURVIVAL_RELEASE_TIMING food_kinds={} plan={planned:?} plan_mean_ns={} plan_max_ns={} first_prepare_poll_mean_ns={} first_prepare_poll_max_ns={}",
+            bank_rows.len(),
+            plan_total.as_nanos() / 5,
+            plan_max.as_nanos(),
+            poll_total.as_nanos() / 5,
+            poll_max.as_nanos()
+        );
+    }
+
+    #[test]
+    fn survival_food_ties_prefer_fewer_pack_slots() {
+        use super::super::survival::food_candidate_better;
+
+        assert!(food_candidate_better(
+            (2, "stack", 10, 1),
+            (3, "single", 10, 28)
+        ));
+        assert!(!food_candidate_better(
+            (3, "single", 10, 28),
+            (2, "stack", 10, 1)
+        ));
+        assert!(food_candidate_better(
+            (3, "single", 11, 28),
+            (2, "stack", 10, 1)
+        ));
+    }
+
+    #[test]
+    fn survival_food_choice_uses_best_available_usable_unprotected_kind() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let tables = crate::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
+        let mut usable = selected
+            .items()
+            .iter()
+            .filter_map(|item| {
+                let fact = tables.food(item.id)?;
+                (fact.heal > 0
+                    && fact.eat_delay_arg == Some(2)
+                    && fact.message_delay.is_none_or(|delay| delay <= 0))
+                .then_some((
+                    item.id,
+                    item.alias.as_deref()?,
+                    fact.heal,
+                    Stock::slots_for(28, item.stackable),
+                ))
+            })
+            .collect::<Vec<_>>();
+        usable.sort_by_key(|(id, _, heal, slots)| (std::cmp::Reverse(*heal), *slots, *id));
+        assert!(usable.len() >= 3, "the fixture has three usable food kinds");
+        let (protected_id, protected_alias, _, _) = usable[0];
+        let (expected_id, _, _, _) = usable[1];
+        let unavailable = usable
+            .iter()
+            .find(|(id, _, _, _)| *id != protected_id && *id != expected_id)
+            .map(|(id, _, _, _)| *id)
+            .expect("the fixture has a third usable food kind");
+        let unusable = selected.items().iter().find_map(|item| {
+            let fact = tables.food(item.id)?;
+            (fact.heal <= 0
+                || fact.eat_delay_arg != Some(2)
+                || fact.message_delay.is_some_and(|delay| delay > 0))
+            .then_some((item.id, item.name.as_deref()?))
+        });
+        let Some(unusable) = unusable else {
+            panic!("the revision data has an unusable food-kind fixture");
+        };
+        let (path, _, mut snapshot) =
+            survival_fixture_document(true, true, |document| {
+                document.quest.as_mut().unwrap().items.push(
+                    crate::quester::path::QuestItemDocument {
+                        obj: protected_alias.into(),
+                        qty: 1,
+                        kind: crate::quester::path::QuestItemKindDocument::MustHave,
+                        acquire: None,
+                        from_stage: None,
+                    },
+                );
+                document.roles[0].sequences[0].steps[0].settle =
+                    crate::quester::path::PredicateDocument::Fact {
+                        kind: "has_item".into(),
+                        version: 1,
+                        args: serde_json::json!({"obj": protected_alias}),
+                    };
+            });
+        assert!(path.provisioning.carried_items.contains(&protected_id));
+        snapshot.seed_inventory(Vec::new(), 28);
+        let survival = path.provisioning.survival.as_ref().unwrap();
+        for (protected_stock, expected) in [(1, expected_id), (2, protected_id)] {
+            let bank_rows = [
+                (protected_id, protected_stock),
+                (expected_id, 28),
+                (unusable.0, 28),
+                (unavailable, 0),
+            ];
+            let memory = BankMemory::seeded(&bank_rows, Origin::Session);
+            let need = survival
+                .plan(
+                    0,
+                    Stock {
+                        bank: Some(&memory),
+                        ..snapshot_view(&snapshot, 1).stock()
+                    },
+                    survival_input(&snapshot, survival),
+                    Some(&path.provisioning),
+                )
+                .unwrap();
+            assert_eq!(
+                need.food.as_ref().map(|(item, _)| item.id),
+                Some(expected),
+                "exclude only the required quantity, plus unusable and unavailable kinds"
+            );
+        }
+    }
+
+    #[test]
+    fn declared_crossing_withdraws_the_food_bound_needs_before_ready() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture(true);
+        let survival = path.provisioning.survival.as_ref().unwrap();
+        let lobster = survival
+            .tables()
+            .selected()
+            .item_by_alias("lobster")
+            .unwrap();
+        let name = lobster.name.as_deref().unwrap();
+        let id = lobster.id;
+        snapshot.seed_bank_observation(1, 0, Some(vec![bank_row(id, name, 28)]), Vec::new());
+        let mut memory = BankMemory::default();
+        memory.track(&snapshot, 0);
+        let input = survival_input(&snapshot, survival);
+        let expected = survival
+            .plan(
+                0,
+                Stock {
+                    bank: Some(&memory),
+                    ..snapshot_view(&snapshot, 1).stock()
+                },
+                input,
+                None,
+            )
+            .unwrap()
+            .food
+            .unwrap();
+        assert_eq!(expected.0.id, id);
+        assert!(expected.1 > 0);
+        let (_, _, banks) = openable_bank_fixture();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut withdrawn = 0;
+        let mut ready = false;
+        for tick in 1..=80 {
+            memory.track(&snapshot, tick);
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &path.provisioning,
+                None,
+                Some(&path.provisioning.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            if let Some(effect) = ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect)
+            {
+                match effect {
+                    HostEffect::Interaction(crate::interact::InteractReq::Withdraw {
+                        name: item,
+                        action,
+                    }) => {
+                        assert_eq!(item, name);
+                        withdrawn += action
+                            .strip_prefix("Withdraw-")
+                            .unwrap()
+                            .parse::<i32>()
+                            .unwrap();
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                        name: item,
+                        count,
+                        ..
+                    }) => {
+                        assert_eq!(item, name);
+                        withdrawn += count;
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    }) => {}
+                    _ => panic!("survival preparation must only withdraw food"),
+                }
+                complete_open_stand(&mut ledger, tick);
+                if withdrawn > 0 {
+                    snapshot.seed_inventory(
+                        (0..withdrawn)
+                            .map(|slot| {
+                                let mut row = item_view(id, name, 1, ItemContainer::Inventory);
+                                row.slot = slot;
+                                row
+                            })
+                            .collect(),
+                        28,
+                    );
+                    snapshot.seed_bank_observation(
+                        1,
+                        tick,
+                        Some(vec![bank_row(id, name, 28 - withdrawn)]),
+                        Vec::new(),
+                    );
+                }
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                    ready = true;
+                    break;
+                }
+                Poll::Pending | Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {}
+                other => panic!("unexpected survival preparation result: {other:?}"),
+            }
+        }
+        assert!(
+            ready,
+            "the stage must become ready after the observed withdrawal"
+        );
+        assert_eq!(withdrawn, expected.1);
+        let observed = survival_input(&snapshot, survival);
+        let target = survival
+            .plan(
+                0,
+                Stock {
+                    bank: Some(&memory),
+                    ..snapshot_view(&snapshot, 80).stock()
+                },
+                observed,
+                None,
+            )
+            .unwrap();
+        assert!(target
+            .food
+            .is_some_and(|(item, qty)| item.id == id && qty <= withdrawn));
+        assert!(target.bound <= crate::combat::risk::consts::DEATH_BOUND);
+    }
+
+    #[test]
+    fn survival_gear_is_worn_before_quest_items_reserve_food_room() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut path, quests, mut snapshot) = survival_fixture_document(true, true, |document| {
+            // Keep the configured kit available without Path claiming its slots.
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            assert!(fight
+                .args
+                .as_object_mut()
+                .unwrap()
+                .remove("loadout")
+                .is_some());
+        });
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let equipment = [
+            (0, "bronze_full_helm"),
+            (4, "bronze_platebody"),
+            (7, "bronze_platelegs"),
+            (5, "bronze_kiteshield"),
+            (3, "bronze_sword"),
+        ]
+        .map(|(slot, name)| {
+            let item = selected.resolve_item_name(name).unwrap();
+            (slot, item.id, item.name.as_deref().unwrap())
+        });
+        let food = selected.item_by_alias("lobster").unwrap();
+        let food_name = food.name.as_deref().unwrap();
+        let plan = &mut Arc::get_mut(&mut path).unwrap().provisioning;
+        plan.items = Arc::from([compiled_item(
+            42,
+            "Quest token",
+            25,
+            CompiledItemKind::MustHave,
+            None,
+        )]);
+        plan.base_spillover_keep = Arc::from([42]);
+        let mut pack: Vec<_> = (0..25)
+            .map(|slot| {
+                let mut row = item_view(42, "Quest token", 1, ItemContainer::Inventory);
+                row.slot = slot;
+                row
+            })
+            .collect();
+        snapshot.seed_inventory(pack.clone(), 28);
+        let mut rows: Vec<_> = equipment
+            .iter()
+            .map(|&(_, id, name)| bank_row(id, name, 1))
+            .collect();
+        rows.push(bank_row(food.id, food_name, 28));
+        snapshot.seed_bank_observation(1, 0, Some(rows.clone()), Vec::new());
+        let mut memory = BankMemory::default();
+        memory.track(&snapshot, 0);
+        let survival = plan.survival.as_ref().unwrap();
+        let target = survival
+            .plan(
+                0,
+                Stock {
+                    bank: Some(&memory),
+                    ..snapshot_view(&snapshot, 1).stock()
+                },
+                survival_input(&snapshot, survival),
+                Some(&*plan),
+            )
+            .unwrap();
+        assert_eq!(target.gear.len(), equipment.len());
+        assert!(target.food.as_ref().unwrap().1 > 3);
+        assert!(
+            equipment.len() > 28 - pack.len(),
+            "the whole kit cannot fit in the pack"
+        );
+        let (_, bank, banks) = openable_bank_fixture();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut worn = Vec::new();
+        let mut food_drawn = 0;
+        let mut ready = false;
+        for tick in 1..=200 {
+            memory.track(&snapshot, tick);
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            let effect = ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect);
+            if let Some(effect) = effect {
+                match effect {
+                    HostEffect::BankPick(_) => {
+                        complete_bank_pick(&mut ledger, bank, bank.tile, tick);
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. }) => {
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(1, tick, Some(rows.clone()), Vec::new());
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::Withdraw {
+                        name,
+                        action,
+                    }) => {
+                        let count = action.strip_prefix("Withdraw-").unwrap().parse().unwrap();
+                        let item = rows
+                            .iter_mut()
+                            .find(|row| row.def.name.as_deref() == Some(name.as_str()))
+                            .unwrap();
+                        if item.def.id == food.id {
+                            assert_eq!(worn.len(), equipment.len(), "food follows worn gear");
+                            food_drawn += count;
+                        }
+                        for _ in 0..count {
+                            pack.push(item_view(item.def.id, name, 1, ItemContainer::Inventory));
+                        }
+                        item.count -= count;
+                        complete_open_stand(&mut ledger, tick);
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                        name,
+                        count,
+                        ..
+                    }) => {
+                        let item = rows
+                            .iter_mut()
+                            .find(|row| row.def.name.as_deref() == Some(name.as_str()))
+                            .unwrap();
+                        if item.def.id == food.id {
+                            assert_eq!(worn.len(), equipment.len(), "food follows worn gear");
+                            food_drawn += count;
+                        }
+                        for _ in 0..*count {
+                            pack.push(item_view(item.def.id, name, 1, ItemContainer::Inventory));
+                        }
+                        item.count -= count;
+                        complete_open_stand(&mut ledger, tick);
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::Wear { name }) => {
+                        let &(slot, id, _) = equipment
+                            .iter()
+                            .find(|&&(_, _, known)| known == name.as_str())
+                            .unwrap();
+                        assert!(pack.iter().any(|row| row.def.id == id));
+                        pack.retain(|row| row.def.id != id);
+                        let mut row = item_view(id, name, 1, ItemContainer::Equipment);
+                        row.slot = slot;
+                        worn.push(row);
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    }) => {
+                        complete_open_stand(&mut ledger, tick);
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::Close) => {
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    _ => panic!("unexpected survival gear effect"),
+                }
+                snapshot.seed_inventory(pack.clone(), 28);
+                snapshot.seed_equipment(worn.clone());
+                if snapshot_view(&snapshot, tick)
+                    .bank_session()
+                    .is_some_and(|bank| bank.value.open)
+                {
+                    snapshot.seed_bank_observation(1, tick, Some(rows.clone()), Vec::new());
+                }
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                    ready = true;
+                    break;
+                }
+                Poll::Pending | Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {}
+                other => panic!("gear preparation must continue: {other:?}"),
+            }
+        }
+        assert!(ready);
+        assert_eq!(worn.len(), equipment.len());
+        assert_eq!(food_drawn, 3);
+        assert_eq!(pack.len(), 28);
+        assert_eq!(provisioner.status().pack, 3);
+        assert!(provisioner.status().need > 3);
+    }
+
+    #[test]
+    fn declared_crossing_missing_food_records_shortfall_and_continues_to_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memory = known_empty(0);
+        let banks = Arc::new(NamedBankFacts::empty());
+        let result = poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            Some(&path.provisioning.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        );
+        let status = provisioner.status();
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(status.phase, ProvisionPhase::Ready);
+        assert!(status.item.is_some_and(|name| !name.is_empty()));
+        assert!(status.need > 0);
+        assert_eq!(status.pack, 0);
+        assert_eq!(status.bank, Some(0));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+
+    #[test]
+    fn held_survival_food_meets_the_bound_without_reading_the_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let survival = plan.survival.as_ref().unwrap();
+        let food = survival
+            .tables()
+            .selected()
+            .item_by_alias("lobster")
+            .unwrap();
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| {
+                    let mut row = item_view(
+                        food.id,
+                        food.name.as_deref().unwrap(),
+                        1,
+                        ItemContainer::Inventory,
+                    );
+                    row.slot = slot;
+                    row
+                })
+                .collect(),
+            28,
+        );
+        let memory = BankMemory::default();
+        let stock = Stock {
+            bank: Some(&memory),
+            ..snapshot_view(&snapshot, 1).stock()
+        };
+        assert_eq!(stock.total(food.id), None);
+        let target = survival
+            .plan(0, stock, survival_input(&snapshot, survival), Some(plan))
+            .unwrap();
+        assert!(target.unknown.is_none());
+        assert!(target.bound <= crate::combat::risk::consts::DEATH_BOUND);
+        assert!(target
+            .food
+            .is_some_and(|(item, count)| item.id == food.id && (1..=28).contains(&count)));
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let banks = Arc::new(NamedBankFacts::empty());
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        assert_eq!(provisioner.bank_starts(), 0);
+        assert!(provisioner.unmet_logged.is_empty());
+        assert_eq!(memory.count(food.id), None);
+        assert!(ledger.is_none());
+    }
+
+    fn refuse_bank_pick(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+        let ledger = ledger.as_mut().expect("survival scan queued a bank pick");
+        let action = ledger.outbox.remove(0);
+        assert!(matches!(
+            &action.effect,
+            HostEffect::BankPick(request) if !request.allow_air_fallback
+        ));
+        let authority = action.authority();
+        ledger.complete_bank_pick(
+            &authority,
+            crate::bank::BankPickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                outcome: crate::bank::BankPickOutcome::NoCandidate {
+                    detail: Arc::from("no routable bank candidate after NoPath"),
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn unreachable_optional_survival_bank_records_shortfall_without_parking() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        refuse_bank_pick(&mut ledger, 2);
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            2,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        for tick in 3..=4 {
+            assert!(matches!(
+                poll_once_at(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    plan,
+                    None,
+                    Some(&plan.stages[0]),
+                    &memory,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+        }
+        assert_eq!(provisioner.bank_starts(), 1);
+        assert_eq!(provisioner.unmet_logged.len(), 1);
+        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(unmet.cause, UnmetCause::NoReachableBank);
+        assert!(unmet.need > unmet.have);
+        assert!(unmet.item.contains("stage "));
+        assert_eq!(memory.origin(), Origin::Unknown);
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn unreachable_required_bank_is_not_an_optional_survival_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut path, quests, snapshot) = survival_fixture(true);
+        let plan = &mut Arc::get_mut(&mut path).unwrap().provisioning;
+        plan.items = Arc::from([compiled_item(
+            42,
+            "Required quest token",
+            1,
+            CompiledItemKind::MustHave,
+            None,
+        )]);
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert!(!provisioner.survival_bank);
+        refuse_bank_pick(&mut ledger, 2);
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                2,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Err(ActionError::Unavailable(reason)))
+                if reason.as_ref() == "no eligible bank"
+        ));
+        assert_eq!(provisioner.survival_stage, usize::MAX);
+        assert!(provisioner.unmet_logged.is_empty());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn carried_safe_supplies_do_not_start_a_better_guide_kit_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, _, mut snapshot) = survival_fixture_document(true, true, |document| {
+            document.roles[0].sequences[0].steps[0]
+                .args
+                .as_object_mut()
+                .unwrap()
+                .remove("loadout");
+        });
+        let plan = &path.provisioning;
+        let survival = plan.survival.as_ref().unwrap();
+        let selected = survival.tables().selected();
+        let food = selected.item_by_alias("lobster").unwrap();
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| {
+                    let mut row = item_view(
+                        food.id,
+                        food.name.as_deref().unwrap(),
+                        1,
+                        ItemContainer::Inventory,
+                    );
+                    row.slot = slot;
+                    row
+                })
+                .collect(),
+            28,
+        );
+        snapshot.seed_stats(
+            [(3, "hitpoints", 80), (1, "defence", 40), (5, "prayer", 1)]
+                .into_iter()
+                .map(|(index, name, level)| StatView {
+                    index,
+                    name: name.into(),
+                    effective: level,
+                    base: level,
+                    xp: 0,
+                    used: true,
+                })
+                .collect(),
+        );
+        let banked_gear: Vec<_> = [
+            "bronze_full_helm",
+            "bronze_platebody",
+            "bronze_platelegs",
+            "bronze_kiteshield",
+            "bronze_sword",
+        ]
+        .map(|alias| (selected.item_by_alias(alias).unwrap().id, 1))
+        .into();
+        for memory in [
+            BankMemory::default(),
+            BankMemory::seeded(&banked_gear, Origin::Session),
+        ] {
+            let target = survival
+                .plan(
+                    0,
+                    Stock {
+                        bank: Some(&memory),
+                        ..snapshot_view(&snapshot, 1).stock()
+                    },
+                    survival_input(&snapshot, survival),
+                    Some(plan),
+                )
+                .unwrap();
+            assert!(target.unknown.is_none());
+            assert!(target.bound <= crate::combat::risk::consts::DEATH_BOUND);
+            assert!(target.gear.is_empty());
+            assert!(target
+                .food
+                .is_none_or(|(item, count)| { item.id == food.id && (1..=28).contains(&count) }));
+        }
+    }
+
+    #[test]
+    fn optional_survival_bank_cancellation_is_not_a_reachability_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        let dispatched = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(matches!(dispatched.effect, HostEffect::BankPick(_)));
+        with_tick_bank(&snapshot, Some(&memory), &mut ledger, 2, |native| {
+            provisioner
+                .bank_run
+                .as_mut()
+                .unwrap()
+                .cancel(native.actions);
+        });
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                3,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert_eq!(provisioner.survival_stage, usize::MAX);
+        assert!(provisioner.unmet_logged.is_empty());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn guide_without_risky_fights_or_crossings_adds_no_survival_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(false);
+        assert!(path.provisioning.survival.is_none());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let memory = BankMemory::default();
+        let banks = Arc::new(NamedBankFacts::empty());
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &path.provisioning,
+                None,
+                Some(&path.provisioning.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        assert!(ledger.is_none());
     }
 
     #[test]
@@ -2640,7 +4272,7 @@ mod tests {
     }
 
     #[test]
-    fn owns_inventory_skips_prepare() {
+    fn owns_inventory_without_survival_leaves_quest_preparation_to_the_path() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -2787,7 +4419,7 @@ mod tests {
 
     /// A fixture bank the provisioner can open offline: the player stands on
     /// the booth tile and the booth loc is posted, so a trip needs no walk.
-    fn openable_bank_fixture() -> (GameSnapshot, NamedBank, Arc<NamedBankFacts>) {
+    pub(super) fn openable_bank_fixture() -> (GameSnapshot, NamedBank, Arc<NamedBankFacts>) {
         let stand = tile(3210, 3210);
         let bank = NamedBank::new("Test bank", stand);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
@@ -2820,7 +4452,7 @@ mod tests {
         (snapshot, bank, banks)
     }
 
-    fn bank_row(id: i32, name: &str, count: i32) -> ItemView {
+    pub(super) fn bank_row(id: i32, name: &str, count: i32) -> ItemView {
         ItemView {
             def: def(id, name),
             container: ItemContainer::Bank,
@@ -2832,7 +4464,7 @@ mod tests {
         }
     }
 
-    fn complete_bank_pick(
+    pub(super) fn complete_bank_pick(
         ledger: &mut Option<Box<ledger::Ledger>>,
         bank: NamedBank,
         stand: WorldTile,
@@ -2867,7 +4499,7 @@ mod tests {
         );
     }
 
-    fn complete_open_stand(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    pub(super) fn complete_open_stand(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
         let ledger = ledger.as_mut().expect("bank trip queued an OpenStand");
         let action = ledger.outbox.remove(0);
         let authority = action.authority();
@@ -3964,7 +5596,7 @@ mod tests {
         assert!(
             lines[0]
                 .message
-                .ends_with("Coins needs 20, holds 0, short 20 (nothing more to draw it from)"),
+                .ends_with("Coins needs 20, holds 0, short 20 (bank stock is below target)"),
             "{}",
             lines[0].message
         );

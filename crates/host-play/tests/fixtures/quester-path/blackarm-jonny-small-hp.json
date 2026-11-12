@@ -1,0 +1,11 @@
+{
+  "stage": "p:8",
+  "stand": [3046, 3287, 0],
+  "loadout": null,
+  "extra_items": [["lobster", 2]],
+  "seed_vars": [["phoenixgang", 8]],
+  "skills": [["hitpoints", 4]],
+  "before_relog": [],
+  "expect": ["p:9"],
+  "mode": "stage"
+}

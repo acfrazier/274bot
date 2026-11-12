@@ -547,7 +547,7 @@ pub struct ReturnObservation<'a> {
     pub here: WorldTile,
     pub now: u64,
     pub skill_stat: i32,
-    pub avoided: &'a [AvoidedTile; MAX_AVOID],
+    pub avoided: &'a [AvoidedTile],
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
     pub collision: Option<nav_planner::contract::CollisionView<'a>>,
@@ -636,7 +636,7 @@ pub fn classify_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
     scene: PlacementScene<'_>,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     let PlacementScene {
@@ -679,7 +679,7 @@ fn classify_fishing_placement(
     method: &GatherMethod,
     scene: PlacementScene<'_>,
     here: WorldTile,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     if matches!(spot.entity, EntityId::Loc(_)) {
@@ -750,7 +750,7 @@ pub fn select(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
     select_with_access(
@@ -790,7 +790,7 @@ fn select_with_access(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
     quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
 ) -> SelectionResult {
@@ -1628,13 +1628,13 @@ fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> boo
         .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
 }
 
-fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
+fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile], now: u64) -> bool {
     avoided
         .iter()
         .any(|entry| u64::from(entry.until) > now && entry.tile == tile)
 }
 
-fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MAX_AVOID]) -> u64 {
+fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile]) -> u64 {
     avoided
         .iter()
         .filter(|entry| {
@@ -5654,6 +5654,54 @@ pub(crate) mod tests {
                 plan.products[..usize::from(plan.products_len)].contains(gem),
                 "incidental gem product {gem} missing from target yield"
             );
+        }
+    }
+
+    /// "Iron" spans a fast-handler method (regular rocks) and a normal-handler method (Haunted Mine veins).
+    /// Selection offers a rock only under the method whose handler it really runs, so a plan's method index
+    /// always carries the right tick behaviour.
+    #[test]
+    fn each_iron_rock_is_offered_under_exactly_the_method_of_its_own_handler() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let catalog = real_catalog();
+        let iron: Vec<&GatherMethod> = catalog.methods_for_resource("iron").collect();
+        assert_eq!(
+            iron.iter()
+                .map(|method| (method.id.0.as_ref(), method.tick_arm.delay_drop))
+                .collect::<Vec<_>>(),
+            [("mining.iron", false), ("mining.iron.get_ore_normal", true)]
+        );
+        let rocks = |method: &GatherMethod| -> Vec<&str> {
+            api::gather_methods::known_rows(&method.targets)
+                .iter()
+                .filter(|target| target.class == TargetClass::Resource)
+                .filter_map(|target| catalog.alias(target.entity))
+                .collect()
+        };
+        let regular = rocks(iron[0]);
+        let haunted = rocks(iron[1]);
+        assert!(regular.contains(&"ironrock1") && regular.contains(&"ironrock2"));
+        for vein in ["loc_4982", "loc_4983", "loc_4984"] {
+            assert!(haunted.contains(&vein), "{vein} runs mining_rock_normal");
+        }
+        assert!(
+            haunted.iter().all(|alias| !regular.contains(alias)),
+            "no rock is a target of both iron methods"
+        );
+        for method in iron {
+            let own = rocks(method);
+            for spot in complete_spots(method).expect("complete iron placements") {
+                if known_resource_target(method, spot.entity) {
+                    let alias = catalog.alias(spot.entity).expect("placed rocks are named");
+                    assert!(
+                        own.contains(&alias),
+                        "{} offers {alias}, which is not its own rock",
+                        method.id.0
+                    );
+                }
+            }
         }
     }
 

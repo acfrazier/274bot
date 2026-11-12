@@ -100,7 +100,7 @@ fn hydrate_panel_preferences(session: &mut Session) {
 
 #[test]
 fn old_vault_no_is_terminal_and_yes_returns_to_empty_vault_setup() {
-    use frontend_core::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataResolveError};
+    use frontend_core::saved_data::{SavedDataChoice, SavedDataResolveError};
 
     const PASS: &str = "test-passphrase-01";
     for rename in [false, true] {
@@ -110,19 +110,12 @@ fn old_vault_no_is_terminal_and_yes_returns_to_empty_vault_setup() {
             "vault-format-no"
         });
         let path = root.join("vault");
-        let mut vault = VaultFixture::create(&path, PASS);
-        vault.put(frontend_core::test_support::session::with_settings_bag(
-            profile("alice", "pw", 274),
-            "compiled:old-card",
-            serde_json::Map::new(),
-        ));
-        drop(vault);
+        drop(VaultFixture::create(&path, PASS));
         let original = std::fs::read(&path).unwrap();
-        let error = match host_play::open_vault(&path, PASS) {
-            Err(error) => error,
-            Ok(_) => panic!("a pre-envelope compiled setting must be refused"),
-        };
-        let refusal = SavedDataRefusal::from_vault_error(&error).unwrap();
+        // 0.2.9 reads every vault shape 0.2.8 read, so no product reader
+        // refuses a vault. This test makes the refusal itself to keep the
+        // prompt path covered for the release that next retires a shape.
+        let refusal = frontend_core::test_support::session::old_vault_refusal(&path);
         let mut session = Session::new();
         session.pass_scratch.push_str(PASS);
         session.vault_saved_data = Some(super::VaultSavedData::Pending(refusal));
@@ -3552,16 +3545,9 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     hydrate_panel_preferences(&mut session);
     assert_eq!(
         session.ui.nav.danger_level(),
-        frontend_core::DangerLevel::WhenSurvivable
-    );
-    assert_eq!(
-        session.ui.nav.walk_globals().effective_danger_level(),
         frontend_core::DangerLevel::Never
     );
-    assert_eq!(
-        frontend_core::walk_permissions::danger_routing_label(session.ui.nav.danger_level()),
-        "When survivable (not available yet: acts as Never)"
-    );
+    assert_eq!(session.ui.nav.danger_level().label(), "Never");
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     session.route_through_zones = true;
     assert!(session.walk_find_options().zones.is_all());

@@ -13,10 +13,12 @@
 use crate::world::NavWorld;
 use std::path::Path;
 
-/// Measured decoded world on the candidate pack (91,188,966 B, exactly the
-/// diagnostic's PreparingNavigation retention), plus 8 bytes and rounded up
-/// to the 8-byte alignment: 91,188,976 B.
-const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_188_976;
+/// Measured decoded world on the 0.2.9.1 content pack (91,235,314 B on Linux),
+/// plus the smaller of 1 % and 64 KiB, rounded up to the 8-byte alignment:
+/// 91,300,856 B. The Haunted Mine content added 46,348 B (the same code on the
+/// old content, engine cc359656 / content 92649430f, measures the earlier
+/// 91,188,966 B).
+const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_300_856;
 
 /// R377 decoded world measured on Linux: 84,582,653 B, plus 8 bytes and
 /// rounded up to the same 8-byte alignment as the R289 bound.

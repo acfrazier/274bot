@@ -51,6 +51,19 @@ struct Mark {
 }
 
 impl Mark {
+    fn from_client_cycle(tick: u64, cycle: i32) -> Option<Self> {
+        Some(Self {
+            tick,
+            poll: u64::try_from(cycle).ok()?,
+        })
+    }
+
+    fn from_snapshot(snapshot: &GameSnapshot) -> Option<Self> {
+        // The observer loop and the scenario worker run independently. Both
+        // must stamp the client cycle stored by the worker, not count reads.
+        Self::from_client_cycle(snapshot.gens().player_info, snapshot.hitmarks()?.loop_cycle)
+    }
+
     fn gap(self, earlier: Self) -> i128 {
         i128::from(self.tick) - i128::from(earlier.tick)
     }
@@ -210,6 +223,7 @@ impl C0Receipt {
             "s1_after_l0_ticks": self.s1.zip(self.l0).map(|(s1, l0)| s1.gap(l0)),
         });
         receipt["frame_clock"] = json!("raw PLAYER_INFO generation");
+        receipt["client_poll_clock"] = json!("native client loop_cycle");
         receipt["survival_deadline_clock"] = json!("native script tick");
         receipt["survival_op_events"] = json!(self
             .survival_op_events
@@ -449,7 +463,6 @@ impl RunPurpose {
 
 struct LiveWitness {
     receipt: C0Receipt,
-    polls: u64,
     last_lobsters: i32,
     last_chat_sequence: i32,
     journal_open_seen: bool,
@@ -460,12 +473,23 @@ impl Default for LiveWitness {
     fn default() -> Self {
         Self {
             receipt: C0Receipt::default(),
-            polls: 0,
             last_lobsters: 8,
             last_chat_sequence: -1,
             journal_open_seen: false,
             prompt_was_open: false,
         }
+    }
+}
+
+impl LiveWitness {
+    fn observed_mark(&mut self, snapshot: &GameSnapshot) -> Option<Mark> {
+        let mark = Mark::from_snapshot(snapshot);
+        if mark.is_none() {
+            self.receipt
+                .failure
+                .get_or_insert_with(|| "client-cycle clock unavailable".into());
+        }
+        mark
     }
 }
 
@@ -487,6 +511,7 @@ fn build_cell(
     }
     let loadout = seeds.fixture_loadout()?;
     let extra_items = seeds.extra_item_refs();
+    let skills = seeds.skill_refs();
     let seed_vars = seeds.seed_var_refs();
     let before_relog = seeds.before_relog_steps();
     let mode = match seeds.mode.as_deref().unwrap_or("stage") {
@@ -502,6 +527,7 @@ fn build_cell(
         stage: Some(seeds.stage.as_str()),
         loadout,
         extra_items: &extra_items,
+        skills: &skills,
         seed_vars: &seed_vars,
         stand: WorldTile {
             x: seeds.stand[0],
@@ -557,12 +583,12 @@ fn insert_pre_start_drain(
                         }
                     }
                 }
+                let Some(at) = witness.observed_mark(snapshot) else {
+                    return false;
+                };
                 let sent = api::interact::cheat(client, PRE_START_DRAIN).is_sent();
                 if sent {
-                    witness.receipt.pre_drain_send = Some(Mark {
-                        tick: snapshot.gens().player_info,
-                        poll: witness.polls.saturating_add(1),
-                    });
+                    witness.receipt.pre_drain_send = Some(at);
                 }
                 sent
             }),
@@ -607,8 +633,10 @@ fn insert_attempt_drain_and_anchors(
                 let Ok(mut witness) = r0_ready.lock() else {
                     return false;
                 };
-                let poll = witness.polls.saturating_add(1);
-                observe_journal(&mut witness, snapshot, poll);
+                let Some(at) = witness.observed_mark(snapshot) else {
+                    return false;
+                };
+                observe_journal(&mut witness, snapshot, at.poll);
                 witness.receipt.r0.is_some()
             }),
             summary: None,
@@ -636,11 +664,10 @@ fn insert_attempt_drain_and_anchors(
                         .iter()
                         .any(|line| line.sequence >= baseline && line.text.contains(CLIMB_LINE))
                 {
-                    let poll = witness.polls.saturating_add(1);
-                    witness.receipt.l0.get_or_insert(Mark {
-                        tick: snapshot.gens().player_info,
-                        poll,
-                    });
+                    let Some(at) = witness.observed_mark(snapshot) else {
+                        return false;
+                    };
+                    witness.receipt.l0.get_or_insert(at);
                 }
                 witness.receipt.l0.is_some()
             }),
@@ -662,14 +689,14 @@ fn insert_attempt_drain_and_anchors(
                 if witness.receipt.s_send.is_some() {
                     return true;
                 }
+                let Some(at) = witness.observed_mark(snapshot) else {
+                    return false;
+                };
                 let amount = stat_effective(snapshot, 3).saturating_sub(14).max(0);
                 let command = format!("~stat_drain hitpoints {amount} 0");
                 let sent = api::interact::cheat(client, &command).is_sent();
                 if sent {
-                    witness.receipt.s_send = Some(Mark {
-                        tick: snapshot.gens().player_info,
-                        poll: witness.polls.saturating_add(1),
-                    });
+                    witness.receipt.s_send = Some(at);
                 }
                 sent
             }),
@@ -706,10 +733,8 @@ fn live_callbacks(
             let witness = family_witness
                 .lock()
                 .map_err(|_| "C0 live witness poisoned".to_owned())?;
-            let now = Mark {
-                tick: snapshot.gens().player_info,
-                poll: witness.polls,
-            };
+            let now = Mark::from_snapshot(snapshot)
+                .ok_or_else(|| "C0 failed: client-cycle clock unavailable".to_owned())?;
             let logs = hostlogs();
             if witness.receipt.death || snapshot.local_player().is_none() {
                 return Err("C0 failed: player death or missing local player".into());
@@ -801,10 +826,8 @@ fn run_c0(purpose: RunPurpose) -> Result<LiveCapture, String> {
 }
 
 fn record_frame(witness: &mut LiveWitness, snapshot: &GameSnapshot, status: &ScriptStatus) -> bool {
-    witness.polls = witness.polls.saturating_add(1);
-    let at = Mark {
-        tick: snapshot.gens().player_info,
-        poll: witness.polls,
+    let Some(at) = witness.observed_mark(snapshot) else {
+        return false;
     };
     witness.receipt.start.get_or_insert(at);
     observe_journal(witness, snapshot, at.poll);
@@ -2127,6 +2150,18 @@ mod tests {
 
         let late_s1 = valid_receipt(3, 5, 1, 16, 2, 20);
         expect_rejected(&late_s1, &valid_hazard_logs());
+    }
+
+    #[test]
+    fn client_poll_marks_use_worker_cycles_not_observer_read_count() {
+        let l0 = Mark::from_client_cycle(80, 1600).unwrap();
+        for _ in 0..3 {
+            assert_eq!(Mark::from_client_cycle(80, 1600), Some(l0));
+        }
+        let send = Mark::from_client_cycle(80, 1601).unwrap();
+        assert_eq!(send.poll, l0.poll + 1);
+        assert_eq!(send.tick, l0.tick);
+        assert_eq!(Mark::from_client_cycle(80, -1), None);
     }
 
     #[test]

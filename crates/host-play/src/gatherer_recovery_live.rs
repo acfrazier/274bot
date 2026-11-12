@@ -494,6 +494,44 @@ fn refused_deposit_recovered(
         && retry.is_some_and(|_| transfer_settled(frames, fault.item_id))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FrameObservation {
+    tick: u32,
+    bank_session: u64,
+    inventory_revision: Option<u64>,
+    bank_revision: Option<u64>,
+}
+
+impl FrameObservation {
+    /// Returns whether the tick changed, or None for an unchanged observation.
+    fn record_if_changed(self, previous: &mut Option<Self>) -> Option<bool> {
+        let before = previous.replace(self);
+        (before != Some(self)).then(|| before.is_none_or(|before| before.tick != self.tick))
+    }
+}
+
+#[test]
+fn recovery_recorder_keeps_same_tick_bank_evidence_without_repeating_tick_interference() {
+    let mut previous = None;
+    let mut observation = FrameObservation {
+        tick: 84,
+        bank_session: 0,
+        inventory_revision: Some(6),
+        bank_revision: None,
+    };
+    assert_eq!(observation.record_if_changed(&mut previous), Some(true));
+    assert_eq!(observation.record_if_changed(&mut previous), None);
+    observation.bank_session = 1;
+    observation.bank_revision = Some(1);
+    assert_eq!(observation.record_if_changed(&mut previous), Some(false));
+    assert_eq!(observation.record_if_changed(&mut previous), None);
+    observation.inventory_revision = Some(7);
+    observation.bank_revision = Some(2);
+    assert_eq!(observation.record_if_changed(&mut previous), Some(false));
+    observation.tick = 85;
+    assert_eq!(observation.record_if_changed(&mut previous), Some(true));
+}
+
 #[derive(Debug, Default)]
 struct ReturnFault {
     armed: bool,
@@ -966,7 +1004,7 @@ fn run_live(mode: Mode) {
     let frame_account = account.clone();
     let frame_recorder = Arc::new(Mutex::new(Recorder::default()));
     let hook_recorder = Arc::clone(&frame_recorder);
-    let last_tick = Mutex::new(None);
+    let last_observation = Mutex::new(None);
     let hook_snapshot = Mutex::new(GameSnapshot::new());
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let play = super::run_with_template(
@@ -990,16 +1028,20 @@ fn run_live(mode: Mode) {
             let mut snapshot = hook_snapshot.lock();
             snapshot.rebuild(client);
             let tick = snapshot.tick();
-            let mut last_tick = last_tick.lock();
-            if *last_tick == Some(tick) {
+            let observation = FrameObservation {
+                tick,
+                bank_session: snapshot.bank_session_generation(),
+                inventory_revision: snapshot.inventory_packet_generation(),
+                bank_revision: snapshot.bank_snapshot_generation(),
+            };
+            let Some(tick_changed) = observation.record_if_changed(&mut last_observation.lock())
+            else {
                 return;
-            }
-            *last_tick = Some(tick);
-            drop(last_tick);
+            };
 
             let mut recorder = hook_recorder.lock();
             let fault_active = mode == Mode::ReturnStall && recorder.return_fault.active;
-            let destination = if fault_active && !frame_result.hold {
+            let destination = if tick_changed && fault_active && !frame_result.hold {
                 Some(if recorder.return_fault.writes.len() % 2 == 0 {
                     RETURN_INTERFERENCE_EVEN
                 } else {

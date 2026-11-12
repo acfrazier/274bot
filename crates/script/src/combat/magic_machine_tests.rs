@@ -990,6 +990,7 @@ fn npc_cast_runtime() -> Runtime {
         condition: None,
         poison_unknown_pulse: u8::MAX,
         cure_poison: crate::survival::CurePoison::WhenNeeded,
+        protected_items: None,
         wilderness: None,
     }
 }

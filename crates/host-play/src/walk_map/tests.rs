@@ -36,10 +36,9 @@ fn bound_context(play: &crate::Play) -> MapContext {
 
 fn routing_test_admission() -> crate::admission::Admission {
     crate::admission::Admission::manual(
-        FindOptions::default(),
+        crate::WalkGlobals::default().manual_decision(false),
         Default::default(),
         0,
-        crate::WalkGlobals::default(),
     )
 }
 
@@ -55,7 +54,6 @@ fn digest(n: u8) -> Digest {
 fn identity() -> CatalogueIdentity {
     CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     }
 }
@@ -1007,8 +1005,71 @@ fn bound_host_walk_arms_and_rejects_a_foreign_world_pack_without_replacing_the_r
     assert_eq!(arm.route_generation, generation);
 }
 
+/// DANGER-SIMPLIFY R2-F2: a manual WalkTo is admitted from the one danger
+/// decision. The global level or the one-walk control is the user's override
+/// (Proceed, every zone); otherwise the walk has no danger permission.
 #[test]
-fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_catalogue_identity() {
+fn manual_walk_admission_is_the_manual_danger_decision() {
+    use script::native::RiskPolicy;
+    for global in [false, true] {
+        for this_walk in [false, true] {
+            let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+            let origin = t(3201, 3201, 0);
+            let play = fixture.play(origin);
+            let mut globals = crate::WalkGlobals::default();
+            globals.set_danger_level(if global {
+                crate::DangerLevel::Always
+            } else {
+                crate::DangerLevel::Never
+            });
+            play.set_walk_globals(globals);
+            let ctx = bound_context(&play);
+            let loaded_world = play.world().unwrap();
+            let arms = Arc::new(Mutex::new(HashMap::new()));
+            let mut model = MapModel::default();
+            model.bind(ctx);
+            model.select_tile(&loaded_world, t(3205, 3206, 0));
+            let options = globals.manual_options(this_walk);
+            let command = model
+                .confirm(ActionKind::Walk, &ctx, Some(origin), options)
+                .unwrap();
+            let snapshot = api::snapshot::GameSnapshot::new();
+            assert!(matches!(
+                play.map_walk(
+                    command,
+                    &ctx,
+                    &snapshot,
+                    &WorldState::empty(),
+                    &BankRows::default(),
+                    Default::default(),
+                    &arms,
+                ),
+                Ok(WalkActionOutcome::Walking(_))
+            ));
+            let arms = arms.lock().unwrap();
+            let arm = arms["alice"].lock().unwrap();
+            let decision = arm.admission.as_deref().expect("armed admission").decision;
+            let overridden = global || this_walk;
+            assert_eq!(
+                decision.permitted, overridden,
+                "global={global}, this_walk={this_walk}"
+            );
+            assert_eq!(
+                decision.policy,
+                if overridden {
+                    RiskPolicy::Proceed
+                } else {
+                    RiskPolicy::Avoid
+                },
+                "global={global}, this_walk={this_walk}"
+            );
+            assert_eq!(decision, globals.manual_decision(this_walk));
+        }
+    }
+}
+
+#[test]
+fn ready_catalogue_retains_searchable_normalized_access() {
     use crate::map_cache::{
         fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
         MapProfileDescriptor,
@@ -1020,7 +1081,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     let identity = identity();
     let key = identity.key().unwrap();
     let cache_root = MapCacheRoot::from_root(fixture.root.join("map-cache"));
-    let directory = cache_root.catalogue_dir(identity).unwrap();
+    let directory = cache_root.catalogue_dir(identity.revision);
     std::fs::create_dir_all(&directory).unwrap();
     let document = ClientPois {
         schema: 1,
@@ -1056,13 +1117,8 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
         serde_json::to_vec(&receipt).unwrap(),
     )
     .unwrap();
-    let descriptor = MapProfileDescriptor::new(
-        identity.revision,
-        identity.content,
-        digest(4),
-        identity.policy,
-    )
-    .unwrap();
+    let descriptor =
+        MapProfileDescriptor::new(identity.revision, digest(4), identity.policy).unwrap();
     let manager = MapDemandManager::new(cache_root, Arc::new(CountingMapProducer::default()));
     let handle = manager
         .request(descriptor, MapDemand::CatalogueOnly)
@@ -1089,18 +1145,6 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     }
     let ready_map = handle.ready().unwrap();
     let ready = Arc::clone(&ready_map.catalogue);
-    assert!(matches!(
-        Catalogue::from_ready(
-            Arc::clone(&world),
-            CatalogueIdentity {
-                content: digest(99),
-                ..identity
-            },
-            Some(Arc::clone(&ready_map.catalogue)),
-            None,
-        ),
-        Err(nav_planner::map::MapError::Identity)
-    ));
     let catalogue = Catalogue::from_ready(
         Arc::clone(&world),
         identity,
@@ -1785,10 +1829,9 @@ fn incomplete_search_does_not_clear_existing_walk_arm() {
         ..FindOptions::default()
     };
     let admission = crate::admission::Admission::manual(
-        options,
+        crate::WalkGlobals::default().manual_decision(options.zones.is_all()),
         Default::default(),
         23,
-        crate::WalkGlobals::default(),
     );
     let failure = crate::arm_walk_on(
         &world,

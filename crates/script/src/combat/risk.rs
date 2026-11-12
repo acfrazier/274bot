@@ -12,6 +12,7 @@ mod geometry;
 mod input;
 pub mod odds;
 mod replay;
+pub mod supplies;
 mod timeline;
 use api::condition::PoisonState;
 use api::WorldTile;
@@ -27,11 +28,12 @@ pub use input::*;
 use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
     assess, assess_cooperative, candidate_cost, eat_line, estimated_floor, replay, Estimate,
-    Grants, PoisonTest, ReplayResult,
+    PoisonTest, ReplayResult,
 };
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+pub use supplies::{guarded_bound, Food, GuardTick};
 
 pub(super) async fn checkpoint<F, U>(checkpoint: &mut F)
 where
@@ -92,7 +94,7 @@ pub fn assessment_heap_bounds() -> Option<RiskHeapBounds> {
         .checked_add(reason)?
         .checked_add(assessment)?;
     Some(RiskHeapBounds {
-        peak_bytes: retained_bytes,
+        peak_bytes: retained_bytes.checked_add(supplies::SCRATCH_HEAP_BYTES)?,
         retained_bytes,
     })
 }
@@ -123,6 +125,10 @@ pub mod consts {
     pub const POISON_PERIOD: i32 = 30;
     /// Admitted chance of death over one route (operator Q1, 2026-10-29).
     pub const DEATH_BOUND: f64 = 0.01;
+    /// Ticks after the last combat the player had before another NPC may
+    /// attack in single-way combat: content `npc_combat.rs2:374-378`
+    /// (`lastcombat + 8 > map_clock` refuses the attack).
+    pub const SINGLE_WAY_LULL: u8 = 8;
     /// Shared cap for scheduled attacks, fixed hazards and poison pulses.
     pub const MAX_EVENTS: usize = 2048;
 }
@@ -317,7 +323,7 @@ pub struct RouteAssessment {
     pub supplies: Box<[SupplyNeed]>,
     pub hp_after: u8,
     pub volley: u8,
-    /// Conservative no-action probability of death over the assessed timeline.
+    /// Conservative probability of death with the carried food guard.
     pub bound: f64,
     /// How unknown poison affected the admission bound, if it was relevant.
     pub poison_test: PoisonTest,
@@ -332,7 +338,120 @@ pub fn attacker_count(live: u16, estimated: u16) -> Result<u16, UnknownWhy> {
     live.checked_add(estimated).ok_or(UnknownWhy::Overflow)
 }
 
+/// One declared exposure used to size stage supplies. Crossing admission still
+/// evaluates the actual route; this record never grants movement permission.
+#[derive(Debug, Clone, Copy)]
+pub struct SupplyExposure {
+    pub ident: i32,
+    pub kind: KindRisk,
+    pub ticks: u16,
+}
+
+const _: () = assert!(std::mem::size_of::<SupplyExposure>() <= 20);
+
+/// Evaluate declared exposures in order with the same event distributions,
+/// food threshold and 1% admission bound as route assessment.
+pub fn supply_bound(
+    exposures: &[SupplyExposure],
+    input: &RiskInput,
+    tables: &crate::combat::tables::CombatTables,
+    food: Food,
+) -> Result<odds::DeathBound, UnknownWhy> {
+    timeline::with_event_buffer(|events| {
+        events.clear();
+        let mut start = 0u16;
+        let (mut poison, mut poison_first) = match timeline::known_poison_charge(
+            input.poison,
+            input.tick,
+            tables.unknown_poison_pulse(),
+        )? {
+            timeline::PoisonCharge::Known { per_tick, first } => (per_tick, first),
+            timeline::PoisonCharge::None | timeline::PoisonCharge::Unknown { .. } => (0, u16::MAX),
+        };
+        for exposure in exposures {
+            let kind = exposure.kind;
+            if let Some(why) = kind.unknown_for() {
+                return Err(UnknownWhy::Kind(why));
+            }
+            if kind.rate == 0 || exposure.ticks == 0 {
+                return Err(UnknownWhy::MissingFacts);
+            }
+            let (event_kind, hit) = if kind.shared_attack() {
+                (
+                    odds::EventKind::Attack,
+                    timeline::npc_hit(exposure.ident, kind.attack_roll, input, tables)?,
+                )
+            } else {
+                (odds::EventKind::Certain, odds::HitChance::ceil_from(0.0))
+            };
+            let end = start
+                .checked_add(exposure.ticks)
+                .ok_or(UnknownWhy::Overflow)?;
+            let mut tick = start;
+            while tick < end {
+                events.push(odds::Event {
+                    tick,
+                    kind: event_kind,
+                    amount: kind.max_hit,
+                    hit,
+                })?;
+                if kind.hazard() {
+                    break;
+                }
+                tick = tick
+                    .checked_add(u16::from(kind.rate))
+                    .ok_or(UnknownWhy::Overflow)?;
+            }
+            if kind.poison != 0 {
+                poison = poison.max(kind.poison);
+                poison_first = poison_first.min(start);
+            }
+            start = end;
+        }
+        let mut tick = poison_first;
+        while poison != 0 && tick < start {
+            events.push(odds::Event {
+                tick,
+                kind: odds::EventKind::Poison,
+                amount: poison,
+                hit: odds::HitChance::ceil_from(0.0),
+            })?;
+            tick = tick.checked_add(30).ok_or(UnknownWhy::Overflow)?;
+        }
+        guarded_bound(events.events(), input.hp, input.hp_max, food, |tick| {
+            let mut start = 0u16;
+            for exposure in exposures {
+                let end = start.saturating_add(exposure.ticks);
+                if tick < end {
+                    let hit = i32::from(exposure.kind.max_hit);
+                    return GuardTick {
+                        danger: Some(hit),
+                        burst: Some(if exposure.kind.hazard() {
+                            hit
+                        } else {
+                            hit.saturating_mul(crate::combat::policy::hits_before_bite(
+                                exposure.kind.rate,
+                            ))
+                        }),
+                        poison_fire: i32::from(poison),
+                        input_locked: false,
+                    };
+                }
+                start = end;
+            }
+            GuardTick {
+                danger: Some(0),
+                burst: Some(0),
+                poison_fire: i32::from(poison),
+                input_locked: false,
+            }
+        })
+    })
+}
+
 #[cfg(test)]
 mod poison_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::provisioning_cross_fixture;

@@ -301,10 +301,9 @@ fn router_goal_tiles(
         opts: super::FindOptions::default(),
         state: None,
         admission: crate::admission::Admission::manual(
-            super::FindOptions::default(),
+            crate::WalkGlobals::default().manual_decision(false),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         ),
         prereq_catalog: None,
         bank_origin: super::Origin::Unknown,

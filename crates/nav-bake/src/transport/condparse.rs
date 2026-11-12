@@ -350,8 +350,10 @@ pub(super) fn proc_bitfield_varp(
 
 /// Every `[proc,<name>](…)(…)` body in a script text. All transport
 /// block readers share the same line-boundary and body accumulation path.
+/// A header inside a `/* */` comment is not a declaration.
 pub(super) fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
-    super::script_text::collect_script_blocks(script_text, |raw| {
+    let script_text = super::rs2_syntax::strip_block_comments(script_text);
+    super::script_text::collect_script_blocks(&script_text, |raw| {
         let line = raw.trim();
         if line.starts_with("[proc,") {
             let Some(header) = super::script_text::split_script_header(line) else {
@@ -376,9 +378,11 @@ pub(super) fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
 }
 
 /// `[<a>,<b>]` blocks in a script text → `(a, b, body)`, including inline
-/// bodies. Parameterized proc/label headers remain separate blocks.
+/// bodies. Parameterized proc/label headers remain separate blocks. A
+/// header inside a `/* */` comment is not a declaration.
 pub(super) fn script_blocks(text: &str) -> Vec<(String, String, String)> {
-    super::script_text::collect_script_blocks(text, |raw| {
+    let text = super::rs2_syntax::strip_block_comments(text);
+    super::script_text::collect_script_blocks(&text, |raw| {
         let line = raw.trim();
         let header_line = line
             .split_once("//")

@@ -64,6 +64,8 @@ pub(crate) struct TickPlan {
     pub rows: [PlanRow; 5],
     pub len: u8,
     pub events: u8,
+    /// What the plan's bite was chosen on, for the survival log.
+    pub eat_basis: crate::survival::eat::Basis,
 }
 impl TickPlan {
     pub fn iter(&self) -> impl Iterator<Item = PlanRow> + '_ {
@@ -87,19 +89,21 @@ impl TickPlan {
 }
 /// Largest held heal fitting the HP deficit, otherwise the smallest eligible
 /// heal. Recovery applies the cap, not the nominal heal.
-pub(crate) fn food_by(
+pub(crate) fn food_by_excluding(
     frame: &Frame<'_>,
     tables: &CombatTables,
     gate: Option<i32>,
+    protected_items: &[super::FoodReserve],
     eligible: impl Fn(&super::tables::FoodFact) -> bool,
 ) -> Option<i32> {
     let (hp, hp_max) = stat(frame, 3);
-    policy::food_by(
+    policy::food_by_excluding(
         hp,
         hp_max,
         frame.inventory.iter().map(|row| (row.def.id, row.count)),
         tables,
         gate,
+        protected_items,
         eligible,
     )
 }

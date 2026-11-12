@@ -1,11 +1,11 @@
-use super::replay::{candidate_cost, Estimate, Grants};
+use super::replay::{candidate_cost, Estimate};
 use super::*;
 use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
 use api::selected::ClientRevision;
 use api::WorldTile;
 use nav_planner::contract::{
-    BoundZoneExempt, BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView,
+    BoundZoneKey, MultiwayView, NavLease, RouteView, WildernessView, ZoneTableView,
 };
 use nav_planner::router::{Leg, Route};
 use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
@@ -25,10 +25,22 @@ struct Fixture {
 }
 impl Fixture {
     fn new(table: ZoneTable, wilderness: WildernessRules) -> Self {
+        Self::with_multiway(table, wilderness, &[])
+    }
+    /// The same world with a multiway table. An empty list is a pack built
+    /// without `maps/multiway.csv`: no single-way claim is ever made.
+    fn with_multiway(
+        table: ZoneTable,
+        wilderness: WildernessRules,
+        multiway: &[WorldTile],
+    ) -> Self {
         let zones = table.clone();
+        let keys: Box<[u32]> = nav_planner::pack::keys_from_tiles(multiway.iter().copied())
+            .expect("multiway fixture cells pack");
         let lease = crate::gatherer::select::tests::test_nav_lease(move |world| {
             world.graph.zones = Some(zones);
             world.graph.wilderness = wilderness;
+            world.graph.multiway = keys;
         });
         Self { lease, table }
     }
@@ -49,6 +61,9 @@ impl Fixture {
     }
     fn wilderness(&self) -> WildernessView<'_> {
         self.lease.wilderness()
+    }
+    fn multiway(&self) -> MultiwayView<'_> {
+        self.lease.multiway()
     }
     fn route<'a>(&self, route: &'a Route) -> RouteView<'a> {
         nav_planner::producer::route_view(&self.lease, route).expect("the lease identity is minted")
@@ -75,16 +90,6 @@ impl Fixture {
                 .resolve(self.table.groups()[usize::from(index)].id.as_ref())
                 .expect("a group resolves by its id"),
         }
-    }
-    fn exempt(&self, keys: &[ZoneKey]) -> BoundZoneExempt {
-        let bound: Vec<BoundZoneKey> = keys.iter().map(|key| self.bound(*key)).collect();
-        self.zones().exempt(&bound).unwrap()
-    }
-    fn exempt_all(&self) -> BoundZoneExempt {
-        self.zones().exempt_all()
-    }
-    fn none(&self) -> BoundZoneExempt {
-        self.exempt(&[])
     }
 }
 fn tile(x: i32) -> WorldTile {
@@ -168,6 +173,17 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
         &WildernessRules::default(),
     )
 }
+
+/// Real-content crossing shared by the bank-check acceptance tests.
+pub(crate) fn provisioning_cross_fixture() -> (NavLease, String) {
+    let tables = tables();
+    let fixture = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let name = fixture
+        .zones()
+        .name(fixture.bound(ZoneKey::Zone(0)))
+        .unwrap();
+    (fixture.lease, name)
+}
 /// Effective one-attacker fixture for the S3 hand-worked ice examples. This
 /// tests S2a replay arithmetic, not S3's unimplemented eligibility discount.
 fn corridor_plan(fx: &Fixture, tables: &CombatTables, prefix: u16) -> RoutePlan {
@@ -213,9 +229,10 @@ fn context<'a>(fx: &'a Fixture, risk: &'a RiskTables, tables: &'a CombatTables) 
         risks: risk,
         combat: tables,
         wilderness: fx.wilderness(),
+        multiway: fx.multiway(),
         allow: WalkAllow::default(),
         generation: 7,
-        grants: None,
+        permitted: false,
     }
 }
 
@@ -605,7 +622,7 @@ fn admission_no_grants_passes_through_estimate() {
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
     let cx = context(&fx, &risk, &tables);
-    assert!(cx.grants.is_none());
+    assert!(!cx.permitted);
 
     let walk = route(90, 108);
     let assessment = assess(fx.route(&walk), &cx, wolf_input(40, 40, &tables));
@@ -624,9 +641,9 @@ fn admission_granted_unsurvivable_crossing_is_refused() {
     let risk = RiskTables::build(&tables);
     let walk = route(90, 108);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
+    cx.permitted = true;
 
-    // Old: a grant could bypass risk; new: it affects only named NoWayOut zones.
+    // Permission never bypasses the death bound; it only waives NoWayOut.
     let assessment = assess(fx.route(&walk), &cx, input(1, 1, 0, &tables));
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.bound > consts::DEATH_BOUND);
@@ -655,7 +672,7 @@ fn admission_declared_no_way_out_endpoint_is_judged_on_the_walk() {
 }
 
 #[test]
-fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
+fn admission_permitted_walk_waives_no_way_out_but_not_the_death_bound() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -664,34 +681,7 @@ fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
     let risk = RiskTables::build(&tables);
     let walk = transport_entering_walk(100, 101);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::request(fx.none(), fx.wilderness()));
-    assert!(cx.grants.unwrap().endpoint.is_some());
-
-    // Old: endpoint completion waived NoWayOut; new: only named zones waive it.
-    let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(assessment.plan.crossings.len(), 1);
-    assert!(!assessment.plan.crossings[0].has_way_out());
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
-    assert!(assessment.reason.contains("NoWayOut"));
-
-    cx.grants = Some(Grants::request(fx.exempt_all(), fx.wilderness()));
-    let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(covered.verdict, Verdict::Survivable, "{}", covered.reason);
-    assert!(!covered.reason.contains("NoWayOut"));
-}
-
-#[test]
-fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let tables = tables();
-    let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = RiskTables::build(&tables);
-    let walk = transport_entering_walk(100, 101);
-    let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt_all()));
-    assert!(cx.grants.unwrap().endpoint.is_none());
+    cx.permitted = true;
 
     let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
     assert_eq!(covered.plan.crossings.len(), 1);
@@ -706,51 +696,7 @@ fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
 }
 
 #[test]
-fn named_grants_must_cover_every_zone_in_no_way_out_crossing() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let tables = tables();
-    let w = WildernessRules::default();
-    let fx = Fixture::new(
-        zone_table(
-            vec![
-                Zone::npc(tile(100), 1, ZoneClass::Always, u16::MAX, 0),
-                Zone::npc(tile(101), 1, ZoneClass::Always, u16::MAX, 0),
-            ],
-            vec![known_kind(&tables)],
-            vec![],
-            vec![],
-            &w,
-        ),
-        w,
-    );
-    let risk = RiskTables::build(&tables);
-    let walk = transport_entering_walk(100, 101);
-    let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
-    // Old: one exemption could bypass the whole crossing; new: all rows are named.
-    let partial = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(partial.plan.crossings.len(), 1);
-    assert_eq!(partial.plan.intervals.len(), 2);
-    assert_eq!(partial.verdict, Verdict::Unsurvivable);
-    assert!(partial.reason.contains("NoWayOut"));
-
-    cx.grants = Some(Grants::named(
-        fx.exempt(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]),
-    ));
-    let all_named = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(
-        all_named.verdict,
-        Verdict::Survivable,
-        "{}",
-        all_named.reason
-    );
-    assert!(!all_named.reason.contains("NoWayOut"));
-}
-
-#[test]
-fn admission_named_grant_never_bypasses_unknown_facts() {
+fn admission_permission_never_bypasses_unknown_facts() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -778,11 +724,11 @@ fn admission_named_grant_never_bypasses_unknown_facts() {
     );
     let risk = RiskTables::build(&tables);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
+    cx.permitted = true;
     let walk = transport_entering_walk(100, 101);
     let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
 
-    // Old: naming a zone bypassed unknown risk; new: grants only waive NoWayOut.
+    // Permission only waives NoWayOut; unknown facts still refuse.
     assert_eq!(
         assessment.verdict,
         Verdict::Unknown(UnknownWhy::MissingFacts)
@@ -1724,11 +1670,24 @@ fn simulate_ice(
         let topup = t < crossing_start
             && crossing_start - t <= 30
             && smallest.is_some_and(|i| hp + heals[i] <= cap);
+        // The two-tier rule by hand. The one attacker hits 6 every 4 ticks
+        // from `crossing_start` for 39 ticks, so the ticks `t + 1..=t + 2`
+        // (a bite's delay) hold at most one of its hits: the critical floor
+        // is 6 + 1 while the attacker is in reach of the window, 1 outside.
+        let attacker_in_window = t + 2 >= crossing_start && t + 1 < crossing_start + 39;
+        let critical = if attacker_in_window { 6 + 1 } else { 1 };
         if due.is_none() && t >= ready && (topup || hp <= line) {
             let fitting = (0..2)
                 .filter(|i| left[*i] > 0 && hp + heals[*i] <= cap)
                 .max_by_key(|i| heals[*i]);
-            if let Some(food) = fitting.or(smallest) {
+            // Above the critical floor only a food that fits is eaten; at or
+            // below it the best fit is eaten even when it overheals.
+            let choice = if hp > critical {
+                fitting
+            } else {
+                fitting.or(smallest)
+            };
+            if let Some(food) = choice {
                 left[food] -= 1;
                 bites += 1;
                 due = Some((t + 2, heals[food]));
@@ -1749,14 +1708,27 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
     let route = route(80, 127);
     let path = fx.path(&route);
     let plan = corridor_plan(&fx, &tables, 20);
-    for (hp, cap, food, pass, after) in [
-        (40, 40, 0, false, 22),
-        (40, 40, 4, false, 22),
-        (40, 40, 5, true, 16),
-        (45, 45, 6, true, 21),
-        (20, 40, 0, false, 14),
-        (20, 40, 6, false, 22),
-        (20, 40, 7, true, 16),
+    // The replay eats as the real eater does: above its critical floor (one
+    // hit of 6, plus 1, is 7) only a lobster that fits (`hp + 12 <= cap`) is
+    // eaten, so no bite overheals. The route floor reaches 30. At cap 40 a
+    // lobster fits only at HP 28 or below, under that floor, and the
+    // critical floor (7) is far below it: no food count holds HP above 30,
+    // so every cap-40 row refuses and `needed` is `None`. At cap 45 a
+    // lobster fits at 33 or below, above the floor, so each bite lands
+    // inside the band: 45 -> 39 -> 33 -> bite -> 45, and the counts are
+    // the bites the crossing needs.
+    // (hp, cap, lobsters, passes, hp after, least extra lobsters or None)
+    for (hp, cap, food, pass, after, needed) in [
+        (40, 40, 0, false, 22, None),
+        (40, 40, 5, false, 28, None),
+        (45, 45, 0, false, 21, Some(3)),
+        (45, 45, 2, false, 21, Some(1)),
+        (45, 45, 3, true, 21, None),
+        (45, 45, 6, true, 21, None),
+        (50, 50, 1, false, 26, Some(1)),
+        (60, 60, 1, false, 24, Some(1)),
+        (20, 40, 0, false, 14, None),
+        (20, 40, 8, false, 26, None),
     ] {
         let input = input(hp, cap, food, &tables);
         let mut clicks = Vec::new();
@@ -1782,31 +1754,27 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
         );
         assert_eq!(clicks, independent.3, "hp={hp},food={food}");
         assert_eq!((actual.passed, actual.hp_after), (pass, after));
-        if !pass {
-            let needed = if hp == 20 {
-                if food == 0 {
-                    7
-                } else {
-                    1
-                }
-            } else if food == 0 {
-                5
-            } else {
-                1
-            };
-            for extra in 1..=needed {
-                let fixed = replay(
-                    path,
-                    &plan,
-                    &input,
-                    &tables,
-                    WalkAllow::default(),
-                    Some((input.food_ids[0], extra)),
-                    |_, _, _, _, _| {},
-                )
-                .unwrap();
-                assert_eq!(fixed.passed, extra == needed, "least additional count");
-            }
+        if pass {
+            assert_eq!(needed, None);
+            continue;
+        }
+        let tried = needed.unwrap_or(12);
+        for extra in 1..=tried {
+            let fixed = replay(
+                path,
+                &plan,
+                &input,
+                &tables,
+                WalkAllow::default(),
+                Some((input.food_ids[0], extra)),
+                |_, _, _, _, _| {},
+            )
+            .unwrap();
+            assert_eq!(
+                fixed.passed,
+                needed == Some(extra),
+                "least additional count, hp={hp},food={food},extra={extra}"
+            );
         }
     }
 }
@@ -2036,7 +2004,7 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
 }
 
 #[test]
-fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
+fn r1_m2_mid_crossing_transport_only_credits_food_outside_the_hold() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -2094,10 +2062,9 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
         !baseline.passed,
         "the max-hit replay still fails despite the probabilistic no-food admission"
     );
-    assert_eq!(
-        (assessment.verdict, assessment.bound),
-        (no_food_assessment.verdict, no_food_assessment.bound),
-        "inventory must not change P1-C's no-food bound"
+    assert!(
+        assessment.bound < no_food_assessment.bound,
+        "ordinary bites outside the transport lock receive food credit"
     );
     assert_eq!(assessment.verdict, Verdict::Survivable);
 }
@@ -3364,7 +3331,7 @@ fn u9_risk_assessment_reuses_one_immutable_table() {
 }
 
 #[test]
-fn assessment_does_not_credit_food_or_report_fixable_with() {
+fn assessment_does_not_credit_food_when_the_guard_cannot_eat() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3372,7 +3339,8 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
     let walk = route(88, 112);
-    let cx = context(&fx, &risk, &tables);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.allow.food = false;
     let mut no_food = input(40, 40, 0, &tables);
     no_food.pos = tile(88);
     let mut carried_food = input(40, 40, 5, &tables);
@@ -3389,6 +3357,67 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
         .iter()
         .chain(with.supplies.iter())
         .all(|need| !matches!(need, SupplyNeed::Food { .. })));
+}
+
+#[test]
+fn assessment_crossing_passes_with_computed_carried_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(85, 125);
+    let mut bare = input(20, 40, 0, &tables);
+    bare.pos = tile(85);
+    let cx = context(&fx, &risks, &tables);
+    let without = assess(fx.route(&walk), &cx, bare);
+    assert_eq!(without.verdict, Verdict::Unsurvivable, "{}", without.reason);
+    let ident = known_kind(&tables).npc_id;
+    let exposure = SupplyExposure {
+        ident,
+        kind: *risks.npc(ident).unwrap(),
+        ticks: 70,
+    };
+    let heal = tables.food(bare.food_ids[0]).unwrap().heal as u8;
+    let count = (1..=28)
+        .find(|&count| {
+            supply_bound(
+                &[exposure],
+                &bare,
+                &tables,
+                Food {
+                    item: bare.food_ids[0],
+                    heal,
+                    count,
+                },
+            )
+            .unwrap()
+            .admits(consts::DEATH_BOUND)
+        })
+        .expect("ordinary content food can cover this exposure");
+    let mut carried = bare;
+    carried.food_counts[0] = count;
+    let with = assert_assessment_equivalence(fx.route(&walk), &cx, carried);
+    assert_eq!(with.verdict, Verdict::Survivable, "{}", with.reason);
+    assert!(with.bound < consts::DEATH_BOUND);
+    assert!(without.bound > consts::DEATH_BOUND);
+}
+
+#[test]
+fn assessment_content_lethal_opening_is_refused_even_with_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(85, 125);
+    let mut carried = input(1, 40, 28, &tables);
+    carried.pos = tile(85);
+    let result = assess(fx.route(&walk), &context(&fx, &risks, &tables), carried);
+    assert_eq!(result.verdict, Verdict::Unsurvivable, "{}", result.reason);
+    assert!(result.bound > consts::DEATH_BOUND);
 }
 
 #[test]
@@ -3861,13 +3890,6 @@ fn t5_1_assessment_refuses_another_pack() {
         assessment.plan.intervals[0].key(other.zones()),
         Err(UnknownWhy::NavIdentity)
     );
-    let mut foreign_grant = context(&fx, &risk, &tables);
-    foreign_grant.grants = Some(Grants::named(other.exempt_all()));
-    let mismatched = assess(fx.route(&walk), &foreign_grant, value);
-    assert_eq!(
-        mismatched.verdict,
-        Verdict::Unknown(UnknownWhy::NavIdentity)
-    );
 }
 fn yielding_checkpoint(
     calls: Arc<AtomicUsize>,
@@ -3987,6 +4009,712 @@ fn t5w_assessment_yields_and_drops_geometry_and_timeline_state() {
 #[test]
 fn t5w_heap_bound_covers_one_assessment_without_projection() {
     let bounds = assessment_heap_bounds().expect("risk heap bound is representable");
-    assert_eq!(bounds.peak_bytes, bounds.retained_bytes);
+    assert_eq!(
+        bounds.peak_bytes,
+        bounds.retained_bytes + supplies::SCRATCH_HEAP_BYTES
+    );
     assert_eq!(admission_peak_heap_bytes(), Some(bounds.peak_bytes));
+}
+
+// ---- Single-way combat (content `npc_combat.rs2:372-389`) ----
+
+fn knight_zones(tables: &CombatTables, spawns: &[i32]) -> ZoneTable {
+    let npc = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap();
+    zone_table(
+        spawns
+            .iter()
+            .map(|spawn| Zone::npc(tile(*spawn), 5, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![ZoneKind::new(
+            "knight",
+            "Black Knight",
+            npc.id,
+            33,
+            false,
+            false,
+        )],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    )
+}
+
+/// A Base40 account: 40 hitpoints and 40 defence, no armour bonus.
+fn base40_input(tables: &CombatTables) -> RiskInput {
+    let mut value = input(40, 40, 0, tables);
+    value.defence = 40;
+    value
+}
+
+const KNIGHT_SPAWNS: [i32; 7] = [92, 95, 98, 100, 102, 104, 106];
+
+/// A cell far from the route: the pack carries a multiway table, the route
+/// is not in it.
+fn far_multiway() -> [WorldTile; 1] {
+    [WorldTile {
+        x: 4000,
+        z: 4000,
+        level: 0,
+    }]
+}
+
+fn assess_knights(fx: &Fixture, tables: &CombatTables, input: RiskInput) -> Arc<RouteAssessment> {
+    let risk = RiskTables::build(tables);
+    let walk = route(90, 108);
+    let mut cx = context(fx, &risk, tables);
+    cx.permitted = true;
+    assess(fx.route(&walk), &cx, input)
+}
+
+#[test]
+fn single_way_walk_past_seven_black_knights_is_admitted_for_a_base_40_account() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let single = Fixture::with_multiway(table.clone(), WildernessRules::default(), &far_multiway());
+    let admitted = assess_knights(&single, &tables, base40_input(&tables));
+    // Seven zones, one attacker at a time: at most one attack per 5 ticks
+    // over the route, 4 damage at most each, below 40 hitpoints.
+    assert_eq!(admitted.plan.intervals.len(), 7, "{}", admitted.reason);
+    assert_eq!(admitted.verdict, Verdict::Survivable, "{}", admitted.reason);
+    assert!(admitted.bound <= consts::DEATH_BOUND, "{}", admitted.reason);
+
+    // Without a multiway table nothing is claimed: all seven attack.
+    let unknown = Fixture::new(table, WildernessRules::default());
+    let summed = assess_knights(&unknown, &tables, base40_input(&tables));
+    assert_eq!(summed.verdict, Verdict::Unsurvivable, "{}", summed.reason);
+    assert!(
+        summed.bound > consts::DEATH_BOUND,
+        "summed bound {}",
+        summed.bound
+    );
+}
+
+#[test]
+fn single_way_bound_never_exceeds_the_summed_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let summed_fx = Fixture::new(table.clone(), WildernessRules::default());
+    let single_fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    for hp in [1u8, 4, 8, 12, 20, 40] {
+        let mut input = base40_input(&tables);
+        input.hp = hp;
+        input.hp_max = hp.max(40);
+        let summed = assess_knights(&summed_fx, &tables, input);
+        let single = assess_knights(&single_fx, &tables, input);
+        assert!(
+            single.bound <= summed.bound,
+            "hp {hp}: single {} summed {}",
+            single.bound,
+            summed.bound
+        );
+    }
+}
+
+#[test]
+fn single_way_lethal_walk_is_still_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let single = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    // A single attacker for the whole walk still beats 6 hitpoints.
+    let mut weak = base40_input(&tables);
+    weak.hp = 6;
+    weak.hp_max = 40;
+    let refused = assess_knights(&single, &tables, weak);
+    assert_eq!(refused.verdict, Verdict::Unsurvivable, "{}", refused.reason);
+    assert!(refused.bound > consts::DEATH_BOUND);
+    assert!(
+        refused.bound < 1.0,
+        "the bound counts one attacker, not seven: {}",
+        refused.bound
+    );
+}
+
+#[test]
+fn a_multiway_cell_on_the_route_keeps_every_attacker_summed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let on_route = WorldTile {
+        x: 96,
+        z: 96,
+        level: 0,
+    };
+    let multiway = Fixture::with_multiway(
+        table.clone(),
+        WildernessRules::default(),
+        &[on_route, far_multiway()[0]],
+    );
+    let summed = Fixture::new(table, WildernessRules::default());
+    let with_cell = assess_knights(&multiway, &tables, base40_input(&tables));
+    let without = assess_knights(&summed, &tables, base40_input(&tables));
+    assert_eq!(
+        with_cell.verdict,
+        Verdict::Unsurvivable,
+        "{}",
+        with_cell.reason
+    );
+    assert_eq!(with_cell.bound.to_bits(), without.bound.to_bits());
+}
+
+#[test]
+fn single_way_does_not_collapse_an_npc_with_forcemulti() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    let mut risk = RiskTables::build(&tables);
+    let id = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let fact = *risk.npc(id).unwrap();
+    *risk.npc_mut(id).unwrap() = KindRisk::new(
+        fact.max_hit,
+        fact.rate,
+        fact.r,
+        fact.reach,
+        fact.style,
+        fact.unknown,
+        fact.poison,
+        fact.attack_roll,
+        true,
+        true,
+        false,
+        false,
+    );
+    let walk = route(90, 108);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.permitted = true;
+    let forced = assess(fx.route(&walk), &cx, base40_input(&tables));
+    assert_eq!(forced.verdict, Verdict::Unsurvivable, "{}", forced.reason);
+}
+
+#[test]
+fn single_way_cluster_of_an_on_hit_only_npc_rolls_every_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let table = knight_zones(&tables, &KNIGHT_SPAWNS);
+    let fx = Fixture::with_multiway(table, WildernessRules::default(), &far_multiway());
+    let id = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let plain = RiskTables::build(&tables);
+    let mut gated = RiskTables::build(&tables);
+    let fact = *gated.npc(id).unwrap();
+    *gated.npc_mut(id).unwrap() = fact.with_on_hit_only(true);
+    let walk = route(90, 108);
+    let mut input = base40_input(&tables);
+    input.hp = 12;
+    let run = |risk: &RiskTables| {
+        let mut cx = context(&fx, risk, &tables);
+        cx.permitted = true;
+        assess(fx.route(&walk), &cx, input)
+    };
+    let one_at_a_time = run(&plain);
+    let leaky = run(&gated);
+    // A hit-only recorder may let a second NPC attack after misses, so its
+    // cluster rolls damage on every slot: never a lower bound than the
+    // ordinary cluster, never above the summed schedule.
+    assert!(leaky.bound >= one_at_a_time.bound);
+    let summed = Fixture::new(
+        knight_zones(&tables, &KNIGHT_SPAWNS),
+        WildernessRules::default(),
+    );
+    let all = assess_knights(&summed, &tables, input);
+    assert!(leaky.bound <= all.bound);
+}
+
+#[test]
+fn single_way_counts_one_attacker_across_different_kinds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let knight = tables
+        .selected()
+        .npc_by_config("aggressive_black_knight")
+        .unwrap()
+        .id;
+    let ice = tables.selected().npc_by_config("icewarrior").unwrap().id;
+    let spawns = [92, 95, 98, 100, 102, 104, 106];
+    let zones: Vec<Zone> = spawns
+        .iter()
+        .enumerate()
+        .map(|(index, spawn)| {
+            Zone::npc(
+                tile(*spawn),
+                5,
+                ZoneClass::Always,
+                u16::MAX,
+                u16::from(index % 2 == 1),
+            )
+        })
+        .collect();
+    let table = zone_table(
+        zones,
+        vec![
+            ZoneKind::new("knight", "Black Knight", knight, 33, false, false),
+            ZoneKind::new("ice", "Ice warrior", ice, 57, false, false),
+        ],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    );
+    let single = Fixture::with_multiway(table.clone(), WildernessRules::default(), &far_multiway());
+    let summed = Fixture::new(table, WildernessRules::default());
+    let one = assess_knights(&single, &tables, base40_input(&tables));
+    let all = assess_knights(&summed, &tables, base40_input(&tables));
+    // Four knights (4, every 5 ticks) and three ice warriors (6, every 4
+    // ticks) take turns: at most one attack per 4 ticks, 6 damage at most.
+    assert_eq!(one.plan.intervals.len(), 7, "{}", one.reason);
+    assert_eq!(one.verdict, Verdict::Survivable, "{}", one.reason);
+    assert!(one.bound <= all.bound);
+    assert_eq!(all.verdict, Verdict::Unsurvivable, "{}", all.reason);
+}
+
+/// Whether the shared eat choice picks a bite for a bot holding five
+/// lobsters, given the danger and burst the model read from its plan.
+fn model_bites(tables: &CombatTables, danger: i32, burst: i32, hp: i32, hp_max: i32) -> bool {
+    use crate::combat::frame::Frame;
+    use crate::combat::policy;
+    use crate::combat::schedule::Schedule;
+    use api::obj_names::ItemDefView;
+    use api::snapshot::{
+        ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView,
+        LocalPlayerView, PlayerView, WorldStateView,
+    };
+    let lobster = tables.selected().item_by_alias("lobster").unwrap().id;
+    let world = WorldStateView::default();
+    let local = LocalPlayerView {
+        player: PlayerView {
+            index: 0,
+            actor: ActorView {
+                name: None,
+                actions: Vec::new(),
+                tile: tile(80),
+                distance: 0,
+                animation: -1,
+                animation_frame: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: -1,
+                health: 0,
+                total_health: 0,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            network: tile(80),
+            combat_level: 1,
+            skill_level: 0,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 0,
+        weight: 0,
+        animation_update: None,
+    };
+    let inventory = [ItemView {
+        def: ItemDefView {
+            id: lobster,
+            name: None,
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 5,
+        actions: Vec::new(),
+        component_id: 0,
+    }];
+    let frame = Frame {
+        here: tile(80),
+        combat_tab: None,
+        tick: 5,
+        stats: &[],
+        inventory: &inventory,
+        equipment: &[],
+        npcs: &[],
+        players: &[],
+        local: &local,
+        world: &world,
+        projectiles: &[],
+        hitmarks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+        prayers: [false; 15],
+        varps: &[],
+        in_combat: CombatView {
+            in_combat: false,
+            target: None,
+        },
+        reach: None,
+        wilderness: None,
+    };
+    policy::eat_choice_excluding(
+        &frame,
+        tables,
+        &Schedule::default(),
+        policy::EatInputs {
+            danger: Some(danger),
+            burst: Some(burst),
+            poison_fire: 0,
+            hp,
+            hp_max,
+            tick: 5,
+            eat_floor: 0,
+        },
+        &[],
+    )
+    .and_then(|choice| choice.ordinary)
+    .is_some()
+}
+
+/// The route model's side of the cases the real eater (`guard.rs`,
+/// `the_real_eater_decides_the_shared_cases`) decides the same way: the
+/// plan's own window damage feeds the one shared eat choice.
+#[test]
+fn the_route_model_decides_the_shared_cases() {
+    use crate::combat::policy::shared_cases::CASES;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
+    let route = route(80, 127);
+    let path = fx.path(&route);
+    for case in CASES {
+        // Each attacker's hit and rate are the content's own, as the real
+        // eater's threat rows read them.
+        let intervals: Vec<ZoneInterval> = case
+            .attackers
+            .iter()
+            .map(|id| {
+                let fact = tables.npc(*id).expect("a shared case names a content NPC");
+                let hit = crate::combat::select::facts::npc_max_hit(fact)
+                    .expect("a known-damage attacker");
+                ZoneInterval::new(
+                    fx.bound(ZoneKey::Zone(0)),
+                    *id,
+                    tile(120),
+                    0,
+                    46,
+                    0,
+                    46,
+                    13,
+                    1,
+                    hit,
+                    tables.npc_rate(fact),
+                    Style::Melee,
+                    None,
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+            .collect();
+        let plan = RoutePlan {
+            complete: true,
+            pack: Some(fx.pack()),
+            intervals: intervals.into_boxed_slice(),
+            crossings: Vec::new().into_boxed_slice(),
+        };
+        let mut checkpoint = || std::future::ready(());
+        let (danger, burst) = poll_ready(replay::window_damage(
+            path,
+            &plan,
+            5,
+            &input(case.hp as u8, case.hp_max as u8, 5, &tables),
+            &tables,
+            WalkAllow::default(),
+            &mut checkpoint,
+        ))
+        .unwrap();
+        assert_eq!(
+            model_bites(&tables, danger, burst, case.hp, case.hp_max),
+            case.bite,
+            "{}: danger {danger}, burst {burst}",
+            case.label
+        );
+    }
+}
+
+/// The burst, not the danger, sets the critical floor: an attacker of 6 that
+/// attacks every tick lands two hits before a bite does, so a 13/20 account
+/// is critical (burst 12, floor 13) and overheals its lobster; the same hit
+/// every fourth tick is one hit (burst 6, floor 7), and the account waits.
+#[test]
+fn a_rate_one_attacker_raises_the_critical_floor_through_its_burst() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    assert!(model_bites(&tables, 6, 12, 13, 20));
+    assert!(!model_bites(&tables, 6, 12, 14, 20));
+    assert!(!model_bites(&tables, 6, 6, 13, 20));
+    assert!(model_bites(&tables, 6, 6, 7, 20));
+}
+
+/// A rate-one attacker lands two hits inside the bite delay; a slower one
+/// lands one. The window damage counts both, and a hazard or a row that has
+/// ended or has not begun counts once or not at all.
+#[test]
+fn window_damage_counts_hits_inside_the_bite_delay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
+    let route = route(80, 127);
+    let path = fx.path(&route);
+    let row = |a: u16, b: u16, hit: u8, rate: u8, hazard: bool| {
+        ZoneInterval::new(
+            fx.bound(ZoneKey::Zone(0)),
+            known_kind(&tables).npc_id,
+            tile(120),
+            a,
+            b,
+            a,
+            b,
+            13,
+            1,
+            hit,
+            rate,
+            Style::Melee,
+            None,
+            false,
+            hazard,
+        )
+        .unwrap()
+    };
+    let at = |rows: Vec<ZoneInterval>, tick: i32| {
+        let plan = RoutePlan {
+            complete: true,
+            pack: Some(fx.pack()),
+            intervals: rows.into_boxed_slice(),
+            crossings: Vec::new().into_boxed_slice(),
+        };
+        let mut checkpoint = || std::future::ready(());
+        poll_ready(replay::window_damage(
+            path,
+            &plan,
+            tick,
+            &input(40, 40, 5, &tables),
+            &tables,
+            WalkAllow::default(),
+            &mut checkpoint,
+        ))
+        .unwrap()
+    };
+    // Rate 1: two hits of 7. Rate 2 and 4: one.
+    assert_eq!(at(vec![row(0, 46, 7, 1, false)], 5), (7, 14));
+    assert_eq!(at(vec![row(0, 46, 7, 2, false)], 5), (7, 7));
+    assert_eq!(at(vec![row(0, 46, 7, 4, false)], 5), (7, 7));
+    // Two attackers add; a strong one is not a weak one doubled.
+    assert_eq!(
+        at(vec![row(0, 46, 9, 4, false), row(0, 46, 4, 1, false)], 5),
+        (13, 17)
+    );
+    // The row has not begun: it starts after the window (path tick of index
+    // 30 is 45) and its first hit is out of reach at tick 5.
+    assert_eq!(at(vec![row(30, 46, 7, 1, false)], 5), (0, 0));
+    // A hazard hits once, only when its start falls in the window.
+    let start = path.point(10).unwrap().tick;
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start - 1), (8, 8));
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start - 3), (0, 0));
+    assert_eq!(at(vec![row(10, 46, 8, 1, true)], start), (0, 0));
+}
+
+fn ice_zones(tables: &CombatTables, spawns: &[i32], radius: u8) -> ZoneTable {
+    zone_table(
+        spawns
+            .iter()
+            .map(|spawn| Zone::npc(tile(*spawn), radius, ZoneClass::Always, u16::MAX, 0))
+            .collect(),
+        vec![known_kind(tables)],
+        vec![],
+        vec![],
+        &WildernessRules::default(),
+    )
+}
+
+/// The supply planner's bite at one observation: one lobster-sized food, one
+/// lethal hit at tick 3 that only a bite at tick 0 (healed at tick 2) can
+/// outlive. The guard's observation is the same on every tick, so the planner
+/// survives exactly when it bites.
+fn planner_bites(danger: i32, burst: i32, hp: i32, hp_max: i32, heal: u8, fire: i32) -> bool {
+    let events = [odds::Event {
+        tick: 3,
+        kind: odds::EventKind::Certain,
+        amount: u8::try_from(hp).unwrap(),
+        hit: odds::HitChance::ceil_from(0.0),
+    }];
+    guarded_bound(
+        &events,
+        u8::try_from(hp).unwrap(),
+        u8::try_from(hp_max).unwrap(),
+        Food {
+            item: 100,
+            heal,
+            count: 1,
+        },
+        |_| GuardTick {
+            danger: Some(danger),
+            burst: Some(burst),
+            poison_fire: fire,
+            input_locked: false,
+        },
+    )
+    .unwrap()
+    .bound
+        == 0.0
+}
+
+/// The supply planner's side of the cases the real eater and the route model
+/// decide (`guard.rs`, `the_route_model_decides_the_shared_cases`): the same
+/// table, the same bite-or-not answers, because all three use `policy::bite_tier`.
+#[test]
+fn the_supply_planner_decides_the_shared_cases() {
+    use crate::combat::policy::{self, shared_cases::CASES};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let lobster = tables
+        .food(tables.selected().item_by_alias("lobster").unwrap().id)
+        .unwrap();
+    let heal = u8::try_from(lobster.heal).unwrap();
+    for case in CASES {
+        let (mut danger, mut burst) = (0, 0);
+        for id in case.attackers {
+            let fact = tables.npc(*id).expect("a shared case names a content NPC");
+            let hit = i32::from(
+                crate::combat::select::facts::npc_max_hit(fact).expect("a known-damage attacker"),
+            );
+            danger += hit;
+            burst += hit * policy::hits_before_bite(tables.npc_rate(fact));
+        }
+        assert_eq!(
+            planner_bites(danger, burst, case.hp, case.hp_max, heal, 0),
+            case.bite,
+            "{}: danger {danger}, burst {burst}",
+            case.label
+        );
+    }
+}
+
+/// The planner's critical floor follows the burst, as the real eater's does:
+/// a rate-one attacker of 6 (burst 12) makes a 13/20 account critical, so the
+/// planner overheals; the same hit every fourth tick (burst 6) does not. The
+/// poison fire raises the floor too.
+#[test]
+fn the_supply_planner_critical_floor_follows_the_burst_and_the_fire() {
+    assert!(planner_bites(6, 12, 13, 20, 12, 0));
+    assert!(!planner_bites(6, 12, 14, 20, 12, 0));
+    assert!(!planner_bites(6, 6, 13, 20, 12, 0));
+    assert!(planner_bites(6, 6, 7, 20, 12, 0));
+    // A fire of 3 lifts the floor from 7 to 10 and the eat line from 13 to 16.
+    assert!(planner_bites(6, 6, 10, 20, 12, 3));
+    assert!(!planner_bites(6, 6, 11, 20, 12, 3));
+    // Caution tier: the heal fits at 8/20 (8 + 12), not at 9/20.
+    assert!(planner_bites(6, 6, 8, 20, 12, 0));
+    assert!(!planner_bites(6, 6, 9, 20, 12, 0));
+}
+
+/// Production admission of the ice corridor (two 20-tick crossings of one
+/// ice warrior, 6 every 4 ticks, the same exposure as the hand-built replay
+/// corridor), a 40-point account. The planner eats at the guard's own line
+/// (`2 * 6 + 1 = 13`); every HP from 1 to 13 fits a 12-point lobster at cap
+/// 40, so the two tiers change nothing here and the account is admitted
+/// with one lobster, as before. The replay's floor-30 failure rule is not a
+/// production gate (`replay()` has no production caller).
+#[test]
+fn production_admits_the_ice_corridor_with_one_lobster() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let risks = RiskTables::build(&tables);
+    let fx = Fixture::new(
+        ice_zones(&tables, &[100, 118], 6),
+        WildernessRules::default(),
+    );
+    let cx = context(&fx, &risks, &tables);
+    let walk = route(70, 160);
+    let at = |hp: u8, cap: u8, food: u8| {
+        let mut value = input(hp, cap, food, &tables);
+        value.pos = tile(70);
+        assess(fx.route(&walk), &cx, value)
+    };
+    let refused = at(40, 40, 0);
+    assert_eq!(refused.verdict, Verdict::Unsurvivable, "{}", refused.reason);
+    assert!(refused.bound > consts::DEATH_BOUND);
+    for food in [1, 2, 5, 12] {
+        let admitted = at(40, 40, food);
+        assert_eq!(admitted.verdict, Verdict::Survivable, "{}", admitted.reason);
+        assert!(admitted.bound < consts::DEATH_BOUND, "lobsters {food}");
+    }
+    // The planner asks for the least count that admits: one.
+    let ident = known_kind(&tables).npc_id;
+    let exposure = SupplyExposure {
+        ident,
+        kind: *risks.npc(ident).unwrap(),
+        ticks: 39,
+    };
+    let start = input(40, 40, 0, &tables);
+    let heal = tables.food(start.food_ids[0]).unwrap().heal as u8;
+    let least = (0..=28)
+        .find(|&count| {
+            supply_bound(
+                &[exposure],
+                &start,
+                &tables,
+                Food {
+                    item: start.food_ids[0],
+                    heal,
+                    count,
+                },
+            )
+            .unwrap()
+            .admits(consts::DEATH_BOUND)
+        })
+        .unwrap();
+    assert_eq!(least, 1);
+    // A 20-point start needs two (one is refused, 29 % death bound).
+    assert_eq!(at(20, 40, 1).verdict, Verdict::Unsurvivable);
+    assert_eq!(at(20, 40, 2).verdict, Verdict::Survivable);
 }

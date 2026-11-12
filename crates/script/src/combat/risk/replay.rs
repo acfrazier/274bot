@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav_planner::contract::{BoundZoneExempt, LegView, RouteView, WildernessView};
+use nav_planner::contract::{LegView, MultiwayView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 
@@ -22,11 +22,18 @@ use std::future::Future;
 pub struct Estimate<'a> {
     pub zones: Option<ZoneTableView<'a>>,
     pub wilderness: WildernessView<'a>,
+    /// Multi-combat map cells. [`MultiwayView::none`] keeps every attacker
+    /// summed (an absent table never grants a single-way claim).
+    pub multiway: MultiwayView<'a>,
     pub risks: &'a RiskTables,
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
     pub generation: u64,
-    pub grants: Option<Grants<'a>>,
+    /// The walk carries danger permission (the global override or the
+    /// script's request), so it may deliberately end inside a zone with no
+    /// way out. The death bound still judges the route. There is no per-zone
+    /// matching: a permitted walk is judged on its route, not on zone names.
+    pub permitted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -458,6 +465,100 @@ fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, Unknown
     add(mul(i32::from(kind.r), 2)?, LAG)
 }
 
+/// One interval's damage inside the window `low..=high`: its maximum hit
+/// once, and once per attack it can make in the window.
+fn row_window(
+    path: RoutePath<'_>,
+    row: &ZoneInterval,
+    low: i32,
+    high: i32,
+) -> Result<(i32, i32), UnknownWhy> {
+    let (start, end) = exposure(path, row)?;
+    let hit = i32::from(row.max_hit);
+    Ok(if row.hazard() {
+        if (low..=high).contains(&start) {
+            (hit, hit)
+        } else {
+            (0, 0)
+        }
+    } else if start <= high && end > low {
+        (hit, mul(hit, policy::hits_before_bite(row.rate))?)
+    } else {
+        (0, 0)
+    })
+}
+/// The damage the plan's own rows can land in the ticks before a bite sent
+/// at `tick` takes effect (`tick + 1` through `tick + LAG`): the sum of each
+/// attacker's maximum hit once (`danger`, what the real eater reads from its
+/// live threats) and once per attack it can make inside the window
+/// (`burst`, [`policy::hits_before_bite`], what the real eater's critical
+/// floor reads). A credited protection removes a crossing's attackers from
+/// both, as the replay's own `hits` does; a fixed hazard and a queued launch
+/// hit once.
+pub(super) async fn window_damage<F, U>(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    tick: i32,
+    input: &RiskInput,
+    tables: &CombatTables,
+    allow: WalkAllow,
+    checkpoint: &mut F,
+) -> Result<(i32, i32), UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    let (low, high) = (add(tick, 1)?, add(tick, LAG)?);
+    let mut danger = 0;
+    let mut burst = 0;
+    for c in &plan.crossings {
+        if protect(c, plan, path, input, tables, allow, checkpoint).await {
+            if (low..=high).contains(&path.point(c.first).ok_or(UnknownWhy::Overflow)?.tick) {
+                let mut worst = 0;
+                for i in c.first..=c.last {
+                    worst = worst.max(volley(plan, i, false, checkpoint).await?);
+                }
+                danger = add(danger, worst)?;
+                burst = add(burst, worst)?;
+            }
+            super::checkpoint(checkpoint).await;
+            continue;
+        }
+        for row in rows(plan, c) {
+            let (one, many) = row_window(path, row, low, high)?;
+            danger = add(danger, one)?;
+            burst = add(burst, many)?;
+            super::checkpoint(checkpoint).await;
+        }
+    }
+    let escape_end = plan
+        .crossings
+        .first()
+        .map_or(plan.intervals.len(), |c| usize::from(c.intervals.0));
+    for row in &plan.intervals[..escape_end] {
+        let (one, many) = row_window(path, row, low, high)?;
+        danger = add(danger, one)?;
+        burst = add(burst, many)?;
+        super::checkpoint(checkpoint).await;
+    }
+    for live in input.live_iter() {
+        let hit = i32::from(live.max_hit);
+        if low < origin_duration(live, tables)? {
+            danger = add(danger, hit)?;
+            burst = add(burst, mul(hit, policy::hits_before_bite(live.rate))?)?;
+        }
+        if live
+            .due()
+            .is_some_and(|due| (low..=high).contains(&i32::from(due.wrapping_sub(input.tick))))
+        {
+            danger = add(danger, hit)?;
+            burst = add(burst, hit)?;
+        }
+        super::checkpoint(checkpoint).await;
+    }
+    Ok((danger, burst))
+}
+
 async fn hits<F, U>(
     path: RoutePath<'_>,
     plan: &RoutePlan,
@@ -569,6 +670,11 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
 
 /// Replays the shared picker against stack-only inventory/count overlays.
 /// The hook exposes applied hits and bites to independent test simulations.
+///
+/// Test model only: no production path calls it. Production admission is
+/// [`assess`] (the 1 % `timeline_bound` with the `guarded_bound` supply
+/// planner), so this replay's failure rule (HP at or below the route floor
+/// `estimated_floor`) is not a production gate.
 #[allow(clippy::too_many_arguments)]
 pub fn replay(
     path: RoutePath<'_>,
@@ -820,19 +926,30 @@ where
                     reach: None,
                     wilderness: None,
                 };
-                // The replay's own line already charges the poison term
-                // (`intended` above), so it passes no second fire here, or
-                // one fire would count twice.
-                if let Some(id) = policy::eat_choice(
+                // The same two-tier choice the real eater makes. Its danger
+                // and burst come from the plan's own rows over the ticks
+                // before this bite takes effect; the replay's line is its
+                // caller floor. The line already charges the poison term, so
+                // only the critical floor takes the pulse.
+                let (danger, burst) =
+                    window_damage(path, plan, tick, input, tables, allow, checkpoint).await?;
+                if let Some(id) = policy::eat_choice_excluding(
                     &frame,
                     tables,
                     &schedule,
-                    Some(intended / 2),
-                    0,
-                    hp,
-                    cap,
-                    tick as u16,
-                    0,
+                    policy::EatInputs {
+                        danger: Some(danger),
+                        burst: Some(burst),
+                        poison_fire: i32::from(poison_pulse_now(
+                            input.poison,
+                            tables.unknown_poison_pulse(),
+                        )),
+                        hp,
+                        hp_max: cap,
+                        tick: tick as u16,
+                        eat_floor: intended,
+                    },
+                    &[],
                 )
                 .and_then(|choice| choice.ordinary)
                 {
@@ -886,32 +1003,6 @@ impl Write for Reason {
     }
 }
 
-/// The zones enforcing admission treats as granted for one found route.
-#[derive(Clone, Copy)]
-pub struct Grants<'a> {
-    /// Request-bound named exemptions (`cross` keys or an explicit `all()`).
-    pub named: BoundZoneExempt,
-    /// Router endpoint completion is retained as request context but is never
-    /// an admission exemption; only `named` affects the NoWayOut exception.
-    pub endpoint: Option<WildernessView<'a>>,
-}
-impl<'a> Grants<'a> {
-    /// Only the request's explicit exemptions.
-    pub const fn named(named: BoundZoneExempt) -> Self {
-        Self {
-            named,
-            endpoint: None,
-        }
-    }
-    /// Retain router request context; endpoint completion does not grant risk.
-    pub const fn request(named: BoundZoneExempt, wilderness: WildernessView<'a>) -> Self {
-        Self {
-            named,
-            endpoint: Some(wilderness),
-        }
-    }
-}
-
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
 /// `route` and `context.zones` must be views of the same pack.
 pub fn assess(
@@ -930,7 +1021,34 @@ fn timeline_bound(
     poison: super::timeline::PoisonCharge,
 ) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy> {
     super::timeline::with_event_buffer(|events| {
-        let summary = super::timeline::build_timeline(
+        // Single-way combat (content `npc_combat.rs2:372-389`) lets one
+        // attacker at a time hit the player. The schedule that counts it is
+        // an upper bound of the real process, and so is the all-summed
+        // schedule; the smaller of the two bounds is still an upper bound.
+        let single = super::timeline::build_single_way_timeline(
+            super::timeline::TimelineInputs::new(
+                path,
+                plan,
+                input,
+                context.combat,
+                context.risks,
+                context.multiway,
+            ),
+            poison,
+            events,
+        );
+        let single = match single {
+            Ok(summary) if summary.single_way_rows == 0 => {
+                // Nothing collapsed: this schedule is the all-summed one.
+                let bound = scheduled_bound(events.events(), path, plan, input, context)?;
+                return Ok((summary, bound));
+            }
+            Ok(summary) => scheduled_bound(events.events(), path, plan, input, context)
+                .map(|bound| (summary, bound))
+                .ok(),
+            Err(_) => None,
+        };
+        let summed = super::timeline::build_timeline(
             path,
             plan,
             input,
@@ -938,10 +1056,90 @@ fn timeline_bound(
             context.risks,
             poison,
             events,
-        )?;
-        let bound = super::odds::death_bound(events.events(), input.hp)?;
-        Ok((summary, bound))
+        )
+        .and_then(|summary| {
+            scheduled_bound(events.events(), path, plan, input, context)
+                .map(|bound| (summary, bound))
+        });
+        match (single, summed) {
+            (Some(single), Ok(summed)) => Ok(if score(single.1) <= score(summed.1) {
+                single
+            } else {
+                summed
+            }),
+            (Some(single), Err(_)) => Ok(single),
+            (None, summed) => summed,
+        }
     })
+}
+
+fn scheduled_bound(
+    events: &[super::odds::Event],
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    context: &Estimate<'_>,
+) -> Result<super::odds::DeathBound, UnknownWhy> {
+    if !context.allow.food || input.food_len != 1 || input.more_food() {
+        return super::odds::death_bound(events, input.hp);
+    }
+    let id = input.food_ids[0];
+    let Some(food) = context.combat.food(id).filter(|food| ordinary(food)) else {
+        return super::odds::death_bound(events, input.hp);
+    };
+    super::guarded_bound(
+        events,
+        input.hp,
+        input.hp_max,
+        super::Food {
+            item: id,
+            heal: u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?,
+            count: input.food_counts[0],
+        },
+        |tick| {
+            let tick = i32::from(tick);
+            let mut danger = 0i32;
+            let mut burst = 0i32;
+            for row in &plan.intervals {
+                if exposure(path, row).is_ok_and(|(start, end)| tick >= start && tick < end) {
+                    let hit = i32::from(row.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst.saturating_add(if row.hazard() {
+                        hit
+                    } else {
+                        hit.saturating_mul(policy::hits_before_bite(row.rate))
+                    });
+                }
+            }
+            for live in input.live_iter() {
+                if origin_duration(live, context.combat).is_ok_and(|end| tick < end) {
+                    let hit = i32::from(live.max_hit);
+                    danger = danger.saturating_add(hit);
+                    burst = burst
+                        .saturating_add(hit.saturating_mul(policy::hits_before_bite(live.rate)));
+                }
+            }
+            let point = (0..path.len())
+                .filter_map(|index| u16::try_from(index).ok())
+                .filter_map(|index| path.point(index))
+                .take_while(|point| point.tick <= tick)
+                .last();
+            super::GuardTick {
+                danger: Some(danger),
+                burst: Some(burst),
+                poison_fire: i32::from(poison_pulse_now(
+                    input.poison,
+                    context.risks.poison_unknown_v,
+                )),
+                input_locked: point.is_some_and(|point| point.input_held(tick)),
+            }
+        },
+    )
+}
+
+/// The admission statistic of a bound: the closed form plus its rounding guard.
+fn score(bound: super::odds::DeathBound) -> f64 {
+    bound.bound + f64::from(bound.visits) * f64::EPSILON
 }
 
 async fn timeline_bound_cooperative<F, U>(
@@ -964,32 +1162,6 @@ where
     // The event buffer borrow ended with `timeline_bound`.
     super::checkpoint(checkpoint).await;
     result
-}
-
-async fn crossing_named<F, U>(
-    plan: &RoutePlan,
-    crossing: &CrossingGeom,
-    zones: ZoneTableView<'_>,
-    grants: Option<Grants<'_>>,
-    checkpoint: &mut F,
-) -> Result<bool, UnknownWhy>
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    let Some(grants) = grants else {
-        return Ok(false);
-    };
-    for row in rows(plan, crossing) {
-        let named = zones
-            .exemption_contains(grants.named, row.zone)
-            .map_err(nav_identity)?;
-        super::checkpoint(checkpoint).await;
-        if !named {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 fn display_u8(value: u64) -> u8 {
@@ -1061,13 +1233,6 @@ where
     }
 
     let mut unknown = input_problem(&input, context.combat);
-    if unknown.is_none()
-        && context
-            .grants
-            .is_some_and(|grants| grants.named.pack() != zones.pack())
-    {
-        unknown = Some(UnknownWhy::NavIdentity);
-    }
     for row in &plan.intervals {
         if let Some(class) = row.unknown_kind() {
             let _ = write!(
@@ -1170,9 +1335,7 @@ where
     let mut no_way_out = None;
     if unknown.is_none() {
         for crossing in &plan.crossings {
-            if !crossing.has_way_out()
-                && !crossing_named(&plan, crossing, zones, context.grants, checkpoint).await?
-            {
+            if !crossing.has_way_out() && !context.permitted {
                 no_way_out = Some(*crossing);
                 break;
             }
@@ -1399,7 +1562,7 @@ where
         Verdict::Unsurvivable => {
             let _ = write!(
                 reason,
-                "the model's upper bound on the chance of death is {:.1}%; at most {:.0}% is admitted (no eating, prayer or escape counted); ",
+                "the model's upper bound on the chance of death is {:.1}%; at most {:.0}% is admitted (carried ordinary food counted; no prayer or escape counted); ",
                 bound * 100.0,
                 super::consts::DEATH_BOUND * 100.0,
             );

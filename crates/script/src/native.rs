@@ -121,6 +121,8 @@ pub const WALK_OUTCOME_SEQ_MAX: u64 = u64::MAX >> 1;
 
 /// A walk-local permission bit. Inherit uses the captured global and
 /// per-script settings; Allow can add permission and Forbid can narrow it.
+/// The danger-zone bit is the exception: only Allow has an effect, and Forbid
+/// reads as Inherit, because the global danger setting has no exception.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WalkBit {
     #[default]
@@ -156,23 +158,12 @@ impl From<Option<bool>> for WalkBit {
         }
     }
 }
-/// Walk-local override for survivable-risk admission, mapped directly from
-/// `WalkOptions::allow_danger_zones`.
+/// How the host judges a walk that may meet danger zones. `Proceed` walks
+/// without the survival check (the global override); `Avoid` keeps the check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RiskPolicy {
-    Inherit,
     Proceed,
     Avoid,
-}
-
-impl From<WalkBit> for RiskPolicy {
-    fn from(value: WalkBit) -> Self {
-        match value {
-            WalkBit::Inherit => Self::Inherit,
-            WalkBit::Allow => Self::Proceed,
-            WalkBit::Forbid => Self::Avoid,
-        }
-    }
 }
 
 /// Native navigation permissions attached to one request. Native fetch is
@@ -453,11 +444,22 @@ pub struct CompiledCard {
     pub description: &'static str,
     pub category: &'static str,
     pub schema_version: u16,
+    /// Saved settings schema versions older than `schema_version` that this
+    /// card reads as its own: their values load unchanged, and a setting
+    /// they lack takes its default. The next save stamps `schema_version`.
+    pub reads_schema_versions: &'static [u16],
     pub schema: fn() -> &'static [SettingDef],
     pub per_account_settings: &'static [&'static str],
     pub prepare: PrepareCard,
     pub create: CreateScript,
     pub lifecycle: Option<&'static CardLifecycle>,
+}
+
+impl CompiledCard {
+    /// Whether saved settings stamped `version` load for this card.
+    pub fn reads_saved_schema(&self, version: u16) -> bool {
+        version == self.schema_version || self.reads_schema_versions.contains(&version)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -823,7 +825,8 @@ pub fn with_test_tick<R>(
     let mut budget = ledger::TickBudget::default();
     budget.observe(evidence.tick);
     let mut actions = NativeActions { _private: () };
-    let snapshot = SnapshotView::new(frame.snapshot(), evidence);
+    let snapshot = SnapshotView::new(frame.snapshot(), evidence)
+        .with_bank_memory(frame.compiled().bank_memory);
     let eligible = !frame.compiled().hold;
     let mut tick = NativeTick {
         walk_danger: None,
@@ -834,6 +837,7 @@ pub fn with_test_tick<R>(
         actions: &mut actions,
         cx: ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: PrereqOptions::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -842,6 +846,7 @@ pub fn with_test_tick<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: WalkCancelReason::None,
             snapshot,
+            shop_keepers: frame.compiled().shop_keepers,
             revision,
             retained: &mut retained,
             action_id: 0,
@@ -931,6 +936,7 @@ pub struct ActionContext<'a> {
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,
+    pub(crate) shop_keepers: Option<&'a Arc<api::service_pick::ShopKeeperFacts>>,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
@@ -942,6 +948,8 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
+    /// Declared Path counts reserved from the active run's survival food.
+    pub(crate) protected_items: Option<Arc<[crate::combat::FoodReserve]>>,
     /// The Wilderness levels the host lends for this frame; `None` when the
     /// host has no nav pack. The combat machine's zone gate treats `None` as
     /// "outside the wilderness".
@@ -1321,12 +1329,22 @@ const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 /// two fresh replans. Quester walk first set this cap in b26097813.
 pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
 
+/// The Gatherer's per-walk bound: the initial request and one fresh plan from
+/// the observed position (USER-0.2.3-GATHERER §1 and §3; the same bound as
+/// `MAX_RETURN_RECOVERY_ATTEMPTS`). Targets that still fail are shunned and
+/// spend the run's per-phase budget, so the retries stay finite.
+pub(crate) const GATHER_WALK_MAX_ATTEMPTS: u8 = 2;
+
 /// Shares Quester's walk-step retry budget and next-tick recovery state with
 /// every family that owns an approach walk.
 pub(crate) struct WalkRetryState {
     recovery: ReturnStallRecovery,
-    // Read only while recovery is pending; that state owns whether this tick is set.
+    // Read only while recovery is pending or held; those states own whether
+    // this tick is set.
     retry_after_tick: u64,
+    /// A wait that spends no retry budget, such as a refused walk or a target
+    /// excluded for the next pick.
+    held: bool,
 }
 
 impl Default for WalkRetryState {
@@ -1334,11 +1352,52 @@ impl Default for WalkRetryState {
         Self {
             recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
             retry_after_tick: 0,
+            held: false,
         }
     }
 }
 
 impl WalkRetryState {
+    /// A retry state whose budget is `max_attempts` requests in all, the
+    /// initial one included. The Gatherer's walks use
+    /// [`GATHER_WALK_MAX_ATTEMPTS`]: one fresh plan from the observed position.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            recovery: ReturnStallRecovery::with_max_attempts(max_attempts),
+            retry_after_tick: 0,
+            held: false,
+        }
+    }
+
+    /// The Gatherer's failure test: the ordinary failures of
+    /// [`Self::retryable_receipt`] and a plain refusal that names no typed
+    /// reason or blocked zone (AGENTS.md:131 covers NoPath, RouteEnded, Failed,
+    /// untyped Refused and Stalled). A typed refusal stays terminal.
+    pub(crate) fn observe_gather_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        let untyped_refusal = receipt.end == WalkEnd::Refused
+            && receipt.refusal.is_none()
+            && receipt
+                .blocked
+                .as_deref()
+                .is_none_or(|blocked| blocked.is_empty());
+        self.observe_approach_retry(
+            receipt,
+            tick,
+            Self::retryable_receipt(receipt) || untyped_refusal,
+        )
+    }
+
+    /// A transient Traveller stall (expired or dropped hop) on a return
+    /// walk; every other end stays terminal for the owner.
+    pub(crate) fn observe_return_stall(&mut self, end: &WalkEnd, tick: u64) -> bool {
+        if self.recovery.observe(end) {
+            self.retry_after_tick = tick;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
         if self.recovery.observe_receipt(receipt) {
             self.retry_after_tick = tick;
@@ -1387,8 +1446,8 @@ impl WalkRetryState {
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
-            "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
-            QUEST_WALK_MAX_ATTEMPTS,
+            "walk-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+            self.recovery.max_attempts,
             receipt.end,
         );
         true
@@ -1412,7 +1471,13 @@ impl WalkRetryState {
     }
 
     pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
-        self.pending() && tick <= self.retry_after_tick
+        (self.pending() || self.held) && tick <= self.retry_after_tick
+    }
+
+    /// Wait until an observed tick after `tick` without spending retry budget.
+    pub(crate) fn hold_next_tick(&mut self, tick: u64) {
+        self.held = true;
+        self.retry_after_tick = tick;
     }
 
     pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
@@ -1424,15 +1489,23 @@ impl WalkRetryState {
     pub(crate) fn action_submitted(&mut self) {
         self.recovery.action_submitted();
         self.retry_after_tick = 0;
+        self.held = false;
     }
 
     pub(crate) fn reset(&mut self) {
         self.recovery.reset();
         self.retry_after_tick = 0;
+        self.held = false;
     }
 
     pub(crate) fn retry_attempt_number(&self) -> u8 {
         self.recovery.retry_attempt_number()
+    }
+
+    /// Recovery actions already submitted.
+    #[cfg(test)]
+    pub(crate) fn actions(&self) -> u8 {
+        self.recovery.actions()
     }
 }
 
@@ -1771,6 +1844,9 @@ impl<'a> ActionContext<'a> {
     pub fn cure_poison(&self) -> crate::survival::CurePoison {
         self.cure_poison
     }
+    pub(crate) fn protected_items(&self) -> &[crate::combat::FoodReserve] {
+        self.protected_items.as_deref().unwrap_or(&[])
+    }
     pub fn retained(&mut self) -> &mut RetainedMemory {
         self.retained
     }
@@ -2074,13 +2150,6 @@ mod walk_permission_tests {
     }
 
     #[test]
-    fn risk_policy_is_the_existing_walk_tri_state_projection() {
-        assert_eq!(RiskPolicy::from(WalkBit::Inherit), RiskPolicy::Inherit);
-        assert_eq!(RiskPolicy::from(WalkBit::Allow), RiskPolicy::Proceed);
-        assert_eq!(RiskPolicy::from(WalkBit::Forbid), RiskPolicy::Avoid);
-    }
-
-    #[test]
     fn walk_allow_defaults_enable_food_and_escape() {
         let allow = WalkAllow::default();
         assert!(allow.prayer);
@@ -2287,6 +2356,58 @@ mod walk_permission_tests {
             receipt.failure_detail().as_deref(),
             Some("escape in progress")
         );
+    }
+
+    fn walk_retry_receipt(
+        end: WalkEnd,
+        blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+        refusal: Option<WalkRefusal>,
+    ) -> WalkReceipt {
+        WalkReceipt {
+            goal: None,
+            request_id: 19,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end,
+            blocked,
+            detail: None,
+            refusal,
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        }
+    }
+
+    #[test]
+    fn typed_walk_refusal_does_not_schedule_a_fresh_plan() {
+        let receipt =
+            walk_retry_receipt(WalkEnd::Refused, None, Some(WalkRefusal::EscapeInProgress));
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!WalkRetryState::retryable_receipt(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
+    }
+
+    #[test]
+    fn blocked_zones_do_not_schedule_a_fresh_plan() {
+        let receipt = walk_retry_receipt(
+            WalkEnd::NoPath,
+            Some(Arc::from([nav_planner::contract::ZoneKey::Zone(17)])),
+            None,
+        );
+        let mut recovery = ReturnStallRecovery::default();
+
+        assert!(!WalkRetryState::retryable_receipt(&receipt));
+        assert!(!recovery.observe_receipt(&receipt));
+        assert!(!recovery.pending());
     }
 
     #[test]

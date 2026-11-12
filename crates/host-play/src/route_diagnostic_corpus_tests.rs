@@ -56,10 +56,9 @@ impl DiagnosticCase {
         Box::new(ScriptRouteRequest {
             candidate_goals: self.walk_goals(),
             admission: crate::admission::Admission::manual(
-                self.opts,
+                crate::WalkGlobals::default().manual_decision(self.opts.zones.is_all()),
                 Default::default(),
                 1,
-                crate::WalkGlobals::default(),
             ),
             generation: 1,
             request_id: 1,

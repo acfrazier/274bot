@@ -255,6 +255,8 @@ pub struct FleetRow {
     /// Authenticated client session, independent of game readiness.
     connected: bool,
     script: RunState,
+    /// Whether the current Running script's native status is parked.
+    parked: bool,
     /// The script run's published walk destination is live (tied to the run:
     /// only while the script lifecycle is live).
     script_walk: bool,
@@ -280,7 +282,7 @@ pub struct FleetRow {
     /// per slot, so it outlives the bounded operation history.
     last_op: Option<OpBrief>,
     /// Narrow status label (at most about 12 columns for a small queue):
-    /// `queued 2/5`, `logging in`, `running`, `idle`, …
+    /// `queued 2/5`, `logging in`, `running`, `blocked`, `idle`, …
     brief: String,
 }
 
@@ -296,6 +298,7 @@ impl Default for FleetRow {
             guard_parked: false,
             connected: false,
             script: RunState::Idle,
+            parked: false,
             script_walk: false,
             manual_walk: false,
             error: None,
@@ -320,6 +323,7 @@ impl FleetRow {
         self.guard_parked = source.guard_parked;
         self.connected = source.connected;
         self.script = source.script;
+        self.parked = source.parked;
         self.script_walk = source.script_walk;
         self.manual_walk = source.manual_walk;
         self.error.clone_from(&source.error);
@@ -344,6 +348,7 @@ impl FleetRow {
             guard_parked: false,
             connected: false,
             script: RunState::Idle,
+            parked: false,
             script_walk: false,
             manual_walk: false,
             error: None,
@@ -389,6 +394,7 @@ impl FleetRow {
         self.connected = false;
         self.script = RunState::Idle;
         self.script_walk = false;
+        self.parked = false;
         self.manual_walk = false;
         self.error = None;
         self.login_notice = None;
@@ -443,6 +449,11 @@ impl FleetRow {
         self.script
     }
 
+    /// Whether the current Running script's native status is parked.
+    pub fn parked(&self) -> bool {
+        self.parked
+    }
+
     /// The script run's published walk is live. It belongs to the run, so it
     /// is never true while the script is idle or failed.
     pub fn script_walk(&self) -> bool {
@@ -483,7 +494,7 @@ impl FleetRow {
         self.last_op.as_ref()
     }
 
-    /// Narrow status label (`queued 2/5`, `logging in`, `running`, `idle`, …).
+    /// Narrow status label (`queued 2/5`, `logging in`, `running`, `blocked`, `idle`, …).
     pub fn brief(&self) -> &str {
         &self.brief
     }
@@ -535,6 +546,10 @@ impl FleetRow {
 
     fn write_brief(&mut self) {
         self.brief.clear();
+        if self.script == RunState::Running && self.parked {
+            self.brief.push_str("blocked");
+            return;
+        }
         if self.script == RunState::Idle {
             if let Some(place) = self.queue {
                 if !matches!(
@@ -1230,6 +1245,11 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         (Some(play), true) => RunState::from_script(play.script_state(&row.name)),
         _ => RunState::Idle,
     };
+    let script_parked = script == RunState::Running
+        && input.play.is_some_and(|play| {
+            play.script_native_status(&row.name)
+                .is_some_and(|status| parked(&status))
+        });
     let mut changed = false;
     let world = status.and_then(|s| s.world);
     let connected = status.is_some_and(|s| s.connected);
@@ -1255,6 +1275,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.guard_parked,
         row.connected,
         row.script,
+        row.parked,
         row.script_walk,
         row.manual_walk,
     ) != (
@@ -1265,6 +1286,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         guard_parked,
         connected,
         script,
+        script_parked,
         script_walk,
         manual_walk,
     ) {
@@ -1275,6 +1297,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.guard_parked = guard_parked;
         row.connected = connected;
         row.script = script;
+        row.parked = script_parked;
         row.script_walk = script_walk;
         row.manual_walk = manual_walk;
         changed = true;
@@ -1676,19 +1699,22 @@ fn field_text<'a>(field: &'a script::native::StatusField, key: &str) -> Option<&
 /// `(label, value)`. Folder Path comments are shown only with a source marker.
 pub fn script_status_rows(status: StatusView<'_>) -> impl Iterator<Item = (&str, &str)> {
     let status = status.status();
-    status.fields.iter().filter_map(|field| match &field.value {
-        script::native::StatusValue::Text(value)
-            if matches!(
-                field.key,
-                "display" | "queue" | "path_source" | "draft_status"
-            ) || (field.key == "step_comment"
-                && !value.is_empty()
-                && status.fields.iter().any(|field| field.key == "path_source")) =>
-        {
-            Some((field.label, value.as_ref()))
-        }
-        _ => None,
-    })
+    let has_path_source = status.fields.iter().any(|field| field.key == "path_source");
+    status
+        .fields
+        .iter()
+        .filter_map(move |field| match &field.value {
+            script::native::StatusValue::Text(value)
+                if (matches!(
+                    field.key,
+                    "display" | "queue" | "path_source" | "draft_status" | "bank_seen"
+                ) || (field.key == "step_comment" && has_path_source))
+                    && !value.is_empty() =>
+            {
+                Some((field.label, value.as_ref()))
+            }
+            _ => None,
+        })
 }
 
 fn count(rows: &[FleetRow]) -> FleetCounts {

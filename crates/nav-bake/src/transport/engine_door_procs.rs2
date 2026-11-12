@@ -1,8 +1,6 @@
-// The engine procs a stage-door crossing ends in, and every proc they call,
-// verbatim from lostcity-289 content 92649430f (source file:line above each).
-// `stage_doors` admits a crossing proc only while the content's own body of
-// it and of every proc it calls equals the body here (comments and whitespace
-// aside); any drift makes the proc unsupported and its openers edge-less.
+// Test fixture: the engine procs a stage-door crossing ends in, and every
+// proc they call, from lostcity-289 content (source file:line above each).
+// Tests write this text as synthetic content; the bake does not compare it.
 
 // doors/scripts/open_and_close_doors.rs2:9
 [proc,open_and_close_door](loc $replacement, boolean $entering, boolean $play_locked_synth)

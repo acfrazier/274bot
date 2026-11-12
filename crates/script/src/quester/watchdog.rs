@@ -2,6 +2,8 @@
 //! park at eight. Unlike the slot's wall-clock wedge watchdog and Gatherer's
 //! gameplay-tick idle bound, this counts completed/failed Quester boundaries.
 //! Lifecycle freezes and releases discard the prior signature/count window.
+//! A completed attempt of a budgeted step (see `attempt_completed`) clears the
+//! count: that step's own `max_attempts` bounds its retries instead.
 
 use api::selected::FactKey;
 use api::WorldTile;
@@ -23,6 +25,13 @@ pub struct Watchdog {
 impl Watchdog {
     pub fn unchanged(&self) -> u8 {
         self.same
+    }
+
+    /// One attempt of a budgeted step ran and showed its content failure
+    /// signal, so it changed the world even though no tracked fact moved.
+    /// Clears the unchanged count; the step's `max_attempts` is then the bound.
+    pub fn attempt_completed(&mut self) {
+        self.same = 0;
     }
 
     pub fn observe(
@@ -94,6 +103,33 @@ mod tests {
             last = dog.observe(Some(&stage), None, &[(1, 1)], &[], 0);
         }
         assert_eq!(last, WatchdogAction::Warn);
+    }
+
+    #[test]
+    fn a_completed_attempt_clears_the_unchanged_count() {
+        let mut dog = Watchdog::default();
+        let stage = FactKey::new("mcannon:1");
+        let mut last = WatchdogAction::None;
+        for _ in 0..40 {
+            dog.attempt_completed();
+            last = dog.observe(Some(&stage), None, &[(1, 1)], &[], 0);
+        }
+        assert_eq!(last, WatchdogAction::None);
+        assert_eq!(dog.unchanged(), 1);
+        // Without the clear, the same observations park.
+        let mut dog = Watchdog::default();
+        for _ in 0..9 {
+            last = dog.observe(Some(&stage), None, &[(1, 1)], &[], 0);
+        }
+        assert_eq!(last, WatchdogAction::Park);
+        // Completed attempts do not hide a later stall.
+        let mut dog = Watchdog::default();
+        dog.attempt_completed();
+        dog.observe(Some(&stage), None, &[(1, 1)], &[], 0);
+        for _ in 0..9 {
+            last = dog.observe(Some(&stage), None, &[(1, 1)], &[], 0);
+        }
+        assert_eq!(last, WatchdogAction::Park);
     }
 
     #[test]

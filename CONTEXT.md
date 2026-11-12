@@ -82,8 +82,8 @@ Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Tra
 _Avoid_: calling a coordinate table a world-port; calling `lightFire` (tinderbox use-on logs) a world-port
 
 **Unloadable**:
-A catalog card the picker will not Start: missing remap, or a locked dim name (GatheringBot rows Woodcutter/Miner/Fisher, AIOQuester, ArravSupplier, Barcrawl, RoguesPurse, MarketMaker). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
-_Avoid_: dimming because a mapped member throws `not impl`; keeping CookBot dim for lack of a `Firemaking.js` URL
+A loaded JS card the picker will not Start, for one of two reasons: an import that does not remap to a supplied shim (shown as `failed import: <specifier>`), or catalog policy that retires the card in favour of a native card or puts it outside supported scope (shown as `unavailable: <reason>`). Catalog WalkTo is reserved (host nav), never a card. Dimmed.
+_Avoid_: calling a policy retirement a failed import; dimming because a mapped member throws `not impl`; keeping CookBot dim for lack of a `Firemaking.js` URL
 
 **`not impl`**:
 The honest miss prefix: `not impl: <throw reason>`. Unmapped: `not impl: Game.teleport`. Mapped close: `not impl: Game.setCombatStyle: combat_styles empty`. Better than a fake `true`. The throw list is the ledger for a later host-verb campaign.
@@ -183,5 +183,5 @@ One entry from `servers.json` binding revision and world roster for the whole pr
 _Avoid_: switching worlds mid-process, `--prod` / `BOT_TARGET` (removed)
 
 **Danger zone**:
-Content-derived nav exclusion (dangerous monsters and similar areas). Walks avoid it by default and name what blocks them. Crossing needs the global Danger routing level Always, the per-walk WalkTo opt-in, or a script's or quest step's own allowance. The middle level, When survivable (the default), acts as Never until the bot can track poison.
+Content-derived nav exclusion (dangerous monsters and similar areas). Walks avoid it by default and name what blocks them. Crossing needs the global Danger routing level Always (the default is Never), the per-walk WalkTo opt-in, or a script's or quest step's own request; a request without Always is checked against the 1% death bound.
 _Avoid_: hand-written monster lists, policy tables as routing

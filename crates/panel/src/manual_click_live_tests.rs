@@ -192,13 +192,9 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 &WorldState::empty(),
                 &BankRows::default(),
                 host_play::admission::Admission::manual(
-                    FindOptions {
-                        zones: nav_planner::zones::ZoneExempt::all(),
-                        ..Default::default()
-                    },
+                    host_play::WalkGlobals::default().manual_decision(true),
                     Default::default(),
                     0,
-                    host_play::WalkGlobals::default(),
                 ),
                 &scratch,
                 None,

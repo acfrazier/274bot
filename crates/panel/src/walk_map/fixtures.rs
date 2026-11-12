@@ -40,7 +40,6 @@ pub const FIXTURE_MAX_LOD: u8 = 1;
 pub fn image_identity() -> ImageIdentity {
     ImageIdentity {
         revision: 289,
-        content: Digest([0xf1; 32]),
         policy: Digest([0xf2; 32]),
     }
 }
@@ -60,7 +59,6 @@ impl Store {
         Self {
             identity: ImageIdentity {
                 revision: 0,
-                content: Digest([0; 32]),
                 policy: Digest([0; 32]),
             },
             max_lod: MAX_LOD,

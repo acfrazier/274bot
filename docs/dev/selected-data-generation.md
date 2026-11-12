@@ -104,9 +104,11 @@ the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
 Duel rules retain their selected bit positions: an unproved button stays at
 the existing unavailable sentinel 0, which `rule_button` returns as `None`.
 
-Shared extraction retains the 0.2.9 source-join rules. It does not require
-frozen corpus row counts, item IDs, prayer button ranges or display names.
-Missing definitions, duplicate joins and malformed source shapes still fail.
+Shared extraction does not compare packed names or IDs with the decoded
+caches, authored values with source text, or source with copied bodies. It
+does not require frozen corpus row counts, item IDs, prayer button ranges or
+display names. Missing definitions, duplicate joins and malformed source
+shapes still fail.
 
 Regression fixtures must supply the selected facts their consumers require.
 Legacy navigation controls retain the selected revision's Entrana inventory
@@ -132,11 +134,78 @@ its default sidecars:
 ```bash
 cargo run --locked -p nav-bake --bin nav-pack -- \
   --revision 289 \
+  --engine "$GAME_DATA_289_ENGINE" \
   --content "$GAME_DATA_289_CONTENT" \
   --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
   --game-data-dir crates/api/data/game-data \
   --out target/local-data/nav/289/274bot.navpack
 ```
+
+Add `--nav-shadow REPORT_JSON` to write the optional interpreter report. The
+report records per-entry machine results, edge differences, and measured
+limits. It does not change the baked pack or its sidecars.
+
+`stage_elapsed_ns` sums constructor setup, stage-door candidate
+machine-and-projection spans, the full auxiliary-entry run, and report-limit
+preparation. It excludes legacy stage-door evaluation, other transport
+producers, and JSON serialization.
+
+Each covered candidate records its generalised conditions and the elapsed-tick
+range across all compatible rivals. A raw path retains its own tick range.
+The shadow keeps the producer's existing pack prices.
+
+The standalone `climb_ladder` entry has unknown arguments. It records the
+one-tick prefix, then stops as unsupported because its destination has no
+coordinate proof. A known valid destination can finish. The query does not
+assume that an unknown argument is a valid coordinate.
+
+Measure process peak resident bytes separately, with and without this option.
+The report's byte counts cover each machine entry, not the whole bake process.
+The entry limits are 2,048 paths, 65,536 dispatched instructions, and 16 MiB of
+cumulative allocation. Each is the next power of two at least four times the
+largest measured entry on 274 and 289. The per-site fork limit stays at 64.
+
+Each retained path has transfer evidence. A join adds the counts from the paths
+it represents. Aggregate counts record dispatcher events, so they need not match
+the number of retained results.
+
+Loc effects record the resolved tile, shape, and angle. Created object ids are
+path-local, so equal ids alone cannot prove equal navigation effects. The shadow
+uses this geometry to bind an opened loc to the interaction target.
+The active leaf type comes from a created loc at the interacted leaf's
+`door_open` tile. A double-door partner can have another type at the mirrored
+tile, so it cannot override the active leaf (`doubledoors.rs2:133-141`). Some
+metal-gate handlers explicitly use `door_open_mirrored`, so the mirrored tile
+is a fallback when the active tile has no created leaf
+(`open_and_close_doors.rs2:139-164`, `door_procs.rs2:41-47`). A same-tile
+invisible wall or a leaf with the closed type is not the open leaf.
+Quest-signal bounds do not require journal colour authority. Journal completion
+still needs its separate proof.
+
+An NPC loop summary requires a stable population and a fresh iterator. An NPC add
+or delete instruction on a closed pass stops the path as unsupported at its
+iterator step. It does not use the engine's NPC capacity as a work bound.
+
+The real-engine parity tests compare arithmetic, string-enum stack types, loc
+life cycles, and zone list order with the selected 274 and 289 engines. They use
+the engine's real `World`, `Zone`, `Loc`, script state, and command handlers. The
+tests do not start a server tick or listener. Each engine process has a 120-second
+deadline. They also read `ScriptOpcodePointers` from each engine. A supported
+read row must not require protected player access.
+
+Select the same input roots used for generation:
+
+```bash
+RS2VM_ENGINE_274="$GAME_DATA_274_ENGINE" \
+RS2VM_CONTENT_274="$GAME_DATA_274_CONTENT" \
+RS2VM_ENGINE_289="$GAME_DATA_289_ENGINE" \
+RS2VM_CONTENT_289="$GAME_DATA_289_CONTENT" \
+RS2VM_BUN="$(command -v bun)" \
+cargo test --locked -p nav-bake rs2vm_engine_oracles
+```
+
+Missing local assets fail these tests. Only hosted GitHub Actions can skip them
+when the inputs are absent.
 
 The complete local navigation payloads live under
 `target/local-data/nav/<revision>/`. Regenerate both game data and navigation
@@ -175,8 +244,9 @@ Version-1 rows require attack, defence, magic, the signed attack/defence bonus f
 ## Gathering tick facts
 
 Gathering schema 4 requires a `tick_arm` row for every method.
-The extractor checks the reviewed attempt-script families and classifies each
-method as continuing, ending, or not armable. It also records the roll signal,
+The extractor classifies each method as continuing, ending, or not armable.
+Fishing tick values are hand-authored per method ID and are not compared
+with the attempt scripts. It also records the roll signal,
 depletion and delay-drop behavior, the native arm delay, and the animation ids
 resolved from the selected sequence pack.
 Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
@@ -185,8 +255,7 @@ classifications, unknown kinds, and tool rows that are duplicate or incomplete.
 
 Revision 377 resolves woodcutting animations through the selected tool struct's
 `skill_anim` parameter. It separates incompatible mining handlers into distinct
-methods for the same resource. Named fishing entrypoints keep the same
-source-shape checks as the historical loops. Shop keepers come from the
+methods for the same resource. Shop keepers come from the
 selected unpacked NPC definitions. Shop inventories join their unique definitions
 in the selected content tree.
 The 377 run does not rewrite the tracked historical hidden-site catalogue.
@@ -199,8 +268,8 @@ do not enable tick manipulation or change gathering requests by themselves.
 
 The revision 289 core includes a generated `server_ordered` catalog.
 The extractor joins content aliases, decoded interface properties, and the selected engine paths.
-It refuses missing or ambiguous aliases, changed controls, and incorrect interface ancestry.
-The selected font and message animation must prove one banker player page for `bank_open_deposit`.
+It refuses missing or ambiguous aliases and unsupported structures.
+The parsed chat split and the selected message animation must give one banker player page for `bank_open_deposit`.
 If that page is unproved, only this recipe is unavailable.
 Unproved revisions do not inherit revision 289 facts.
 

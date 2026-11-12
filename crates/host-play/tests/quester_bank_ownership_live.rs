@@ -668,6 +668,7 @@ fn step(
         advances: Some(advances),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if,
         settle,
         hazard: None,
@@ -829,6 +830,14 @@ fn insert_player_open_gundai_steps(
                     api::interact::SendResult::Sent { .. }
                 );
                 if sent {
+                    eprintln!(
+                        "gundai-prestart-click player={:?} npc_tile={:?} npc_network={:?} npc_index={} moving={}",
+                        snapshot.tile(),
+                        npc.tile,
+                        npc.network,
+                        npc.index,
+                        npc.moving,
+                    );
                     let mut witness = talk_trace.lock().expect("bank witness mutex");
                     witness.gundai_seed_before_talk = Some(seed_receipt);
                     witness.gundai_talk_sent = true;
@@ -1074,6 +1083,7 @@ fn build_bank_cell(
             stage: COOK_STAGE,
             loadout: None,
             extra_items: &[],
+            skills: &[],
             stand,
         },
         &[(COOK_VARP, 0)],
@@ -1586,6 +1596,7 @@ mod oracle_tests {
                 stage: COOK_STAGE,
                 loadout: None,
                 extra_items: &[],
+                skills: &[],
                 stand: GUNDAI_STAND,
             },
             &[(COOK_VARP, 0)],

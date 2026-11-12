@@ -1,34 +1,17 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { walkContentFiles } from './common.ts';
-import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
+import { stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
-import type { PrereqJournalWire, PrereqRowWire, RangeWire } from './prereq-steps.ts';
+import type { RangeWire } from './prereq-steps.ts';
 
 type Guard = { expression: string; polarity: boolean };
 type Statement = { text: string; line: number; guards: Guard[] };
 type BlockRef = { id: string; block: Rs2Block; statements: Statement[]; entry: boolean };
 type CallEdge = { caller: string; guards: Guard[] };
-type WriterRhs = { kind: 'constant'; value: number } | { kind: 'increment' };
-type Writer = {
-    file: string;
-    line: number;
-    block: BlockRef;
-    rhs: WriterRhs;
-    guards: Guard[];
-    reviewed?: PrereqRowWire['reviewed_writes'][number];
-};
 type ScriptGraph = {
     byId: Map<string, BlockRef>;
     reverse: Map<string, CallEdge[]>;
-    writers: Writer[];
 };
 type Compare = { variableOnLeft: boolean; operator: string; value: number };
 type BoolExpr = { kind: 'atom'; text: string } | { kind: 'and' | 'or'; left: BoolExpr; right: BoolExpr } | { kind: 'not'; child: BoolExpr };
-type Literal = { text: string; negated: boolean };
-function isProductionScript(file: string) {
-    return !file.split(path.sep).some((segment) => segment === '_test' || segment === 'debug');
-}
 
 function splitOperator(text: string, operator: '|' | '&') {
     const parts: string[] = [];
@@ -112,9 +95,6 @@ function compareFor(text: string, variable: string, constants: ReadonlyMap<strin
 function reversedOperator(operator: string) {
     return ({ '<': '>', '<=': '>=', '>': '<', '>=': '<=', '=': '=', '==': '==', '!=': '!=' } as Record<string, string>)[operator];
 }
-function negatedOperator(operator: string) {
-    return ({ '<': '>=', '<=': '>', '>': '<=', '>=': '<', '=': '!=', '==': '!=', '!=': '=' } as Record<string, string>)[operator];
-}
 
 function comparisonAt(text: string, variable: string, constants: ReadonlyMap<string, number>) {
     const found = compareFor(text, variable, constants);
@@ -181,105 +161,6 @@ function guardsCanHold(guards: readonly Guard[], variable: string, range: RangeW
         const possibilities = possibleAt(expression, variable, value, constants);
         return possibilities.has(polarity);
     }));
-}
-
-/** Partition a bounded domain without enumerating its values. Unknown atoms refuse the proof. */
-export function stageConditionCases(
-    conditions: readonly string[],
-    variable: string,
-    range: RangeWire,
-    constants: ReadonlyMap<string, number>,
-): { values: RangeWire; outcomes: ReadonlyMap<string, boolean> }[] | null {
-    if (!Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max)
-        || range.min > range.max || range.max >= Number.MAX_SAFE_INTEGER) return null;
-    const unique = [...new Set(conditions)];
-    const expressions = unique.map((text) => ({ text, expression: parseBool(text) }));
-    const known = (expression: BoolExpr): boolean => {
-        if (expression.kind === 'atom') {
-            const comparison = comparisonAt(expression.text, variable, constants);
-            return comparison !== null && Number.isSafeInteger(comparison.value);
-        }
-        if (expression.kind === 'not') return known(expression.child);
-        return known(expression.left) && known(expression.right);
-    };
-    if (!expressions.every(({ expression }) => known(expression))) return null;
-    const boundaries = new Set([range.min, range.max + 1]);
-    for (const value of criticalValues(unique.map((expression) => ({ expression, polarity: true })), variable, range, constants)) {
-        boundaries.add(value);
-        boundaries.add(value + 1);
-    }
-    const ordered = [...boundaries].sort((left, right) => left - right);
-    const cases: { values: RangeWire; outcomes: ReadonlyMap<string, boolean> }[] = [];
-    for (let index = 0; index + 1 < ordered.length; index += 1) {
-        const values = { min: ordered[index], max: ordered[index + 1] - 1 };
-        const outcomes = new Map<string, boolean>();
-        for (const { text, expression } of expressions) {
-            const possible = possibleAt(expression, variable, values.min, constants);
-            if (possible.size !== 1) return null;
-            const value = possible.values().next().value;
-            if (typeof value !== 'boolean') return null;
-            outcomes.set(text, value);
-        }
-        cases.push({ values, outcomes });
-    }
-    return cases;
-}
-
-function negate(expression: BoolExpr): BoolExpr {
-    if (expression.kind === 'not') return expression.child;
-    if (expression.kind === 'and' || expression.kind === 'or') return {
-        kind: expression.kind === 'and' ? 'or' : 'and',
-        left: negate(expression.left),
-        right: negate(expression.right),
-    };
-    return { kind: 'not', child: expression };
-}
-
-function dnf(expression: BoolExpr): Literal[][] {
-    if (expression.kind === 'atom') return [[{ text: expression.text, negated: false }]];
-    if (expression.kind === 'not' && expression.child.kind === 'atom') return [[{ text: expression.child.text, negated: true }]];
-    if (expression.kind === 'not') return dnf(negate(expression.child));
-    const left = dnf(expression.left);
-    const right = dnf(expression.right);
-    if (expression.kind === 'or') return [...left, ...right];
-    return left.flatMap((a) => right.map((b) => [...a, ...b]));
-}
-
-function literalComparison(literal: Literal, variable: string, constants: ReadonlyMap<string, number>) {
-    let comparison = comparisonAt(literal.text, variable, constants);
-    if (!comparison) return null;
-    if (literal.negated) comparison = { ...comparison, operator: negatedOperator(comparison.operator) };
-    return comparison;
-}
-
-function feasibleClause(clause: readonly Literal[], variable: string, value: number, constants: ReadonlyMap<string, number>) {
-    return clause.every((literal) => {
-        const expression = parseBool(literal.text);
-        const possible = possibleAt(expression, variable, value, constants);
-        return possible.has(!literal.negated);
-    });
-}
-
-function upperBound(guards: readonly Guard[], variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
-    const expression: BoolExpr = guards.map((guard) => guard.polarity ? parseBool(guard.expression) : negate(parseBool(guard.expression)))
-        .reduce<BoolExpr>((left, right) => ({ kind: 'and', left, right }), { kind: 'atom', text: 'true' });
-    let maximum: number | null = null;
-    for (const clause of dnf(expression)) {
-        if (!criticalValues(guards, variable, range, constants).some((value) => feasibleClause(clause, variable, value, constants))) continue;
-        let clauseUpper: number | null = null;
-        for (const literal of clause) {
-            const comparison = literalComparison(literal, variable, constants);
-            if (!comparison) continue;
-            let limit: number | null = null;
-            if (comparison.operator === '<') limit = comparison.value - 1;
-            else if (comparison.operator === '<=') limit = comparison.value;
-            else if (comparison.operator === '=' || comparison.operator === '==') limit = comparison.value;
-            if (limit !== null) clauseUpper = clauseUpper === null ? limit : Math.min(clauseUpper, limit);
-        }
-        if (clauseUpper === null) return null;
-        maximum = maximum === null ? clauseUpper : Math.max(maximum, clauseUpper);
-    }
-    return maximum;
 }
 
 function stripStrings(text: string) {
@@ -489,31 +370,6 @@ function parseStatements(block: Rs2Block, variable: string, constants: ReadonlyM
     return statements;
 }
 
-
-function readConstants(content: string) {
-    const constants = new Map<string, number>();
-    for (const file of walkContentFiles(path.join(content, 'scripts'), '.constant').filter(isProductionScript)) {
-        const relative = path.relative(content, file);
-        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-            const match = /^\s*\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw);
-            if (!match) continue;
-            const value = Number(match[2]);
-            const previous = constants.get(match[1]);
-            if (previous !== undefined && previous !== value) throw new Error(`prereq preservation: conflicting ^${match[1]} constants (${previous}, ${value}) in ${relative}`);
-            constants.set(match[1], value);
-        }
-    }
-    return constants;
-}
-
-function parseWriter(file: string, line: number, rhs: string, variable: string, constants: ReadonlyMap<string, number>) {
-    const normalized = rhs.trim().replace(/;$/, '').trim();
-    if (new RegExp(`^add\\(\\s*%${variable}\\s*,\\s*1\\s*\\)$`).test(normalized)) return { kind: 'increment' as const };
-    const literal = constantValue(normalized, constants);
-    if (literal === undefined) throw new Error(`prereq preservation: non-constant %${variable} writer at ${file}:${line}: ${normalized}`);
-    return { kind: 'constant' as const, value: literal };
-}
-
 function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, constants: ReadonlyMap<string, number>) {
     const blocks = sourceBlocks.map((block, index): BlockRef => ({
         id: `${block.span.file}#${index}`,
@@ -540,25 +396,7 @@ function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, const
     return { byId: new Map(blocks.map((block) => [block.id, block])), reverse };
 }
 
-function buildGraph(content: string, variable: string, constants: ReadonlyMap<string, number>): ScriptGraph {
-    const blocks: Rs2Block[] = [];
-    for (const file of walkContentFiles(path.join(content, 'scripts'), '.rs2').filter(isProductionScript)) {
-        const relative = path.relative(content, file).split(path.sep).join('/');
-        blocks.push(...parseRs2Blocks(relative, fs.readFileSync(file, 'utf8')));
-    }
-    const { byId, reverse } = controlGraph(blocks, variable, constants);
-    const writers: Writer[] = [];
-    for (const block of byId.values()) for (const statement of block.statements) {
-        const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`).exec(statement.text);
-        if (!assignment) continue;
-        const file = block.block.span.file;
-        const reviewed = undefined;
-        writers.push({ file, line: statement.line, block, rhs: parseWriter(file, statement.line, assignment[1], variable, constants), guards: statement.guards, reviewed });
-    }
-    return { byId, reverse, writers };
-}
-
-function hasEntryPath(writer: Pick<Writer, 'block'>, graph: ScriptGraph) {
+function hasEntryPath(writer: { block: BlockRef }, graph: ScriptGraph) {
     const visit = (blockId: string, seen: Set<string>): boolean => {
         const block = graph.byId.get(blockId)!;
         if (block.entry) return true;
@@ -569,29 +407,23 @@ function hasEntryPath(writer: Pick<Writer, 'block'>, graph: ScriptGraph) {
     return visit(writer.block.id, new Set());
 }
 
-function feasiblePaths(writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
+function feasiblePaths(writer: { block: BlockRef; guards: Guard[] }, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
     const out: Guard[][] = [];
-    const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
-    const hasPath = hasEntryPath(writer, graph);
     const visit = (blockId: string, guards: Guard[], seen: Set<string>) => {
         const block = graph.byId.get(blockId)!;
         if (block.entry) {
-            if (guardsCanHold([...guards, ...reviewedGuard], variable, range, constants)) out.push([...guards, ...reviewedGuard]);
+            if (guardsCanHold(guards, variable, range, constants)) out.push(guards);
             return;
         }
         if (seen.has(blockId)) return;
         const nextSeen = new Set(seen).add(blockId);
         for (const edge of graph.reverse.get(blockId) ?? []) {
             const next = [...guards, ...edge.guards];
-            if (!guardsCanHold([...next, ...reviewedGuard], variable, range, constants)) continue;
+            if (!guardsCanHold(next, variable, range, constants)) continue;
             visit(edge.caller, next, nextSeen);
         }
     };
     visit(writer.block.id, writer.guards, new Set());
-    if (!hasPath && reviewedGuard.length) {
-        const guards = [...writer.guards, ...reviewedGuard];
-        if (guardsCanHold(guards, variable, range, constants)) out.push(guards);
-    }
     return out;
 }
 
@@ -603,7 +435,7 @@ export function postCompletionProgressWriters(
     constants: ReadonlyMap<string, number>,
     candidates: readonly { block: Rs2Block; line: number; right: string }[],
 ) {
-    const graph: ScriptGraph = { ...controlGraph(blocks, variable, constants), writers: [] };
+    const graph: ScriptGraph = controlGraph(blocks, variable, constants);
     const byBlock = new Map([...graph.byId.values()].map((block) => [block.block, block]));
     const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`);
     const possible: { file: string; line: number; right: string }[] = [];
@@ -628,150 +460,4 @@ export function postCompletionProgressWriters(
         }
     }
     return possible;
-}
-
-function verifyReviewedWrites(content: string, row: Pick<PrereqRowWire, 'reviewed_writes'>, writers: Writer[]) {
-    for (const reviewed of row.reviewed_writes) {
-        const writeLines = reviewed.write.split(';').map((part) => part.trim());
-        if (writeLines.length !== 1) throw new Error(`prereq preservation: invalid reviewed writer citation ${reviewed.write}`);
-        const match = /^(.+):(\d+)$/.exec(writeLines[0]);
-        if (!match) throw new Error(`prereq preservation: invalid reviewed writer citation ${reviewed.write}`);
-        const file = match[1];
-        const line = Number(match[2]);
-        const writer = writers.find((entry) => entry.file === file && entry.line === line);
-        if (!writer || writer.rhs.kind !== 'constant' || writer.rhs.value !== reviewed.sets) throw new Error(`prereq preservation: reviewed writer ${reviewed.write} no longer sets ${reviewed.sets}`);
-        const guardFile = reviewed.guard.split(';')[0].trim().replace(/:\d+(?:-\d+)?$/, '');
-        const guardBlock = graphBlocksForFile(content, guardFile).find((block) => {
-            const first = Number(/:(\d+)/.exec(reviewed.guard)?.[1]);
-            const last = Number(/:(\d+)-(\d+)/.exec(reviewed.guard)?.[2] ?? first);
-            return block.kind === 'proc' && block.span.first <= first && block.span.last >= last;
-        });
-        if (!guardBlock) throw new Error(`prereq preservation: reviewed guard ${reviewed.guard} is not one proc body`);
-        const procName = guardBlock.name;
-        for (const citation of reviewed.called_from.split(';')) {
-            const parsed = /^\s*(.+?):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*?)\s*$/.exec(citation);
-            if (!parsed) throw new Error(`prereq preservation: invalid caller citation ${citation}`);
-            const sourceLines = fs.readFileSync(path.join(content, parsed[1]), 'utf8').split(/\r?\n/);
-            for (const selection of parsed[2].split(',')) {
-                const [first, last = first] = selection.split('-').map(Number);
-                const text = sourceLines.slice(first - 1, last).join('\n');
-                if (!text.includes(`~${procName}`)) throw new Error(`prereq preservation: ${parsed[1]}:${selection} no longer calls ~${procName}`);
-            }
-        }
-        writer.reviewed = reviewed;
-    }
-}
-
-function graphBlocksForFile(content: string, file: string) {
-    return parseRs2Blocks(file, fs.readFileSync(path.join(content, file), 'utf8'));
-}
-
-function rangeHull(range: RangeWire, values: readonly number[]) {
-    return { min: Math.min(range.min, ...values), max: Math.max(range.max, ...values) };
-}
-function equalRange(left: RangeWire, right: RangeWire) { return left.min === right.min && left.max === right.max; }
-
-function computedAfter(row: { id: string }, initial: RangeWire, graph: ScriptGraph, variable: string, constants: ReadonlyMap<string, number>, stageDomain: RangeWire) {
-    let result = { ...initial };
-    // Each pass that does not converge widens the hull by at least one stage,
-    // and a hull that leaves the stage domain throws, so the domain width plus
-    // one is a complete pass bound. An add(%var, 1) loop climbs one stage a pass.
-    const passLimit = Math.max(graph.writers.length, Math.min(stageDomain.max - stageDomain.min, 65535) + 1);
-    for (let pass = 0; pass <= passLimit; pass += 1) {
-        const additions: number[] = [];
-        for (const writer of graph.writers) {
-            const paths = feasiblePaths(writer, graph, variable, result, constants);
-            if (paths.length === 0) continue;
-            if (writer.rhs.kind === 'constant') additions.push(writer.rhs.value);
-            else {
-                for (const guards of paths) {
-                    const upper = upperBound(guards, variable, result, constants);
-                    if (upper === null) throw new Error(`prereq preservation: unbounded add(%${variable}, 1) at ${writer.file}:${writer.line}`);
-                    additions.push(Math.min(result.max, upper) + 1);
-                }
-            }
-        }
-        const next = rangeHull(result, additions);
-        if (next.min < stageDomain.min || next.max > stageDomain.max) throw new Error(`prereq preservation: ${row.id} leaves stage domain [${stageDomain.min},${stageDomain.max}]`);
-        if (equalRange(next, result)) return result;
-        result = next;
-    }
-    throw new Error(`prereq preservation: fixed point did not converge for ${row.id}`);
-}
-
-function productionStageDomain(questRows: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[], row: PrereqRowWire) {
-    const quest = questRows.find((candidate) => candidate.id === row.establishes.quest);
-    if (!quest || quest.transmission !== 'not_transmitted' || !quest.stage_domain) {
-        throw new Error(`prereq preservation: ${row.id} lacks server-only stage metadata`);
-    }
-    return quest.stage_domain;
-}
-function productionJournalStageDomain(
-    questRows: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[],
-    journal: PrereqJournalWire,
-) {
-    const quest = questRows.find((candidate) => candidate.id === journal.quest);
-    if (!quest || quest.transmission !== 'not_transmitted' || !quest.stage_domain) {
-        throw new Error(`prereq preservation: ${journal.id} lacks server-only stage metadata`);
-    }
-    return quest.stage_domain;
-}
-
-function assertRangesInsideDomain(row: PrereqRowWire, domain: RangeWire) {
-    const ranges = [row.establishes.values, ...row.after.flatMap((rule) => [rule.proves, rule.after]),
-        ...row.crossings.map((crossing) => crossing.pass.proves), ...row.probe.refuse.map((refusal) => refusal.proves),
-        ...row.talk.branches.map((branch) => branch.proves)];
-    for (const range of ranges) if (range.min < domain.min || range.max > domain.max) {
-        throw new Error(`prereq preservation: ${row.id} range [${range.min},${range.max}] leaves stage domain [${domain.min},${domain.max}]`);
-    }
-}
-function assertJournalRangesInsideDomain(journal: PrereqJournalWire, domain: RangeWire) {
-    const ranges = [journal.establishes.values, ...journal.after.flatMap((rule) => [rule.proves, rule.after]),
-        ...journal.rules.map((rule) => rule.proves)];
-    for (const range of ranges) if (range.min < domain.min || range.max > domain.max) {
-        throw new Error(`prereq preservation: ${journal.id} range [${range.min},${range.max}] leaves stage domain [${domain.min},${domain.max}]`);
-    }
-}
-
-export function assertPrereqPreservation(
-    content: string,
-    rows: readonly PrereqRowWire[],
-    questRows?: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[],
-    journals: readonly PrereqJournalWire[] = [],
-) {
-    const constants = readConstants(content);
-    for (const row of rows) {
-        const variable = row.establishes.signal;
-        const graph = buildGraph(content, variable, constants);
-        verifyReviewedWrites(content, row, graph.writers);
-        const unreviewedUncalled = graph.writers.find((writer) => !hasEntryPath(writer, graph) && !writer.reviewed);
-        if (unreviewedUncalled) throw new Error(`prereq preservation: writer path set is empty at ${unreviewedUncalled.file}:${unreviewedUncalled.line}`);
-        const domain = questRows ? productionStageDomain(questRows, row) : { min: 0, max: 2147483647 };
-        if (questRows) assertRangesInsideDomain(row, domain);
-        for (const rule of row.after) {
-            const actual = computedAfter(row, rule.proves, graph, variable, constants, domain);
-            if (!equalRange(actual, rule.after)) {
-                throw new Error(`prereq preservation: ${row.id} after [${rule.proves.min},${rule.proves.max}] is [${actual.min},${actual.max}], authored [${rule.after.min},${rule.after.max}]`);
-            }
-        }
-    }
-    for (const journal of journals) {
-        const variable = journal.establishes.signal;
-        const graph = buildGraph(content, variable, constants);
-        verifyReviewedWrites(content, journal, graph.writers);
-        // A proc call inside an expression can be absent from this call graph.
-        // Treat its local writer guards as a possible entry, never as dead code.
-        // This loses caller restrictions and can only widen the preserved range.
-        for (const writer of graph.writers) {
-            if (!hasEntryPath(writer, graph)) writer.block.entry = true;
-        }
-        const domain = questRows ? productionJournalStageDomain(questRows, journal) : { min: 0, max: 2147483647 };
-        if (questRows) assertJournalRangesInsideDomain(journal, domain);
-        for (const rule of journal.after) {
-            const actual = computedAfter(journal, rule.proves, graph, variable, constants, domain);
-            if (!equalRange(actual, rule.after)) {
-                throw new Error(`prereq preservation: ${journal.id} after [${rule.proves.min},${rule.proves.max}] is [${actual.min},${actual.max}], authored [${rule.after.min},${rule.after.max}]`);
-            }
-        }
-    }
 }

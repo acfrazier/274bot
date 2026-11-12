@@ -12,18 +12,16 @@
 # tools/known-issues/known_issues.py.
 
 [[item]]
-id = "revision-377-host-qualification"
+id = "legends-guild-bank-gate-conservative"
 kind = "not-in-release"
-area = "Host"
-text = """Revision 377 is an explicit local development target, selected with
-  `host-play --revision 377`. It requires revision-377 cache, navigation and
-  generated game data; revision-289 artifacts are not substitutes.
-  The bounded `client_377` scenario covers scene rendering, a direct courtyard
-  walk and a fresh Hans dialogue, not the broader gameplay families."""
+area = "Navigation"
+text = """Legends Guild bank gate is conservative (completion instead of the door's
+  stage-50 threshold). This is a navigation correctness follow-up for work
+  after 0.2.9."""
 first = "0.2.9"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
-owner = "Fairy Ring downstream integration"
+owner = "navigation (Legends Guild gate)"
 
 [[item]]
 id = "bank-native-planned"
@@ -52,12 +50,12 @@ text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
   0.2.9. `bankPace` itself is supported from 0.2.9 as a fixed one-game-tick
   pause."""
 first = "0.2.4"
-target = "0.2.9"
+target = "none"
 severity = "low"
 owner = "scripts-misc"
 
 [[item.earlier]]
-until = "0.2.8"
+until = "0.2.9"
 text = """Caller-supplied bank-cost routers (`nearestWalkableBank`,
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
   random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
@@ -137,7 +135,7 @@ text = """With the default Danger routing setting, **When survivable**, bots can
   monsters on the route."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.9"
+target = "0.3.0"
 severity = "medium"
 owner = "S2c"
 
@@ -145,81 +143,29 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """The following Quester guides are drafts. Release builds do not support them:
-  - Cook's Assistant
-  - Sheep Shearer
-  - Rune Mysteries
-  - Romeo & Juliet
-  - Imp Catcher
-  - Vampire Slayer
-  - Doric's Quest
-  - Goblin Diplomacy
-  - Witch's Potion
-  - Prince Ali Rescue
-  - Pirate's Treasure
-  - Demon Slayer
-  - The Knight's Sword
-  - Death Plateau
-  - The Tourist Trap
-  - Priest in Peril
-  - Clock Tower
-  - Monk's Friend
-  - Hazeel Cult
-  - Plague City
-  - Druidic Ritual
-  - Gertrude's Cat
-  - Jungle Potion
-  - Sea Slug Quest
-  - Tribal Totem
-  - Black Knight's Fortress
-  - Ernest the Chicken
-  - Fishing Contest
-  - Elemental Workshop
-  - Merlin's Crystal
-  - Lost City
-  - Tree Gnome Village
-  - Scorpion Catcher
-  - Observatory Quest
-  - Shield of Arrav
-  - Hero's Quest
-  - Temple of Ikov
-  - Holy Grail
-  - Watch Tower
-  - Digsite Quest
-  - Biohazard
-  - Murder Mystery
-  - Witch's House
-  - Big Chompy Bird Hunting
-  - Dwarf Cannon
-  - Family Crest
-  - Fight Arena
-  - The Grand Tree
-  - Dragon Slayer
-  - Horror from the Deep
-  - Shilo Village
-  - Tai Bwo Wannai Trio
-  - Nature Spirit
-  - In Search of the Myreque
-  - Troll Stronghold
-  - Eadgar's Ruse
-  - Troll Romance
-  - Throne of Miscellania
-  - Waterfall Quest
-  - Legends Quest
-  - Sheep Herder
-  - Underground Pass
-  - Regicide
-  - Shades of Mort'ton
-  - The Fremennik Trials
-  - Monkey Madness"""
+text = """These Quester guides are drafts, and live testing has not shown that they
+  work. Release builds do not start them unless you turn on Allow unqualified
+  guides in Script prefs with the Quester picked. The guides are: Prince
+  Ali Rescue, Pirate's Treasure, The Knight's Sword, Death Plateau, The Tourist
+  Trap, Clock Tower, Plague City, Druidic Ritual, Gertrude's Cat, Jungle Potion,
+  Sea Slug Quest, Tribal Totem, Black Knight's Fortress, Ernest the Chicken,
+  Fishing Contest, Elemental Workshop, Merlin's Crystal, Lost City, Tree Gnome
+  Village, Scorpion Catcher, Observatory Quest, Shield of Arrav, Hero's Quest,
+  Temple of Ikov, Holy Grail, Watch Tower, Digsite Quest, Biohazard, Murder
+  Mystery, Witch's House, Big Chompy Bird Hunting, Dwarf Cannon, Family Crest,
+  Fight Arena, The Grand Tree, Dragon Slayer, Horror from the Deep, Shilo
+  Village, Tai Bwo Wannai Trio, Nature Spirit, In Search of the Myreque, Troll
+  Stronghold, Eadgar's Ruse, Troll Romance, Throne of Miscellania, Waterfall
+  Quest, Legends Quest, Sheep Herder, Underground Pass, Regicide, Shades of
+  Mort'ton, The Fremennik Trials and Monkey Madness."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.9"
+target = "0.3.0"
 severity = "medium"
 owner = "Quest campaign qualification"
 
 [[item.earlier]]
-until = "0.2.8"
+until = "0.2.9"
 text = """The Quester has routes for 20 of the 68 quests. Routes for the other
   quests are planned in waves."""
 
@@ -233,6 +179,7 @@ text = """When the Quester cannot start a walk between quest steps, it can stop
 first = "0.2.0"
 listed = "0.2.8"
 target = "0.2.9"
+fixed = "0.2.9"
 severity = "medium"
 owner = "Quester walk step"
 
@@ -244,9 +191,9 @@ text = """The Brimhaven Agility Arena script can stop at a plank or pillar it
   cannot use. The cause is under investigation."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.9"
+target = "0.3.0"
 severity = "medium"
-owner = "T2.rest agility"
+owner = "upstream rs2b0t BrimhavenAgility (rs2b2t/rs2b0t#893, still open at the 0.2.9 cut)"
 
 [[item]]
 id = "bank-deposit-callback-delay"
@@ -288,7 +235,7 @@ text = """A bot can't get through a door that another player closes again on eve
   another way around, changing worlds when allowed, and a clear "door held
   shut" result are planned for a later release."""
 first = "0.2.5"
-target = "0.2.9"
+target = "0.3.0"
 severity = "medium"
 owner = "nav"
 
@@ -476,9 +423,9 @@ text = """Fetching a cure or food when the bot would otherwise die is planned fo
   later release. In this release a native script that would die of poison with
   no cure held pauses its work and names what it needs."""
 first = "0.2.9"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
-owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+owner = "T2 survival phase 2 (review again for 0.3.0)"
 
 [[item]]
 id = "survival-shop-cure-planned"
@@ -486,9 +433,9 @@ kind = "not-in-release"
 area = "Scripts"
 text = """Buying a cure from a shop is planned, not included here."""
 first = "0.2.9"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
-owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+owner = "T2 survival phase 2 (review again for 0.3.0)"
 
 [[item]]
 id = "survival-spawn-or-made-cure-planned"
@@ -497,9 +444,9 @@ area = "Scripts"
 text = """Taking a cure from a ground spawn, or making one from held supplies, is
   planned for a later release."""
 first = "0.2.9"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
-owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+owner = "T2 survival phase 2 (review again for 0.3.0)"
 
 [[item]]
 id = "survival-green-hitsplat-reserve"
@@ -509,7 +456,7 @@ text = """A green poison hitsplat that the game shows without poison makes the b
   keep a poison reserve until the next poison message, poison tick or cure."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -520,7 +467,7 @@ area = "Scripts"
 text = """Strange fruit is recognized as a held cure and never fetched."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival phase 2"
 
@@ -541,7 +488,7 @@ text = """When the game reports poison and the bot cannot see which creature
   bot is eating as it waits, and then the script continues on its own."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -555,7 +502,7 @@ text = """When the game reports poison in a frame before its creatures' update, 
   later. A cure that is needed at once is drunk at once."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -568,7 +515,7 @@ text = """The game does not say when a poison has ended. A paused script whose
   after the weakest tick) stays paused after the poison ran out, until it heals
   past that or gets a cure."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -580,7 +527,7 @@ text = """A paused script that is being hit by any creature stays paused while t
   hits continue, because any hit can be a fresh poisoning. It does not flee or
   fight back for that reason in this release."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -595,7 +542,7 @@ text = """A native script that needs a cure while a bank deposit or withdrawal i
   the bank and drinks. The Quester's own provisioning trips follow the same
   rule."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -611,7 +558,7 @@ text = """When the bot reconnects while it is poisoned, it does not know it is
   that tick."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2 survival"
 
@@ -625,7 +572,7 @@ text = """In a fight with no food left, a poisoned bot that holds an antipoison 
   then be safe."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -639,7 +586,7 @@ text = """During a walk, a dialogue page that is open (for example a level-up pa
   tick as a door or gate click."""
 first = "0.2.7"
 listed = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -651,7 +598,7 @@ text = """In Power mode, a Gatherer that finishes its last dose of an antipoison
   keeps the empty vial. The vial takes a pack slot until you drop it. Bank mode
   deposits it on the next bank trip."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -663,7 +610,7 @@ text = """During a walk or a fight, the status row shows that a cure or food is
   needed while the walk or the fight drinks or eats; it does not show the drink
   or the bite itself."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -752,9 +699,9 @@ text = """The rs2b0t FireGiant script can keep fighting after it eats its last
   the script is fixed upstream."""
 first = "0.2.6"
 listed = "0.2.7"
-target = "0.2.9"
+target = "0.3.0"
 severity = "medium"
-owner = "upstream rs2b0t FireGiant / survival phase 3"
+owner = "upstream rs2b0t FireGiant (rs2b2t/rs2b0t#895, still open at the 0.2.9 cut) / survival phase 3"
 
 [[item]]
 id = "quester-undeclared-step-damage"
@@ -765,7 +712,7 @@ text = """A quest step without a declared damage source uses only the fallback:
   A first undeclared hit larger than its current Hitpoints is not prevented.
   The Tourist Trap guide declares its cell climb and mine cart damage."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "QUEST-TERRA (next backlog review)"
 
@@ -779,7 +726,7 @@ text = """Damage from a game area while the bot stands in it is not a step
   for this damage. A bot holding for food on such a tile keeps taking damage.
   The Underground Pass guide is not covered by this release."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "SURVIVAL-P2-DESIGN (next backlog review)"
 
@@ -793,7 +740,7 @@ text = """Without food, the Quester holds at a step that can hurt it until
   If a game page stays open for 24 ticks while it holds, it stops with a clear
   reason instead of waiting."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "SURVIVAL-P2-DESIGN"
 
@@ -808,7 +755,7 @@ text = """The rs2b0t GnomeMagicChopper script can stop chopping when a Strange
   rs2b0t folder once it is merged."""
 first = "0.2.7"
 listed = "0.2.8"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
 
@@ -837,26 +784,9 @@ text = """`reader.locBox`, `reader.overlayPosWorld` and
   property name). A script that names the reader gets correct values from its
   first game tick. Call the reader by its name."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "COMPAT-FINISH ClientAdapter"
-
-[[item]]
-id = "compat-catalog-members-missing"
-kind = "known-issue"
-area = "Scripts"
-text = """Some rs2b0t catalog scripts call script API members that 274bot does
-  not implement yet: `SettingsStore.save` and `onChange`, `Bank.backpackReady`
-  and `normalBackpackSnapshot`, `Reachability.probeable`, `ScriptRunner.pause`,
-  `resume`, `state` and `ctx`, and `BotHost.addFrameListener`. Such a script
-  stops with "not implemented" when it reaches that call; for example, the
-  current AutoFighter cannot start fighting. Support is planned for 0.2.9."""
-first = "0.2.0"
-listed = "0.2.8"
-fixed = "0.2.9"
-target = "0.2.9"
-severity = "medium"
-owner = "compat (UPSTREAM-MEMBERS-1023 census)"
 
 [[item]]
 id = "background-work-stops-after-slow-disk"
@@ -865,9 +795,14 @@ area = "Host"
 text = """Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9."""
-first = "0.2.4"
+# The stop was already in 0.2.4 (the 60 s stall latch shipped then), but the
+# published 0.2.8 block says "0.2.6 to 0.2.7", and `check --release 0.2.8`
+# renders that sentence from `first`. Keep 0.2.6 so the published text still
+# matches. Closed in 0.2.9 by d9028b148 (a slow step only logs a warning).
+first = "0.2.6"
 listed = "0.2.8"
 target = "0.2.9"
+fixed = "0.2.9"
 severity = "medium"
 owner = "host background work (WorkAdmission)"
 
@@ -898,20 +833,21 @@ owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the ser
 
 [[item]]
 id = "risk-zone-reach-pruning"
-kind = "deferred"
-area = "nav/admission"
-text = """Reach-to-route pruning of risk zones stays deferred. The model sums
-  every exposed zone, including a monster that collision might prevent from
-  reaching the route. Revisit this only when the frozen-route and end-to-end
-  corpora show a realistic quest route at its seed policy's level that is
-  refused solely because of that sum, and that reach pruning would admit.
-  No reach data is stored in the pack. Any future section needs a hard byte
-  budget, bake-reported bytes, a sound collision check, and summed-count
-  fallback for zones that exceed the budget."""
+kind = "not-in-release"
+area = "Navigation"
+# Revisit only when frozen-route and end-to-end corpora show a realistic quest
+# route at its seed-policy level refused solely by the summed zone count, and
+# reach pruning would admit it. No reach data is stored in the pack. A future
+# section needs a hard byte budget, bake-reported bytes, a sound collision
+# check, and summed-count fallback for zones that exceed the budget.
+text = """Danger checks can count a monster that walls prevent from reaching the
+  route. A more exact reachability check is deferred until route evidence shows
+  that this count alone refuses a safe quest walk. This work returns for review
+  in 0.3.0."""
 first = "0.2.9"
-target = "0.2.9"
+target = "0.3.0"
 severity = "low"
-owner = "Main backlog review"
+owner = "Navigation backlog review at 0.3.0"
 
 [[item]]
 id = "tick-normal-trees"
@@ -993,8 +929,8 @@ text = """A combat step can end at its start with `prep-failed:weapon` even thou
   client behaviour; preparation has the same exposure and has not been seen to
   fail yet. **Workaround:** run the combat step again; the weapon is worn by then."""
 first = "0.2.0"
-listed = "0.2.8"
-target = "none"
+listed = "0.2.9"
+target = "0.3.0"
 severity = "low"
 owner = "combat (PvP slices)"
 
@@ -1006,6 +942,153 @@ text = """Stopping the two bots after a paired Duel Arena fight can time out
   before both clean logouts are acknowledged. The fight can work before this
   stop failure. No verified workaround is recorded."""
 first = "0.2.9"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "M3 clean logout"
+
+[[item]]
+id = "imp-catcher-false-no-way-out"
+kind = "known-issue"
+area = "Quester"
+text = """In Imp Catcher, the Quester can wrongly report that it has no way out
+  when it walks near the caged Lesser demon in the Wizards' Tower. The route
+  check treats the caged demon as free to chase the bot across a wide area, and
+  it ignores the cage, so it can refuse a walk that is safe. This does not
+  happen on every run; the release qualification run finished the quest. No
+  workaround is known. A fix is planned for after 0.2.9."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "Quester route admission (pursuit envelope of mobile NPCs)"
+
+[[item]]
+id = "transport-rewrite-deferred"
+kind = "not-in-release"
+area = "Connection"
+text = """The planned connection rewrite is not included. This release keeps the
+  existing connection code. The rewrite and event-driven content downloads
+  move to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1.4 transport and T1 idea 16 (review again for 0.3.0)"
+
+[[item]]
+id = "sqlite-preferences-deferred"
+kind = "not-in-release"
+area = "Settings"
+text = """The planned move of preferences to a SQLite database is not included.
+  Settings keep their existing file storage. The database work moves to a later
+  0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T5.3-S4 (review again for 0.3.0)"
+
+[[item]]
+id = "pvp-prayer-flicking-deferred"
+kind = "not-in-release"
+area = "Combat"
+text = """Automatic protection-prayer flicking is not included. It moves to a later
+  0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "PvP V3 (review again for 0.3.0)"
+
+[[item]]
+id = "account-aware-target-picking-deferred"
+kind = "not-in-release"
+area = "Navigation"
+text = """Choosing every gathering, combat and service target by a route that the
+  account can use is not complete. Shop vendor choice and fixed fishing spots
+  have their existing checks. Other target choices can still select a target
+  behind a fence or gate. The remaining work moves to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "medium"
+owner = "Baked reachability BR3-BR7 and account-aware target choice (review again for 0.3.0)"
+
+[[item]]
+id = "gatherer-bullroarer-batch-deferred"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The planned Bullroarer gathering technique is not included. It moves to
+  a later 0.3.x release. The separate Knife technique remains available."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "Gatherer U39 (review again for 0.3.0)"
+
+[[item]]
+id = "fair-rendering-deferred"
+kind = "not-in-release"
+area = "Panel"
+text = """Fair, nonblocking sharing of the graphics renderer across bots is not
+  active. Bots keep the existing blocking render admission. The remaining work
+  moves to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "Render fairness S2-S5 qualification and activation (review again for 0.3.0)"
+
+[[item]]
+id = "snapshot-hot-path-deferred"
+kind = "not-in-release"
+area = "Performance"
+text = """Further reductions in work when the host publishes world snapshots are
+  not included. The planned snapshot optimizations move to a later 0.3.x
+  release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1 hot snapshot ideas 2-4 (review again for 0.3.0)"
+
+[[item]]
+id = "bounded-runtime-logging-deferred"
+kind = "not-in-release"
+area = "Performance"
+text = """The planned background queue for runtime log messages is not included.
+  The existing optional session-file queue remains. Further runtime logging
+  changes move to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1 bounded logging (review again for 0.3.0)"
+
+[[item]]
+id = "nav-executor-split-deferred"
+kind = "not-in-release"
+area = "Source builds"
+text = """The final separation of route planning from route execution is not
+  included. This internal code change moves to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "Nav split S4 I-exec-closure (review again for 0.3.0)"
+
+[[item]]
+id = "crossing-risk-policy-credit-deferred"
+kind = "not-in-release"
+area = "Navigation"
+text = """Route admission checks the chance of death without credit for eating,
+  protection prayers or escape. The planned more accurate policy calculation
+  and fight estimates move to a later 0.3.x release. This does not fix the
+  default **When survivable** setting, which remains a known issue."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "Survivable P1-D/E and S3 runtime estimate activation (review again for 0.3.0)"
+
+[[item]]
+id = "gatherer-gas-hazard-escape"
+kind = "known-issue"
+area = "Gatherer"
+text = """After Gatherer detects a gas hazard while mining, it can choose another
+  nearby rock without first walking away if that rock is ready to mine.
+  Do not rely on automatic escape from a gas hazard; stop the mining card if
+  one appears. A fix moves to a later 0.3.x release."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "medium"
+owner = "Gatherer hazard escape (review again for 0.3.0)"

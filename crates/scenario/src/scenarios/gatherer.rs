@@ -121,6 +121,14 @@ pub(crate) fn gatherer_scenario() -> Scenario {
             budget_ticks: GATHERER_WATCH_TICKS,
         },
     });
+    steps.push(Step {
+        name: "log out cleanly after the Gatherer XP proof",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::LoggedOut,
+            budget_ticks: 600,
+        },
+    });
 
     Scenario {
         name: "gatherer",
@@ -162,6 +170,12 @@ mod tests {
             return;
         }
         let scenario = gatherer_scenario();
+        let final_step = scenario
+            .steps
+            .last()
+            .expect("the live Gatherer cell ends with a clean logout");
+        assert!(matches!(&final_step.kind, StepKind::Relog));
+        assert!(matches!(&final_step.wait.arm, Proof::LoggedOut));
         let (id, x, z, level, radius) = scenario
             .steps
             .iter()

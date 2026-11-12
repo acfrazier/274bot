@@ -144,19 +144,9 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
     let shared = Arc::new(parking_lot::Mutex::new(Walker {
         blocked,
         walks: 1,
-        // These pre-admission geometry/guard fixtures intentionally use a
-        // legacy no-zone grid. Only explicit Proceed can arm that grid now.
-        options: script::native::WalkOptions {
-            allow_danger_zones: if world
-                .as_ref()
-                .is_some_and(|world| world.graph.zones.is_none())
-            {
-                script::native::WalkBit::Allow
-            } else {
-                script::native::WalkBit::Inherit
-            },
-            ..Default::default()
-        },
+        // These pre-admission geometry/guard fixtures use a legacy no-zone
+        // grid with no danger permission: the walk is inherited.
+        options: script::native::WalkOptions::default(),
         ..Walker::default()
     }));
     let slot = script_slot_or_insert(&scripts, "alice");
@@ -294,16 +284,23 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         state: None,
         bank: BankRows::default(),
     };
+    let (compat_options, compat_danger) = crate::walk_permissions::compiled_options(
+        &rig.navs,
+        "alice",
+        nav_planner::router::FindOptions::default(),
+        false,
+    );
     assert!(compat_arm.queue_route_in_snapshot_avoiding(
         &rig.snapshot,
         target.x,
         target.z,
         target.level,
-        nav_planner::router::FindOptions::default(),
+        compat_options,
         1,
         900,
         true,
         crate::script_runtime::ScriptRouteExclusions::default(),
+        compat_danger,
     ));
     assert!(
         rig.wait_for_route(5_000, || queued(&rig.navs) == Some(target)),
@@ -1808,6 +1805,46 @@ fn food_disallowed_without_an_explicit_guard_starts_no_host_guard() {
     assert!(rig.driver.move_calls > 0);
 }
 
+/// Every permitted native danger crossing arms the walk's food guard, whether
+/// the permission is the global override or the script's own request. These
+/// walks set no `food_guard`, no `protect` and no `cross`. (A `cross` request
+/// is covered by `native_cross_request_is_scoped_to_one_walk`.)
+#[test]
+fn a_permitted_native_danger_walk_arms_the_food_guard_whichever_permission_it_has() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use script::native::WalkBit;
+    for (global, bit) in [(true, WalkBit::Inherit), (true, WalkBit::Allow)] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_danger_zones: global,
+            ..Default::default()
+        })));
+        rig.shared.lock().options.allow_danger_zones = bit;
+        rig.observe(1);
+        assert!(rig.wait_for_route(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| !bot.route_work_pending())
+        }));
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(bot.has_route(), "global={global}, walk={bit:?}");
+        assert!(
+            bot.walk_guard.is_some(),
+            "a permitted crossing must arm the food guard (global={global}, walk={bit:?})"
+        );
+    }
+}
+
 fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) {
     let drain = host::DrainResult {
         player_info: true,
@@ -3049,6 +3086,17 @@ fn a_native_walk_refused_by_an_in_flight_route_gets_a_refused_receipt() {
         return;
     }
     let mut rig = open_rig(false);
+    // The host walk's all-zone grant comes from the global override (this
+    // fixture's grid has no zone table, so a mere request could not be judged).
+    rig.navs
+        .lock()
+        .unwrap()
+        .entry("alice".into())
+        .or_default()
+        .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+        allow_danger_zones: true,
+        ..Default::default()
+    })));
     // A host walk to the same destination is already in flight under the
     // legacy request id; the distinct native id is refused, not coalesced.
     assert!(host_walk(&rig, 4, false));
@@ -3168,7 +3216,7 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 }
 
 #[test]
-fn native_cross_exemption_is_scoped_to_one_walk() {
+fn native_cross_request_is_scoped_to_one_walk() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3198,10 +3246,14 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         let bot = &navs["alice"];
         let grants = bot.requested_route.expect("first native route request").5;
         assert!(
-            !grants.is_all(),
-            "the first route receives a named, not global, grant"
+            grants.is_all(),
+            "a walk that asks to cross receives permission for any zone"
         );
         let assessment = bot.assessment.as_ref().expect("first route assessment");
+        assert!(
+            bot.walk_guard.is_some(),
+            "a requested crossing arms the food guard even when the script set no guard flag"
+        );
         assert!(bot.risk_refusal.is_none());
         assert_eq!(
             assessment.verdict,
@@ -3237,7 +3289,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     rig.observe_with_here(2, goal);
     assert_eq!(rig.shared.lock().results.len(), 1);
-    rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
+    rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Inherit;
 
     let origin = WorldTile {
         x: 0,
@@ -3250,14 +3302,14 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     assert!(
         rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
             .route_work_pending()),
-        "the planner completes the second, explicitly forbidden request"
+        "the planner completes the second request, which asks for no crossing"
     );
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
         assert!(
             !bot.has_route(),
-            "the second request does not inherit the first request's named grant"
+            "the second request does not inherit the first request's crossing permission"
         );
         assert!(bot.native_walk_failure.is_some());
         assert!(
@@ -3273,18 +3325,22 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 }
 
 #[test]
-fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect() {
     if !api::test_support::game_data_available() {
         return;
     }
     use script::native::WalkBit;
-    for (global, bit, permitted) in [
-        (false, WalkBit::Inherit, false),
-        (false, WalkBit::Allow, true),
-        (false, WalkBit::Forbid, false),
-        (true, WalkBit::Inherit, true),
-        (true, WalkBit::Allow, true),
-        (true, WalkBit::Forbid, false),
+    // `permitted`: the decision grants every zone. `routed`: the walk is
+    // admitted. A walk-option request with the global override off is
+    // permitted but judged by the 1% bound: this fixture's default player
+    // cannot pass it, so the walk is refused. The override proceeds.
+    for (global, bit, permitted, routed) in [
+        (false, WalkBit::Inherit, false, false),
+        (false, WalkBit::Allow, true, false),
+        (false, WalkBit::Forbid, false, false),
+        (true, WalkBit::Inherit, true, true),
+        (true, WalkBit::Allow, true, true),
+        (true, WalkBit::Forbid, true, true),
     ] {
         // With no inherited grant the original router cannot cross this
         // barrier. Holding assessment authority off does not widen routing.
@@ -3301,16 +3357,22 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
             .or_default()
             .walk_globals = Some(globals);
         rig.shared.lock().options.allow_danger_zones = bit;
+        let admitted_options = crate::walk_permissions::native_admission(
+            &rig.navs,
+            "alice",
+            rig.shared.lock().options,
+            None,
+            false,
+        )
+        .0;
         assert!(
-            !crate::walk_permissions::native_admission(
-                &rig.navs,
-                "alice",
-                rig.shared.lock().options,
-                None,
-            )
-            .0
-            .allow_bank_fetch,
+            !admitted_options.allow_bank_fetch,
             "global fetch stays manual-only at the native admission"
+        );
+        assert_eq!(
+            admitted_options.zones.is_all(),
+            permitted,
+            "global={global}, walk={bit:?}"
         );
         rig.observe(1);
         assert!(rig.wait_for_route(5_000, || {
@@ -3323,13 +3385,17 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
         {
             let all = rig.navs.lock().unwrap();
             let bot = &all["alice"];
-            assert_eq!(bot.has_route(), permitted, "global={global}, walk={bit:?}");
+            assert_eq!(bot.has_route(), routed, "global={global}, walk={bit:?}");
             assert!(
                 bot.bank_fetch.is_none(),
                 "native walks never use BankBudget"
             );
-            if permitted {
+            if routed {
                 assert!(!bot.requested_route.unwrap().4);
+                assert!(
+                    bot.walk_guard.is_some(),
+                    "a permitted danger crossing arms the food guard"
+                );
             } else {
                 assert!(bot.native_walk_failure.is_some());
                 assert!(
@@ -3337,12 +3403,8 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
                     "a failed admission retires its route request"
                 );
             }
-            assert!(
-                bot.walk_guard.is_none(),
-                "danger crossing does not start protection"
-            );
         }
-        if !permitted {
+        if !routed {
             rig.observe(2);
             assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
         }
@@ -4050,6 +4112,7 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
             "alice",
             script::native::WalkOptions::default(),
             Some(current),
+            false,
         )
         .0;
         assert_eq!(
@@ -4085,12 +4148,15 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
                 .get("alice")
                 .is_some_and(|bot| !bot.route_work_pending())
         }));
+        // The card's request alone is permitted but judged by the 1% bound,
+        // which this fixture's default player cannot pass.
+        let routed = global;
         assert_eq!(
-        rig.navs.lock().unwrap()["alice"].has_route(),
-        permitted,
-        "the actual native Walk crosses the same denied zone under global={global}, card={card}"
-    );
-        if !permitted {
+            rig.navs.lock().unwrap()["alice"].has_route(),
+            routed,
+            "the actual native Walk crosses the same denied zone under global={global}, card={card}"
+        );
+        if !routed {
             rig.observe(2);
             assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
         }
@@ -4182,7 +4248,7 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
         rig.shared.lock().options = script::native::WalkOptions {
             allow_teleports: bit,
             allow_wilderness: bit,
-            allow_danger_zones: WalkBit::Allow,
+            allow_danger_zones: WalkBit::Inherit,
             allow_prereq_dialogue: WalkBit::Inherit,
             allow_quest_start: WalkBit::Inherit,
         };
@@ -4197,7 +4263,7 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
 }
 
 #[test]
-fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+fn native_protect_alone_does_not_grant_danger_and_unknown_cross_still_refuses() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -4219,9 +4285,11 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
     for names in [
         vec![Arc::from("unknown-danger-zone")],
-        (2..11)
-            .map(|x| Arc::from(format!("test-barrier@{x},0,0")))
-            .collect(),
+        // One unknown name among others still refuses the whole request.
+        vec![
+            Arc::from("test-barrier@2,0,0"),
+            Arc::from("unknown-danger-zone"),
+        ],
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
@@ -4263,25 +4331,31 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         slot.state() == script::RunState::Running
     }));
     let permissions = slot.native_walk_permissions().unwrap();
-    for compiled in [true, false] {
+    // The card's request alone is permitted but judged by the 1% bound, which
+    // this fixture's default player cannot pass; only the global override
+    // proceeds.
+    for (compiled, global) in [(true, false), (true, true), (false, false), (false, true)] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         let mut all = rig.navs.lock().unwrap();
         let bot = all.entry("alice".into()).or_default();
         bot.native_permissions = compiled.then_some(permissions);
         bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
             allow_bank_fetch: true,
+            allow_danger_zones: global,
             ..Default::default()
         })));
         drop(all);
-        let options = crate::walk_permissions::compiled_options(
+        let (options, decision) = crate::walk_permissions::compiled_options(
             &rig.navs,
             "alice",
             nav_planner::router::FindOptions::default(),
+            false,
         );
+        assert_eq!(decision.enforce, compiled && !global);
         assert_eq!(options.allow_teleports, compiled);
         assert_eq!(options.allow_wilderness, compiled);
         assert!(!options.allow_bank_fetch);
-        assert_eq!(options.zones.is_all(), compiled);
+        assert_eq!(options.zones.is_all(), compiled || global);
         assert!(dispatch_script_interact(
             &mut rig.client,
             &rig.snapshot,
@@ -4314,10 +4388,16 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         }));
         let all = rig.navs.lock().unwrap();
         let bot = &all["alice"];
-        assert_eq!(bot.has_route(), compiled);
-        if compiled {
+        let routed = global;
+        assert_eq!(
+            bot.has_route(),
+            routed,
+            "compiled={compiled}, global={global}"
+        );
+        if routed {
             let request = bot.requested_route.unwrap();
-            assert!(request.2 && request.3 && request.5.is_all());
+            assert_eq!((request.2, request.3), (compiled, compiled));
+            assert!(request.5.is_all());
             assert!(!request.4);
         } else {
             assert!(bot.requested_route.is_none());
@@ -4382,33 +4462,25 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
         exclusions
             .avoid_wire
             .push(InspectAvoidWire::Catalog(id.to_string()));
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            to,
-            state,
-            exclusions,
-        )
+        crate::script_runtime::resolve_route_exclusions(&world, from, to, state, exclusions)
     };
 
     let state = WorldState::empty();
-    let (_, white_wolf) = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
+    let white_wolf = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
     assert_eq!(white_wolf.avoid, [white_wolf_rect]);
 
-    let (_, jail) = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
+    let jail = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(jail.avoid, jail_member_rects);
     assert!(
         !jail.avoid.iter().any(|rect| rect.contains(bbox_gap)),
         "a tile inside the bounding box but outside every actual rectangle is not avoided"
     );
-    let (_, gap_origin) = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
+    let gap_origin = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
         gap_origin.avoid, jail_member_rects,
         "an endpoint in the bounding-box gap does not exempt the jail"
     );
-    let (_, gap_destination) =
-        resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
+    let gap_destination = resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
         gap_destination.avoid, jail_member_rects,
         "a destination in the bounding-box gap does not exempt the jail"
@@ -4416,13 +4488,13 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
 
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
-    let (_, skipped_for_combat) =
+    let skipped_for_combat =
         resolve_avoid(outside, outside, &high_combat, "draynor-jail-guards").unwrap();
     assert!(skipped_for_combat.avoid.is_empty());
-    let (_, skipped_for_source_endpoint) =
+    let skipped_for_source_endpoint =
         resolve_avoid(inside_jail, outside, &state, "draynor-jail-guards").unwrap();
     assert!(skipped_for_source_endpoint.avoid.is_empty());
-    let (_, skipped_for_destination_endpoint) =
+    let skipped_for_destination_endpoint =
         resolve_avoid(outside, inside_jail, &state, "draynor-jail-guards").unwrap();
     assert!(skipped_for_destination_endpoint.avoid.is_empty());
 }
@@ -4443,15 +4515,8 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         .avoid_wire
         .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            unknown,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, unknown,)
+            .unwrap_err(),
         "avoidZones: unknown zone \"no-such-zone\""
     );
     let mut nonfrozen = crate::script_runtime::ScriptRouteExclusions::default();
@@ -4459,49 +4524,47 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         "death-plateau-throwers".to_string(),
     ));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            nonfrozen,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, nonfrozen,)
+            .unwrap_err(),
         "avoidZones: unknown zone \"death-plateau-throwers\""
     );
 
     let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
     unknown_cross.cross.push(Arc::from("no-such-zone"));
     assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            unknown_cross,
-        )
-        .unwrap_err(),
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, unknown_cross,)
+            .unwrap_err(),
         "crossZones: unknown zone \"no-such-zone\""
     );
 
-    let too_many = crate::script_runtime::ScriptRouteExclusions {
-        cross: (0..9).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
+    // The list has no length limit. Validation grants nothing: the names
+    // reach the one danger decision as the walk's request.
+    let many = crate::script_runtime::ScriptRouteExclusions {
+        cross: (0..12).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
         ..Default::default()
     };
-    assert_eq!(
-        crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
-            &world,
-            from,
-            from,
-            &state,
-            too_many,
-        )
-        .unwrap_err(),
-        "crossZones: more than 8 zone names"
+    let many =
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, many).unwrap();
+    assert_eq!(many.cross.len(), 12);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let (options, decision) = crate::walk_permissions::compiled_options(
+        &navs,
+        "alice",
+        nav_planner::router::FindOptions::default(),
+        !many.cross.is_empty(),
     );
+    assert!(options.zones.is_all() && decision.enforce);
+
+    let none = crate::script_runtime::ScriptRouteExclusions::default();
+    let none =
+        crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, none).unwrap();
+    let (options, _) = crate::walk_permissions::compiled_options(
+        &navs,
+        "alice",
+        nav_planner::router::FindOptions::default(),
+        !none.cross.is_empty(),
+    );
+    assert_eq!(options.zones, nav_planner::zones::ZoneExempt::NONE);
 }
 
 #[test]
@@ -4520,7 +4583,6 @@ fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
         .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -6235,6 +6297,11 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         state: None,
         bank: BankRows::default(),
     };
+    let danger = rig.navs.lock().unwrap()["alice"]
+        .admission
+        .as_deref()
+        .map(|admission| admission.decision)
+        .expect("the walk's retained admission");
     assert!(arm.refresh_route_in_snapshot(
         &rig.snapshot,
         WATER_CENTER,
@@ -6251,6 +6318,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         None,
         nav_planner::arrival::ArrivalKind::Area,
         false,
+        danger,
     ));
     assert!(
         rig.wait_for_route(5_000, || {
@@ -6311,15 +6379,14 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     assert!(world.collision.standable(shore));
     let request = |arrival, radius| ScriptRouteRequest {
         candidate_goals: None,
-        admission: crate::admission::Admission {
-            enforce: true,
-            ..crate::admission::Admission::manual(
-                FindOptions::default(),
-                Default::default(),
-                0,
-                crate::WalkGlobals::default(),
-            )
-        },
+        admission: crate::admission::Admission::manual(
+            crate::DangerDecision {
+                enforce: true,
+                ..crate::WalkGlobals::default().manual_decision(false)
+            },
+            Default::default(),
+            0,
+        ),
         generation: 1,
         request_id: 1,
         world: Arc::clone(&world),
@@ -6424,10 +6491,56 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
         .unwrap()
         .value = 1;
     rig.snapshot.seed_varps(varps);
+    // Bank stock is incidental to this prayer lifecycle test. Unknown-bank
+    // preparation is covered by the Quester's pre-combat scan regression.
+    let mut observed_bank = GameSnapshot::new();
+    observed_bank.seed_bank_observation(1, 0, Some(Vec::new()), Vec::new());
+    let mut bank_memory = api::bank_memory::BankMemory::default();
+    bank_memory.track(&observed_bank, 0);
+    let bank_memory = parking_lot::RwLock::new(bank_memory);
+    let observe = |rig: &mut Rig, tick: u64| {
+        script_observe_cached_with_channels(
+            &mut rig.driver,
+            "alice",
+            true,
+            true,
+            false,
+            tick,
+            Some((here.x, here.z, here.level)),
+            None,
+            None,
+            Some(&rig.snapshot),
+            Some(&bank_memory),
+            #[cfg(feature = "js")]
+            None,
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "js")]
+            None,
+            #[cfg(feature = "js")]
+            crate::script_channels::BrokerWorld::Unavailable,
+            None,
+            None,
+            None,
+            None,
+        );
+        crate::script_runtime::pump_route_work(&rig.navs, "alice");
+    };
     let raised_tick = (1..=20)
         .find(|tick| {
             rig.snapshot.seed_tick(*tick);
-            rig.observe_with_here(u64::from(*tick), here);
+            observe(&mut rig, u64::from(*tick));
             rig.driver
                 .if_button_components
                 .contains(&protect.button_com)
@@ -6445,13 +6558,13 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
     rig.snapshot.seed_varps(varps);
     rig.slot().lock().unwrap().stop();
     rig.snapshot.seed_tick(raised_tick + 1);
-    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    observe(&mut rig, u64::from(raised_tick + 1));
     assert_eq!(
         &rig.driver.if_button_components[before_stop..],
         &[protect.button_com],
         "Stop owes only Combat's accepted protect, never the user's Thick Skin"
     );
-    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    observe(&mut rig, u64::from(raised_tick + 1));
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
     assert_eq!(
         rig.snapshot
@@ -6470,7 +6583,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
         .value = 0;
     rig.snapshot.seed_varps(varps);
     rig.snapshot.seed_tick(raised_tick + 2);
-    rig.observe_with_here(u64::from(raised_tick + 2), here);
+    observe(&mut rig, u64::from(raised_tick + 2));
     assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
     assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
 }
@@ -6693,92 +6806,16 @@ fn s2b_admission_per_bot_layouts() {
         std::mem::size_of_val(&bot.bank_fetch),
         std::mem::size_of_val(&bot.compact_route),
     );
-    // FIX-025: request-only inspection work and unpublished bank results are
-    // boxed, not reserved inline in every idle bot. Their owners do not change.
-    // The remaining growth since the S2b pin is intentional: admitted-work
-    // identities/cancellation, compact route leases, and the shared script
-    // seat's bounded delivery/hold queues. See FIX-025/mac-layout/report.md
-    // for the field/commit measurements. Exact pins have zero growth headroom.
-    // Grinch's shared native progress and evidence-wait run fences add two
-    // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
-    // Neither fence retains a scene or allocates a per-bot heap payload.
-    // EVENT-RUNTIME-S2 adds one inline u64 consumed-takeover sequence:
-    // macOS SlotScript measures 4616 B (+8 B), with no new heap payload.
-    // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
-    // account to NavBot's retained QuestEvidence.
-    // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
-    // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
-    // Nav split S3's typed NPC hop reason shrank NavBot by 16 B (3656 B).
-    // SURVIVAL-1.1 adds the 104 B inline SlotCondition owner, and the walk
-    // stall diagnostic adds 16 B to Traveller (original send tile and tick
-    // across resends): NavBot measures 3776 B, with no new heap payload and
-    // no SlotScript growth.
-    // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
-    // SURVIVAL-NATIVE-CURE keeps SurvivalStep (bounded by 192 B) and interrupt
-    // state in the existing boxed Gatherer/Quester scripts, not inline SlotScript.
-    // The 64-bit SlotScript pin remains 1624 B (+0 B).
-    // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
-    // layouts: test-only inspection budgets and bank fixtures are included.
-    // S0c moves the platform-specific isolate mutexes into the surface run.
-    // The shared 64-bit slot layout no longer contains those mutexes.
-    // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
-    // QUEST-DANGER-CONSENT boxes pending Start. On measured Linux x86_64,
-    // SlotScript shrinks from the earlier 1624 B pin to 1544 B.
-    // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
-    // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
-    // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
-    // Prerequisite hop tracking and captured logical-walk ownership add 240 B
-    // to NavBot, including 24 B for physical takeoff/destination identity;
-    // the slot's manual-run alias and exact bank policy add 32 B.
-    // Before nav-hop, Linux x86_64 measured 4056 B / 1576 B in this composed tree.
-    // Separately measured macOS aarch64 on e560b8222 (Rust 1.98.1, same lib-test
-    // features) also gives 4056 B / 1576 B; the old 1656 B slot pin was stale.
-    // Pre-FLOOR and per-bot memory A/B remain separate, still-owed proofs.
-    // Compat finish: Walking adds 48 B to NavBot and 16 B to SlotScript;
-    // Shop/Trade adds 8 B through `Option<Box<ShopSeat>>`, offset by the 8 B
-    // reduction from thin `Arc<WildernessRules>`. The Linux x86_64 pin was
-    // measured after the merge with dev (4104 B / 1592 B); the wilderness seam is a
-    // fat `Arc<dyn WildernessLevels>` (+8 B, 1600 B); the macOS pin follows it
-    // because the two have matched at every earlier measurement.
-    #[cfg(all(
-        target_os = "macos",
-        target_arch = "aarch64",
-        not(feature = "memory-profile")
-    ))]
-    // ADR 0019 provenance removal: two contained NavLease owners shrink 32 B each, plus 40 B inline quest evidence (-104 B), matching Linux.
-    assert_eq!(
-        (
-            std::mem::size_of::<NavBot>(),
-            std::mem::size_of::<script::SlotScript>(),
-            std::mem::size_of::<script::combat::Combat>(),
-            std::mem::size_of::<script::combat::WalkGuard>()
-        ),
-        (4104, 1600, 560, 264)
-    );
-    #[cfg(all(
-        target_os = "linux",
-        target_arch = "x86_64",
-        target_env = "gnu",
-        not(feature = "memory-profile")
-    ))]
-    // Provenance removal shrinks each of the two inline NavLease owners
-    // by 32 B and the inline quest evidence by 40 B.
-    // The Linux lib suite on the compat-finish merge with dev measured NavBot at 4104 B.
-    assert_eq!(
-        (
-            std::mem::size_of::<NavBot>(),
-            std::mem::size_of::<script::SlotScript>(),
-            std::mem::size_of::<script::combat::Combat>(),
-            std::mem::size_of::<script::combat::WalkGuard>()
-        ),
-        (4104, 1600, 560, 264)
-    );
-    // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
-    // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B
-    // with padding), which use Main's 8 B of headroom (the 560 B ceiling).
-    // NavBot and SlotScript pins still need their composed measurements.
-    assert!(std::mem::size_of::<script::combat::Combat>() <= 560);
-    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
+    // Protected-food handles add 80 B to NavBot and 16 B to WalkGuard.
+    // The composed 64-bit baseline is 4192/1600/560/280 B.
+    // Each ceiling leaves 64 B; memory-profile adds separate state.
+    #[cfg(all(target_pointer_width = "64", not(feature = "memory-profile")))]
+    {
+        assert!(std::mem::size_of::<NavBot>() <= 4256);
+        assert!(std::mem::size_of::<script::SlotScript>() <= 1664);
+    }
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 624);
+    assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 344);
 }
 
 mod s2b_admission_contract {
@@ -6869,48 +6906,6 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn first_native_crossing_with_explicit_forbid_keeps_a_bounded_poison_hold() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut rig = rig(Some(Arc::new(ice_world())), false);
-        rig.shared.lock().options.allow_danger_zones = WalkBit::Forbid;
-        observed_loadout(&mut rig.snapshot);
-        rig.shared.lock().target = Some(tile(120));
-        rig.observe(1);
-        rig.wait_routed();
-        let until_index = {
-            let bots = rig.navs.lock().unwrap();
-            let bot = &bots["alice"];
-            let assessment = bot.assessment.as_ref().unwrap();
-            assert_eq!(assessment.verdict, Verdict::Survivable);
-            assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
-            assert!(matches!(
-                assessment.input.poison,
-                PoisonState::Unknown { .. }
-            ));
-            let script::combat::risk::PoisonTest::WaitForClear { until_index, .. } =
-                assessment.poison_test
-            else {
-                panic!("expected a clear-passing, charged-failing route: {assessment:?}");
-            };
-            assert!(bot.risk_refusal.is_none());
-            assert!(bot.has_route() && bot.bank_fetch.is_none());
-            until_index
-        };
-        rig.step();
-        assert!(rig
-            .driver
-            .walked
-            .is_some_and(|(x, _)| x <= i32::from(until_index)));
-        assert_eq!(
-            rig.end(),
-            None,
-            "the crossing waits, rather than refusing Unknown alone"
-        );
-    }
-
-    #[test]
     fn first_native_safe_only_walk_keeps_the_poison_exemption_and_assessment() {
         if !api::test_support::game_data_available() {
             return;
@@ -6928,7 +6923,7 @@ mod s2b_admission_contract {
             PoisonState::Unknown { .. }
         ));
         assert_eq!(
-            bots["alice"].admission.as_ref().unwrap().policy,
+            bots["alice"].admission.as_ref().unwrap().decision.policy,
             script::native::RiskPolicy::Avoid
         );
     }
@@ -7017,7 +7012,10 @@ mod s2b_admission_contract {
                 let bot = &navs["alice"];
                 let admission = bot.admission.as_ref().unwrap();
                 assert!(admission.compat_v1);
-                assert_eq!(admission.policy, script::native::RiskPolicy::Proceed);
+                assert_eq!(
+                    admission.decision.policy,
+                    script::native::RiskPolicy::Proceed
+                );
                 assert!(
                     !admission.allow.food && !admission.allow.prayer && !admission.allow.escape
                 );
@@ -7084,6 +7082,12 @@ mod s2b_admission_contract {
         let bot = &navs["alice"];
         let admission = bot.admission.as_ref().unwrap();
         assert!(admission.compat_v1, "the stand walk keeps the v1 rule");
+        // Compat v1 counts as the global override: the machine-owned native
+        // walk is admitted from that one decision.
+        assert_eq!(
+            admission.decision,
+            crate::DangerLevel::Always.decide(Default::default(), Default::default(), false)
+        );
         assert!(bot.has_route(), "the stand walk crosses the ice zone");
         assert!(bot.native_walk_failure.is_none());
         drop(navs);
@@ -7118,10 +7122,7 @@ mod s2b_admission_contract {
                 radius: 0,
                 arrival: Default::default(),
                 loc_id: None,
-                options: script::native::WalkOptions {
-                    allow_danger_zones: WalkBit::Allow,
-                    ..Default::default()
-                },
+                options: Default::default(),
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
@@ -7376,10 +7377,7 @@ mod s2b_admission_contract {
                 radius: 0,
                 arrival: Default::default(),
                 loc_id: None,
-                options: script::native::WalkOptions {
-                    allow_danger_zones: WalkBit::Allow,
-                    ..Default::default()
-                },
+                options: Default::default(),
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
@@ -7602,13 +7600,14 @@ mod s2b_admission_contract {
         let (mut rig, shared) = advising_rig(1, false);
         let manual = Arc::new(Mutex::new(WalkArm {
             admission: Some(Box::new(crate::admission::Admission {
-                enforce: true,
                 escape: Some(unresolved_escape()),
                 ..crate::admission::Admission::manual(
-                    Default::default(),
+                    crate::DangerDecision {
+                        enforce: true,
+                        ..WalkGlobals::default().manual_decision(false)
+                    },
                     Default::default(),
                     1,
-                    WalkGlobals::default(),
                 )
             })),
             ..Default::default()

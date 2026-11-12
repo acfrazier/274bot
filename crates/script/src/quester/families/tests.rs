@@ -60,6 +60,7 @@ pub(crate) fn with_tick_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         None,
         |native, later, _| f(native, later),
@@ -79,6 +80,7 @@ pub(crate) fn with_tick_output<R>(
         ledger,
         tick,
         output,
+        None,
         None,
         snapshot,
         None,
@@ -100,6 +102,7 @@ pub(crate) fn with_tick_reach<R>(
         ledger,
         tick,
         &mut Output,
+        None,
         None,
         snapshot,
         None,
@@ -140,6 +143,7 @@ pub(crate) fn with_tick_scene_bank<R>(
         tick,
         &mut Output,
         bank,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -217,6 +221,7 @@ pub(crate) fn with_tick_reach_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         None,
         |native, _, later| f(native, later),
@@ -239,6 +244,7 @@ pub(crate) fn with_tick_world<R>(
         tick,
         &mut Output,
         None,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -260,6 +266,30 @@ pub(crate) fn with_tick_bank<R>(
         tick,
         &mut Output,
         bank,
+        None,
+        snapshot,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+pub(crate) fn with_tick_shop<R>(
+    snapshot: &GameSnapshot,
+    facts: &Arc<api::service_pick::ShopKeeperFacts>,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        Some(facts),
         snapshot,
         None,
         |native, _, _| f(native),
@@ -282,6 +312,7 @@ pub(crate) fn with_tick_output_bank<R>(
         tick,
         output,
         bank,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -305,6 +336,7 @@ pub(crate) fn with_tick_collision<R>(
         tick,
         &mut Output,
         None,
+        None,
         snapshot,
         Some(collision),
         |native, _, _| f(native),
@@ -321,6 +353,7 @@ fn with_tick_output_reach<R>(
     tick: u64,
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
+    shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
     next_snapshot: &GameSnapshot,
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
@@ -348,6 +381,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -355,6 +389,7 @@ fn with_tick_output_reach<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers,
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
@@ -388,6 +423,7 @@ fn with_tick_output_reach<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
+                shop_keepers,
                 collision,
                 hold: false,
                 world_members,
@@ -447,12 +483,14 @@ pub(crate) fn with_tick_budget_output<R>(
         cx: crate::native::ActionContext {
             stage_cross: None,
             walk_prereq: Default::default(),
+            protected_items: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence),
@@ -478,6 +516,7 @@ pub(crate) fn with_tick_budget_output<R>(
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 walk_danger: Some(&crate::native::AllowWalkDanger),
                 wilderness: None,
+                shop_keepers: None,
                 pvp_globals: None,
                 selected: Some(&data),
                 reach: None,
@@ -1816,7 +1855,10 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("open door recovery cannot select a bank or advisory")
         }
     }
@@ -2621,7 +2663,10 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("door approach cannot select a bank or advisory")
         }
     }
@@ -5066,6 +5111,7 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
             }
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
             | HostEffect::AssessWalk(_)
             | HostEffect::ServerOrdered(_) => {
                 panic!("used the item before approaching the NPC")

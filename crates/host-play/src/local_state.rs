@@ -113,6 +113,7 @@ use script::local_state::{SlotState, StatePort};
 mod files;
 mod frontend;
 
+pub(crate) use files::hint_has_pre_0_2_8_shape;
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{
     StateRoot, HINT_SCHEMA_VERSION, MAX_HINT_BYTES, MAX_LOADOUTS_BYTES, MAX_PREFERENCES_BYTES,
@@ -2539,7 +2540,6 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
                     | "script_scope_notice_ack"
                     | "show_special_areas"
                     | "survivable_routing"
-                    | "survivable_routing_notice_ack"
             ) =>
         {
             Some(PreferenceAuditScalarKind::Boolean)
