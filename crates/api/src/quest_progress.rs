@@ -127,6 +127,7 @@ pub fn observe_quest_gate(
                 facts.complete,
                 facts.stage_domain,
                 facts.colour_authoritative,
+                facts.completion_range,
                 facts.transmission,
             )
             .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
@@ -152,9 +153,18 @@ fn stage_colour_range(
     complete: i32,
     stage_domain: Option<InclusiveRange>,
     colour_authoritative: bool,
+    completion_range: Option<InclusiveRange>,
     transmission: Transmission,
 ) -> Option<InclusiveRange> {
-    if !colour_authoritative || transmission != Transmission::NotTransmitted || complete <= 0 {
+    if transmission != Transmission::NotTransmitted || complete <= 0 {
+        return None;
+    }
+    if status == QuestListStatus::Complete {
+        if let Some(range) = completion_range {
+            return Some(range);
+        }
+    }
+    if !colour_authoritative {
         return None;
     }
     let domain = stage_domain?;
@@ -202,10 +212,7 @@ struct QuestListStatusEvidence {
     quest: FactKey,
     status: QuestListStatus,
     signal: FactKey,
-    complete: i32,
-    stage_domain: Option<InclusiveRange>,
-    colour_authoritative: bool,
-    transmission: Transmission,
+    stage_range: Option<InclusiveRange>,
 }
 /// Evidence copied from one observed quest-list frame. It retains only
 /// canonical quest facts needed for complete and stage-window evaluation.
@@ -228,15 +235,22 @@ impl QuestListEvidenceProvider {
         };
         let statuses = quests
             .iter()
-            .map(|facts| QuestListStatusEvidence {
-                quest: facts.id.clone(),
-                status: status_for_display(&facts.display, observed.value)
-                    .unwrap_or(QuestListStatus::Unknown),
-                signal: facts.varp.clone(),
-                complete: facts.complete,
-                stage_domain: facts.stage_domain,
-                colour_authoritative: facts.colour_authoritative,
-                transmission: facts.transmission,
+            .map(|facts| {
+                let status = status_for_display(&facts.display, observed.value)
+                    .unwrap_or(QuestListStatus::Unknown);
+                QuestListStatusEvidence {
+                    quest: facts.id.clone(),
+                    status,
+                    signal: facts.varp.clone(),
+                    stage_range: stage_colour_range(
+                        status,
+                        facts.complete,
+                        facts.stage_domain,
+                        facts.colour_authoritative,
+                        facts.completion_range,
+                        facts.transmission,
+                    ),
+                }
             })
             .collect();
         Self {
@@ -270,14 +284,9 @@ impl EvidenceProvider for QuestListEvidenceProvider {
             };
             match gate {
                 QuestGate::Complete(_) => status_truth(status.status),
-                QuestGate::Window(window) if window.signal == status.signal => stage_colour_range(
-                    status.status,
-                    status.complete,
-                    status.stage_domain,
-                    status.colour_authoritative,
-                    status.transmission,
-                )
-                .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
+                QuestGate::Window(window) if window.signal == status.signal => status
+                    .stage_range
+                    .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
                 QuestGate::Window(_) => Truth::Unknown,
             }
         };
@@ -291,6 +300,11 @@ impl EvidenceProvider for QuestListEvidenceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn captured_quest_rows_retain_only_one_stage_range() {
+        assert!(std::mem::size_of::<QuestListStatusEvidence>() <= 64);
+    }
+
 
     #[test]
     fn reconnect_and_causal_changes_invalidate_but_idle_ticks_do_not() {
@@ -624,6 +638,37 @@ mod quest_list_tests {
             .truth,
             expected
         );
+    }
+
+    #[test]
+    fn completed_hero_window_uses_prerequisite_consistent_colour() {
+        let Some(quests) = catalog() else {
+            return;
+        };
+        assert!(quests.quest("hero").unwrap().colour_authoritative);
+        for (colour, expected) in [
+            (0x00F800, Truth::True),
+            (0xF8F800, Truth::False),
+            (0xF80000, Truth::False),
+        ] {
+            assert_window_from_colour(&quests, "hero", colour, 15, 15, expected);
+        }
+    }
+
+    #[test]
+    fn weak_colour_proves_only_windows_covering_every_later_value() {
+        let Some(selected) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
+        let mut identity = selected.quest_identity().unwrap().clone();
+        let row = identity.rows.iter_mut().find(|row| row.id == "hero").unwrap();
+        row.colour_authoritative = false;
+        row.completion_range = Some(InclusiveRange { min: Some(8), max: Some(15) });
+        let quests = QuestCatalog::from_identity(Some(&identity)).unwrap();
+        assert_window_from_colour(&quests, "hero", 0x00F800, 8, 15, Truth::True);
+        assert_window_from_colour(&quests, "hero", 0x00F800, 15, 15, Truth::Unknown);
+        assert_window_from_colour(&quests, "hero", 0xF8F800, 15, 15, Truth::Unknown);
+        assert_window_from_colour(&quests, "hero", 0xF80000, 15, 15, Truth::Unknown);
     }
 
     #[test]

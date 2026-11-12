@@ -15,6 +15,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   starts over once after a missed update, so it can last up to 63 game ticks.
   If the poison state still cannot be confirmed, the walk stops and shows
   the reason, as before.
+- The Shilo Village carts now require Shilo Village completion in both directions,
+  as the current game content requires.
+- Completed Hero's Quest accounts can enter the Heroes' Guild again. Quest
+  colour checks now account for the completed quest's required quests when
+  they test whether a later action can change its stage.
 
 ### Login
 
