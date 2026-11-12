@@ -91,6 +91,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   "no position yet". When a Teleport does not apply, the terminal app now
   shows the same reason as the panel, and no longer clears the message line.
 
+### Panel
+
+- Clicking or dragging the Fleet heading no longer closes the panel while its
+  folded state saves or after that save fails.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes

@@ -272,7 +272,6 @@ pub(crate) fn header(ui: &Ui, session: &mut Session, label: &str) -> bool {
         let _ = session
             .persist_panel_member(&["fleet_toolbar_open"], Some(serde_json::Value::Bool(open)));
     }
-    crate::app::panel_member_feedback_line(ui, session, &["fleet_toolbar_open"]);
     open
 }
 
@@ -280,6 +279,8 @@ pub(crate) fn header(ui: &Ui, session: &mut Session, label: &str) -> bool {
 /// names the drop-down that owns an open card search, and labels what a
 /// test records.
 pub(crate) fn body(ui: &Ui, session: &mut Session, site: Site, open: bool) {
+    // Keep the header as the last item until its tooltip and drag handling finish.
+    crate::app::panel_member_feedback_line(ui, session, &["fleet_toolbar_open"]);
     #[cfg(test)]
     {
         let left = ui.cursor_screen_pos()[0];

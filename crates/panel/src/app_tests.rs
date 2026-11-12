@@ -7644,9 +7644,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
                     Some(serde_json::Value::Bool(false)),
                 );
             },
-            draw: |ui, s| {
-                crate::fleet_toolbar::header(ui, s, "fleet");
-            },
+            draw: super::fleet_section,
         },
         Surface {
             name: "rail preview fold",
@@ -9382,4 +9380,88 @@ fn the_banner_for_a_99_zone_refusal_is_short() {
     );
     assert!(lines[0].ends_with('…'), "{}", lines[0]);
     assert!(!banner.contains("2567,3050"), "{banner}");
+}
+
+/// Draw the real strip headings with a physical pointer and button state.
+fn heading_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    down: bool,
+) -> ([f32; 2], [f32; 2], bool) {
+    ctx.io_mut().add_mouse_pos_event(point);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, down);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    crate::fleet::take_layout();
+    let mut target = [0.0; 2];
+    let active = {
+        let ui = ctx.frame();
+        ui.window("heading driver")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([600.0, 700.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::section_open(ui, session, "status");
+                target = rect_centre([
+                    ui.item_rect_min()[0],
+                    ui.item_rect_min()[1],
+                    ui.item_rect_max()[0],
+                    ui.item_rect_max()[1],
+                ]);
+                super::fleet_section(ui, session);
+            });
+        ui.drag_drop_payload().is_some()
+    };
+    ctx.render();
+    let source = rect_centre(crate::fleet::take_layout().fold_header);
+    (source, target, active)
+}
+
+#[test]
+fn fleet_heading_click_and_drag_keep_the_header_while_its_fold_saves() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("heading-dnd");
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let (release, failing) = hold_writes(&session);
+    failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    session.ui.fleet_toolbar_open = false;
+    session.ui.section_order = vec!["status".into(), "fleet".into()];
+    let mut ctx = dock_host_context();
+    let away = [1200.0, 700.0];
+    let mut source = [0.0; 2];
+    for _ in 0..3 {
+        (source, _, _) = heading_frame(&mut ctx, &mut session, away, false);
+    }
+    for down in [false, true, false] {
+        let (_, _, active) = heading_frame(&mut ctx, &mut session, source, down);
+        assert!(!active, "a plain click must not start a heading drag");
+    }
+    assert!(session.ui.fleet_toolbar_open, "the click opens the toolbar");
+    assert!(session.panel_member_pending(&["fleet_toolbar_open"]));
+
+    heading_frame(&mut ctx, &mut session, source, false);
+    heading_frame(&mut ctx, &mut session, source, true);
+    let dragged = [source[0] + 40.0, source[1]];
+    let (_, target, active) = heading_frame(&mut ctx, &mut session, dragged, true);
+    assert!(
+        active,
+        "dragging the header starts its payload while Saving… is drawn"
+    );
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, false);
+    let order = super::resolve_heading_order(&session.ui.section_order);
+    assert!(
+        order.iter().position(|id| id == "fleet") < order.iter().position(|id| id == "status"),
+        "the Fleet payload reorders the actual headings: {order:?}"
+    );
+    let saved_open = serde_json::json!(session.ui.fleet_toolbar_open);
+    drop(release);
+    await_preference(&mut session, "fleet_toolbar_open", saved_open);
+    let saved_order = serde_json::to_value(&session.ui.section_order).unwrap();
+    await_preference(&mut session, "section_order", saved_order);
 }
