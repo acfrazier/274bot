@@ -128,6 +128,49 @@ fn a_refusal_prefers_the_npc_in_combat_and_then_moves_to_the_other_attacker() {
     assert_eq!(harness.machine.single_way_lines, 1);
 }
 
+#[test]
+fn single_way_attacker_retarget_uses_network_coords_for_bounds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = two_imps();
+    let rendered = tile(2601, 3200);
+    scene.npcs[1].tile = rendered;
+    scene.npcs[1].network = tile(2604, 3200);
+    faces_the_bot(&mut scene.npcs[0]);
+    scene.refresh();
+    let mut request = scene.request();
+    request.target = Target::Attacker {
+        npcs: true,
+        players: false,
+    };
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: 2600,
+        min_z: 3200,
+        max_x: 2601,
+        max_z: 3200,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    attack_on(harness.pending(&scene, 1), 7);
+
+    faces_the_bot(&mut scene.npcs[1]);
+    scene.refresh();
+    say(&mut scene, 1, REFUSAL);
+    let batch = pending_unless_ended(&mut harness, &scene, 2);
+    assert!(
+        !has_attack(&batch),
+        "the out-of-bounds network attacker is not a retarget"
+    );
+    assert_eq!(
+        harness.machine.engaged,
+        Some(ActorRef {
+            kind: ActorKind::Npc,
+            index: 7,
+        })
+    );
+}
+
 /// The stand gates starting an engagement; an NPC already hitting the bot is
 /// reached without it.
 #[test]
@@ -621,6 +664,19 @@ fn the_first_pick_stays_nearest_on_a_multiway_map() {
     });
     let mut harness = Harness::new(&scene, scene.request());
     attack_on(harness.pending(&scene, 1), 7);
+}
+
+#[test]
+fn nearest_npc_pick_uses_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = two_imps();
+    scene.npcs[0].network = tile(2608, 3200);
+    scene.npcs[1].network = tile(2601, 3200);
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 8);
 }
 
 /// An NPC that only faces the bot, with no health bar open, has not attacked

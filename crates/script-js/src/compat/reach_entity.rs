@@ -91,6 +91,93 @@ impl Tile {
     }
 }
 
+impl From<observed::Tile> for Tile {
+    fn from(tile: observed::Tile) -> Self {
+        Self {
+            x: tile.x,
+            z: tile.z,
+            level: tile.level,
+        }
+    }
+}
+
+impl From<Tile> for observed::Tile {
+    fn from(tile: Tile) -> Self {
+        Self {
+            x: tile.x,
+            z: tile.z,
+            level: tile.level,
+        }
+    }
+}
+
+/// The NPC footprint's nearest tile, measured from the local server tile.
+fn footprint_tile(here: Tile, origin: Tile, size: i32) -> Option<Tile> {
+    if size <= 0 || here.level != origin.level {
+        return None;
+    }
+    let last = size - 1;
+    Some(Tile {
+        x: here.x.clamp(origin.x, origin.x.saturating_add(last)),
+        z: here.z.clamp(origin.z, origin.z.saturating_add(last)),
+        level: origin.level,
+    })
+}
+
+fn footprint_distance(here: Tile, origin: Tile, size: i32) -> Option<i32> {
+    let closest = footprint_tile(here, origin, size)?;
+    Some(observed::network_distance(here.into(), closest.into()))
+}
+
+/// Distance from the local server tile to the nearest tile in an NPC footprint.
+pub(crate) fn npc_network_distance(here: WorldTile, origin: WorldTile, size: i32) -> Option<i32> {
+    footprint_distance(
+        Tile {
+            x: here.x,
+            z: here.z,
+            level: here.level,
+        },
+        Tile {
+            x: origin.x,
+            z: origin.z,
+            level: origin.level,
+        },
+        size,
+    )
+}
+
+/// Whether the local server tile is on or beside an NPC's network footprint.
+pub(crate) fn npc_network_adjacent(here: WorldTile, origin: WorldTile, size: i32) -> bool {
+    npc_network_distance(here, origin, size).is_some_and(|distance| distance <= 1)
+}
+
+fn can_reach_npc_footprint(origin: Tile, size: i32, adjacent_ok: bool) -> bool {
+    if size <= 0 {
+        return false;
+    }
+    for dx in 0..size {
+        let Some(x) = origin.x.checked_add(dx) else {
+            continue;
+        };
+        for dz in 0..size {
+            let Some(z) = origin.z.checked_add(dz) else {
+                continue;
+            };
+            if can_reach(
+                Tile {
+                    x,
+                    z,
+                    level: origin.level,
+                },
+                adjacent_ok,
+            ) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn here() -> Option<Tile> {
     observed::with(|scene| {
         scene.since_login().here().map(|t| Tile {
@@ -1214,19 +1301,23 @@ pub(crate) struct NpcReach {
     logs: VecDeque<String>,
 }
 
-/// The nearest posted `npc` row with a talk op (frozen
-/// `Npcs.query().name(n).where(talkOp !== null).nearest()`).
+/// The nearest posted talkable NPC, selected by its nearest network-footprint tile.
 pub(crate) struct TalkRow {
     name: String,
     action: String,
     index: i32,
     tile: Tile,
+    size: i32,
     pub(crate) reachable_adj: bool,
 }
 
 impl TalkRow {
+    /// The network-footprint tile nearest the current local server tile.
     pub(crate) fn world_tile(&self) -> WorldTile {
-        self.tile.world()
+        here()
+            .and_then(|here| footprint_tile(here, self.tile, self.size))
+            .unwrap_or(self.tile)
+            .world()
     }
 }
 
@@ -1234,32 +1325,37 @@ fn npc_name_matches(name: Option<&str>, want: &str) -> bool {
     name.is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
 }
 
+/// Select a talkable NPC by the distance from the local server tile to its footprint.
 pub(crate) fn talk_row(npc: &str) -> Option<TalkRow> {
     let want = npc.trim();
     if want.is_empty() {
         return None;
     }
     observed::with(|scene| {
-        let rows = scene.since_login().npcs()?;
+        let session = scene.since_login();
+        let here = Tile::from(session.here()?);
+        let rows = session.npcs()?;
         rows.iter()
-            .filter(|row| npc_name_matches(row.name.as_deref(), want))
-            .filter_map(|row| crate::compat::dialog::talk_op(&row.actions).map(|op| (row, op)))
-            .min_by_key(|(row, _)| row.distance)
-            .map(|(row, op)| TalkRow {
+            .filter_map(|row| {
+                let tile = Tile::from(row.network_tile()?);
+                let distance = footprint_distance(here, tile, row.size)?;
+                let op = crate::compat::dialog::talk_op(&row.actions)?;
+                Some((row, op, tile, distance))
+            })
+            .filter(|(row, _, _, _)| npc_name_matches(row.name.as_deref(), want))
+            .min_by_key(|(_, _, _, distance)| *distance)
+            .map(|(row, op, tile, _)| TalkRow {
                 name: row.name.as_deref().unwrap_or_default().to_string(),
                 action: op.to_string(),
                 index: row.index,
-                tile: Tile {
-                    x: row.x,
-                    z: row.z,
-                    level: row.level,
-                },
+                tile,
+                size: row.size,
                 reachable_adj: row.reachable_adj,
             })
     })
 }
 
-/// The nearest posted tile for an NPC with a talk operation.
+/// The closest tile in the network footprint for a talkable NPC.
 pub(crate) fn nearest_npc_tile(npc: &str) -> Option<WorldTile> {
     talk_row(npc).map(|row| row.world_tile())
 }
@@ -1329,12 +1425,13 @@ impl NpcReach {
                         return Some("retry");
                     }
                     if self.opts.probe_unreachable && !self.expect() {
-                        let blocked = talk_row(&self.npc).map(|row| row.tile).filter(|blocked| {
-                            here().is_some_and(|here| {
-                                blocked.level == here.level
-                                    && here.cheb(*blocked) <= PROBE_RADIUS
-                                    && !can_reach(*blocked, true)
-                            })
+                        let blocked = talk_row(&self.npc).and_then(|row| {
+                            let here = here()?;
+                            let distance = footprint_distance(here, row.tile, row.size)?;
+                            let target = footprint_tile(here, row.tile, row.size)?;
+                            (distance <= PROBE_RADIUS
+                                && !can_reach_npc_footprint(row.tile, row.size, true))
+                            .then_some(target)
                         });
                         if let Some(blocked) = blocked {
                             self.phase = NpcReachPhase::Clearing {
@@ -1372,7 +1469,9 @@ impl NpcReach {
                         return Some("done");
                     }
                     if cant_reach {
-                        let Some(toward) = talk_row(&self.npc).map(|row| row.tile) else {
+                        let Some(toward) = talk_row(&self.npc).and_then(|row| {
+                            here().and_then(|here| footprint_tile(here, row.tile, row.size))
+                        }) else {
                             self.logs.push_back(unreachable_line(&self.npc, None));
                             return Some("unreachable");
                         };
@@ -1876,7 +1975,9 @@ mod tests {
                     x: 1,
                     z: 0,
                     level: 0,
-                    distance: 1,
+                    size: 1,
+                    nx: 1,
+                    nz: 0,
                     actions: vec!["Talk-to".into(), "Examine".into()].into(),
                     ..observed::EntityRow::default()
                 }]);
@@ -2018,6 +2119,133 @@ mod tests {
     }
 
     #[test]
+    fn network_coords_cant_reach_clear_targets_the_current_npc_footprint() {
+        fresh();
+        let post_target = |tick, lines: &[(i32, &str)]| {
+            observed::post(tick, |post| {
+                post.session(true)
+                    .here(observed::Tile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    })
+                    .chat_lines(
+                        lines
+                            .iter()
+                            .map(|(seq, text)| observed::ChatLine {
+                                seq: *seq,
+                                text: (*text).into(),
+                            })
+                            .collect(),
+                    )
+                    .npcs(vec![observed::EntityRow {
+                        index: 7,
+                        name: Some("Luthas".into()),
+                        x: -20,
+                        z: 0,
+                        level: 0,
+                        distance: 0,
+                        size: 3,
+                        nx: 10,
+                        nz: 0,
+                        actions: vec!["Talk-to".into()].into(),
+                        ..observed::EntityRow::default()
+                    }]);
+            });
+        };
+        post_target(1, &[]);
+        let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, true, false));
+        assert_eq!(d.step(), (None, vec![talk_click()]));
+
+        post_target(2, &[(1, "I can't reach that!")]);
+        assert_eq!(d.step(), (Some("unreachable"), vec![]));
+        let line = d.reach.pop_log().expect("the unreachable detail");
+        assert!(
+            line.contains("(10,0)"),
+            "clear uses the nearest tile in the current network footprint: {line}"
+        );
+    }
+
+    #[test]
+    fn network_coords_talk_row_ranks_by_nearest_server_footprint_tile() {
+        fresh();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 5,
+                    z: 0,
+                    level: 0,
+                })
+                .npcs(vec![
+                    observed::EntityRow {
+                        index: 8,
+                        name: Some("Luthas".into()),
+                        x: 5,
+                        z: 0,
+                        level: 0,
+                        distance: 0,
+                        size: 1,
+                        nx: 4,
+                        nz: 0,
+                        actions: vec!["Talk-to".into()].into(),
+                        ..observed::EntityRow::default()
+                    },
+                    observed::EntityRow {
+                        index: 7,
+                        name: Some("Luthas".into()),
+                        x: 200,
+                        z: 0,
+                        level: 0,
+                        distance: 10,
+                        size: 6,
+                        nx: 0,
+                        nz: 0,
+                        actions: vec!["Talk-to".into()].into(),
+                        ..observed::EntityRow::default()
+                    },
+                ]);
+        });
+        let row = talk_row("Luthas").expect("a talkable NPC with a network footprint");
+        assert_eq!(
+            row.index, 7,
+            "the local tile is inside this NPC's footprint"
+        );
+        let target = nearest_npc_tile("Luthas").expect("the nearest footprint tile");
+        assert_eq!((target.x, target.z, target.level), (5, 0, 0));
+    }
+
+    #[test]
+    fn network_coords_talk_row_rejects_missing_origin_and_zero_size() {
+        let row = || observed::EntityRow {
+            index: 7,
+            name: Some("Luthas".into()),
+            size: 1,
+            nx: 10,
+            nz: 0,
+            actions: vec!["Talk-to".into()].into(),
+            ..observed::EntityRow::default()
+        };
+
+        fresh();
+        observed::post(1, |post| {
+            post.session(true).npcs(vec![row()]);
+        });
+        assert!(talk_row("Luthas").is_none(), "local origin is required");
+
+        fresh();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                })
+                .npcs(vec![observed::EntityRow { size: 0, ..row() }]);
+        });
+        assert!(talk_row("Luthas").is_none(), "size zero has no footprint");
+    }
+
+    #[test]
     fn an_absent_npc_waits_one_tick_then_retries_without_a_click() {
         fresh();
         observed::post(1, |post| {
@@ -2072,5 +2300,12 @@ mod tests {
             machine::take(h),
             Take::Settled(machine::Outcome::Done(json!("unreachable")))
         );
+    }
+
+    #[test]
+    fn network_coords_native_talk_row_layout_has_headroom() {
+        let size = std::mem::size_of::<TalkRow>();
+        println!("Native talk layout TalkRow={size} limit={}", 72 + 64);
+        assert!(size <= 72 + 64);
     }
 }

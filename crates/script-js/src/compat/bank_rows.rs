@@ -1,6 +1,6 @@
 use crate::scene::observed::{EntityRow, ItemRow, SceneRow};
 use api::snapshot::WorldTile;
-use script::bank::ops::{op_index, BankRow, LocRow, NpcRow, OpLabels};
+use script::bank::ops::{op_index, BankRow, LocRow, OpLabels};
 
 /// The host posts a native action hole as an empty label in its slot, so
 /// the 1-based positions match the native row.
@@ -76,24 +76,6 @@ impl OpLabels for EntityRow {
 
     fn op_label(&self, one_based: i32) -> Option<&str> {
         self.actions.get(op_index(one_based)?).map(|label| &**label)
-    }
-}
-
-impl NpcRow for EntityRow {
-    fn tile(&self) -> WorldTile {
-        WorldTile {
-            x: self.x,
-            z: self.z,
-            level: self.level,
-        }
-    }
-
-    fn distance(&self) -> i32 {
-        self.distance
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
     }
 }
 

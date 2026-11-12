@@ -708,7 +708,10 @@ fn classify_fishing_placement(
     let Some(targets) = known_targets(method) else {
         return PlacementClass::Absent;
     };
-    for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+    for npc in npcs
+        .iter()
+        .filter(|npc| region_contains(bounds, npc.network))
+    {
         let Some(id) = npc_type_id(npc) else {
             continue;
         };
@@ -728,7 +731,7 @@ fn classify_fishing_placement(
         }
     }
     if npcs.iter().any(|npc| {
-        region_contains(bounds, npc.tile)
+        region_contains(bounds, npc.network)
             && npc_type_id(npc).is_some_and(|id| {
                 spot.entity == EntityId::Npc(id)
                     && targets.iter().any(|target| {
@@ -879,20 +882,25 @@ fn select_with_access(
                 let Some(bounds) = movement_bounds(spot) else {
                     continue;
                 };
-                for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
-                    if access == AccessPolicy::Possible && !area.contains(npc.tile) {
+                for npc in npcs
+                    .iter()
+                    .filter(|npc| region_contains(bounds, npc.network))
+                {
+                    if access == AccessPolicy::Possible && !area.contains(npc.network) {
                         continue;
                     }
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
-                    if spot.entity != EntityId::Npc(type_id) || is_avoided(npc.tile, avoided, now) {
+                    if spot.entity != EntityId::Npc(type_id)
+                        || is_avoided(npc.network, avoided, now)
+                    {
                         continue;
                     }
                     let Ok(index) = i32::try_from(npc.index) else {
                         continue;
                     };
-                    if !danger.allows_live(npc.tile, spot.entity, snapshot) {
+                    if !danger.allows_live(npc.network, spot.entity, snapshot) {
                         continue;
                     }
                     fishing.reset_live(method_index, spot.id.0);
@@ -904,9 +912,9 @@ fn select_with_access(
                             method,
                             spot,
                             PlacementClass::Live,
-                            npc.tile,
+                            npc.network,
                             index,
-                            distance(here, npc.tile),
+                            distance(here, npc.network),
                         ),
                         skill_stat,
                     );
@@ -1624,8 +1632,9 @@ fn npc_type_id(npc: &NpcView) -> Option<i32> {
 }
 
 fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> bool {
-    npcs.iter()
-        .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
+    npcs.iter().any(|npc| {
+        npc.network == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id))
+    })
 }
 
 fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile], now: u64) -> bool {
@@ -3561,7 +3570,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn fishing_spots_use_movement_boxes_and_do_not_target_hazards() {
+    fn fishing_spots_network_coords_use_path_heads_in_movement_and_hazards() {
         let bounds = SceneRegionInput {
             min_x: 3290,
             min_z: 3290,
@@ -3610,7 +3619,14 @@ pub(crate) mod tests {
                 PlacementScene {
                     world: &world,
                     locs: &[],
-                    npcs: &[npc(42, 309, target_tile)],
+                    npcs: &[{
+                        let mut npc = npc(42, 309, target_tile);
+                        npc.tile = WorldTile {
+                            x: target_tile.x + 20,
+                            ..target_tile
+                        };
+                        npc
+                    }],
                     hazard_npcs: &[],
                 },
                 area.anchor,
@@ -3642,7 +3658,14 @@ pub(crate) mod tests {
                 PlacementScene {
                     world: &world,
                     locs: &[],
-                    npcs: &[npc(43, 900, target_tile)],
+                    npcs: &[{
+                        let mut npc = npc(43, 900, target_tile);
+                        npc.tile = WorldTile {
+                            x: target_tile.x + 20,
+                            ..target_tile
+                        };
+                        npc
+                    }],
                     hazard_npcs: &[900],
                 },
                 area.anchor,
@@ -3695,7 +3718,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn selected_fishing_target_uses_npc_type_index_and_live_tile() {
+    fn selected_fishing_target_network_coords_use_npc_path_head() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -3771,7 +3794,13 @@ pub(crate) mod tests {
             ..GathererSettings::default()
         };
         let world = scene_around(tile);
-        let observed_npcs = [npc(42, type_index, tile)];
+        let mut observed = npc(42, type_index, tile);
+        observed.tile = WorldTile {
+            x: bounds.max_x + 1,
+            z: tile.z,
+            level: tile.level,
+        };
+        let observed_npcs = [observed];
         let selected = select(
             &catalog,
             &[method_index],
@@ -3817,7 +3846,9 @@ pub(crate) mod tests {
         .into_iter()
         .find(|moved| *moved != tile && area.contains(*moved) && region_contains(bounds, *moved))
         .expect("a moved fishing instance remains in its eligible movement box");
-        let moved_npc = [npc(43, type_index, moved_tile)];
+        let mut moved = npc(43, type_index, moved_tile);
+        moved.tile = tile;
+        let moved_npc = [moved];
         let reacquired = select(
             &catalog,
             &[method_index],

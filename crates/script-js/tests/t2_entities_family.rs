@@ -31,9 +31,9 @@ fn entity<'a>(
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: x,
+        nz: z,
         shape: 0,
         angle: 0,
     }
@@ -161,7 +161,7 @@ export default class EntityFamilyBot extends LoopingBot {
             .name(' goblin ', 'GOBLIN')
             .action('attack')
             .within(2)
-            .inside({ minX: 3200, maxX: 3202, minZ: 3200, maxZ: 3202 })
+            .inside({ minX: 3199, maxX: 3202, minZ: 3200, maxZ: 3202 })
             .results();
         const nearest = Npcs.query().nearest();
         globalThis.__probe = {
@@ -480,7 +480,8 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     assert_eq!(iso.probe("1").unwrap(), serde_json::json!(1));
     let probe = tick(&iso, &snapshot);
     assert_eq!(probe["aliases"], serde_json::json!([true, true, true]));
-    assert_eq!(probe["roots"], serde_json::json!([2, 1, 2]));
+    // Native geometry includes the first path head, not the other-level NPC.
+    assert_eq!(probe["roots"], serde_json::json!([2, 1, 1]));
     assert_eq!(probe["wrapped"], serde_json::json!([true, true, true]));
     assert_eq!(probe["npc"][0], "Goblin");
     assert_eq!(

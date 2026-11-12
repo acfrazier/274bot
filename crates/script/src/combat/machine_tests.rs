@@ -2581,6 +2581,7 @@ fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
         assert!(harness.pending(&scene, tick).is_none());
     }
     scene.local.player.actor.tile = goal;
+    scene.local.player.network = goal;
     scene.refresh();
     let report = harness.ready(&scene, 20);
     assert_eq!(report.end, CombatEnd::Aborted(AbortReason::Retreated));
@@ -3989,14 +3990,15 @@ fn leash_fight(scene: &mut Scene, budget_ticks: u16) -> Harness {
 }
 
 #[test]
-fn stand_leash_loss_walks_off_the_server_chase_before_target_gone() {
+fn stand_leash_loss_uses_npc_network_coords_to_cancel_the_server_chase() {
     if !api::test_support::game_data_available() {
         return;
     }
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 50);
-    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].tile = tile(stand.x + 1, stand.z);
+    scene.npcs[0].network = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
     scene.refresh();
 
@@ -4031,7 +4033,8 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 4);
-    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].tile = tile(stand.x + 1, stand.z);
+    scene.npcs[0].network = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
     scene.refresh();
     assert!(matches!(
@@ -4073,6 +4076,7 @@ fn quester_combat_approach_replans_after_no_path() {
         Some("first route failed"),
     );
     scene.local.player.actor.tile = tile(here.x + 1, here.z);
+    scene.local.player.network = tile(here.x + 1, here.z);
     scene.face_us();
     scene.refresh();
     scene.snapshot.seed_hitmarks(HitmarksView {
@@ -4470,7 +4474,8 @@ fn stand_is_reached_before_engagement_even_when_a_target_is_already_in_radius() 
 }
 
 #[test]
-fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
+fn melee_pick_uses_npc_network_coords_for_footprints_and_never_takes_a_target_behind_a_closed_pen()
+{
     if !api::test_support::game_data_available() {
         return;
     }
@@ -4480,13 +4485,14 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
     let penned = tile(here.x + 3, here.z);
-    scene.npcs[0].tile = penned;
+    scene.npcs[0].tile = tile(here.x, here.z + 6);
     scene.npcs[0].network = penned;
+    scene.npcs[0].size = 0;
     scene.npcs[0].distance = 3;
     let mut open = scene.npcs[0].clone();
     open.index = 8;
-    open.tile = tile(here.x, here.z + 6);
-    open.network = open.tile;
+    open.tile = penned;
+    open.network = tile(here.x, here.z + 6);
     open.distance = 6;
     scene.npcs.push(open);
     scene.refresh();
@@ -4505,8 +4511,9 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
 
     // With only the penned cow present, nothing is picked at all.
     let mut scene = Scene::new("cow");
-    scene.npcs[0].tile = penned;
+    scene.npcs[0].tile = tile(here.x, here.z + 6);
     scene.npcs[0].network = penned;
+    scene.npcs[0].size = 0;
     scene.npcs[0].distance = 3;
     scene.refresh();
     let reach = flood_view(tile(here.x - 10, here.z - 10), 32, &pen_flags(penned), here);
@@ -4516,6 +4523,181 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
         harness.pending(&scene, 1).is_none(),
         "no attack and no walk: the player is at the stand and the only cow is penned"
     );
+}
+
+#[test]
+fn npc_target_selection_uses_network_coords_for_search_bounds_and_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.network;
+    let rendered = tile(here.x + 1, here.z);
+    scene.npcs[0].tile = rendered;
+    scene.npcs[0].network = tile(here.x + 4, here.z);
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.engage_radius = 1;
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack"
+        ),
+        "a rendered tile in bounds cannot select an NPC whose network tile is out of bounds"
+    );
+}
+
+#[test]
+fn attacker_npc_search_bounds_use_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    let rendered = scene.npcs[0].tile;
+    scene.npcs[0].network = tile(rendered.x + 4, rendered.z);
+    scene.face_us();
+    scene.refresh();
+    let mut request = scene.request();
+    request.target = Target::Attacker {
+        npcs: true,
+        players: false,
+    };
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack"
+        ),
+        "an attacker whose rendered tile is in bounds but network tile is not must not be picked"
+    );
+}
+
+fn incoming_projectile(
+    source: api::WorldTile,
+    local_index: usize,
+) -> api::snapshot::ProjectileView {
+    api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: source.level,
+        src: source,
+        target: Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: local_index,
+        }),
+        t1: 41,
+        t2: 51,
+    }
+}
+
+fn projectile_has_threat_event(scene: &Scene, actor: ActorRef) -> bool {
+    let mut harness = Harness::new(scene, scene.request());
+    harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+        let frame = Frame::borrow(cx.snapshot()).unwrap();
+        let mut threats = ThreatSet::default();
+        threats.observe(&frame, &scene.tables, 1);
+        let has_event = threats
+            .iter(1)
+            .any(|threat| threat.actor == actor && threat.has_event());
+        has_event
+    })
+}
+
+#[test]
+fn incoming_projectile_attribution_uses_npc_and_player_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let npc_actor = ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    };
+    let mut npc_scene = Scene::new("imp");
+    let source = npc_scene.npcs[0].tile;
+    npc_scene.face_us();
+    npc_scene.npcs[0].tile = source;
+    npc_scene.npcs[0].network = tile(source.x + 5, source.z);
+    npc_scene.npcs[0].animation = -1;
+    npc_scene.npcs[0].spot_animation = -1;
+    npc_scene.refresh();
+    npc_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            npc_scene.local.player.index,
+        )]);
+    assert!(
+        !projectile_has_threat_event(&npc_scene, npc_actor),
+        "a rendered-tile match must not attribute a projectile to an NPC on another network tile"
+    );
+
+    npc_scene.npcs[0].tile = tile(source.x + 5, source.z);
+    npc_scene.npcs[0].network = source;
+    npc_scene.refresh();
+    npc_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            npc_scene.local.player.index,
+        )]);
+    assert!(projectile_has_threat_event(&npc_scene, npc_actor));
+
+    let player_actor = ActorRef {
+        kind: ActorKind::Player,
+        index: 8,
+    };
+    let mut player_scene = Scene::new("imp");
+    let source = player_scene.local.player.network;
+    let mut remote = pvp_tests::player(8, "alice", source, &[Some("Attack")], 60);
+    remote.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: player_scene.local.player.index,
+    });
+    remote.actor.animation = -1;
+    remote.actor.spot_animation = -1;
+    remote.network = tile(source.x + 5, source.z);
+    player_scene.players.push(remote);
+    player_scene.refresh();
+    player_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            player_scene.local.player.index,
+        )]);
+    assert!(
+        !projectile_has_threat_event(&player_scene, player_actor),
+        "a rendered-tile match must not attribute a projectile to a player on another network tile"
+    );
+
+    player_scene.players[0].actor.tile = tile(source.x + 5, source.z);
+    player_scene.players[0].network = source;
+    player_scene.refresh();
+    player_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            player_scene.local.player.index,
+        )]);
+    assert!(projectile_has_threat_event(&player_scene, player_actor));
 }
 
 #[test]
@@ -4671,6 +4853,7 @@ fn user_input_ends_combat_leash_walk_without_retarget_or_rewalk() {
     let mut harness = leash_fight(&mut scene, 50);
     scene.npcs[0].tile = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
+    scene.npcs[0].network = scene.npcs[0].tile;
     scene.refresh();
 
     let walk_tick = (3..=5).find(|tick| match harness.pending(&scene, *tick) {

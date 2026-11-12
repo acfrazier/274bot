@@ -969,7 +969,7 @@ impl Combat {
         let (wilderness, difference) = self.engaged_player(frame).map_or((0, 0), |row| {
             let level = |tile| frame.wilderness.map_or(0, |rules| rules.level(tile));
             (
-                level(frame.here).min(level(row.actor.tile)),
+                level(frame.here).min(level(row.network)),
                 frame.local.player.combat_level.abs_diff(row.combat_level),
             )
         });
@@ -1605,7 +1605,7 @@ impl Combat {
                                 .iter()
                                 .flatten()
                                 .any(|action| action == "Attack")
-                            && distance(row.tile, self.request.stand.unwrap_or(frame.here))
+                            && distance(row.network, self.request.stand.unwrap_or(frame.here))
                                 <= i32::from(self.request.lost_radius);
                         killed = same && row.total_health > 0 && row.health == 0;
                         if present && !same {
@@ -1623,9 +1623,8 @@ impl Combat {
                             && row.actor.name.as_deref().map(select::ident::fnv1a)
                                 == self.player_ident()
                     }) {
-                        present =
-                            distance(row.actor.tile, self.request.stand.unwrap_or(frame.here))
-                                <= i32::from(self.request.lost_radius);
+                        present = distance(row.network, self.request.stand.unwrap_or(frame.here))
+                            <= i32::from(self.request.lost_radius);
                         killed = row.actor.total_health > 0 && row.actor.health == 0;
                         if present && !killed {
                             refused = select::player_candidate(row, frame, &self.tables).err();
@@ -3453,7 +3452,7 @@ impl Combat {
                     row.index == usize::from(actor.index)
                         && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type()
                 })
-                .map(|row| row.tile),
+                .map(|row| row.network),
             ActorKind::Player => frame
                 .players
                 .iter()
@@ -3463,7 +3462,7 @@ impl Combat {
                         && row.actor.name.as_deref().map(select::ident::fnv1a)
                             == self.player_ident()
                 })
-                .map(|row| row.actor.tile),
+                .map(|row| row.network),
         }?;
         // A walk back to an already-reached stand produces no driver movement;
         // move just beyond its radius to cancel the live server chase instead.
@@ -3646,7 +3645,7 @@ impl Combat {
                                     && player.actor.name.as_deref().map(select::ident::fnv1a)
                                         == self.player_ident()
                             })
-                            .map(|player| (player.actor.tile, player.actor.name.as_deref())),
+                            .map(|player| (player.network, player.actor.name.as_deref())),
                     }
                     .ok_or_else(|| unavailable("cast target identity changed"))?;
                     let spell = &self.tables.selected().spells()[row.id as usize];

@@ -33,7 +33,6 @@ pub const OPEN_MS: u64 = 15_000;
 const WALK_ATTEMPTS: u32 = 4;
 const CLOSE_IN_RADIUS: i32 = 3;
 const STAND_RADIUS: i32 = 1;
-const ADJACENT: i32 = 1;
 const LOG: usize = 0;
 const SUSTAIN: usize = 1;
 
@@ -61,12 +60,12 @@ impl Tile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
-    name: Text,
+    name: String,
     actions: Ops,
     index: i32,
     tile: Tile,
     distance: i32,
-    reachable_adj: bool,
+    size: i32,
 }
 
 /// The posted facts this module decides from, read from the isolate scene.
@@ -84,9 +83,10 @@ impl Observation {
     /// A logout forgets the session: only pages posted since login count.
     fn from_scene(scene: &Scene) -> Self {
         let session = scene.since_login();
+        let here = session.here();
         Self {
             ingame: session.ingame().unwrap_or(false),
-            here: session.here().map(|tile| Tile {
+            here: here.map(|tile| Tile {
                 x: tile.x,
                 z: tile.z,
                 level: tile.level,
@@ -98,19 +98,32 @@ impl Observation {
                 .npcs()
                 .map(|rows| {
                     rows.iter()
-                        // Shared with the scene: no per-call string copies.
-                        // `talk_op` never matches an empty or `hidden` slot.
-                        .map(|npc| Npc {
-                            name: npc.name.clone().unwrap_or_default(),
-                            actions: npc.actions.clone(),
-                            index: npc.index,
-                            tile: Tile {
-                                x: npc.x,
-                                z: npc.z,
-                                level: npc.level,
-                            },
-                            distance: npc.distance,
-                            reachable_adj: npc.reachable_adj,
+                        .filter_map(|npc| {
+                            let here = here?;
+                            let tile = npc.network_tile()?;
+                            let here = Tile {
+                                x: here.x,
+                                z: here.z,
+                                level: here.level,
+                            };
+                            let tile = Tile {
+                                x: tile.x,
+                                z: tile.z,
+                                level: tile.level,
+                            };
+                            let distance = crate::compat::reach_entity::npc_network_distance(
+                                here.world(),
+                                tile.world(),
+                                npc.size,
+                            )?;
+                            Some(Npc {
+                                name: npc.name.as_deref().unwrap_or_default().to_string(),
+                                actions: npc.actions.clone(),
+                                index: npc.index,
+                                tile,
+                                distance,
+                                size: npc.size,
+                            })
                         })
                         .collect()
                 })
@@ -427,7 +440,7 @@ fn owned_adjacent(obs: &Observation, name: &str) -> bool {
     let Some(npc) = nearest_named(&obs.npcs, name) else {
         return false;
     };
-    npc.tile.level == here.level && chebyshev(npc.tile, here) <= ADJACENT
+    crate::compat::reach_entity::npc_network_adjacent(here.world(), npc.tile.world(), npc.size)
 }
 
 fn nearest_named<'a>(npcs: &'a [Npc], wanted: &str) -> Option<&'a Npc> {
@@ -523,9 +536,9 @@ mod tests {
             combat_level: 0,
             target_kind: 1,
             target_index: -1,
-            size: 0,
-            nx: 0,
-            nz: 0,
+            size: 1,
+            nx: x,
+            nz: z,
             shape: 0,
             angle: 0,
         }
@@ -756,6 +769,80 @@ mod tests {
         assert_eq!(talk_op(&["Talk".into()]), Some("Talk"));
         assert_eq!(talk_op(&["Bank".into()]), None);
         assert_eq!(talk_op(&["abcéxxxx".into()]), None);
+    }
+
+    #[test]
+    fn network_coords_capture_ranks_from_local_origin_and_npc_footprint() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let mut rendered_near = npc("Traiborn", &actions, 2, 5, 5, 0, true);
+        rendered_near.nx = 50;
+        rendered_near.nz = 50;
+        let mut network_near = npc("Traiborn", &actions, 11, 30, 30, 100, true);
+        network_near.size = 2;
+        network_near.nx = 6;
+        network_near.nz = 5;
+        let npcs = [rendered_near, network_near];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+
+        let obs = observed::with(Observation::from_scene);
+        let target = talk_target(&obs.npcs, "Traiborn").expect("network target");
+        assert_eq!(
+            target.index, 11,
+            "rank from local (5,5) to network path heads"
+        );
+        assert_eq!(
+            target.tile,
+            Tile {
+                x: 6,
+                z: 5,
+                level: 0
+            }
+        );
+        assert_eq!(target.distance, 1);
+
+        let mut rendered_far = npc("Traiborn", &actions, 15, 30, 30, 0, true);
+        rendered_far.size = 2;
+        rendered_far.nx = 6;
+        rendered_far.nz = 5;
+        let npcs = [rendered_far];
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let obs = observed::with(Observation::from_scene);
+        assert!(
+            owned_adjacent(&obs, "Traiborn"),
+            "the local player is beside the network footprint, not the rendered point"
+        );
+    }
+
+    #[test]
+    fn network_coords_missing_origin_or_size_does_not_select_an_npc() {
+        reset();
+        observed::on_reset();
+        let actions = ["Talk-to".to_string()];
+        let valid = npc("Traiborn", &actions, 3, 30, 30, 0, true);
+        let npcs = [valid];
+        let mut snap = base();
+        snap.here = None;
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let obs = observed::with(Observation::from_scene);
+        assert!(talk_target(&obs.npcs, "Traiborn").is_none());
+
+        let mut unknown_size = npc("Traiborn", &actions, 3, 30, 30, 0, true);
+        unknown_size.size = 0;
+        let npcs = [unknown_size];
+        snap.here = Some(TileInput {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let obs = observed::with(Observation::from_scene);
+        assert!(talk_target(&obs.npcs, "Traiborn").is_none());
     }
 
     #[test]
@@ -1236,5 +1323,12 @@ mod tests {
         let done = next_token(&probe);
         assert_eq!(done["status"], "unreachable");
         assert_ne!(done["kind"], "npc");
+    }
+
+    #[test]
+    fn network_coords_native_reach_row_layout_has_headroom() {
+        let size = std::mem::size_of::<Npc>();
+        println!("Native reach layout Npc={size} limit={}", 64 + 64);
+        assert!(size <= 64 + 64);
     }
 }

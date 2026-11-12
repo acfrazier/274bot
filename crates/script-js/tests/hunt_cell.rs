@@ -78,6 +78,7 @@ fn velrak(index: i32, at: Tile, action: &str) -> CellNpc {
         name: "Velrak the explorer".into(),
         actions: vec![action.into()],
         tile: at,
+        network: Some(at),
     }
 }
 
@@ -407,8 +408,8 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
         target_kind: 0,
         target_index: -1,
         size: 1,
-        nx: 0,
-        nz: 0,
+        nx: 2931,
+        nz: 9680,
         shape: 0,
         angle: 0,
     };

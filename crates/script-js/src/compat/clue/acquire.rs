@@ -283,7 +283,12 @@ impl ClueRuntime {
             // this arm may send.
             Arrival::Arrived if ready => self.chat(&stop, input),
             Arrival::Arrived => match input.get("npcs").and_then(Value::as_array) {
-                Some(page) => match pick_at_spawn(&NpcIdentity::Giver(stop.row), page, tile) {
+                Some(page) => match pick_at_spawn(
+                    &NpcIdentity::Giver(stop.row),
+                    page,
+                    tile,
+                    posted_here(input),
+                ) {
                     Some(pick) => self.npc_verb(&pick),
                     // Arrived with no posted row of this giver's identity on the
                     // tile: stay there and wait, never chase a wanderer, never

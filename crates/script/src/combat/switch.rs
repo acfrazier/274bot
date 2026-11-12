@@ -677,7 +677,7 @@ impl Combat {
             if first != self.active
                 && now == 0
                 && prev == 0
-                && (first != Style::Melee || distance(opponent.actor.tile, frame.here) <= 1)
+                && (first != Style::Melee || distance(opponent.network, frame.here) <= 1)
                 && self.target_style(frame, |style| style == first).is_some()
             {
                 return Some((first, SwitchCause::Prefer));
@@ -736,7 +736,7 @@ impl Combat {
         let swung = self.flags2 & PVP_SWING != 0;
         self.flags2 &= !PVP_SWING;
         let (mask, tile) = self.engaged_player(frame).map_or((0, None), |row| {
-            ((row.headicons & 0b11_1000) as u8, Some(row.actor.tile))
+            ((row.headicons & 0b11_1000) as u8, Some(row.network))
         });
         self.opp_protect_prev = self.opp_protect;
         self.opp_protect = mask;

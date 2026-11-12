@@ -178,9 +178,9 @@ fn npc<'a>(name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
         shape: 0,
         angle: 0,
     }
@@ -1076,6 +1076,8 @@ fn keeper_at<'a>(actions: &'a [String], x: i32, distance: i32) -> SceneEntityInp
         x,
         z: 5,
         distance,
+        nx: x,
+        nz: 5,
         ..npc("Shop keeper", actions)
     }
 }

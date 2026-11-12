@@ -1,7 +1,9 @@
 use super::*;
 use crate::local_state::{SlotState, StatePort};
 use crate::native::{ledger, HostEffect, InteractionReceipt, WalkReceipt};
-use crate::quester::families::tests::{def, local_player, with_tick_scene_reach as with_tick};
+use crate::quester::families::tests::{
+    def, local_player, local_player_with_network, with_tick_scene_reach as with_tick,
+};
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort,
     StoreVersion, SubmitReceipt, WriteSettlement,
@@ -549,7 +551,7 @@ fn a_stale_pass_message_does_not_settle_the_probe() {
 }
 
 #[test]
-fn pass_message_and_landing_settle_the_probe() {
+fn network_coords_pass_message_and_network_landing_settle_the_probe() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -559,7 +561,10 @@ fn pass_message_and_landing_settle_the_probe() {
             let state = state();
             let mut snapshot = crossing_snapshot(crossing);
             let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
-            snapshot.seed_local_player(local_player(crossing.pass.landing));
+            snapshot.seed_local_player(local_player_with_network(
+                crossing.crossing.takeoff,
+                crossing.pass.landing,
+            ));
             message(&mut snapshot, 11, &crossing.pass.message);
             let result = poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget);
             assert!(matches!(result, Poll::Ready(Ok(Done { crossed: true }))));
@@ -573,7 +578,7 @@ fn pass_message_and_landing_settle_the_probe() {
 }
 
 #[test]
-fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
+fn network_coords_probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -606,10 +611,13 @@ fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
         );
         snapshot.seed_locs(vec![loc]);
         snapshot.seed_scene(scene);
-        snapshot.seed_local_player(local_player(WorldTile {
-            x: identity.takeoff.x - 1,
-            ..identity.takeoff
-        }));
+        snapshot.seed_local_player(local_player_with_network(
+            identity.takeoff,
+            WorldTile {
+                x: identity.takeoff.x - 1,
+                ..identity.takeoff
+            },
+        ));
         let mut run = runner(row, crossing, Truth::Unknown);
         let mut budget = PrereqBudget::default();
         let mut ledger = None;
@@ -644,7 +652,7 @@ fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
 }
 
 #[test]
-fn pass_message_without_landing_keeps_waiting_until_the_bound() {
+fn network_coords_rendered_landing_without_network_landing_keeps_waiting() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -653,6 +661,10 @@ fn pass_message_without_landing_keeps_waiting_until_the_bound() {
     let state = state();
     let mut snapshot = crossing_snapshot(crossing);
     let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    snapshot.seed_local_player(local_player_with_network(
+        crossing.pass.landing,
+        crossing.crossing.takeoff,
+    ));
     message(&mut snapshot, 11, &crossing.pass.message);
     for tick in 2..=4 {
         assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
@@ -2419,6 +2431,54 @@ fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
     let drive = talk_drive(&run);
     assert_eq!(drive.reach_failures, 1, "the earlier cancel stays counted");
     assert_eq!(budget.talks, 1, "a retried Talk is one Talk of the budget");
+}
+
+#[test]
+fn network_coords_talk_retries_when_either_network_actor_moves_out_of_range() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for move_npc in [true, false] {
+        let (_, row) = row(ConsentSwitch::PrereqDialogue);
+        let state = state();
+        let mut snapshot = npc_snapshot_with_open_scene(row);
+        let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+        let sent = last_request_id(&ledger);
+        let mut npc = snapshot.npcs()[0].clone();
+        if move_npc {
+            npc.network.x += 5;
+        } else {
+            let mut player = snapshot.local_player().unwrap().clone();
+            player.player.network.x -= 5;
+            snapshot.seed_local_player(player);
+        }
+        let goal = npc.network;
+        snapshot.seed_npcs(vec![npc]);
+        assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+        let drive = talk_drive(&run);
+        assert_eq!(drive.reach_failures, 1);
+        assert!(
+            drive.pending.is_none(),
+            "movement closes W5 without an engine cancel"
+        );
+        assert!(drive.handle.is_none());
+        assert_eq!(
+            last_request_id(&ledger),
+            sent,
+            "the retry waits for a later tick"
+        );
+        assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("the retry must approach the current network NPC before Talk");
+        };
+        assert_eq!(request.target, goal);
+        assert_eq!(
+            budget.talks, 1,
+            "reach recovery keeps the existing Talk budget"
+        );
+        assert_eq!(talk_bound(row), 7, "the content wait is not lengthened");
+    }
 }
 
 #[test]

@@ -293,8 +293,7 @@ fn native_rows<'s>(
             let value = if let Some(constructor) = constructor {
                 let wrapper =
                     cb::construct(scope, constructor, &[row.into()], "entity constructor")?;
-                let distance = cb::num(scope, f64::from(facts.distance()));
-                set_private_data(scope, wrapper, RANK_DISTANCE, distance)?;
+                set_native_rank_distance(scope, wrapper, facts, pages.generation.here)?;
                 wrapper
             } else {
                 row.into()
@@ -331,8 +330,47 @@ fn ranking_distance<'s>(
         if let Some(distance) = private_data(scope, entity, RANK_DISTANCE)? {
             return Ok(distance);
         }
+        return Ok(cb::num(scope, f64::INFINITY));
     }
     cb::call_method(scope, entity, "distance", &[], label)
+}
+
+fn set_native_rank_distance<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    entity: v8::Local<'s, v8::Value>,
+    facts: EntityFacts<'_>,
+    origin: Option<crate::scene::observed::Tile>,
+) -> JsResult<'s, ()> {
+    let distance = match facts.native_distance(origin) {
+        Some(distance) => cb::num(scope, f64::from(distance)),
+        None => cb::num(scope, f64::INFINITY),
+    };
+    set_private_data(scope, entity, RANK_DISTANCE, distance)
+}
+
+fn native_rankable<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    entity: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, bool> {
+    let Some(distance) = private_data(scope, entity, RANK_DISTANCE)? else {
+        return Ok(false);
+    };
+    if !distance.is_number() {
+        return Ok(false);
+    }
+    Ok(cb::number(scope, distance)?.is_finite())
+}
+
+fn native_rankable_predicate<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let rankable = native_rankable(scope, args.get(0))?;
+        Ok(boolean(scope, rankable))
+    })();
+    cb::finish(scope, rv, result);
 }
 
 fn object_with_keys<'s>(
@@ -590,6 +628,10 @@ fn npcs_nearest<'s>(
     count: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let all = cb::call_method(scope, npcs, "all", &[], "Npcs.all")?;
+    let filter = cb::get(scope, all, "filter")?;
+    let rankable = v8::Function::new(scope, native_rankable_predicate)
+        .ok_or_else(|| cb::type_error(scope, "could not create native rankable filter"))?;
+    let all = cb::call(scope, filter, all, &[rankable.into()], "entities.filter")?;
     let sort = cb::get(scope, all, "sort")?;
     let comparator = v8::Function::new(scope, distance_compare)
         .ok_or_else(|| cb::type_error(scope, "could not create entity distance comparator"))?;
@@ -977,8 +1019,7 @@ fn native_query_for_each_match<'s>(
                 return Ok(Flow::Continue(None));
             }
             let entity = cb::call_method(scope, query, "wrap", &[raw], "this.wrap")?;
-            let distance = cb::num(scope, f64::from(facts.distance()));
-            set_private_data(scope, entity, RANK_DISTANCE, distance)?;
+            set_native_rank_distance(scope, entity, facts, pages.generation.here)?;
             if !filter_array_passes(scope, query, "entityFilters", entity)? {
                 return Ok(Flow::Continue(None));
             }
@@ -1060,7 +1101,7 @@ fn invoke_native_filter<'s>(
                 .generation
                 .facts(category, index)
                 .ok_or_else(|| cb::type_error(scope, "native entity facts unavailable"))?;
-            return native_filter_matches(scope, filter, facts);
+            return native_filter_matches(scope, filter, facts, pages.generation.here);
         }
         // Explicit caller filters retain their normalized public-row argument.
         // Built-in filters never construct or read that echoed view.
@@ -1080,6 +1121,7 @@ fn native_filter_matches<'s>(
     scope: &mut v8::HandleScope<'s>,
     filter: v8::Local<'s, v8::Value>,
     facts: EntityFacts<'_>,
+    origin: Option<crate::scene::observed::Tile>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let kind = cb::get(scope, filter, "kind")?;
     match kind.int32_value(scope) {
@@ -1110,7 +1152,10 @@ fn native_filter_matches<'s>(
             Ok(boolean(scope, false))
         }
         Some(3) => {
-            let distance = cb::num(scope, f64::from(facts.distance()));
+            let distance = match facts.native_distance(origin) {
+                Some(distance) => cb::num(scope, f64::from(distance)),
+                None => cb::num(scope, f64::INFINITY),
+            };
             let limit = cb::get(scope, filter, "distance")?;
             let within = cb::le(scope, distance, limit)?;
             Ok(boolean(scope, within))
@@ -1118,16 +1163,19 @@ fn native_filter_matches<'s>(
         Some(4) => {
             let origin = cb::get(scope, filter, "origin")?;
             let radius = cb::get(scope, filter, "radius")?;
-            let distance = if cb::truthy(scope, origin) {
-                super::distance::planar_from_posted(scope, facts.tile(), origin)?
-            } else {
-                cb::num(scope, f64::INFINITY)
+            let distance = match facts.native_tile() {
+                Some(tile) if cb::truthy(scope, origin) => {
+                    super::distance::planar_from_posted(scope, tile, origin)?
+                }
+                _ => cb::num(scope, f64::INFINITY),
             };
             let within = cb::le(scope, distance, radius)?;
             Ok(boolean(scope, within))
         }
         Some(5) => {
-            let tile = facts.tile();
+            let Some(tile) = facts.native_tile() else {
+                return Ok(boolean(scope, false));
+            };
             let area = cb::get(scope, filter, "area")?;
             let x = cb::num(scope, f64::from(tile.x));
             let min_x = cb::get(scope, area, "minX")?;
@@ -1270,12 +1318,15 @@ fn rank_nearest<'s>(
 ) {
     let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
         let data = args.data();
-        let best = cb::get(scope, data, "best")?;
         let entity = args.get(0);
+        let native = cb::get(scope, data, "native")?.is_true();
+        if native && !native_rankable(scope, entity)? {
+            return Ok(boolean(scope, false));
+        }
+        let best = cb::get(scope, data, "best")?;
         if !cb::truthy(scope, best) {
             set_data(scope, data, "best", entity)?;
         } else {
-            let native = cb::get(scope, data, "native")?.is_true();
             let distance = ranking_distance(scope, entity, native, "e.distance")?;
             let best_distance = ranking_distance(scope, best, native, "best.distance")?;
             if cb::lt(scope, distance, best_distance)? {
@@ -1408,6 +1459,9 @@ fn local_distance_predicate<'s>(
     let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
         let entity = args.get(0);
         let native = cb::get(scope, args.data(), "native")?.is_true();
+        if native && !native_rankable(scope, entity)? {
+            return Ok(boolean(scope, false));
+        }
         let distance = ranking_distance(scope, entity, native, "e.distance")?;
         let radius = cb::get(scope, args.data(), "radius")?;
         let within = cb::le(scope, distance, radius)?;
@@ -1449,6 +1503,9 @@ fn rank_pool_iteration<'s>(
         return Ok(Flow::Break(Some(best)));
     };
     let body = (|| -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
+        if native && !native_rankable(scope, entity)? {
+            return Ok(None);
+        }
         if !cb::truthy(scope, best) {
             return Ok(Some(entity));
         }
@@ -2107,6 +2164,15 @@ class AllocationEntity {
     constructor(snap) { this.snap = snap; }
     distance() { return __rs2b0t_entities_v8(32, this); }
 }
+globalThis.checkOriginOnlyQuery = expectedIndex => {
+    for (const category of [0, 1]) {
+        const rows = __rs2b0t_host.snapshot[category === 0 ? 'npcs' : 'players'];
+        const query = __rs2b0t_entities_v8(58, category, EntityQuery, AllocationEntity).within(1);
+        if (query.count() !== 1 || query.first().snap !== rows[expectedIndex] ||
+            query.nearest().snap !== rows[expectedIndex]) return false;
+    }
+    return true;
+};
 globalThis.checkNativeQuery = () => {
     const keys = ['npcs', 'players', 'locs', 'ground'];
     for (let category = 0; category < keys.length; category++) {
@@ -2118,16 +2184,40 @@ globalThis.checkNativeQuery = () => {
             .where(value => value.snap.name === 'Goblin');
         let seen = 0;
         query.forEachMatch(value => { seen += value.snap.name === 'Goblin'; return false; });
+        const allCount = category < 2 ? 3 : 2;
         if (query.results().length !== 2 || query.first().snap !== rows[0] ||
             query.nearest().snap !== rows[1] || !query.exists() ||
             query.count() !== 2 || query.nearestPreferLocal(2).snap !== rows[1] ||
-            seen !== 2 || __rs2b0t_entities_v8(5, category, AllocationEntity).length !== 2)
+            seen !== 2 || __rs2b0t_entities_v8(5, category, AllocationEntity).length !== allCount)
             return false;
     }
     const npc = new AllocationEntity(__rs2b0t_host.snapshot.npcs[0]);
     const player = new AllocationEntity(__rs2b0t_host.snapshot.players[0]);
+    const nearestNpcs = __rs2b0t_entities_v8(6, {
+        all: () => __rs2b0t_entities_v8(5, 0, AllocationEntity),
+    }, 2);
     return __rs2b0t_entities_v8(34, npc) &&
-        __rs2b0t_entities_v8(29, npc) && __rs2b0t_entities_v8(46, player);
+        __rs2b0t_entities_v8(29, npc) && __rs2b0t_entities_v8(46, player) &&
+        npc.distance() === 3 && npc.snap.x === 3300 &&
+        player.distance() === 3 && player.snap.x === 3300 &&
+        player.snap.size === 0 && player.snap.nx === 0 && player.snap.nz === 0 &&
+        !Object.hasOwn(player.snap, 'network_x') &&
+        !Object.hasOwn(player.snap, 'network_z') &&
+        nearestNpcs.length === 2 &&
+        nearestNpcs[0].snap === __rs2b0t_host.snapshot.npcs[1];
+};
+globalThis.checkNoOriginQuery = () => {
+    for (const category of [0, 1]) {
+        const query = __rs2b0t_entities_v8(58, category, EntityQuery, AllocationEntity)
+            .name('Goblin').within(1000);
+        if (query.results().length !== 0 || query.nearest() !== null ||
+            query.nearestPreferLocal(1000) !== null)
+            return false;
+    }
+    const nearestNpcs = __rs2b0t_entities_v8(6, {
+        all: () => __rs2b0t_entities_v8(5, 0, AllocationEntity),
+    }, 2);
+    return nearestNpcs.length === 0;
 };
 "#;
 
@@ -2156,14 +2246,60 @@ globalThis.checkNativeQuery = () => {
     }
 
     fn entity_post_bytes() -> Vec<u8> {
+        entity_post_bytes_with_origin(true)
+    }
+
+    fn entity_post_bytes_without_here() -> Vec<u8> {
+        entity_post_bytes_with_origin(false)
+    }
+
+    fn entity_post_bytes_with_origin(include_here: bool) -> Vec<u8> {
+        entity_post_bytes_with_geometry(include_here, false)
+    }
+
+    fn entity_post_bytes_with_geometry(include_here: bool, aligned: bool) -> Vec<u8> {
         use crate::wire::generated::rs_2b_0t::isolate::{
-            SceneEntity, SceneEntityArgs, Snapshot, SnapshotArgs,
+            SceneEntity, SceneEntityArgs, Snapshot, SnapshotArgs, Tile, TileArgs,
         };
         let mut builder = flatbuffers::FlatBufferBuilder::new();
         let name = builder.create_string("Goblin");
         let action = builder.create_string("Attack");
         let actions = builder.create_vector(&[action]);
-        let rows = [3, 1].map(|distance| {
+        let actor_rows = if aligned {
+            [
+                (2, 1, 3202, 3200, 3202, 3200),
+                (1, 1, 3201, 3200, 3201, 3200),
+                (100, 0, 3200, 3200, 3200, 3200),
+            ]
+        } else {
+            [
+                (3, 1, 3202, 3200, 3300, 3300),
+                (1, 1, 3201, 3200, 3300, 3300),
+                (0, 0, 3200, 3200, 3200, 3200),
+            ]
+        };
+        let actor_rows = actor_rows.map(|(distance, size, nx, nz, x, z)| {
+            SceneEntity::create(
+                &mut builder,
+                &SceneEntityArgs {
+                    index: distance + 1,
+                    id: 123,
+                    name: Some(name),
+                    x,
+                    z,
+                    distance,
+                    actions: Some(actions),
+                    size,
+                    nx,
+                    nz,
+                    target_kind: 2,
+                    target_index: 1,
+                    ..SceneEntityArgs::default()
+                },
+            )
+        });
+        let actor_rows = builder.create_vector(&actor_rows);
+        let scene_rows = [3, 1].map(|distance| {
             SceneEntity::create(
                 &mut builder,
                 &SceneEntityArgs {
@@ -2174,23 +2310,32 @@ globalThis.checkNativeQuery = () => {
                     z: 3201,
                     distance,
                     actions: Some(actions),
-                    target_kind: 2,
-                    target_index: 1,
                     ..SceneEntityArgs::default()
                 },
             )
         });
-        let rows = builder.create_vector(&rows);
+        let scene_rows = builder.create_vector(&scene_rows);
+        let here = include_here.then(|| {
+            Tile::create(
+                &mut builder,
+                &TileArgs {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+            )
+        });
         let snapshot = Snapshot::create(
             &mut builder,
             &SnapshotArgs {
                 tick: 1,
+                here,
                 ingame: true,
                 self_slot: 1,
-                npcs: Some(rows),
-                players: Some(rows),
-                locs: Some(rows),
-                ground: Some(rows),
+                npcs: Some(actor_rows),
+                players: Some(actor_rows),
+                locs: Some(scene_rows),
+                ground: Some(scene_rows),
                 ..SnapshotArgs::default()
             },
         );
@@ -2201,6 +2346,95 @@ globalThis.checkNativeQuery = () => {
     fn post_entities(runtime: &mut Runtime, snapshot: &crate::wire::Snapshot<'_>) {
         crate::scene::observed::apply(snapshot);
         crate::runtime::snapshot::materialize_snapshot(runtime, snapshot, false).unwrap();
+    }
+
+    #[test]
+    fn native_entity_queries_use_network_coords_and_keep_compat_fields() {
+        let mut runtime = setup();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .unwrap();
+        crate::scene::observed::on_reset();
+        let bytes = entity_post_bytes();
+        let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
+        post_entities(&mut runtime, &snapshot);
+
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let query = function(&mut scope, global, "checkNativeQuery");
+        let receiver = v8::undefined(&mut scope).into();
+        assert!(query.call(&mut scope, receiver, &[]).unwrap().is_true());
+    }
+
+    #[test]
+    fn native_actor_queries_fail_closed_without_network_coords_origin() {
+        let mut runtime = setup();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .unwrap();
+        crate::scene::observed::on_reset();
+        let bytes = entity_post_bytes_without_here();
+        let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
+        post_entities(&mut runtime, &snapshot);
+
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let query = function(&mut scope, global, "checkNoOriginQuery");
+        let receiver = v8::undefined(&mut scope).into();
+        assert!(query.call(&mut scope, receiver, &[]).unwrap().is_true());
+    }
+
+    #[test]
+    fn native_queries_follow_network_coords_origin_only_snapshot() {
+        use crate::wire::generated::rs_2b_0t::isolate::{Snapshot, SnapshotArgs, Tile, TileArgs};
+        let mut runtime = setup();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .unwrap();
+        crate::scene::observed::on_reset();
+        let bytes = entity_post_bytes_with_geometry(true, true);
+        let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
+        post_entities(&mut runtime, &snapshot);
+        assert!(runtime.eval::<bool>("checkOriginOnlyQuery(1)").unwrap());
+        runtime
+            .eval::<()>(
+                "globalThis.originNpcRows = __rs2b0t_host.snapshot.npcs; \
+             globalThis.originPlayerRows = __rs2b0t_host.snapshot.players;",
+            )
+            .unwrap();
+
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let here = Tile::create(
+            &mut builder,
+            &TileArgs {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+        );
+        let snapshot = Snapshot::create(
+            &mut builder,
+            &SnapshotArgs {
+                tick: 2,
+                here: Some(here),
+                ingame: true,
+                ..SnapshotArgs::default()
+            },
+        );
+        builder.finish(snapshot, None);
+        let snapshot = crate::wire::Snapshot::from_bytes(builder.finished_data()).unwrap();
+        post_entities(&mut runtime, &snapshot);
+        assert!(runtime
+            .eval::<bool>(
+                "originNpcRows === __rs2b0t_host.snapshot.npcs && \
+             originPlayerRows === __rs2b0t_host.snapshot.players && checkOriginOnlyQuery(0)",
+            )
+            .unwrap());
     }
 
     /// A cold native post with `count` NPC rows (25-field shape) and `count`
@@ -2505,14 +2739,19 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
         let state = entity_pages::state(&scope).unwrap();
         let pages = state.borrow();
         let latest = crate::scene::scene_query::entity_generation();
-        let row_roots: usize = [&pages.npcs, &pages.players, &pages.locs, &pages.ground]
-            .into_iter()
-            .map(|rows| {
-                assert_eq!(rows.len(), 2);
-                assert_eq!(rows.capacity(), 2);
-                rows.capacity() * std::mem::size_of::<v8::Global<v8::Object>>()
-            })
-            .sum();
+        let row_roots: usize = [
+            (&pages.npcs, 3),
+            (&pages.players, 3),
+            (&pages.locs, 2),
+            (&pages.ground, 2),
+        ]
+        .into_iter()
+        .map(|(rows, expected)| {
+            assert_eq!(rows.len(), expected);
+            assert_eq!(rows.capacity(), expected);
+            rows.capacity() * std::mem::size_of::<v8::Global<v8::Object>>()
+        })
+        .sum();
         assert!(std::rc::Rc::ptr_eq(
             pages.generation.npcs.as_ref().unwrap(),
             latest.npcs.as_ref().unwrap(),
@@ -2529,16 +2768,34 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
             pages.generation.ground.as_ref().unwrap(),
             latest.ground.as_ref().unwrap(),
         ));
+        const PLAYER_ROW_BASELINE: usize = 72;
+        const PLAYER_ROW_SIZE_LIMIT: usize = 80 + 64;
+        const ENTITY_GENERATION_SIZE_LIMIT: usize = 56 + 64;
+        const ENTITY_PAGES_SIZE_LIMIT: usize = 184 + 64;
+        let player_row_baseline = PLAYER_ROW_BASELINE;
+        let player_row_size = std::mem::size_of::<crate::scene::observed::PlayerRow>();
+        let player_row_size_limit = PLAYER_ROW_SIZE_LIMIT;
+        assert!(
+            std::mem::size_of::<crate::scene::scene_query::EntityGeneration>()
+                <= ENTITY_GENERATION_SIZE_LIMIT,
+        );
+        assert!(std::mem::size_of::<entity_pages::EntityPages>() <= ENTITY_PAGES_SIZE_LIMIT);
+        assert!(
+            player_row_size <= player_row_size_limit,
+            "PlayerRow={player_row_size} baseline={player_row_baseline} limit={player_row_size_limit}",
+        );
         println!(
             "Entity posting complete cold={cold:?}; replacement={replacement:?}; \
              EntityPages={} RefCellPages={} EntityGeneration={} \
-             EntityRow={} SceneRow={} PlayerRow={} GlobalObject={} row-root-capacity-bytes={row_roots}",
+             EntityRow={} SceneRow={} PlayerRow={} PlayerRow-baseline={} PlayerRow-limit={} GlobalObject={} row-root-capacity-bytes={row_roots}",
             std::mem::size_of::<entity_pages::EntityPages>(),
             std::mem::size_of::<std::cell::RefCell<entity_pages::EntityPages>>(),
             std::mem::size_of::<crate::scene::scene_query::EntityGeneration>(),
             std::mem::size_of::<crate::scene::observed::EntityRow>(),
             std::mem::size_of::<crate::scene::observed::SceneRow>(),
-            std::mem::size_of::<crate::scene::observed::PlayerRow>(),
+            player_row_size,
+            player_row_baseline,
+            player_row_size_limit,
             std::mem::size_of::<v8::Global<v8::Object>>(),
         );
         assert_eq!(replacement.count_current, 0);
@@ -2557,6 +2814,9 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
                 index: 1,
                 target_kind: 0,
                 target_index: -1,
+                network_size: 0,
+                network_x: 0,
+                network_z: 0,
             };
             2
         ];

@@ -6963,9 +6963,9 @@ export default class T extends LoopingBot {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
-            size: 0,
-            nx: 0,
-            nz: 0,
+            size: 1,
+            nx: 3217,
+            nz: 3222,
             shape: 0,
             angle: 0,
         },
@@ -6987,14 +6987,14 @@ export default class T extends LoopingBot {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
-            size: 0,
-            nx: 0,
-            nz: 0,
+            size: 1,
+            nx: 3220,
+            nz: 3222,
             shape: 0,
             angle: 0,
         },
     ];
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     snap.npcs = &npcs;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -7005,7 +7005,7 @@ export default class T extends LoopingBot {
             { "name": "Chicken", "distance": 2 },
             { "name": "Chicken", "distance": 5 }
         ]),
-        "Npcs.nearest sorts by posted distance"
+        "Npcs.nearest ranks network tiles while distance() keeps the posted scalar"
     );
     iso.join();
 }
@@ -9980,13 +9980,13 @@ export default class T extends LoopingBot {
         combat_level: 1,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
         shape: 0,
         angle: 0,
     }];
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     snap.players = &players;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -10704,13 +10704,13 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3218,
         shape: 0,
         angle: 0,
     }];
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     snap.npcs = &npcs;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -11445,9 +11445,9 @@ fn case23_chicken<'a>(
         combat_level: 1,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
         shape: 0,
         angle: 0,
     }

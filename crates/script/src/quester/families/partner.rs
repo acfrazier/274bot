@@ -957,10 +957,10 @@ impl NativeMachine for TradeMachine {
                         let name = players.value.iter().find_map(|player| {
                             let name = player.actor.name.as_deref()?;
                             (api::snapshot::player_account_id(name) == Some(self.partner_id)
-                                && player.actor.tile.level == here.value.level
-                                && (player.actor.tile.x - here.value.x)
+                                && player.network.level == here.value.level
+                                && (player.network.x - here.value.x)
                                     .abs()
-                                    .max((player.actor.tile.z - here.value.z).abs())
+                                    .max((player.network.z - here.value.z).abs())
                                     <= 2)
                                 .then_some(name)
                         });

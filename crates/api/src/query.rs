@@ -39,6 +39,7 @@ pub struct Query<'a, T> {
     values: Values<'a, T>,
     #[allow(clippy::type_complexity)]
     predicates: Vec<Box<dyn Fn(&T) -> bool + 'a>>,
+    origin: Option<WorldTile>,
 }
 
 impl<'a, T> Query<'a, T> {
@@ -46,6 +47,7 @@ impl<'a, T> Query<'a, T> {
         Query {
             values: Values::Borrowed(values),
             predicates: Vec::new(),
+            origin: None,
         }
     }
 
@@ -54,7 +56,18 @@ impl<'a, T> Query<'a, T> {
         Query {
             values: Values::Owned(values),
             predicates: Vec::new(),
+            origin: None,
         }
+    }
+
+    /// Set the local player's network tile for actor distance filters and ranking.
+    ///
+    /// Actor `within_distance` and `nearest` queries return no match until an
+    /// origin is set. Static loc and ground-item queries keep their posted
+    /// network-origin distance.
+    pub fn with_origin(mut self, origin: WorldTile) -> Self {
+        self.origin = Some(origin);
+        self
     }
 
     pub fn where_(&mut self, p: impl Fn(&T) -> bool + 'a) -> &mut Self {
@@ -157,7 +170,7 @@ trait EntityQueryView {
 
 trait WorldQueryView: EntityQueryView {
     fn view_tile(&self) -> WorldTile;
-    fn view_distance(&self) -> i32;
+    fn view_distance(&self, origin: Option<WorldTile>) -> Option<i32>;
 }
 
 trait ActorQueryView: WorldQueryView {
@@ -273,10 +286,10 @@ impl EntityQueryView for NpcView {
 
 impl WorldQueryView for NpcView {
     fn view_tile(&self) -> WorldTile {
-        self.tile
+        self.network
     }
-    fn view_distance(&self) -> i32 {
-        self.distance
+    fn view_distance(&self, origin: Option<WorldTile>) -> Option<i32> {
+        origin.map(|origin| chebyshev_to(self.network, origin))
     }
 }
 
@@ -333,10 +346,10 @@ impl EntityQueryView for PlayerView {
 
 impl WorldQueryView for PlayerView {
     fn view_tile(&self) -> WorldTile {
-        self.actor.tile
+        self.network
     }
-    fn view_distance(&self) -> i32 {
-        self.actor.distance
+    fn view_distance(&self, origin: Option<WorldTile>) -> Option<i32> {
+        origin.map(|origin| chebyshev_to(self.network, origin))
     }
 }
 
@@ -395,8 +408,8 @@ impl WorldQueryView for LocView {
     fn view_tile(&self) -> WorldTile {
         self.tile
     }
-    fn view_distance(&self) -> i32 {
-        self.distance
+    fn view_distance(&self, _origin: Option<WorldTile>) -> Option<i32> {
+        Some(self.distance)
     }
 }
 
@@ -449,8 +462,8 @@ impl WorldQueryView for GroundItemView {
     fn view_tile(&self) -> WorldTile {
         self.tile
     }
-    fn view_distance(&self) -> i32 {
-        self.distance
+    fn view_distance(&self, _origin: Option<WorldTile>) -> Option<i32> {
+        Some(self.distance)
     }
 }
 
@@ -761,21 +774,34 @@ impl<'a, T: EntityQueryView> EntityQueryExt<'a, T> for Query<'a, T> {
     }
 }
 
-/// World filters: distance/tile matching plus the nearest terminals
-/// (the m8aq `WorldQuery`).
+/// World filters over native actor path heads or static loc/ground tiles.
+///
+/// Actor radius and nearest queries require [`Query::with_origin`] with the
+/// local player's network tile. Static rows retain their posted distance.
 pub trait WorldQueryExt<'a, T>: EntityQueryExt<'a, T> {
+    /// Keep rows within this distance; actors require [`Query::with_origin`].
     fn within_distance(&mut self, distance: i32) -> &mut Self;
+    /// Keep rows near `point`, using server path-head tiles for actors.
     fn within_distance_to(&mut self, point: WorldTile, distance: i32) -> &mut Self;
+    /// Keep rows inside these inclusive bounds, using server tiles for actors.
     fn inside(&mut self, area: WorldArea) -> &mut Self;
+    /// Keep rows on this level, using the server level for actors.
     fn on_level(&mut self, level: i32) -> &mut Self;
+    /// Keep rows on this tile, using server path-head tiles for actors.
     fn on_tile(&mut self, tile: WorldTile) -> &mut Self;
+    /// Choose the closest row; actors require [`Query::with_origin`].
     fn nearest(&self) -> Option<&T>;
+    /// Choose the row closest to `point`, using server tiles for actors.
     fn nearest_to(&self, point: WorldTile) -> Option<&T>;
 }
 
 impl<'a, T: WorldQueryView> WorldQueryExt<'a, T> for Query<'a, T> {
     fn within_distance(&mut self, distance: i32) -> &mut Self {
-        self.where_(move |v: &T| v.view_distance() <= distance)
+        let origin = self.origin;
+        self.where_(move |v: &T| {
+            v.view_distance(origin)
+                .is_some_and(|posted| posted <= distance)
+        })
     }
 
     fn within_distance_to(&mut self, point: WorldTile, distance: i32) -> &mut Self {
@@ -795,23 +821,41 @@ impl<'a, T: WorldQueryView> WorldQueryExt<'a, T> for Query<'a, T> {
     }
 
     fn nearest(&self) -> Option<&T> {
-        self.results().into_iter().reduce(|best, v| {
-            if v.view_distance() < best.view_distance() {
-                v
-            } else {
-                best
+        let mut best: Option<(&T, i32)> = None;
+        for value in self.values.as_slice() {
+            if !self.predicates.iter().all(|predicate| predicate(value)) {
+                continue;
             }
-        })
+            let Some(distance) = value.view_distance(self.origin) else {
+                continue;
+            };
+            match best {
+                None => best = Some((value, distance)),
+                Some((_, best_distance)) if distance < best_distance => {
+                    best = Some((value, distance));
+                }
+                Some(_) => {}
+            }
+        }
+        best.map(|(value, _)| value)
     }
 
     fn nearest_to(&self, point: WorldTile) -> Option<&T> {
-        self.results().into_iter().reduce(|best, v| {
-            if chebyshev_to(v.view_tile(), point) < chebyshev_to(best.view_tile(), point) {
-                v
-            } else {
-                best
+        let mut best: Option<(&T, i32)> = None;
+        for value in self.values.as_slice() {
+            if !self.predicates.iter().all(|predicate| predicate(value)) {
+                continue;
             }
-        })
+            let distance = chebyshev_to(value.view_tile(), point);
+            match best {
+                None => best = Some((value, distance)),
+                Some((_, best_distance)) if distance < best_distance => {
+                    best = Some((value, distance));
+                }
+                Some(_) => {}
+            }
+        }
+        best.map(|(value, _)| value)
     }
 }
 

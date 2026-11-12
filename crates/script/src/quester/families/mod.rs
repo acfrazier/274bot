@@ -762,7 +762,7 @@ impl PredicatePlan for NpcPresent {
             Some(npcs) => truth(npcs.value.iter().any(|npc| {
                 npc.r#type == Some(self.id as usize)
                     && match (here, self.radius) {
-                        (Some(here), Some(radius)) => reach::within(here, npc.tile, radius),
+                        (Some(here), Some(radius)) => reach::within(here, npc.network, radius),
                         _ => true,
                     }
             })),
@@ -3412,10 +3412,12 @@ impl UseOnRun {
             self.chase_rewalks -= 1;
             return true;
         };
-        let needs = !self.area().contains(npc.tile, npc.distance)
+        let needs = !self
+            .area()
+            .contains(npc.network, reach::npc_distance(cx, npc))
             || reach::npc_adjacent(cx, npc)
             || (reach::reach_known(cx) && reach::npc_route_steps(cx, npc).is_none())
-            || !reach::within(npc.tile, goal, 1);
+            || !reach::within(npc.network, goal, 1);
         if needs {
             if self.chase_rewalks == 0 {
                 return false;
@@ -3793,7 +3795,7 @@ impl StepRun for UseOnRun {
                             reach::Pick::None => return Poll::Pending,
                         };
                         let (npc_tile, npc_index, adjacent) = (
-                            npc.tile,
+                            npc.network,
                             npc.index,
                             reachable && reach::npc_adjacent(&cx.tick.cx, npc),
                         );

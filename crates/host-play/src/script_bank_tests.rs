@@ -972,12 +972,11 @@ fn teller(
     }
 }
 
-/// Characterization (T2.2 r2): the host teller pick keys on
-/// `(d_stand, d_here, distance, index)` in that order, after the
-/// trimmed-name filter and the SAME_BANK-of-stand / 10-of-here gate
-/// (Chebyshev, +10_000 per plane mismatch).
+/// Characterization: the host teller pick filters by name, gates by the
+/// stand or player origin, then ranks network coordinates by stand, here,
+/// and stable index.
 #[test]
-fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
+fn teller_pick_ranks_network_coords_by_stand_then_here_then_index() {
     let stand = WorldTile {
         x: 100,
         z: 100,
@@ -987,7 +986,16 @@ fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
     let pick = |rows: &[api::snapshot::NpcView]| {
         teller_pick(rows, here, stand, "Banker").map(|npc| npc.index)
     };
-    // d_stand dominates the posted distance.
+
+    // Identical rendered poses and a favorable legacy distance cannot
+    // outrank the closer NPC network path head.
+    let mut rendered_winner = teller(10, "Banker", 100, 100, 0, 0);
+    rendered_winner.network = tile(102, 100);
+    let mut network_winner = teller(11, "Banker", 100, 100, 0, 1000);
+    network_winner.network = tile(101, 100);
+    assert_eq!(pick(&[rendered_winner, network_winner]), Some(11));
+
+    // d_stand dominates the compatibility distance.
     assert_eq!(
         pick(&[
             teller(11, "Banker", 103, 100, 0, 1),
@@ -995,7 +1003,7 @@ fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
         ]),
         Some(10)
     );
-    // A d_stand tie is decided by d_here, not the posted distance.
+    // A d_stand tie is decided by d_here, not compatibility distance.
     assert_eq!(
         pick(&[
             teller(10, "Banker", 102, 100, 0, 1),
@@ -1003,7 +1011,7 @@ fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
         ]),
         Some(11)
     );
-    // A (d_stand, d_here) tie is decided by distance, then index.
+    // A (d_stand, d_here) tie is decided by stable index, not distance.
     // (102, 95) and (102, 105) are both Chebyshev 5 from the stand and
     // 12 from here.
     assert_eq!(
@@ -1011,7 +1019,7 @@ fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
             teller(10, "Banker", 102, 95, 0, 8),
             teller(11, "Banker", 102, 105, 0, 3),
         ]),
-        Some(11)
+        Some(10)
     );
     assert_eq!(
         pick(&[

@@ -483,14 +483,16 @@ fn dial_button(index: usize, current: char, target: char) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick};
+    use crate::quester::families::tests::{
+        local_player, local_player_with_network, post_walk_receipt, with_tick,
+    };
     use api::snapshot::GameSnapshot;
 
     /// The door approach is gated on `reach::within` against the authored
     /// anchor and radius, so it must accept any standable tile in that area
     /// rather than demand a path onto the door tile.
     #[test]
-    fn door_approach_walks_the_anchor_area() {
+    fn network_coords_door_approach_walks_the_anchor_area() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -508,11 +510,10 @@ mod tests {
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
-        snapshot.seed_local_player(local_player(WorldTile {
-            x: 2640,
-            z: 3322,
-            level: 0,
-        }));
+        snapshot.seed_local_player(local_player_with_network(
+            door,
+            WorldTile { x: 2640, z: 3322, level: 0 },
+        ));
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             with_step(tick, |cx| plan.begin(cx).unwrap())

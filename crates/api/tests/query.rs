@@ -348,7 +348,12 @@ fn world_filters_use_distance_and_tiles() {
         fixture_npc(1, 2, "b", 20, 20, 10, 5),
         fixture_npc(2, 3, "c", 12, 10, 2, 5),
     ];
-    let mut q = Query::new(&npcs);
+    let origin = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let mut q = Query::new(&npcs).with_origin(origin);
     q.within_distance(3);
     assert_eq!(q.count(), 2, "npc0 at d0 and npc2 at d2");
     let mut q = Query::new(&npcs);
@@ -381,7 +386,13 @@ fn world_filters_use_distance_and_tiles() {
     });
     assert_eq!(q.count(), 2);
     // `nearest` is min distance, first on ties.
-    assert_eq!(q.nearest().map(|n| n.index), Some(0));
+    assert_eq!(
+        Query::new(&npcs)
+            .with_origin(origin)
+            .nearest()
+            .map(|n| n.index),
+        Some(0)
+    );
     let q = Query::new(&npcs);
     assert_eq!(
         q.nearest_to(WorldTile {
@@ -403,6 +414,150 @@ fn world_filters_use_distance_and_tiles() {
         .map(|n| n.index),
         Some(0)
     );
+}
+
+#[test]
+fn actor_world_queries_use_network_coords() {
+    let origin = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let mut npcs = [
+        fixture_npc(0, 1, "rendered-near", 10, 10, 0, 5),
+        fixture_npc(1, 2, "network-near", 12, 10, 90, 5),
+        fixture_npc(2, 3, "network-tie", 10, 10, 90, 5),
+    ];
+    npcs[0].network = WorldTile {
+        x: 12,
+        z: 10,
+        level: 0,
+    };
+    npcs[1].network = WorldTile {
+        x: 11,
+        z: 10,
+        level: 0,
+    };
+    npcs[2].network = WorldTile {
+        x: 9,
+        z: 10,
+        level: 0,
+    };
+    let mut q = Query::new(&npcs).with_origin(origin);
+    q.within_distance(1);
+    assert_eq!(
+        q.results().iter().map(|npc| npc.index).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        Query::new(&npcs)
+            .with_origin(origin)
+            .nearest()
+            .map(|npc| npc.index),
+        Some(1)
+    );
+    let mut q = Query::new(&npcs);
+    q.within_distance_to(origin, 1);
+    assert_eq!(q.count(), 2);
+    let mut q = Query::new(&npcs);
+    q.on_tile(WorldTile {
+        x: 11,
+        z: 10,
+        level: 0,
+    });
+    assert_eq!(q.first().map(|npc| npc.index), Some(1));
+    let mut q = Query::new(&npcs);
+    q.inside(WorldArea {
+        min_x: 9,
+        max_x: 11,
+        min_z: 10,
+        max_z: 10,
+        level: 0,
+    });
+    assert_eq!(q.count(), 2);
+    assert_eq!(
+        npcs[1].tile,
+        WorldTile {
+            x: 12,
+            z: 10,
+            level: 0
+        }
+    );
+    assert_eq!(npcs[1].distance, 90);
+    assert!(Query::new(&npcs).nearest().is_none());
+
+    let mut players = [
+        fixture_player(0, 3, 3),
+        fixture_player(1, 4, 4),
+        fixture_player(2, 5, 5),
+    ];
+    players[0].actor.tile = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    players[0].network = WorldTile {
+        x: 12,
+        z: 10,
+        level: 0,
+    };
+    players[0].actor.distance = 0;
+    players[1].actor.tile = WorldTile {
+        x: 12,
+        z: 10,
+        level: 0,
+    };
+    players[1].network = WorldTile {
+        x: 11,
+        z: 10,
+        level: 0,
+    };
+    players[1].actor.distance = 90;
+    players[2].actor.tile = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    players[2].network = WorldTile {
+        x: 9,
+        z: 10,
+        level: 0,
+    };
+    players[2].actor.distance = 90;
+
+    let mut q = Query::new(&players).with_origin(origin);
+    q.within_distance(1);
+    assert_eq!(
+        q.results()
+            .iter()
+            .map(|player| player.index)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        Query::new(&players)
+            .with_origin(origin)
+            .nearest()
+            .map(|player| player.index),
+        Some(1)
+    );
+    let mut q = Query::new(&players);
+    q.on_tile(WorldTile {
+        x: 11,
+        z: 10,
+        level: 0,
+    });
+    assert_eq!(q.first().map(|player| player.index), Some(1));
+    assert_eq!(
+        players[1].actor.tile,
+        WorldTile {
+            x: 12,
+            z: 10,
+            level: 0
+        }
+    );
+    assert_eq!(players[1].actor.distance, 90);
+    assert!(Query::new(&players).nearest().is_none());
 }
 
 #[test]
@@ -3136,4 +3291,34 @@ fn packed_combat_unarmed_posts_aggressive_from_tab_0() {
             .any(|l| l.label.to_ascii_lowercase().contains("aggressive")),
         "packed combat IF varp={varp} labels={labels:?}"
     );
+}
+
+#[test]
+fn static_queries_keep_posted_distance_without_actor_origin() {
+    let mut locs = [
+        fixture_loc(10, 0, 5, 5, 1, 1),
+        fixture_loc(10, 0, 3, 3, 1, 1),
+    ];
+    locs[0].distance = 7;
+    locs[1].distance = 3;
+    let mut query = Query::new(&locs);
+    query.within_distance(3);
+    assert_eq!(query.count(), 1);
+    assert_eq!(query.first().map(|row| row.tile), Some(locs[1].tile));
+    assert_eq!(
+        Query::new(&locs).nearest().map(|row| row.tile),
+        Some(locs[1].tile)
+    );
+
+    let mut ground = [
+        fixture_ground_item(1, "First", 1, false, false, 5, 5),
+        fixture_ground_item(2, "Second", 1, false, false, 3, 3),
+    ];
+    ground[0].distance = 7;
+    ground[1].distance = 3;
+    let mut query = Query::new(&ground);
+    query.within_distance(3);
+    assert_eq!(query.count(), 1);
+    assert_eq!(query.first().map(|row| row.def.id), Some(2));
+    assert_eq!(Query::new(&ground).nearest().map(|row| row.def.id), Some(2));
 }

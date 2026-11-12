@@ -10681,6 +10681,95 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
     );
 }
 
+#[test]
+fn dispatch_open_stand_npc_uses_network_coords() {
+    use client::config::NpcType;
+    use client::dash3d::ClientNpc;
+
+    let mut c = bank_client();
+    let type_id = 501usize;
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.npcs.len() <= type_id {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[type_id] = NpcType {
+            id: type_id as i32,
+            name: "Network banker".into(),
+            op: vec![Some("Bank".into())],
+            ..Default::default()
+        };
+    }
+    let mut npc = ClientNpc::at(6, 6);
+    npc.r#type = Some(type_id);
+    while c.npc.len() <= 7 {
+        c.npc.push(None);
+    }
+    c.npc[7] = Some(Box::new(npc));
+    c.npc_ids = vec![7];
+    c.npc_count = 1;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.npcs().len(), 1);
+    let rendered = snap.npcs()[0].tile;
+    let target = api::snapshot::WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    assert_ne!(
+        rendered, target,
+        "fixture must diverge rendered and network"
+    );
+    let mut network_row = snap.npcs()[0].clone();
+    network_row.network = target;
+    snap.seed_npcs(vec![network_row]);
+
+    let (navs, world) = empty_nav();
+    let request = |tile: api::snapshot::WorldTile| script::interact::InteractReq::OpenStand {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        kind: "npc".into(),
+        name: Some("Network banker".into()),
+        stand_op: Some(1),
+        choose: None,
+    };
+    let before = c.out.pos;
+    assert!(!dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![request(rendered)],
+    ));
+    assert_eq!(
+        c.out.pos, before,
+        "the rendered tile is not the exact BankStand target"
+    );
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![request(target)],
+    ));
+    assert!(
+        c.out.pos > before,
+        "the network target dispatches the NPC op"
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
@@ -20151,10 +20240,11 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
     assert_eq!(aggressive.component_id(), 2011);
 }
 
-/// Hop 2 — an npc behind a wall posts `reachable: false` from SceneQuery.
+/// NPC reach bits must follow the path-head tile while the public rendered
+/// actor coordinates remain unchanged.
 #[cfg(feature = "js")]
 #[test]
-fn script_snapshot_npc_behind_wall_posts_reachable_false() {
+fn script_snapshot_npc_reach_uses_network_coords() {
     use client::dash3d::{ClientNpc, ClientPlayer, CollisionFlag};
 
     let mut c = nav_client();
@@ -20178,6 +20268,8 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         };
     }
     let mut npc = ClientNpc::at(5, 6);
+    npc.entity.x = 5 * 128 + 64;
+    npc.entity.z = 6 * 128 + 64;
     npc.r#type = Some(type_id);
     while c.npc.len() <= slot {
         c.npc.push(None);
@@ -20209,7 +20301,7 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
     assert_eq!(npcs.len(), 1);
     assert!(
         !npcs.get(0).reachable(),
-        "npc behind SQ_BLOCKED tile is not reachable"
+        "the original network tile is behind SQ_BLOCKED"
     );
     let reach = view.reach().expect("native reach metadata");
     let exact_rank = reach.exact_rank().expect("exact ranks");
@@ -20227,6 +20319,117 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         0,
         "blocked npc tile is adjacent from the origin before expansion"
     );
+
+    let mut divergent = snap.npcs()[0].clone();
+    divergent.network = api::snapshot::WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    divergent.size = 0;
+    snap.seed_npcs(vec![divergent]);
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
+    let npc = view.npcs().expect("npc rows").get(0);
+    assert_eq!(npc.x(), 3205);
+    assert_eq!(npc.z(), 3206);
+    assert!(
+        npc.reachable(),
+        "network path-head on the origin is reachable despite the rendered wall tile"
+    );
+}
+
+/// Remote-player reach bits and native network metadata use the path-head
+/// tile without changing the rendered compatibility position or distance.
+#[cfg(feature = "js")]
+#[test]
+fn script_snapshot_player_reach_uses_network_coords() {
+    use client::dash3d::{ClientPlayer, CollisionFlag};
+
+    let mut c = nav_client();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.collision[0].flags[5][6] |= CollisionFlag::SQ_BLOCKED;
+
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    snap.seed_players(vec![api::snapshot::PlayerView {
+        index: 7,
+        network: api::snapshot::WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        actor: api::snapshot::ActorView {
+            name: Some("Remote".into()),
+            actions: vec![Some("Trade".into())],
+            tile: api::snapshot::WorldTile {
+                x: 3205,
+                z: 3206,
+                level: 0,
+            },
+            distance: 17,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 10,
+            total_health: 10,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        },
+        combat_level: 3,
+        skill_level: 1,
+        headicons: 0,
+        weapon: None,
+    }]);
+
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
+    let players = view.players().expect("player rows");
+    assert_eq!(players.len(), 1);
+    let player = players.get(0);
+    assert!(player.reachable(), "network path-head is the local origin");
+    assert_eq!(player.x(), 3205);
+    assert_eq!(player.z(), 3206);
+    assert_eq!(player.distance(), 17);
+    assert_eq!(player.size(), 1);
+    assert_eq!(player.nx(), 3205);
+    assert_eq!(player.nz(), 3205);
 }
 
 /// A loc on a blocked tile uses the same SceneQuery reach as npcs —

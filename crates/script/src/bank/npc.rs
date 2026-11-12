@@ -305,26 +305,28 @@ pub(crate) fn option_matches(actual: &str, wanted: &str) -> bool {
     })
 }
 
-/// The banker both adapters pick from their scene rows: named `name`,
-/// carrying `op` (by label or by packed 1-based index), nearest first.
-/// A row with no posted name reads as empty, so it can only match an
-/// empty wanted name; adapters never ask for one.
-pub(crate) fn banker_scan<'a, R: crate::bank::ops::NpcRow>(
-    rows: &'a [R],
+/// The banker both adapters pick from native scene rows: named `name`,
+/// carrying `op` (by label or by packed 1-based index), nearest first from the
+/// explicit player network path head.
+///
+/// A row with no posted name reads as empty, so it can only match an empty
+/// wanted name; adapters never ask for one.
+pub(crate) fn banker_scan<'a>(
+    rows: &'a [api::snapshot::NpcView],
+    here: api::snapshot::WorldTile,
     name: &str,
     op: NpcOp<'_>,
-) -> Option<(&'a R, &'a str)> {
+) -> Option<(&'a api::snapshot::NpcView, &'a str)> {
     rows.iter()
-        .filter(|row| name_matches(row.name().unwrap_or_default(), name))
+        .filter(|row| name_matches(row.name.as_deref().unwrap_or_default(), name))
         .filter_map(|row| {
-            let action = (1..=row.op_len()).find_map(|slot| {
-                let label = row.op_label(slot)?;
-                let index = usize::try_from(slot).ok()?.checked_sub(1)?;
+            let action = row.actions.iter().enumerate().find_map(|(index, label)| {
+                let label = label.as_deref()?;
                 action_matches(label, index, op).then_some(label)
             })?;
             Some((row, action))
         })
-        .min_by_key(|(row, _)| row.distance())
+        .min_by_key(|(row, _)| api::query::chebyshev_to(here, row.network))
 }
 
 #[cfg(test)]
@@ -337,6 +339,10 @@ mod tests {
             x: 3200,
             z: 3200,
             level: 0,
+        };
+        let network = WorldTile {
+            x: tile.x + distance,
+            ..tile
         };
         NpcView {
             index,
@@ -365,7 +371,7 @@ mod tests {
             in_combat: false,
             level: 0,
             size: 1,
-            network: tile,
+            network,
             x: tile.x,
             z: tile.z,
             yaw: 0,
@@ -376,8 +382,13 @@ mod tests {
     /// nearest-first, over rows passing the name and op filters; the
     /// first row wins an equal-distance tie.
     #[test]
-    fn banker_scan_picks_the_nearest_named_banker_with_the_op() {
-        let rows = [
+    fn banker_scan_network_coords_picks_the_nearest_named_banker_with_the_op() {
+        let here = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut rows = [
             npc(1, "Trader", 0, &["Bank"]),
             npc(2, "Banker", 1, &["Talk-to"]),
             npc(3, "Banker", 9, &["Talk-to", "Bank"]),
@@ -385,16 +396,21 @@ mod tests {
             npc(5, "Banker", 5, &["hidden", "Bank"]),
             npc(6, "Banker", 2, &["Bank"]),
         ];
-        let (row, action) = banker_scan(&rows, "Banker", NpcOp::Name("Bank"))
+        // The compatibility scalar favors the farthest matching path head.
+        // The native scan must derive its rank from both network endpoints.
+        for row in &mut rows {
+            row.distance = 100 - row.distance;
+        }
+        let (row, action) = banker_scan(&rows, here, "Banker", NpcOp::Name("Bank"))
             .expect("a banker with the Bank op is in the scene");
         assert_eq!(row.index, 4, "nearest matching banker, first on a tie");
         assert_eq!(action, "Bank");
         // By packed index the same nearest rule holds; the empty and
         // `hidden` labels never carry an op.
-        let (row, _) =
-            banker_scan(&rows, "Banker", NpcOp::Index(2)).expect("a banker carries a second op");
+        let (row, _) = banker_scan(&rows, here, "Banker", NpcOp::Index(2))
+            .expect("a banker carries a second op");
         assert_eq!(row.index, 5, "distance 5 beats the distance-9 row");
-        assert!(banker_scan(&rows, "Fremennik", NpcOp::Name("Bank")).is_none());
-        assert!(banker_scan(&rows, "Banker", NpcOp::Name("Collect")).is_none());
+        assert!(banker_scan(&rows, here, "Fremennik", NpcOp::Name("Bank")).is_none());
+        assert!(banker_scan(&rows, here, "Banker", NpcOp::Name("Collect")).is_none());
     }
 }

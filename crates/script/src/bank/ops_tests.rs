@@ -1164,3 +1164,48 @@ fn booth_named_and_nearest_action_pick_the_nearest_match() {
     );
     assert!(booth_at(&rows, tile, Some("Furnace")).is_none());
 }
+
+#[test]
+fn npc_at_network_coords_matches_the_exact_bank_stand_head() {
+    let stand = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let rendered = WorldTile { x: 3205, ..stand };
+    let row = NpcView {
+        index: 7,
+        r#type: None,
+        name: Some("Banker".into()),
+        actions: Vec::new(),
+        tile: rendered,
+        distance: 5,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: stand,
+        x: rendered.x,
+        z: rendered.z,
+        yaw: 0,
+    };
+
+    assert_eq!(
+        npc_at(std::slice::from_ref(&row), stand, "banker").map(|npc| npc.index),
+        Some(7)
+    );
+    assert!(npc_at(std::slice::from_ref(&row), rendered, "Banker").is_none());
+}

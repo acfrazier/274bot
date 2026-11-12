@@ -21,10 +21,10 @@
 //! interned per isolate ([`Text`], [`Ops`]), so a repeated loc, npc or item
 //! name is allocated once and shared, not copied per row per post. The
 //! interner is bounded ([`INTERN_CAP`]) and resets when full.
-//! Loc, ground and player rows are the slim [`SceneRow`]; only npcs carry the
-//! combat fields ([`EntityRow`]). Stats keep the four skills machines read
-//! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
-//! read from each.
+//! Loc and ground rows are the slim [`SceneRow`]; player rows retain their
+//! network path head beside targeting identity, and NPC rows also retain
+//! combat facts. Stats keep the four skills machines read ([`Skills`]), and
+//! the side-tab and bank-stand tables keep the one fact read from each.
 
 use crate::wire::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle,
@@ -112,6 +112,33 @@ pub struct Tile {
     pub x: i32,
     pub z: i32,
     pub level: i32,
+}
+
+/// Decode an actor's posted south-west path head, never its rendered tile.
+/// A non-positive size means the network position was not posted.
+pub(crate) fn network_tile(nx: i32, nz: i32, level: i32, size: i32) -> Option<Tile> {
+    (size > 0).then_some(Tile {
+        x: nx,
+        z: nz,
+        level,
+    })
+}
+
+/// Chebyshev distance between two native path-head tiles, with other levels
+/// infinitely far. Public rendered positions and cached distances are separate.
+pub(crate) fn network_distance(from: Tile, to: Tile) -> i32 {
+    api::query::chebyshev_to(
+        api::snapshot::WorldTile {
+            x: from.x,
+            z: from.z,
+            level: from.level,
+        },
+        api::snapshot::WorldTile {
+            x: to.x,
+            z: to.z,
+            level: to.level,
+        },
+    )
 }
 
 /// One inv/bank/equipment/shop/trade/panel row.
@@ -249,6 +276,11 @@ impl EntityRow {
             level: self.level,
         }
     }
+
+    /// The NPC's posted south-west path-head tile, absent for an unknown size.
+    pub fn network_tile(&self) -> Option<Tile> {
+        network_tile(self.nx, self.nz, self.level, self.size)
+    }
 }
 
 /// One loc, ground stack or other player: identity, place and ops.
@@ -297,13 +329,18 @@ impl SceneRow {
     }
 }
 
-/// One other player, with targeting identity beside the shared scene fields.
+/// One other player, with targeting identity and path-head facts beside the
+/// shared rendered scene fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayerRow {
     pub row: SceneRow,
     pub index: i32,
     pub target_kind: i32,
     pub target_index: i32,
+    /// Positive only when the player path-head coordinates were posted.
+    pub network_size: i32,
+    pub network_x: i32,
+    pub network_z: i32,
 }
 
 impl std::ops::Deref for PlayerRow {
@@ -321,7 +358,20 @@ impl PlayerRow {
             index: row.index(),
             target_kind: row.target_kind(),
             target_index: row.target_index(),
+            network_size: row.size(),
+            network_x: row.nx(),
+            network_z: row.nz(),
         }
+    }
+
+    /// The remote player's posted path-head tile, absent for an unknown row.
+    pub fn network_tile(&self) -> Option<Tile> {
+        network_tile(
+            self.network_x,
+            self.network_z,
+            self.level,
+            self.network_size,
+        )
     }
 }
 

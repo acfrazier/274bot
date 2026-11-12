@@ -965,7 +965,7 @@ impl ThreatSet {
             }
         }
         for player in frame.players {
-            if tile_chebyshev(player.actor.tile, src) > max_distance {
+            if tile_chebyshev(player.network, src) > max_distance {
                 continue;
             }
             let Some(index) = u16::try_from(player.index).ok() else {
@@ -1027,8 +1027,8 @@ impl ThreatSet {
                 .style_spotanim(projectile.spotanim)
                 .filter(|row| row.where_ == StyleWhere::Projectile)
                 .map_or(StyleObs::Unknown, |row| select::style_from_mask(row.style));
-            // Fine-pixel launch coords often decode one tile off the rendered
-            // NPC. Prefer an exact tile/network hit; if none, the unique
+            // Projectile source coordinates can decode one tile away from the
+            // NPC path head. Prefer an exact network-tile hit; if none, the unique
             // adjacent facing actor.
             let actor = match self.take_launcher(frame, projectile.src, 0) {
                 Ok(Some(actor)) => actor,
@@ -1464,7 +1464,7 @@ fn tile_chebyshev(a: WorldTile, b: WorldTile) -> u32 {
 }
 
 fn npc_launch_distance(npc: &NpcView, src: WorldTile) -> u32 {
-    tile_chebyshev(npc.tile, src).min(tile_chebyshev(npc.network, src))
+    tile_chebyshev(npc.network, src)
 }
 
 fn npc_main_style(row: &api::game_data::NpcNameRow) -> StyleObs {

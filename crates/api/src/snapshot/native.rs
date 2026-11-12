@@ -96,13 +96,14 @@ impl<'a> SnapshotView<'a> {
         self.world_members
     }
 
+    /// The local player's server tile in a fully loaded, in-game scene.
     pub fn here(&self) -> Option<Observed<super::WorldTile>> {
         let snapshot = self.snapshot?;
         if !snapshot.ingame() || snapshot.scene_state() != 2 {
             return None;
         }
         Some(Observed {
-            value: snapshot.local_player()?.player.actor.tile,
+            value: snapshot.local_player()?.player.network,
             stamp: self.stamp,
         })
     }
@@ -226,7 +227,7 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    /// Borrow the live loc geometry and cached exact flood for a bank stand.
+    /// Plan a bank-booth operation from the local player's server tile.
     /// This uses the same footprint and wall rules as scene queries, without
     /// building a second flood or copying the scene.
     pub fn booth_approach(
@@ -235,7 +236,7 @@ impl<'a> SnapshotView<'a> {
     ) -> Option<Observed<crate::query::loc_approach::BoothApproach>> {
         let snapshot = self.scene_ready()?;
         let reach = self.reach()?.value;
-        let from = snapshot.local_player()?.player.actor.tile;
+        let from = snapshot.local_player()?.player.network;
         let options = crate::query::SceneReachOptions {
             max_steps: Some(u32::MAX),
             adjacent_ok: false,
@@ -1178,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn local_world_and_capacity_borrow_posted_facts() {
+    fn local_world_capacity_and_here_use_network_coords() {
         let stamp = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1216,8 +1217,8 @@ mod tests {
                     name: Some("alice".into()),
                     actions: Vec::new(),
                     tile: super::super::WorldTile {
-                        x: 3205,
-                        z: 3405,
+                        x: 3210,
+                        z: 3410,
                         level: 1,
                     },
                     distance: 0,
@@ -1282,6 +1283,15 @@ mod tests {
             snapshot.local_player().expect("seeded local player")
         ));
         assert_eq!(local.value.energy, 77);
+        assert_eq!(local.value.player.actor.tile.x, 3210);
+        assert_eq!(
+            view.here().expect("posted local player network tile").value,
+            super::super::WorldTile {
+                x: 3205,
+                z: 3405,
+                level: 1,
+            }
+        );
 
         assert_eq!(view.local_player().unwrap().value.player.weapon, Some(415));
         let players = view.players().expect("posted empty remote-player list");
@@ -1322,6 +1332,115 @@ mod tests {
         assert!(reset_view.hitmarks().is_none());
         assert!(reset_view.side_tabs().is_none());
         assert!(reset_view.active_side_tab().is_none());
+    }
+
+    #[test]
+    fn booth_approach_uses_network_coords_when_rendered_player_differs() {
+        use super::super::{LocLayer, SceneView};
+        use client::dash3d::CollisionFlag;
+
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            tick: 4,
+            sequence: 5,
+        };
+        let tile = |x, z| super::super::WorldTile { x, z, level: 0 };
+        let network = tile(2723, 3493);
+        let rendered = tile(2722, 3493);
+        assert_ne!(network, rendered);
+
+        let mut scene = SceneView {
+            available: true,
+            base_x: 2700,
+            base_z: 3470,
+            level: 0,
+            width: 40,
+            height: 40,
+            collision_flags: vec![0; 40 * 40],
+        };
+        let lx = 2722 - scene.base_x;
+        let lz = 3494 - scene.base_z;
+        scene.collision_flags[(lx * scene.height + lz) as usize] = CollisionFlag::WALK_SCENERY;
+        scene.collision_flags[((lx + 1) * scene.height + lz) as usize] =
+            CollisionFlag::WALK_SCENERY;
+        let flood = crate::query::SceneQuery::new(&scene, Some(network))
+            .flood_reach()
+            .expect("network origin floods scene");
+        let reach = crate::query::pack_reach_query(&scene, Some(&flood));
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_scene(scene);
+        snapshot.seed_local_player(LocalPlayerView {
+            player: PlayerView {
+                index: 7,
+                network,
+                actor: super::super::ActorView {
+                    name: Some("alice".into()),
+                    actions: Vec::new(),
+                    tile: rendered,
+                    distance: 0,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: 0,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 3,
+                skill_level: 3,
+                headicons: 0,
+                weapon: Some(415),
+            },
+            energy: 77,
+            weight: 0,
+            animation_update: None,
+        });
+        let booth = LocView {
+            typecode: 0,
+            info: 0,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            description: None,
+            actions: vec![None, Some("Use-quickly".into())],
+            tile: tile(2722, 3494),
+            distance: 0,
+            layer: LocLayer::Ground,
+            shape: 10,
+            angle: 2,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: true,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        };
+
+        let observed = SnapshotView::new(Some(&snapshot), stamp)
+            .with_reach(Some(&reach))
+            .booth_approach(&booth)
+            .expect("bank booth approach");
+        assert!(!observed.value.can_operate);
+        assert_eq!(observed.value.dest, Some(rendered));
+        assert_eq!(observed.stamp, stamp);
     }
 
     #[test]

@@ -78,6 +78,8 @@ pub struct CellNpc {
     pub name: String,
     pub actions: Vec<String>,
     pub tile: Tile,
+    /// The NPC's south-west path-head tile, absent when its size is unknown.
+    pub network: Option<Tile>,
 }
 
 #[derive(Clone, Debug)]
@@ -101,8 +103,9 @@ impl CellObservation {
     fn from_scene(scene: &Scene) -> Self {
         let empty = Self::empty();
         let latest = scene.latest();
+        let session = scene.since_login();
         Self {
-            here: scene.since_logout().here().map(Tile::from),
+            here: session.here().map(Tile::from),
             ingame: latest.ingame().unwrap_or(empty.ingame),
             hold: latest.hold().unwrap_or(empty.hold),
             ours: latest.ours().unwrap_or(empty.ours),
@@ -143,6 +146,7 @@ impl CellObservation {
                             name: npc.name_or_empty().to_string(),
                             actions: observed::strings(&npc.actions),
                             tile: npc.tile().into(),
+                            network: npc.network_tile().map(Tile::from),
                         })
                         .collect()
                 })
@@ -194,7 +198,10 @@ impl CellObservation {
                             actions: observed::ops_of(&npc.actions),
                             x: npc.tile.x,
                             z: npc.tile.z,
-                            level: npc.tile.level,
+                            level: npc.network.map_or(npc.tile.level, |network| network.level),
+                            nx: npc.network.map_or(0, |network| network.x),
+                            nz: npc.network.map_or(0, |network| network.z),
+                            size: i32::from(npc.network.is_some()),
                             ..EntityRow::default()
                         })
                         .collect(),
@@ -441,8 +448,12 @@ fn nearest_velrak(obs: &CellObservation) -> Option<CellNpc> {
         .filter(|npc| {
             npc.name.eq_ignore_ascii_case(VELRAK_NAME) && talk_action(&npc.actions).is_some()
         })
-        .min_by_key(|npc| live_dist(here, npc.tile))
-        .cloned()
+        .filter_map(|npc| {
+            npc.network
+                .map(|network| (npc, observed::network_distance(here.into(), network.into())))
+        })
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(npc, _)| npc.clone())
 }
 
 fn usable_jail_key(obs: &CellObservation) -> Option<CellInv> {
@@ -994,12 +1005,15 @@ fn velrak_find(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             &format!("no {VELRAK_NAME} in the cell. Retrying."),
         );
     };
-    let dist = obs
-        .here
-        .map(|here| live_dist(here, npc.tile))
-        .unwrap_or(1_000_000);
-    if dist > 1 {
-        return emit_walk_to(rt, npc.tile, false);
+    let Some((here, target)) = obs.here.zip(npc.network) else {
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} refused the talk. Retrying."),
+        );
+    };
+    if observed::network_distance(here.into(), target.into()) > 1 {
+        return emit_walk_to(rt, target, false);
     }
     emit_talk(rt, proj, &npc)
 }
@@ -1016,17 +1030,20 @@ fn ack_velrak_walk(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             &format!("{VELRAK_NAME} refused the talk. Retrying."),
         );
     };
-    let dist = obs
-        .here
-        .map(|here| live_dist(here, npc.tile))
-        .unwrap_or(1_000_000);
-    if dist <= 1 {
+    let Some((here, target)) = obs.here.zip(npc.network) else {
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} refused the talk. Retrying."),
+        );
+    };
+    if observed::network_distance(here.into(), target.into()) <= 1 {
         return emit_talk(rt, proj, &npc);
     }
     if rt.clock.bound_reached() {
         if rt.velrak_reclick == 0 {
             rt.velrak_reclick = 1;
-            return emit_walk_to(rt, npc.tile, true);
+            return emit_walk_to(rt, target, true);
         }
         return talk_failed(
             rt,
@@ -1359,5 +1376,80 @@ impl HuntKind for Cell {
 
     fn end(token: u64) {
         CELL_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn velrak_row(index: i32, x: i32, z: i32, nx: i32, nz: i32, size: i32) -> EntityRow {
+        EntityRow {
+            index,
+            name: Some(VELRAK_NAME.into()),
+            actions: observed::ops_of(&["Talk-to".to_string()]),
+            x,
+            z,
+            level: 0,
+            nx,
+            nz,
+            size,
+            ..EntityRow::default()
+        }
+    }
+
+    #[test]
+    fn velrak_network_coords_drive_rank_movement_and_arrival() {
+        let here = observed::Tile {
+            x: 2930,
+            z: 9687,
+            level: 0,
+        };
+        let proj = CellProj {
+            key: "taverley-blue".into(),
+            key_item_present: true,
+            area: Area::default(),
+            route_present: false,
+            loc_ids: Vec::new(),
+            leave_only: false,
+            max_attempts: 1,
+        };
+        let mut runtime = CellRuntime::new(71);
+        observed::replace(1, true, |post| {
+            post.session(true).here(here).npcs(vec![
+                velrak_row(10, here.x, here.z, 2941, here.z, 1),
+                velrak_row(11, 3000, 9700, 2932, here.z, 1),
+            ]);
+        });
+
+        let walk = velrak_find(&mut runtime, &proj);
+        assert_eq!(walk["kind"], "walk-to");
+        assert_eq!(walk["x"], 2932);
+        assert_eq!(walk["z"], here.z);
+
+        observed::replace(2, true, |post| {
+            post.session(true).here(here).npcs(vec![
+                velrak_row(10, here.x, here.z, 2941, here.z, 1),
+                velrak_row(11, 3000, 9700, 2931, here.z, 1),
+            ]);
+        });
+        let talk = ack_velrak_walk(&mut runtime, &proj);
+        assert_eq!(talk["kind"], "npc");
+        assert_eq!(talk["index"], 11);
+
+        observed::replace(3, true, |post| {
+            post.session(true)
+                .here(here)
+                .npcs(vec![velrak_row(12, here.x, here.z, 2931, here.z, 0)]);
+        });
+        let missing_target = velrak_find(&mut CellRuntime::new(72), &proj);
+        assert_ne!(missing_target["kind"], "npc");
+
+        observed::replace(4, true, |post| {
+            post.session(true)
+                .npcs(vec![velrak_row(12, here.x, here.z, 2931, here.z, 1)]);
+        });
+        let missing_origin = velrak_find(&mut CellRuntime::new(73), &proj);
+        assert_ne!(missing_origin["kind"], "npc");
+        observed::on_reset();
     }
 }

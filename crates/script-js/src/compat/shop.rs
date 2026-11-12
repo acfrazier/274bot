@@ -206,6 +206,17 @@ fn choose_keeper(
     name: &str,
     view: Option<(&api::query::ReachQueryView, WorldTile)>,
 ) -> Option<Keeper> {
+    let (here, live) = match view {
+        Some((view, here)) => (
+            observed::Tile {
+                x: here.x,
+                z: here.z,
+                level: here.level,
+            },
+            Some((view, here)),
+        ),
+        None => (observed::with(|scene| scene.since_login().here())?, None),
+    };
     let name = name.trim();
     let candidates = rows
         .iter()
@@ -214,8 +225,9 @@ fn choose_keeper(
                 .as_deref()
                 .is_some_and(|n| n.trim().eq_ignore_ascii_case(name))
         })
-        .map(|row| {
-            shop_open::Candidate::new(
+        .filter_map(|row| {
+            let tile = row.network_tile()?;
+            Some(shop_open::Candidate::new(
                 row.name.as_deref().unwrap_or_default(),
                 row.actions
                     .iter()
@@ -223,15 +235,15 @@ fn choose_keeper(
                     .map(|op| &**op),
                 row.index,
                 WorldTile {
-                    x: if row.size >= 1 { row.nx } else { row.x },
-                    z: if row.size >= 1 { row.nz } else { row.z },
-                    level: row.level,
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level,
                 },
                 row.size,
-                row.distance,
-            )
+                observed::network_distance(here, tile),
+            ))
         });
-    shop_open::choose_keeper(candidates, view)
+    shop_open::choose_keeper(candidates, live)
 }
 
 /// What the caller asked for.
@@ -1070,12 +1082,26 @@ mod tests {
             level: 0,
             distance,
             actions: ops.iter().map(|op| (*op).into()).collect(),
+            size: 1,
+            nx: x,
+            nz: 5,
             ..observed::EntityRow::default()
         }
     }
 
+    fn post_shop_here(here: observed::Tile) {
+        observed::replace(1, true, |post| {
+            post.here(here);
+        });
+    }
+
     #[test]
     fn choose_keeper_needs_the_npc_and_its_trade_op() {
+        post_shop_here(observed::Tile {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
         let rows = [
             npc_row("Guard", &["Attack"], 1, 6, 1),
             npc_row("Shop keeper", &["Talk-to"], 2, 6, 1),
@@ -1084,13 +1110,46 @@ mod tests {
         ];
         assert!(choose_keeper(&rows, "Guard", None).is_none());
         assert!(choose_keeper(&[], "Shop keeper", None).is_none());
-        // No live flood: the nearest Trade row by straight-line distance.
+        // No live flood: the nearest Trade row by network distance.
         let nearest = choose_keeper(&rows, " shop keeper ", None).unwrap();
         assert_eq!(
             (nearest.index(), nearest.route()),
             (4, KeeperRoute::Unknown(2))
         );
         assert_eq!(nearest.action(), "Trade");
+    }
+
+    #[test]
+    fn choose_keeper_network_coords_rank_without_flood_and_fail_closed() {
+        let here = observed::Tile {
+            x: 50,
+            z: 50,
+            level: 0,
+        };
+        post_shop_here(here);
+        let mut rendered_near = npc_row("Shop keeper", &["Trade"], 1, here.x, 0);
+        rendered_near.nx = here.x + 20;
+        rendered_near.nz = here.z;
+        let mut network_near = npc_row("Shop keeper", &["Trade"], 2, here.x + 20, 99);
+        network_near.nx = here.x + 1;
+        network_near.nz = here.z;
+        let mut unknown_size = npc_row("Shop keeper", &["Trade"], 3, here.x, 0);
+        unknown_size.size = 0;
+        let rows = [rendered_near, network_near, unknown_size];
+
+        let nearest = choose_keeper(&rows, "Shop keeper", None).unwrap();
+        assert_eq!(nearest.index(), 2);
+        assert_eq!(nearest.route(), KeeperRoute::Unknown(1));
+        assert!(
+            choose_keeper(&[rows[2].clone()], "Shop keeper", None).is_none(),
+            "rendered coordinates and mixed distance cannot rescue size zero"
+        );
+
+        observed::on_reset();
+        assert!(
+            choose_keeper(&[rows[1].clone()], "Shop keeper", None).is_none(),
+            "a network target without the local path head is not selectable"
+        );
     }
 
     fn shop(kind: Kind, name: &str, requested: i32, phase: Phase) -> Shop {

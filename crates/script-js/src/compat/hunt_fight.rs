@@ -279,28 +279,9 @@ impl FightNpc {
         }
     }
 
-    fn tile(&self) -> Tile {
-        Tile {
-            x: self.x,
-            z: self.z,
-            level: self.level,
-        }
-    }
-
-    fn network(&self) -> Tile {
-        Tile {
-            x: self.nx,
-            z: self.nz,
-            level: self.level,
-        }
-    }
-
-    fn origin(&self, safespot: bool) -> Tile {
-        if safespot {
-            self.network()
-        } else {
-            self.tile()
-        }
+    /// The posted path head, decoded from the network facts already in this row.
+    fn network_tile(&self) -> Option<Tile> {
+        observed::network_tile(self.nx, self.nz, self.level, self.size).map(Tile::from)
     }
 
     fn has_attack(&self) -> bool {
@@ -1109,6 +1090,9 @@ fn taken_by_another(n: &FightNpc, engaged: Option<i32>, self_slot: i32) -> bool 
 }
 
 fn sighted_from(spot: Tile, n: &FightNpc, obs: &FightObservation) -> bool {
+    let Some(network) = n.network_tile() else {
+        return false;
+    };
     if let Some(v) = obs.los_override {
         return v;
     }
@@ -1119,11 +1103,11 @@ fn sighted_from(spot: Tile, n: &FightNpc, obs: &FightObservation) -> bool {
             level: spot.level,
         },
         WorldTile {
-            x: n.nx,
-            z: n.nz,
-            level: n.level,
+            x: network.x,
+            z: network.z,
+            level: network.level,
         },
-        Some(n.size.max(1)),
+        Some(n.size),
     )
 }
 
@@ -1141,13 +1125,17 @@ fn huntable_near<'a>(
             n.name == name
                 && n.has_attack()
                 && !taken_by_another(n, ours, obs.self_slot)
-                && match from {
-                    None => n.distance <= radius && site.area.contains(n.tile(), n.size.max(1)),
-                    Some(spot) => {
-                        gap_sw(spot, n.network(), n.size) <= radius
-                            && site.area.contains(n.network(), n.size.max(1))
+                && match (from, obs.here, n.network_tile()) {
+                    (None, Some(here), Some(network)) => {
+                        observed::network_distance(here.into(), network.into()) <= radius
+                            && site.area.contains(network, n.size)
+                    }
+                    (Some(spot), _, Some(network)) => {
+                        gap_sw(spot, network, n.size) <= radius
+                            && site.area.contains(network, n.size)
                             && sighted_from(spot, n, obs)
                     }
+                    _ => false,
                 }
         })
         .collect()
@@ -1189,6 +1177,9 @@ fn field<'a>(
     obs: &'a FightObservation,
     radius: i32,
 ) -> Vec<&'a FightNpc> {
+    if obs.here.is_none() {
+        return Vec::new();
+    }
     let now = rt.now();
     if proj.site.key == TAVERLEY_BLUE && proj.style == Style::Range {
         let r = radius.min(engage_range_for(Style::Range));
@@ -1210,8 +1201,8 @@ fn field<'a>(
 
 fn in_reach(rt: &FightRuntime, proj: &Projection, n: &FightNpc) -> bool {
     let _ = rt;
-    gap_sw(anchor(proj), n.origin(uses_safespot(proj.style)), n.size)
-        <= engage_range_for(proj.style)
+    n.network_tile()
+        .is_some_and(|origin| gap_sw(anchor(proj), origin, n.size) <= engage_range_for(proj.style))
 }
 
 fn settled(seen: Option<&Sighting>, now: Instant, ms: u64) -> bool {
@@ -1327,8 +1318,9 @@ fn alternate(rt: &FightRuntime, proj: &Projection, obs: &FightObservation) -> Op
         adults_near(&proj.site, None, FIELD_RADIUS, Some(spot), obs)
             .into_iter()
             .any(|n| {
-                gap_sw(spot, n.network(), n.size) <= engage_range_for(Style::Range)
-                    && !rt.skip_due(n.index)
+                n.network_tile().is_some_and(|network| {
+                    gap_sw(spot, network, n.size) <= engage_range_for(Style::Range)
+                }) && !rt.skip_due(n.index)
             })
     };
     if ready(anchor(proj)) {
@@ -1347,9 +1339,10 @@ fn alternate(rt: &FightRuntime, proj: &Projection, obs: &FightObservation) -> Op
 fn pick_target<'a>(
     rt: &FightRuntime,
     proj: &Projection,
-    _obs: &'a FightObservation,
+    obs: &'a FightObservation,
     rows: &[&'a FightNpc],
 ) -> Option<&'a FightNpc> {
+    let here = obs.here?;
     let now = rt.now();
     if let Some(idx) = rt.engaged {
         if let Some(n) = rows
@@ -1370,16 +1363,21 @@ fn pick_target<'a>(
                     || settled(rt.seen.get(&n.index), now, SETTLE_MS))
         })
         .collect();
+    let distance = |n: &FightNpc| {
+        n.network_tile().map_or(i32::MAX, |network| {
+            observed::network_distance(here.into(), network.into())
+        })
+    };
     cand.sort_by(|a, b| {
         if holds_anchor(proj.style, proj.site.fire_at_range) {
             let ra = in_reach(rt, proj, a);
             let rb = in_reach(rt, proj, b);
             match rb.cmp(&ra) {
-                std::cmp::Ordering::Equal => a.distance.cmp(&b.distance),
+                std::cmp::Ordering::Equal => distance(a).cmp(&distance(b)),
                 other => other,
             }
         } else {
-            a.distance.cmp(&b.distance)
+            distance(a).cmp(&distance(b))
         }
     });
     cand.first().copied()
@@ -1518,11 +1516,11 @@ impl FightRuntime {
             }
         }
         let rows = field(self, proj, &obs, FIELD_RADIUS);
-        let safespot = uses_safespot(proj.style);
         for n in &rows {
-            let tile = n.origin(safespot);
-            let next = note_sighting(self.seen.get(&n.index), tile, now);
-            self.seen.insert(n.index, next);
+            if let Some(tile) = n.network_tile() {
+                let next = note_sighting(self.seen.get(&n.index), tile, now);
+                self.seen.insert(n.index, next);
+            }
         }
         if let Some(live) = self.engaged.and_then(|idx| {
             rows.iter().copied().find(|n| n.index == idx).or_else(|| {
@@ -2630,5 +2628,109 @@ mod tests {
             }]);
         });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
+    }
+
+    fn goblin_row(
+        index: i32,
+        x: i32,
+        z: i32,
+        nx: i32,
+        nz: i32,
+        distance: i32,
+        size: i32,
+    ) -> EntityRow {
+        EntityRow {
+            index,
+            name: Some("Goblin".into()),
+            actions: observed::ops_of(&["Attack".to_string()]),
+            x,
+            z,
+            level: 0,
+            nx,
+            nz,
+            size,
+            distance,
+            ..EntityRow::default()
+        }
+    }
+
+    #[test]
+    fn fight_network_coords_drive_radius_rank_and_fail_closed() {
+        let here = observed::Tile {
+            x: 100,
+            z: 100,
+            level: 0,
+        };
+        let projection = Projection {
+            died: false,
+            target_idx: None,
+            hp_fraction: 1.0,
+            panic_hp: 0.2,
+            retreat_hp: 0.0,
+            has_food: true,
+            need_eat: false,
+            style: Style::Melee,
+            safespot_index: 0,
+            bury_bones: false,
+            bone_name: String::new(),
+            has_vlog: false,
+            has_arm_special: false,
+            has_shield_ready: false,
+            shield_ready: false,
+            site: Site {
+                key: "network-coords".into(),
+                target: "Goblin".into(),
+                also_hunt: Vec::new(),
+                safespots: Vec::new(),
+                melee_anchor: Tile {
+                    x: 100,
+                    z: 100,
+                    level: 0,
+                },
+                area: Area::of(vec![SiteBox {
+                    min_x: 99,
+                    max_x: 102,
+                    min_z: 99,
+                    max_z: 101,
+                    level: 0,
+                }]),
+                fire_at_range: false,
+                ranged_threat: false,
+                approach: Vec::new(),
+            },
+        };
+        observed::replace(1, true, |post| {
+            post.session(true).scene_state(2).here(here).npcs(vec![
+                goblin_row(10, 100, 100, 101, 100, 0, 1),
+                goblin_row(11, 101, 100, 100, 100, 1, 1),
+            ]);
+        });
+        let captured = observation();
+        assert_eq!(captured.npcs[0].x, 100);
+        assert_eq!(captured.npcs[0].distance, 0);
+
+        let mut runtime = FightRuntime::new(81, Instant::now());
+        assert_eq!(runtime.field_logic(&projection)["kind"], "arm-special");
+        assert_eq!(runtime.pending_npc.as_ref().unwrap().index, 11);
+
+        observed::replace(2, true, |post| {
+            post.session(true)
+                .scene_state(2)
+                .here(here)
+                .npcs(vec![goblin_row(12, 100, 100, 100, 100, 0, 0)]);
+        });
+        let mut missing_target = FightRuntime::new(82, Instant::now());
+        let _ = missing_target.field_logic(&projection);
+        assert!(missing_target.pending_npc.is_none());
+
+        observed::replace(3, true, |post| {
+            post.session(true)
+                .scene_state(2)
+                .npcs(vec![goblin_row(13, 100, 100, 100, 100, 0, 1)]);
+        });
+        let mut missing_origin = FightRuntime::new(83, Instant::now());
+        let _ = missing_origin.field_logic(&projection);
+        assert!(missing_origin.pending_npc.is_none());
+        observed::on_reset();
     }
 }

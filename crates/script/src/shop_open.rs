@@ -151,7 +151,7 @@ impl Keeper {
     }
 }
 
-/// One posted NPC row, as either adapter reads it.
+/// One posted NPC row, with its network path head and network-origin distance.
 pub struct Candidate<'a> {
     pub(crate) name: &'a str,
     /// The row's Trade op, if it has one.
