@@ -235,7 +235,7 @@ fn validate_cards(
     cards: Vec<PreparedCard>,
     game_data: Arc<api::game_data::SelectedGameData>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
-) -> Vec<(PreparedCard, Result<(), String>)> {
+) -> Vec<(PreparedCard, script_js::CardValidation)> {
     let _guard = VALIDATION_TEST_LOCK
         .lock()
         .expect("validation test lock poisoned");
@@ -336,7 +336,7 @@ export default class BankReader extends LoopingBot {
     assert_eq!(results.len(), 2);
     for (card, result) in results {
         assert!(
-            result.is_ok(),
+            matches!(result, script_js::CardValidation::Validated),
             "{} failed with selected content: {:?}",
             card.card.name,
             result
@@ -451,7 +451,9 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
     )
     .pop()
     .expect("one validation result");
-    let err = result.unwrap_err();
+    let script_js::CardValidation::Failed(err) = result else {
+        panic!("the broken runtime must fail validation: {result:?}");
+    };
     js.record_prepared_failure(&prepared, &err);
     assert!(err.contains("runtime boom"), "{err}");
 
@@ -544,8 +546,12 @@ fn catalog_mixed_batch_retains_named_failures() {
         .pop()
         .expect("one validation result");
         match result {
-            Ok(()) => prepared_ok.push(candidate),
-            Err(error) => js.record_prepared_failure(&candidate, &error),
+            script_js::CardValidation::Validated | script_js::CardValidation::NotChecked => {
+                prepared_ok.push(candidate)
+            }
+            script_js::CardValidation::Failed(error) => {
+                js.record_prepared_failure(&candidate, &error)
+            }
         }
     }
     assert_eq!(prepared_ok.len(), 1);

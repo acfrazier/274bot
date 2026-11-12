@@ -6024,6 +6024,164 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     );
 }
 
+/// Bind the selected game data and a navigation world, so catalog
+/// validation has the real ready context the front ends supply.
+#[cfg(feature = "js")]
+fn bind_selected_script_context(f: &mut Fixture) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("local R289 test data");
+    let world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let play = f.core.play_mut_for_test().expect("fixture play session");
+    play.bind_script_test_data(data);
+    play.bind_script_test_world(std::sync::Arc::new(world));
+}
+
+/// Write `cards` as `.ts` catalog cards under one registry index.
+#[cfg(feature = "js")]
+fn write_catalog(dir: &std::path::Path, cards: &[(&str, &str)]) -> PathBuf {
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    let mut index = String::new();
+    for (register, folder) in cards {
+        std::fs::create_dir_all(scripts.join(folder)).unwrap();
+        index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+        index.push_str(&format!(
+            "ScriptRegistry.register({{ name: '{register}', create: () => new {folder}() }});\n"
+        ));
+        std::fs::write(
+            scripts.join(folder).join(format!("{folder}.ts")),
+            format!("export default class {folder} extends LoopingBot {{ override loop() {{}} }}"),
+        )
+        .unwrap();
+    }
+    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    root
+}
+
+/// A three-card catalog whose middle card is larger than the 4 MiB source
+/// cap of one validation isolate.
+#[cfg(feature = "js")]
+fn write_catalog_with_oversized_middle_card(dir: &std::path::Path) -> PathBuf {
+    let root = dir.join("rs2b0t-big");
+    let scripts = root.join("src/bot/scripts");
+    let mut index = String::new();
+    for (register, folder) in [("First", "First"), ("Big", "Big"), ("Last", "Last")] {
+        std::fs::create_dir_all(scripts.join(folder)).unwrap();
+        index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+        index.push_str(&format!(
+            "ScriptRegistry.register({{ name: '{register}', create: () => new {folder}() }});\n"
+        ));
+    }
+    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    for folder in ["First", "Last"] {
+        std::fs::write(
+            scripts.join(folder).join(format!("{folder}.js")),
+            format!("export default class {folder} extends LoopingBot {{ loop() {{}} }}\n"),
+        )
+        .unwrap();
+    }
+    let mut oversized = String::from("// ");
+    oversized.push_str(&"x".repeat(4 * 1024 * 1024));
+    oversized.push_str("\nexport default class Big extends LoopingBot { loop() {} }\n");
+    std::fs::write(scripts.join("Big").join("Big.js"), oversized).unwrap();
+    root
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_continues_past_a_card_too_large_to_validate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("catalog-import-oversized-card", &["alice"]);
+    bind_selected_script_context(&mut f);
+    let root = write_catalog_with_oversized_middle_card(&f.dir);
+    f.scripts
+        .request_catalog_import(&root, &script_js::default_rs2b0t_path_file())
+        .expect("a three-card import queues");
+    f.pump_until("the catalog import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
+
+    let imported: Vec<&str> = f
+        .scripts
+        .cards()
+        .filter(|card| card.source() == CardSource::Catalog)
+        .map(|card| card.name())
+        .collect();
+    assert_eq!(
+        imported.len(),
+        3,
+        "every card must be imported: {imported:?}"
+    );
+    assert!(
+        f.scripts
+            .card(CardSource::Catalog, "Big")
+            .is_some_and(|card| card.is_transpiled()),
+        "the oversized card loads unchecked, as release/0.2.9 loaded it"
+    );
+    assert_eq!(f.scripts.load_failure_count(), 0);
+    let notice = f
+        .scripts
+        .take_notice()
+        .expect("the import reports a notice");
+    assert_eq!(
+        notice.text(),
+        Some("Catalog imported: 3 cards; Big: not checked: too large to check")
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn content_change_cancelling_a_catalog_import_names_the_import() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("catalog-import-content-change", &["alice"]);
+    bind_selected_script_context(&mut f);
+    let root = write_catalog(&f.dir, &[("Alpha", "Alpha"), ("Beta", "Beta")]);
+    f.scripts
+        .request_catalog_import(&root, &script_js::default_rs2b0t_path_file())
+        .expect("a two-card import queues");
+    let guard = Instant::now() + HANG_GUARD;
+    while !f.scripts.reload_validation_pending() {
+        assert!(
+            Instant::now() < guard,
+            "the catalog import never started validating"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The selected content changes while the import validates.
+    let world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    f.core
+        .play_mut_for_test()
+        .expect("fixture play session")
+        .bind_script_test_world(std::sync::Arc::new(world));
+    f.pump_until("the cancelled import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
+
+    assert_eq!(
+        f.scripts
+            .take_notice()
+            .and_then(|notice| notice.text().map(str::to_owned)),
+        Some(
+            "Import cancelled: selected content changed. The catalog will be checked again."
+                .to_string()
+        )
+    );
+    assert!(
+        f.scripts
+            .cards()
+            .all(|card| card.source() != CardSource::Catalog),
+        "a cancelled import applies no card"
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn catalog_request_refusals_name_their_failure_kind() {

@@ -355,7 +355,19 @@ impl ReloadOutcome {
     }
 }
 
-type ValidationBatch = Vec<(script_js::PreparedCard, Result<(), String>)>;
+type ValidationBatch = Vec<(script_js::PreparedCard, script_js::CardValidation)>;
+
+/// Shown when selected content changes and discards reload work.
+pub const RELOAD_CONTEXT_CHANGED_NOTICE: &str = "Selected content changed. Try the reload again.";
+
+/// Shown when selected content changes and cancels a catalog import: the
+/// import applied nothing, and a retry checks the catalog again.
+pub const CATALOG_IMPORT_CANCELLED_NOTICE: &str =
+    "Import cancelled: selected content changed. The catalog will be checked again.";
+
+/// One card's reported result when its size puts it above the validation
+/// caps: release/0.2.9 loaded such a card without checking it.
+const CATALOG_CARD_NOT_CHECKED: &str = "not checked: too large to check";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ValidationContextStamp {
@@ -479,6 +491,8 @@ struct CatalogImportValidation {
     validated_count: usize,
     prepared: Vec<script_js::PreparedCard>,
     warmed: Vec<script_js::PreparedCard>,
+    /// Cards loaded without validation because one card cannot fit a batch.
+    not_checked: Vec<String>,
 }
 
 enum ValidationKind {
@@ -1296,6 +1310,7 @@ impl Scripts {
             validated_count: 0,
             prepared: Vec::with_capacity(prepared_count),
             warmed: Vec::with_capacity(candidate_count.saturating_sub(prepared_count)),
+            not_checked: Vec::new(),
         };
         if self.spawn_catalog_import_batch(validation) {
             self.clear_notice();
@@ -1303,6 +1318,20 @@ impl Scripts {
     }
 
     fn spawn_catalog_import_batch(&mut self, mut validation: CatalogImportValidation) -> bool {
+        // A card that cannot fit one validation batch at all is loaded
+        // unchecked and reported in its own record, as release/0.2.9 loaded
+        // it; the cards around it keep their normal bounded batches.
+        if validation
+            .remaining
+            .first()
+            .is_some_and(|card| !script_js::validation_card_fits(card))
+        {
+            let card = validation.remaining.remove(0);
+            return self.complete_catalog_import_validation(
+                validation,
+                vec![(card, script_js::CardValidation::NotChecked)],
+            );
+        }
         let root = validation.root.clone();
         let batch_len = match script_js::validation_batch_prefix_len(&validation.remaining) {
             Ok(0) => {
@@ -1341,15 +1370,31 @@ impl Scripts {
         &mut self,
         mut validation: CatalogImportValidation,
         batch: ValidationBatch,
-    ) {
+    ) -> bool {
         let candidate_count = batch.len();
         for (index, (candidate, result)) in batch.into_iter().enumerate() {
+            let is_prepared = validation.validated_count + index < validation.prepared_count;
             match result {
-                Ok(()) if validation.validated_count + index < validation.prepared_count => {
-                    validation.prepared.push(candidate);
+                script_js::CardValidation::Validated => {
+                    if is_prepared {
+                        validation.prepared.push(candidate);
+                    } else {
+                        validation.warmed.push(candidate);
+                    }
                 }
-                Ok(()) => validation.warmed.push(candidate),
-                Err(error) => {
+                script_js::CardValidation::NotChecked => {
+                    self.show(format!(
+                        "catalog {}: {CATALOG_CARD_NOT_CHECKED}",
+                        candidate.card.name
+                    ));
+                    validation.not_checked.push(candidate.card.name.clone());
+                    if is_prepared {
+                        validation.prepared.push(candidate);
+                    } else {
+                        validation.warmed.push(candidate);
+                    }
+                }
+                script_js::CardValidation::Failed(error) => {
                     self.js.record_prepared_failure(&candidate, &error);
                     if let Some(failure) = self
                         .js
@@ -1364,8 +1409,7 @@ impl Scripts {
         }
         validation.validated_count += candidate_count;
         if !validation.remaining.is_empty() {
-            self.spawn_catalog_import_batch(validation);
-            return;
+            return self.spawn_catalog_import_batch(validation);
         }
         let root = validation.root.clone();
         let result = self.apply_catalog_import(
@@ -1378,12 +1422,33 @@ impl Scripts {
                 prepare_failed: validation.prepare_failed,
             },
         );
-        self.settle_catalog_import(root, result);
+        self.settle_catalog_import_with_unchecked(root, result, &validation.not_checked);
+        false
     }
 
     fn settle_catalog_import(&mut self, root: PathBuf, result: Result<usize, CatalogError>) {
+        self.settle_catalog_import_with_unchecked(root, result, &[]);
+    }
+
+    fn settle_catalog_import_with_unchecked(
+        &mut self,
+        root: PathBuf,
+        result: Result<usize, CatalogError>,
+        not_checked: &[String],
+    ) {
         match &result {
-            Ok(_) if self.js.load_failure_count() > 0 => self.show_load_failures(),
+            Ok(_) if self.js.load_failure_count() > 0 => {
+                let failures = self.js.named_failure_output();
+                if not_checked.is_empty() {
+                    self.show(failures);
+                } else {
+                    self.show(format!("{failures}\n{}", not_checked_line(not_checked)));
+                }
+            }
+            Ok(count) if !not_checked.is_empty() => self.show(format!(
+                "Catalog imported: {count} cards; {}",
+                not_checked_line(not_checked)
+            )),
             Ok(count) => self.show(format!("Catalog imported: {count} cards")),
             Err(error) => self.show(format!("Import catalog: {error}")),
         }
@@ -2528,6 +2593,7 @@ impl Scripts {
         else {
             return;
         };
+        let import_cancelled = matches!(&change.validation, Some(ValidationKind::CatalogImport(_)));
         self.cancel_catalog_import_validation(
             change.validation,
             "selected content changed during catalog validation",
@@ -2538,7 +2604,11 @@ impl Scripts {
                 api::hostlog::Level::Info,
                 "Script reload work was discarded because selected content changed."
             );
-            self.show("Selected content changed. Try the reload again.");
+            self.show(if import_cancelled {
+                CATALOG_IMPORT_CANCELLED_NOTICE
+            } else {
+                RELOAD_CONTEXT_CHANGED_NOTICE
+            });
         }
     }
 
@@ -2636,7 +2706,7 @@ impl Scripts {
                 batch,
             ),
             ValidationKind::CatalogImport(validation) => {
-                self.complete_catalog_import_validation(validation, batch)
+                self.complete_catalog_import_validation(validation, batch);
             }
         }
     }
@@ -2658,7 +2728,7 @@ impl Scripts {
             self.fail_reload("reload", "validation returned no candidate".into());
             return;
         };
-        if let Err(error) = result {
+        if let script_js::CardValidation::Failed(error) = result {
             self.js.record_prepared_failure(&prepared, &error);
             self.fail_reload("reload", error);
             return;
@@ -2717,9 +2787,7 @@ impl Scripts {
         let mut warmed = Vec::with_capacity(candidate_count.saturating_sub(prepared_count));
         for (index, (candidate, result)) in batch.into_iter().enumerate() {
             match result {
-                Ok(()) if index < prepared_count => prepared.push(candidate),
-                Ok(()) => warmed.push(candidate),
-                Err(error) => {
+                script_js::CardValidation::Failed(error) => {
                     self.js.record_prepared_failure(&candidate, &error);
                     if let Some(failure) = self
                         .js
@@ -2729,6 +2797,14 @@ impl Scripts {
                         prepare_failed.push(failure);
                     }
                     self.show(format!("catalog {}: {error}", candidate.card.name));
+                }
+                script_js::CardValidation::Validated | script_js::CardValidation::NotChecked
+                    if index < prepared_count =>
+                {
+                    prepared.push(candidate);
+                }
+                script_js::CardValidation::Validated | script_js::CardValidation::NotChecked => {
+                    warmed.push(candidate);
                 }
             }
         }
@@ -3348,6 +3424,11 @@ fn format_reload_failures(restarted: usize, stopped_paused: usize, errors: &[Str
         errors.len(),
         errors.join("; ")
     )
+}
+
+/// The operator line naming cards that were loaded without validation.
+fn not_checked_line(names: &[String]) -> String {
+    format!("{}: {CATALOG_CARD_NOT_CHECKED}", names.join(", "))
 }
 
 /// The confirmation text for a warning: exactly which runs are replaced.

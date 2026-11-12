@@ -138,7 +138,7 @@ fn validate_non_yielding_module_is_bounded() {
                 }
             };
             assert!(
-                result.is_err(),
+                matches!(result, crate::CardValidation::Failed(_)),
                 "attempt {attempt}: non-yielding source must be rejected"
             );
             assert!(

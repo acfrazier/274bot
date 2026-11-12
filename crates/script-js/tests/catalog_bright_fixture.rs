@@ -497,8 +497,10 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     let mut validated_names = Vec::new();
     for (card, result) in validated {
         match result {
-            Ok(()) => validated_names.push(card.card.name),
-            Err(error) => {
+            script_js::CardValidation::Validated | script_js::CardValidation::NotChecked => {
+                validated_names.push(card.card.name)
+            }
+            script_js::CardValidation::Failed(error) => {
                 failures.insert(format!("{}: prepared validation {error}", card.card.name));
             }
         }

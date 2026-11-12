@@ -121,6 +121,7 @@ impl ScriptSettingsLog {
 #[cfg(feature = "js")]
 pub use reload::{
     CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
+    CATALOG_IMPORT_CANCELLED_NOTICE, RELOAD_CONTEXT_CHANGED_NOTICE,
 };
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 

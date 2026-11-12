@@ -10,7 +10,8 @@ mod thread;
 mod validation;
 pub use supervisor::{capacity_status as isolate_capacity_status, IsolateCapacityStatus};
 pub use validation::{
-    validation_batch_prefix_len, ValidationBatch, ValidationError, MAX_VALIDATION_BATCH_CARDS,
+    validation_batch_prefix_len, validation_card_fits, CardValidation, ValidationBatch,
+    ValidationError, MAX_VALIDATION_BATCH_CARDS,
 };
 
 pub use teardown::TeardownProof;

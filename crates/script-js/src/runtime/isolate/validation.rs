@@ -17,7 +17,26 @@ const INPUT_CAP: usize = 8 * 1024 * 1024;
 pub const MAX_VALIDATION_BATCH_CARDS: usize = 256;
 const BATCH_BYTES_CAP: usize = 16 * 1024 * 1024;
 
-pub(super) type Batch = Vec<(PreparedCard, Result<(), String>)>;
+pub(super) type Batch = Vec<(PreparedCard, CardValidation)>;
+
+/// One card's result in a bounded validation batch.
+///
+/// The coordinator reports [`Validated`](Self::Validated) or
+/// [`Failed`](Self::Failed). A caller supplies
+/// [`NotChecked`](Self::NotChecked) for a card that cannot fit one batch
+/// at all and that the release it follows loaded without validation.
+#[derive(Debug)]
+pub enum CardValidation {
+    /// The card's isolate setup settled Ready.
+    Validated,
+    /// The card is larger than the per-card caps of one validation batch.
+    /// The release/0.2.9 catalog import applied cards without this check,
+    /// so the caller loads it unchecked.
+    NotChecked,
+    /// The card failed validation and does not load.
+    Failed(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
     #[error(transparent)]
@@ -72,6 +91,13 @@ fn validation_card_bytes(card: &PreparedCard) -> Option<usize> {
             sum.checked_add(name.len())?.checked_add(js.len())
         })?;
     (bytes <= INPUT_CAP).then_some(bytes)
+}
+
+/// Whether one card fits the per-card validation caps on its own. A card
+/// that does not cannot be validated in any batch, so its caller decides
+/// whether to load it unchecked.
+pub fn validation_card_fits(card: &PreparedCard) -> bool {
+    validation_card_bytes(card).is_some()
 }
 
 /// Owning reload receipt. A full bounded queue leaves this one transaction
@@ -215,7 +241,13 @@ fn run(rx: Receiver<Job>) {
                 )
             }
             .map_err(|error| format!("prepare {}: {error}", card.card.name));
-            results.push((card, outcome));
+            results.push((
+                card,
+                match outcome {
+                    Ok(()) => CardValidation::Validated,
+                    Err(error) => CardValidation::Failed(error),
+                },
+            ));
         }
         let _ = reply.send(results);
     }
@@ -240,7 +272,7 @@ fn refuse(job: Job, reason: &str) {
         .into_iter()
         .map(|card| {
             let error = format!("prepare {}: {reason}", card.card.name);
-            (card, Err(error))
+            (card, CardValidation::Failed(error))
         })
         .collect();
     let _ = job.reply.send(rows);
