@@ -22,6 +22,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   "logged out: idle logout by the server" no longer appear. A bot you log out
   yourself stays logged out until you log it in.
 
+### Panel
+
+- Clicking or dragging the Fleet heading no longer closes the panel while its
+  folded state saves or after that save fails.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
