@@ -1029,6 +1029,9 @@ slot observer publishes `PoisonWindow` only while poison is Unknown, with the
 remaining clean ticks, whether a click was accepted, and the last reset cause.
 It needs 31 clean observed game ticks after an accepted walk click or
 interaction to prove Clear. Interactions restart this window; movement counts.
+A skipped or duplicated observation restarts the clean count, but retains a
+previously dispatched click. Without a dispatched click, clean observations
+alone cannot prove Clear.
 A hitmark kind above two invalidates the session until reconnect.
 
 For Unknown poison, admission first charges the selected content's worst pulse

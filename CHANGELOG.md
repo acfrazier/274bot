@@ -6,6 +6,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## Unreleased
 
+### Navigation
+
+- After login, the poison check keeps evidence of a walk or interaction when a
+  game update is missed. It can complete after 31 continuous clean updates
+  instead of requiring another click. Previously, a danger crossing could
+  wait at its safe approach tile, then stop with an unsettled-poison refusal.
+
 ## [0.2.9.1] — 2026-11-11 — Beta 2 patch
 
 ### Login

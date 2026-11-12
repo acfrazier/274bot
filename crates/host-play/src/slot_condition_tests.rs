@@ -1116,11 +1116,61 @@ fn poison_window_frame_gap_resets() {
         poison_window(&owner),
         PoisonWindow {
             remaining: 31,
-            accepted: false,
+            accepted: true,
             last_reset: WindowReset::FrameGap,
         },
-        "old: a skipped PLAYER_INFO edge had no cause; new: it restarts and records FrameGap"
+        "a skipped edge restarts clean counting without losing dispatch acceptance"
     );
+}
+
+#[test]
+fn poison_window_recovers_after_one_missing_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for accepted in [false, true] {
+        let mut owner = owner();
+        if accepted {
+            let mut client = outgoing_client(client::io::ClientRevision::R289);
+            let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+            queue_packet(&mut client, ClientProt::MOVE_GAMECLICK);
+            owner.observe_dispatch(&client, checkpoint);
+        }
+        owner.observe_frame(&frame(1), &drain(true, true), false);
+        owner.observe_frame(&frame(3), &drain(true, true), false);
+        assert_eq!(
+            poison_window(&owner),
+            PoisonWindow {
+                remaining: CLEAN_TICKS,
+                accepted,
+                last_reset: WindowReset::FrameGap,
+            }
+        );
+        for tick in 4..=33 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            assert!(matches!(
+                owner.current().unwrap().poison,
+                PoisonState::Unknown { .. }
+            ));
+        }
+        for tick in 34..=42 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            if accepted {
+                assert_eq!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Clear,
+                    "31 clean edges after the gap must recover without another click"
+                );
+            } else {
+                assert!(matches!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Unknown { .. }
+                ));
+                assert_eq!(poison_window(&owner).remaining, 1);
+                assert!(!poison_window(&owner).accepted);
+            }
+        }
+    }
 }
 
 #[test]
