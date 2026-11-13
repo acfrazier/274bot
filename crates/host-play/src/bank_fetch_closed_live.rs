@@ -279,6 +279,9 @@ struct FetchTrace {
     arm_from: Option<[i32; 3]>,
     arm_bank_loaded: Option<bool>,
     arm_held_coins: Option<i32>,
+    arm_walk_outcome_seq: Option<u64>,
+    arm_walk_outcome_failed: Option<bool>,
+    arm_walk_outcome_target: Option<[i32; 3]>,
     planned_steps: Option<Vec<String>>,
     planned_withdraw: Option<i32>,
     /// The armed route's legs: walk spans and transport hops (the
@@ -612,6 +615,8 @@ struct ScriptWalk {
     routed: bool,
     quest_evidence_truth: Option<String>,
     failed: bool,
+    outcome_seq: u64,
+    outcome_target: Option<[i32; 3]>,
     no_path: bool,
     failure_detail: Option<Arc<str>>,
 }
@@ -650,6 +655,14 @@ fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWal
         routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         quest_evidence_truth,
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
+        outcome_seq: bot.map_or(0, |bot| bot.walk_outcome_seq),
+        outcome_target: bot.map(|bot| {
+            [
+                bot.walk_outcome_x,
+                bot.walk_outcome_z,
+                bot.walk_outcome_level,
+            ]
+        }),
         no_path: bot.is_some_and(|bot| bot.walk_outcome_no_path),
         failure_detail: bot.and_then(|bot| bot.walk_outcome_detail.clone()),
     }
@@ -985,6 +998,8 @@ fn run_cell(variant: Variant) {
     let mut script_front: Option<Option<BankStep>> = None;
     #[cfg(feature = "js")]
     let mut script_session = false;
+    #[cfg(feature = "js")]
+    let mut script_outcome_after = 0;
     // Where the walk must end, as selected from the real profile pack.
     let arrived = |tile: Option<[i32; 3]>| match (variant, tile) {
         (_, None) => false,
@@ -1220,6 +1235,14 @@ fn run_cell(variant: Variant) {
                             Variant::HeroGuildPostBank => hero_guild_walk_script(goal),
                             _ => unreachable!("only script-walk variants enter this arm"),
                         };
+                        let previous = script_walk(&play, &account, &world);
+                        script_outcome_after = previous.outcome_seq;
+                        {
+                            let mut guard = trace.lock();
+                            guard.arm_walk_outcome_seq = Some(previous.outcome_seq);
+                            guard.arm_walk_outcome_failed = Some(previous.failed);
+                            guard.arm_walk_outcome_target = previous.outcome_target;
+                        }
                         match play.script_start_load(
                             &account,
                             script,
@@ -1336,9 +1359,10 @@ fn run_cell(variant: Variant) {
                                 variant.expected_withdraw()
                             ));
                         }
-                    } else if walk.failed {
+                    } else if walk.failed && walk.outcome_seq > script_outcome_after {
                         fail(format!(
-                            "{variant:?}: the script walk-near with fetch on must plan; no_path={}, quest evidence={:?}, detail={:?}",
+                            "{variant:?}: the script walk-near with fetch on must plan; outcome={} after {}, target={:?}, no_path={}, quest evidence={:?}, detail={:?}",
+                            walk.outcome_seq, script_outcome_after, walk.outcome_target,
                             walk.no_path, walk.quest_evidence_truth, walk.failure_detail,
                         ));
                     } else if since.elapsed() > Duration::from_secs(60) {
@@ -1379,7 +1403,7 @@ fn run_cell(variant: Variant) {
                             }
                         }
                         script_session = walk.steps.is_some();
-                        if walk.failed {
+                        if walk.failed && walk.outcome_seq > script_outcome_after {
                             fail("the script walk ended failed".into());
                             continue;
                         }
