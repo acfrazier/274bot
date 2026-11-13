@@ -227,9 +227,10 @@ impl QuestEvidenceLive {
                         return;
                     }
                     if self.snapshot.active_side_tab() != 2
-                        && !Interactions::new(&self.snapshot, client)
-                            .click_side_tab(2)
-                            .is_sent()
+                        && !matches!(
+                            Interactions::new(&self.snapshot, client).click_side_tab(2),
+                            interact::SendResult::Sent { .. }
+                        )
                     {
                         self.failure = Some("quest side tab could not be opened".into());
                         return;
