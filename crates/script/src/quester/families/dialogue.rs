@@ -1118,6 +1118,23 @@ impl Dialogue {
             .is_some_and(|target| approach_goal(cx, &target).close)
     }
 
+    /// A visible target is outside the final two-tile server approach.
+    /// Missing actors cannot prove movement; this check needs no reach flood.
+    pub(crate) fn target_out_of_range(&self, cx: &ActionContext<'_>) -> bool {
+        cx.snapshot().here().is_some_and(|here| {
+            self.npc_id()
+                .and_then(|id| nearest_talk(cx, id))
+                .and_then(|target| {
+                    api::query::npc_footprint_distance(
+                        here.value,
+                        target.npc.network,
+                        target.npc.size,
+                    )
+                })
+                .is_some_and(|distance| distance > 2)
+        })
+    }
+
     /// Quiet ticks this conversation waits after the chat closes, and after
     /// each re-arm signal.
     fn gap_ticks(&self) -> u64 {
@@ -2223,14 +2240,15 @@ struct TalkTarget<'a> {
 }
 
 fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
-    cx.snapshot().reach().is_none_or(|reach| {
-        reach.value.can_reach(
-            tile,
-            &api::query::SceneReachOptions {
-                max_steps: None,
-                adjacent_ok: true,
-            },
-        )
+    cx.snapshot().reach().is_none_or(|view| {
+        reach::reach_known(cx)
+            && view.value.can_reach(
+                tile,
+                &api::query::SceneReachOptions {
+                    max_steps: None,
+                    adjacent_ok: true,
+                },
+            )
     })
 }
 
@@ -2287,11 +2305,12 @@ fn held_goal(cx: &ActionContext<'_>, tile: api::WorldTile) -> ApproachGoal {
 }
 
 fn approach_goal(cx: &ActionContext<'_>, target: &TalkTarget<'_>) -> ApproachGoal {
-    let reachable = talk_reachable(cx, target.tile);
+    let route_steps = reach::npc_route_steps(cx, target.npc);
+    let reachable = cx.snapshot().reach().is_none() || route_steps.is_some();
     ApproachGoal {
         tile: target.tile,
         radius: u16::from(reachable),
-        route_steps: reach::npc_route_steps(cx, target.npc),
+        route_steps,
         distance: target.distance,
         close: target.distance <= 2 && reachable,
     }
@@ -2321,8 +2340,8 @@ fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget
                 npc,
                 index: npc.index as i32,
                 action,
-                tile: npc.tile,
-                distance: npc.distance,
+                tile: npc.network,
+                distance: reach::npc_distance(cx, npc),
             })
         })
         .min_by_key(|target| target.distance)

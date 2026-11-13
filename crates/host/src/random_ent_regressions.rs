@@ -315,3 +315,78 @@ fn ent_rejected_stop_retries_only_on_fresh() {
     assert!(status.hold, "ent stays held");
     assert_eq!(drv.walks.len(), 3, "a sent stop must not resend");
 }
+#[test]
+fn ent_targeted_stop_uses_npc_network_tile() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    set_npc_tiles(&mut c, 0, (5, 0), (-1, 0));
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
+    let mut guard = super::super::ent::EntGuard::new();
+    let mut driver = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+
+    assert_eq!((snap.npcs()[0].tile.x, snap.npcs()[0].tile.z), (-1, 0));
+    assert_eq!(
+        (snap.npcs()[0].network.x, snap.npcs()[0].network.z),
+        (5, 0)
+    );
+    assert!(guard.tick(&mut driver, &snap, None, true, true));
+
+    assert_eq!(driver.walks, vec![(-1, 0)]);
+}
+
+#[test]
+fn ent_latched_stop_tracks_network_tile_without_allocations() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    set_npc_tiles(&mut c, 0, (5, 0), (5, 0));
+    c.local_player.as_mut().expect("local player").entity.face_entity = 0;
+    let mut guard = super::super::ent::EntGuard::new();
+    let mut driver = FakeDriver::default();
+    driver.walks.reserve(1);
+    driver.walk_nearest.reserve(1);
+    driver.sent_walks.reserve(1);
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guard.tick(&mut driver, &snap, None, true, false));
+    assert!(driver.walks.is_empty());
+
+    set_player_tiles(&mut c, (0, 0), (10, 10));
+    set_npc_tiles(&mut c, 0, (5, 0), (-1, 0));
+    tick_at(&mut c, &mut snap);
+    let mut held = false;
+    let allocations = allocation_counter::measure(|| {
+        held = guard.tick(&mut driver, &snap, None, true, true);
+    });
+
+    assert!(held);
+    assert_eq!(allocations.count_total, 0);
+    assert_eq!(driver.walks, vec![(-1, 0)]);
+}
+
+#[test]
+fn ent_proximity_rank_and_stop_use_network_tiles() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_npc_typed_with_op(&mut c, 0, 448, "Oak", -1, None, "Chop down");
+    plant_npc_typed_with_op(&mut c, 1, 449, "Willow", -1, None, "Chop down");
+    set_npc_tiles(&mut c, 0, (5, 0), (1, 0));
+    set_npc_tiles(&mut c, 1, (-2, 0), (10, 0));
+    let mut guard = super::super::ent::EntGuard::new();
+    let mut driver = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+
+    assert!(guard.tick(&mut driver, &snap, None, true, true));
+
+    assert_eq!(driver.walks, vec![(1, 0)]);
+}

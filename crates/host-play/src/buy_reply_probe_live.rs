@@ -494,6 +494,25 @@ struct BuyReplyProbeScript {
     reopening_after_coin_drop: bool,
 }
 
+fn keeper_candidate<'a>(
+    npc: &'a api::snapshot::NpcView,
+    fallback_name: &'a str,
+    here: Option<WorldTile>,
+) -> shop_open::Candidate<'a> {
+    shop_open::Candidate::new(
+        npc.name.as_deref().unwrap_or(fallback_name),
+        npc.actions
+            .iter()
+            .flatten()
+            .find(|action| action.eq_ignore_ascii_case("Trade"))
+            .map(String::as_str),
+        i32::try_from(npc.index).unwrap_or(-1),
+        npc.network,
+        npc.size,
+        here.map(|here| api::query::chebyshev_to(npc.network, here))
+            .unwrap_or(i32::MAX),
+    )
+}
 impl BuyReplyProbeScript {
     fn new(account: String, fixture: Fixture, trace: Arc<Mutex<ProbeTrace>>) -> Self {
         Self {
@@ -655,22 +674,7 @@ impl BuyReplyProbeScript {
                     name.eq_ignore_ascii_case(self.fixture.keeper.name.as_ref())
                 })
             })
-            .map(|npc| {
-                shop_open::Candidate::new(
-                    npc.name
-                        .as_deref()
-                        .unwrap_or(self.fixture.keeper.name.as_ref()),
-                    npc.actions
-                        .iter()
-                        .flatten()
-                        .find(|action| action.eq_ignore_ascii_case("Trade"))
-                        .map(String::as_str),
-                    i32::try_from(npc.index).unwrap_or(-1),
-                    if npc.size >= 1 { npc.network } else { npc.tile },
-                    npc.size,
-                    npc.distance,
-                )
-            });
+            .map(|npc| keeper_candidate(npc, self.fixture.keeper.name.as_ref(), here));
         shop_open::choose_keeper(candidates, view.zip(here))
     }
 
@@ -2327,4 +2331,181 @@ fn run_live_probe() {
 #[ignore = "requires LIVE=1, BOT_CPU=1, an owned three-byte BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080 (600 ms), R289 navigation/cache inputs, and LIVE_EVIDENCE_DIR"]
 fn live_buy_reply_probe_engine_l() {
     run_live_probe();
+}
+
+#[cfg(test)]
+mod network_coords_tests {
+    use super::*;
+
+    #[test]
+    fn keeper_candidate_uses_network_coords_without_size_fallback() {
+        let rendered = WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        };
+        let network = WorldTile {
+            x: 40,
+            z: 10,
+            level: 0,
+        };
+        let npc = api::snapshot::NpcView {
+            index: 1,
+            r#type: Some(1),
+            name: Some("Keeper".into()),
+            actions: vec![Some("Trade".into())],
+            tile: rendered,
+            distance: 0,
+            animation: 0,
+            animation_frame: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 0,
+            network,
+            x: rendered.x,
+            z: rendered.z,
+            yaw: 0,
+        };
+        let here = WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        };
+
+        struct InspectKeeper {
+            probe: BuyReplyProbeScript,
+            seen: Arc<Mutex<Option<Keeper>>>,
+        }
+        impl Script for InspectKeeper {
+            fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+                *self.seen.lock() = self.probe.keeper(&tick.cx);
+                Ok(ScriptFlow::Continue)
+            }
+        }
+
+        for (origin, distance) in [(Some(here), 30), (None, i32::MAX)] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_npcs(vec![npc.clone()]);
+            if let Some(network) = origin {
+                snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+                    player: api::snapshot::PlayerView {
+                        index: 0,
+                        network,
+                        actor: api::snapshot::ActorView {
+                            name: Some("Local".into()),
+                            actions: Vec::new(),
+                            tile: WorldTile {
+                                x: -20,
+                                z: 10,
+                                level: 0,
+                            },
+                            distance: 0,
+                            animation: -1,
+                            animation_frame: 0,
+                            pose_animation: -1,
+                            orientation: 0,
+                            target_orientation: 0,
+                            overhead_text: None,
+                            spot_animation: -1,
+                            spot_animation_stamp: 0,
+                            health: 10,
+                            total_health: 10,
+                            face_entity: -1,
+                            target: None,
+                            moving: false,
+                            running: false,
+                            in_combat: false,
+                        },
+                        combat_level: 3,
+                        skill_level: 3,
+                        headicons: 0,
+                        weapon: None,
+                    },
+                    energy: 100,
+                    weight: 0,
+                    animation_update: None,
+                });
+            }
+            let fixture = Fixture {
+                feather: ItemFact {
+                    id: 314,
+                    name: "Feather".into(),
+                },
+                coins: ItemFact {
+                    id: 995,
+                    name: "Coins".into(),
+                },
+                keeper: KeeperFact {
+                    config: "keeper".into(),
+                    name: "Keeper".into(),
+                    id: 1,
+                    tile: network,
+                    access: vec![here],
+                },
+                stand: here,
+                baseline_stock: 0,
+                baseline_unit_price: 1,
+            };
+            let seen = Arc::new(Mutex::new(None));
+            let mut slot = script::SlotScript::new();
+            slot.start_test_script(
+                Box::new(InspectKeeper {
+                    probe: BuyReplyProbeScript::new(
+                        "coords".into(),
+                        fixture,
+                        Arc::new(Mutex::new(ProbeTrace::default())),
+                    ),
+                    seen: seen.clone(),
+                }),
+                None,
+            )
+            .unwrap();
+            let mut driver = Client::new(client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 0,
+                cache_dir: String::new(),
+                members: false,
+                lowmem: true,
+            });
+            slot.on_game_tick(&mut script::ScriptCtx {
+                driver: &mut driver,
+                tick: 1,
+                here: Some((here.x, here.z, here.level)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick::default(),
+            });
+            assert!(slot.take_native_action().is_none());
+            let actual = seen.lock().clone().expect("the posted Trade keeper");
+            let expected = shop_open::choose_keeper(
+                [shop_open::Candidate::new(
+                    "Keeper",
+                    Some("Trade"),
+                    1,
+                    network,
+                    0,
+                    distance,
+                )],
+                None,
+            )
+            .expect("the expected network keeper");
+            assert_eq!(actual, expected);
+        }
+    }
 }

@@ -96,15 +96,22 @@ pub(crate) fn client_377_scenario() -> Scenario {
                         }) {
                             return true;
                         }
+                        let Some((x, z, level)) = snapshot.tile() else {
+                            return true;
+                        };
+                        let here = WorldTile { x, z, level };
                         let Some(npc) = snapshot
                             .npcs()
                             .iter()
-                            .filter(|npc| {
-                                npc.r#type == Some(HANS_ID)
-                                    && npc.tile.level == COURTYARD_SOUTH.level
-                                    && npc.distance <= 16
+                            .filter_map(|npc| {
+                                let distance = api::query::chebyshev_to(here, npc.network);
+                                (npc.r#type == Some(HANS_ID)
+                                    && npc.network.level == COURTYARD_SOUTH.level
+                                    && distance <= 16)
+                                    .then_some((npc, distance))
                             })
-                            .min_by_key(|npc| npc.distance)
+                            .min_by_key(|(_, distance)| *distance)
+                            .map(|(npc, _)| npc)
                         else {
                             return true;
                         };
@@ -250,6 +257,8 @@ mod tests {
             };
             npc.entity.x = local_x * 128;
             npc.entity.z = local_z * 128;
+            npc.entity.route_x[0] = local_x;
+            npc.entity.route_z[0] = local_z;
             client.npc[1] = Some(Box::new(npc));
             client.npc_ids[0] = 1;
             client.npc_count = 1;
@@ -398,5 +407,27 @@ mod tests {
         next_game_tick(&mut runner, &mut client);
         assert_eq!(client.out.pos, after_retry);
         assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn hans_repeat_ignores_a_rendered_only_nearby_npc() {
+        let mut runner = talk_runner();
+        let mut client = scene_client(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(20, 16));
+        prepare_hans(&mut client);
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let _peer = listener.accept().unwrap();
+
+        publish_hans(&mut client, Some((36, 16)));
+        client.npc[1].as_mut().unwrap().entity.route_x[0] = 40;
+        next_game_tick(&mut runner, &mut client);
+
+        assert_eq!(
+            client.out.pos, 0,
+            "a rendered-near Hans outside network range must not receive Talk-to"
+        );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     }
 }

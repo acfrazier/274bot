@@ -1,6 +1,6 @@
 use super::*;
 use crate::native::{ActionContext, ActionError, HostEffect, InteractionReceipt};
-use crate::quester::families::tests::with_tick;
+use crate::quester::families::tests::{local_player, with_tick};
 use api::interact::{Interactions, SendResult, SCENE_READY};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{
@@ -118,6 +118,11 @@ fn snapshot(client: &Client, inventory: Vec<ItemView>, npcs: Vec<NpcView>) -> Ga
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(SCENE_READY);
     snapshot.rebuild_family(client, Family::Shop);
+    snapshot.seed_local_player(local_player(WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    }));
     snapshot.rebuild_family(client, Family::Modals);
     snapshot.seed_inventory(inventory, 28);
     snapshot.seed_npcs(npcs);
@@ -1570,6 +1575,48 @@ fn reach_from(origin: WorldTile) -> api::query::ReachQueryView {
         step: vec![u8::MAX; n],
         canlight: Vec::new(),
     }
+}
+
+#[test]
+fn shop_keeper_network_coords_rank_and_approach_use_player_and_npc_path_heads() {
+    use crate::quester::families::tests::with_tick_reach;
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3190,
+        z: 3200,
+        level: 0,
+    };
+    let mut near = npc_row(7, 123, 10);
+    near.size = 0;
+    near.tile = WorldTile { x: 3200, ..origin };
+    near.network = WorldTile { x: 3192, ..origin };
+    let mut far = npc_row(8, 123, 1);
+    far.tile = WorldTile { x: 3191, ..origin };
+    far.network = WorldTile { x: 3205, ..origin };
+    let mut snapshot = snapshot(&client, Vec::new(), vec![near, far]);
+    let mut player = local_player(WorldTile { x: 3100, ..origin });
+    player.player.network = origin;
+    snapshot.seed_local_player(player);
+    let mut reach = reach_from(origin);
+    reach.step.fill(0);
+    let mut ledger = None;
+    let handle = start_machine(&snapshot, &mut ledger, 1);
+
+    assert!(with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
+        panic!("the unreachable selected keeper requires an approach walk");
+    };
+    assert_eq!(
+        request.target,
+        WorldTile { x: 3192, ..origin },
+        "network path-head distance ranks the near keeper and its path head is the walk target"
+    );
 }
 
 /// A failed approach to an unreachable keeper is not terminal (AGENTS.md: a

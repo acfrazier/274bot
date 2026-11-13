@@ -299,7 +299,7 @@ fn knife_request(
                 let npc = snapshot.npcs()?.value.iter().find(|npc| {
                     npc.index == target.npc_index as usize
                         && npc.r#type == Some(id as usize)
-                        && npc.tile == target.tile
+                        && npc.network == target.tile
                 })?;
                 ExactLocOrNpcRef::Npc(
                     ExactNpcReference::new(

@@ -877,17 +877,20 @@ mod tests {
         assert_quest_mixed_resource_walk(false);
     }
     #[test]
-    fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
+    fn network_coords_gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut plan = plan("mining.copper", 1);
-        let snapshot = snapshot(&plan, 1);
-        let here = snapshot.local_player().unwrap().player.actor.tile;
+        let mut snapshot = snapshot(&plan, 1);
+        let here = snapshot.local_player().unwrap().player.network;
         let anchor = WorldTile {
             x: here.x + 20,
             ..here
         };
+        snapshot.seed_local_player(crate::quester::families::tests::local_player_with_network(
+            anchor, here,
+        ));
         plan.anchor = Some(anchor);
         plan.radius = 2;
 

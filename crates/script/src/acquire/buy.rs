@@ -807,10 +807,8 @@ impl BuyMachine {
     ) -> Option<Keeper> {
         let snapshot = cx.snapshot();
         let npcs = snapshot.npcs()?;
-        let here = snapshot
-            .local_player()
-            .map(|player| player.value.player.network);
-        let view = reach_route::live(snapshot.reach().map(|reach| reach.value), here);
+        let here = snapshot.local_player()?.value.player.network;
+        let view = reach_route::live(snapshot.reach().map(|reach| reach.value), Some(here));
         let candidates = npcs
             .value
             .iter()
@@ -825,11 +823,11 @@ impl BuyMachine {
                     .find(|op| shop_open::is_trade_op(op))
                     .map(String::as_str),
                 index: i32::try_from(npc.index).unwrap_or(-1),
-                tile: if npc.size >= 1 { npc.network } else { npc.tile },
+                tile: npc.network,
                 size: npc.size,
-                distance: npc.distance,
+                distance: api::query::chebyshev_to(here, npc.network),
             });
-        shop_open::choose_keeper(candidates, view.zip(here))
+        shop_open::choose_keeper(candidates, view.map(|view| (view, here)))
     }
 
     fn act(

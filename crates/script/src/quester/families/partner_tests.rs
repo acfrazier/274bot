@@ -226,6 +226,60 @@ fn fixture(budget: u16) -> (GameSnapshot, Ledger, ActionHandle<TradeMachine>, Ar
     (snapshot, ledger, handle, port)
 }
 
+fn assert_trade_network_coords(
+    local_rendered_x: i32,
+    local_network_x: i32,
+    partner_rendered_x: i32,
+    partner_network_x: i32,
+    expected: bool,
+) {
+    let at = |x| api::WorldTile {
+        x,
+        z: 100,
+        level: 0,
+    };
+    let (mut snapshot, mut ledger, handle, _) = fixture(8);
+    snapshot.seed_trade(api::snapshot::TradeView::default());
+    snapshot.seed_local_player(crate::quester::families::tests::local_player_with_network(
+        at(local_rendered_x),
+        at(local_network_x),
+    ));
+    let mut partner = crate::quester::families::tests::local_player_with_network(
+        at(partner_rendered_x),
+        at(partner_network_x),
+    )
+    .player;
+    partner.index = 1;
+    partner.actor.name = Some("Bob 1".into());
+    snapshot.seed_players(vec![partner]);
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, Instant::now()).is_pending());
+    let requested = ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            &action.effect,
+            HostEffect::Interaction(InteractReq::Player { .. })
+        )
+    });
+    assert_eq!(
+        requested, expected,
+        "trade range must use both network actors"
+    );
+}
+
+#[test]
+fn network_coords_trade_uses_local_network_origin() {
+    assert_trade_network_coords(110, 100, 101, 101, true);
+}
+
+#[test]
+fn network_coords_trade_rejects_a_partner_only_rendered_nearby() {
+    assert_trade_network_coords(100, 100, 101, 110, false);
+}
+
+#[test]
+fn network_coords_trade_accepts_a_network_partner_while_rendering_trails() {
+    assert_trade_network_coords(100, 100, 110, 101, true);
+}
+
 fn poll(
     snapshot: &GameSnapshot,
     ledger: &mut Ledger,

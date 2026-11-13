@@ -1939,7 +1939,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_target_from_the_start_keeps_the_existing_pickpocket_path() {
+    fn visible_target_network_coords_uses_player_and_npc_path_heads() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -1948,11 +1948,28 @@ mod tests {
             z: 4,
             level: 0,
         };
-        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let rendered_player = WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        };
+        let mut target = npc(19, 1, 1);
+        target.tile = WorldTile {
+            x: 80,
+            z: 80,
+            level: 0,
+        };
+        target.network = WorldTile { x: 4, ..anchor };
+        let mut snapshot = game_snapshot(rendered_player, vec![target], vec![]);
+        let mut player = local_player(rendered_player);
+        player.player.network = anchor;
+        snapshot.seed_local_player(player);
+        let mut action_args = args(anchor, 12);
+        action_args.anchor = None;
         let mut ledger = None;
         let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions
-                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .begin::<Thieve>(action_args, &mut tick.cx)
                 .unwrap()
         });
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
@@ -2197,7 +2214,13 @@ mod tests {
             z: 4,
             level: 0,
         };
-        let snapshot = game_snapshot(anchor, vec![npc(4, 1, 3), npc(19, 1, 1)], vec![]);
+        let mut farther = npc(4, 1, 3);
+        farther.tile = WorldTile { x: 6, ..anchor };
+        farther.network = farther.tile;
+        let mut selected = npc(19, 1, 1);
+        selected.tile = WorldTile { x: 4, ..anchor };
+        selected.network = selected.tile;
+        let snapshot = game_snapshot(anchor, vec![farther, selected], vec![]);
         let mut ledger = None;
         let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions

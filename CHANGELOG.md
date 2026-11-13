@@ -10,6 +10,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Navigation
 
+- Native target selection, NPC approaches and random-event handling now use
+  server positions instead of animated positions. This fixes prerequisite
+  dialogue that could time out before the bot reached the NPC.
+
 - A danger crossing no longer stops just because one game update was missed
   while the bot waited on a safe tile for its poison to settle. The wait now
   starts over once after a missed update, so it can last up to 63 game ticks.

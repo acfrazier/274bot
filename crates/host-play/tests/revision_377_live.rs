@@ -445,10 +445,6 @@ fn lumbridge(tile: WorldTile) -> bool {
         && tile.z.div_euclid(64) == LUMBRIDGE_REGION
 }
 
-fn chebyshev(a: WorldTile, b: WorldTile) -> u32 {
-    a.x.abs_diff(b.x).max(a.z.abs_diff(b.z))
-}
-
 #[derive(Clone, Copy)]
 struct NpcChoice {
     type_id: usize,
@@ -466,7 +462,7 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
         .filter_map(|npc| {
             let type_id = npc.r#type?;
             if wanted_type.is_some_and(|wanted| wanted != type_id)
-                || npc.tile.level != level
+                || npc.network.level != level
                 || !npc
                     .actions
                     .iter()
@@ -475,11 +471,12 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
             {
                 return None;
             }
-            let distance = chebyshev(player_tile, npc.tile);
+            let distance =
+                u32::try_from(api::query::chebyshev_to(player_tile, npc.network)).ok()?;
             (distance <= 8).then_some(NpcChoice {
                 type_id,
                 index: npc.index,
-                tile: npc.tile,
+                tile: npc.network,
                 distance,
             })
         })
@@ -672,30 +669,14 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let (px, pz, level) = snapshot
-            .tile()
-            .ok_or("missing tile before NPC interaction")?;
-        let npc = snapshot
-            .npcs()
-            .iter()
-            .filter(|npc| {
-                npc.r#type == Some(choice.type_id)
-                    && npc.tile.level == level
-                    && chebyshev(
-                        WorldTile {
-                            x: px,
-                            z: pz,
-                            level,
-                        },
-                        npc.tile,
-                    ) <= 8
-                    && npc
-                        .actions
-                        .iter()
-                        .flatten()
-                        .any(|action| action.eq_ignore_ascii_case(TALK_ACTION))
+        let current = nearest_talk_npc(&snapshot, Some(choice.type_id));
+        let npc = current
+            .and_then(|current| {
+                snapshot
+                    .npcs()
+                    .iter()
+                    .find(|npc| npc.index == current.index)
             })
-            .min_by_key(|npc| (npc.distance, npc.index))
             .cloned()
             .ok_or_else(|| {
                 format!(
@@ -741,6 +722,63 @@ fn run_live_interaction() -> Result<(), String> {
         client.logout();
     }
     result
+}
+
+#[test]
+fn network_coords_live_driver_selects_and_reacquires_the_server_talk_target() {
+    let here = WorldTile {
+        x: 50,
+        z: 50,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_tile(here);
+    snapshot.seed_npcs(
+        [(1, 51, 58), (2, 58, 51)]
+            .into_iter()
+            .map(|(index, network_x, rendered_x)| api::snapshot::NpcView {
+                index,
+                r#type: Some(1),
+                name: None,
+                actions: vec![Some(TALK_ACTION.into())],
+                tile: WorldTile {
+                    x: rendered_x,
+                    ..here
+                },
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 1,
+                total_health: 1,
+                face_entity: -1,
+                target: None,
+                moving: true,
+                running: false,
+                in_combat: false,
+                level: 1,
+                size: 1,
+                network: WorldTile {
+                    x: network_x,
+                    ..here
+                },
+                x: rendered_x * 128 + 64,
+                z: here.z * 128 + 64,
+                yaw: 0,
+            })
+            .collect(),
+    );
+    for wanted in [None, Some(1)] {
+        let choice = nearest_talk_npc(&snapshot, wanted).expect("server-near Talk target");
+        assert_eq!(choice.index, 1);
+        assert_eq!(choice.tile, WorldTile { x: 51, ..here });
+        assert_eq!(choice.distance, 1);
+    }
 }
 
 #[test]

@@ -569,3 +569,97 @@ fn use_on_npc_alternatives_rank_all_placed_types_and_keep_exact_identity() {
         }
     });
 }
+
+#[test]
+fn network_coords_use_on_walks_to_the_npc_network_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let (mut snapshot, plan) = milk_fixture(cx, player);
+        let mut selected = cow(cow_id, 1, tile(3251, 3280), player);
+        selected.network = tile(3254, 3280);
+        snapshot.seed_npcs(vec![selected]);
+        let view = flood_view(tile(3238, 3268), 24, &[], player);
+        let mut ledger = None;
+        let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(last_effect(&ledger), HostEffect::Walk(request) if request.target == tile(3254, 3280)),
+            "a rendered neighbour is not the network interaction target: {}",
+            describe(&ledger),
+        );
+    });
+}
+
+#[test]
+fn network_coords_use_on_approach_uses_the_player_network_origin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let (mut snapshot, plan) = milk_fixture(cx, player);
+        snapshot.seed_local_player(local_player_with_network(tile(3240, 3280), player));
+        snapshot.seed_npcs(vec![cow(cow_id, 1, tile(3254, 3280), player)]);
+        let view = flood_view(tile(3238, 3268), 24, &[], player);
+        let mut ledger = None;
+        let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(last_effect(&ledger), HostEffect::Walk(request) if request.target == tile(3254, 3280)),
+            "the network player is already inside the authored anchor: {}",
+            describe(&ledger),
+        );
+    });
+}
+
+#[test]
+fn network_coords_use_on_chase_repicks_when_only_the_network_npc_moves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let (mut snapshot, plan) = milk_fixture(cx, player);
+        snapshot.seed_npcs(vec![cow(cow_id, 1, tile(3254, 3280), player)]);
+        let view = flood_view(tile(3238, 3268), 24, &[], player);
+        let mut ledger = None;
+        let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(last_effect(&ledger), HostEffect::Walk(request) if request.target == tile(3254, 3280))
+        );
+        let mut moved = snapshot.npcs()[0].clone();
+        moved.network = tile(3252, 3280);
+        snapshot.seed_npcs(vec![moved]);
+        assert!(with_tick_reach(&snapshot, &view, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(last_effect(&ledger), HostEffect::Walk(request) if request.target == tile(3252, 3280)),
+            "a network-only move must replace the old chase: {}",
+            describe(&ledger),
+        );
+    });
+}

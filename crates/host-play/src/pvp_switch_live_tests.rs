@@ -328,7 +328,7 @@ impl SwitchFight {
         );
         let tile = |tile: &api::snapshot::WorldTile| (tile.x, tile.z, tile.level);
         let distance = holder.map_or(-1, |row| {
-            let (a, b) = (frame.here, row.actor.tile);
+            let (a, b) = (frame.here, row.network);
             if a.level == b.level {
                 (a.x - b.x).abs().max((a.z - b.z).abs())
             } else {
@@ -339,7 +339,7 @@ impl SwitchFight {
             tick: now,
             phase: shared.phase,
             own: tile(&frame.here),
-            holder: holder.map(|row| tile(&row.actor.tile)),
+            holder: holder.map(|row| tile(&row.network)),
             distance,
             swing,
             headicons: holder.map_or(0, |row| row.headicons),

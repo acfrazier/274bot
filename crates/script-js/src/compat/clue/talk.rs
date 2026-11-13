@@ -139,7 +139,7 @@ impl ClueRuntime {
                             id: talk.npc.id,
                             name: &talk.npc.name,
                         };
-                        match pick_at_spawn(&npc, page, tile) {
+                        match pick_at_spawn(&npc, page, tile, posted_here(input)) {
                             Some(pick) => self.npc_verb(&pick),
                             // Arrived with no posted row of this identity on the
                             // tile: stay there and wait, never chase a wanderer and

@@ -4216,10 +4216,11 @@ fn open_npc_bank_at_here<D: Driver>(
 }
 
 /// The host teller pick for an already nav-chosen `stand`: named `name`
-/// (trimmed, ASCII-folded), within [`SAME_BANK`] of the stand or 10 of
-/// `here` (Chebyshev, +10_000 per plane mismatch); the smallest
-/// `(d_stand, d_here, distance, index)` key wins. This is BankBudget's
-/// stand policy, not `bank::npc::banker_scan`'s scene-order policy.
+/// (trimmed, ASCII-folded), within [`SAME_BANK`] of the stand or 10 of the
+/// player's network path head (Chebyshev, with plane mismatches infinitely
+/// far); the smallest `(d_stand, d_here, index)` key wins. This is
+/// BankBudget's stand policy, not `bank::npc::banker_scan`'s scene-order
+/// policy.
 fn teller_pick<'a>(
     npcs: &'a [api::snapshot::NpcView],
     here: Option<(i32, i32, i32)>,
@@ -4227,16 +4228,13 @@ fn teller_pick<'a>(
     name: &str,
 ) -> Option<&'a api::snapshot::NpcView> {
     let wanted = name.trim();
-    let chebyshev = |npc: &api::snapshot::NpcView, x: i32, z: i32, level: i32| {
-        (npc.tile.x - x).abs().max((npc.tile.z - z).abs())
-            + i32::from(npc.tile.level != level) * 10_000
-    };
+    let here = here.map(|(x, z, level)| WorldTile { x, z, level });
     let key = |npc: &api::snapshot::NpcView| {
-        let d_stand = chebyshev(npc, stand.x, stand.z, stand.level);
+        let d_stand = api::query::chebyshev_to(npc.network, stand);
         let d_here = here
-            .map(|(hx, hz, hl)| chebyshev(npc, hx, hz, hl))
+            .map(|here| api::query::chebyshev_to(npc.network, here))
             .unwrap_or(i32::MAX);
-        (d_stand, d_here, npc.distance, npc.index)
+        (d_stand, d_here, npc.index)
     };
     npcs.iter()
         .filter(|npc| {

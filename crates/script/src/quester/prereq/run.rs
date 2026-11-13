@@ -1408,8 +1408,8 @@ impl PendingPage {
     }
 }
 
-/// The nearest observed NPC of this type: its rendered tile and distance from
-/// the player, and its server-side (path-head) tile.
+/// The nearest NPC by server-tile distance, with its rendered tile, legacy
+/// mixed distance scalar, and server path-head tile retained for diagnostics.
 fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32, WorldTile)> {
     let wanted = usize::try_from(id).ok()?;
     cx.snapshot()
@@ -1417,7 +1417,7 @@ fn nearest_npc(cx: &ActionContext<'_>, id: i32) -> Option<(WorldTile, i32, World
         .value
         .iter()
         .filter(|npc| npc.r#type == Some(wanted))
-        .min_by_key(|npc| npc.distance)
+        .min_by_key(|npc| reach::npc_distance(cx, npc))
         .map(|npc| (npc.tile, npc.distance, npc.network))
 }
 
@@ -1427,7 +1427,9 @@ fn talk_log(cx: &ActionContext<'_>, row: &PrereqStep, what: &str, tick: u64) {
         api::hostlog::Level::Info,
         "prereq talk {what} npc_type={} tick={tick} from={:?} from_network={:?} npc(tile,distance,network)={:?}",
         row.target.npc,
-        cx.snapshot().here().map(|here| here.value),
+        cx.snapshot()
+            .local_player()
+            .map(|player| player.value.player.actor.tile),
         cx.snapshot()
             .local_player()
             .map(|player| player.value.player.network),
@@ -1578,7 +1580,7 @@ impl ChatDrive {
                 since,
                 at: tick,
                 from: cx.snapshot().here().map(|here| here.value),
-                npc: nearest_npc(cx, row.target.npc).map(|(tile, _, _)| tile),
+                npc: nearest_npc(cx, row.target.npc).map(|(_, _, network)| network),
                 cause,
             }));
         }
@@ -1685,6 +1687,29 @@ impl ChatDrive {
             });
             if cancelled {
                 return self.talk_cancelled(cx, row);
+            }
+            let moved = self.pending.as_ref().is_some_and(|pending| {
+                receipt.is_some_and(|receipt| cx.evidence().tick > receipt.evidence.tick)
+                    && pending.send.kind == DialogueSendKind::Talk
+                    && !chat_open(cx)
+                    && handle
+                        .inspect_in(cx, |dialogue, cx| dialogue.target_out_of_range(cx))
+                        .unwrap_or(false)
+            });
+            if moved {
+                let pending = self
+                    .pending
+                    .take()
+                    .expect("a pending Talk moved out of range");
+                let tick = cx.evidence().tick;
+                wait_log(pending.name, pending.wait, tick, "unreachable");
+                talk_log(cx, row, "moved-out-of-range", tick);
+                return self.reach_failed(
+                    cx,
+                    row,
+                    TalkReachCause::Approach { walk: None },
+                    pending.wait.since,
+                );
             }
             if let Some(pending) = &self.pending {
                 if pending.wait.spent(cx.evidence().tick) {

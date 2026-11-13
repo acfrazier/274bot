@@ -563,17 +563,24 @@ fn ardy_guard_attack_send(
         // it targeted the player. Release it and re-select below.
         state.sent_index = None;
     }
+    let Some((x, z, level)) = snapshot.tile() else {
+        return true;
+    };
+    let here = WorldTile { x, z, level };
     let Some(guard) = snapshot
         .npcs()
         .iter()
-        .filter(|npc| {
-            npc.name.as_deref() == Some("Guard")
-                && npc.distance <= 5
+        .filter_map(|npc| {
+            let distance = api::query::chebyshev_to(here, npc.network);
+            (npc.name.as_deref() == Some("Guard")
+                && distance <= 5
                 && !npc.in_combat
                 && npc.target.is_none()
-                && (npc.total_health == 0 || npc.health > 0)
+                && (npc.total_health == 0 || npc.health > 0))
+                .then_some((npc, distance))
         })
-        .min_by_key(|npc| npc.distance)
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(npc, _)| npc)
     else {
         // No eligible Guard in this snapshot. Wait for the next one;
         // the step's game-tick budget bounds the admission wait.

@@ -627,8 +627,10 @@ impl npc::Context for NativeNpcContext<'_, '_> {
     }
 
     fn banker(&self, name: &str, op: npc::NpcOp<'_>) -> Option<npc::Banker> {
-        let npcs = self.cx.snapshot().npcs()?.value;
-        let (row, action) = npc::banker_scan(npcs, name, op)?;
+        let snapshot = self.cx.snapshot();
+        let here = snapshot.local_player()?.value.player.network;
+        let npcs = snapshot.npcs()?.value;
+        let (row, action) = npc::banker_scan(npcs, here, name, op)?;
         Some(npc::Banker {
             name: row.name.as_deref()?.to_owned(),
             action: action.to_owned(),
@@ -2893,6 +2895,82 @@ mod tests {
             self.emitted.push(request);
             Ok(())
         }
+    }
+
+    fn bank_npc(index: usize, rendered: WorldTile, network: WorldTile) -> api::snapshot::NpcView {
+        api::snapshot::NpcView {
+            index,
+            r#type: None,
+            name: Some("Banker".into()),
+            actions: vec![Some("Bank".into())],
+            tile: rendered,
+            distance: api::query::chebyshev_to(
+                WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                rendered,
+            ),
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network,
+            x: rendered.x,
+            z: rendered.z,
+            yaw: 0,
+        }
+    }
+
+    #[test]
+    fn bank_seat_network_coords_open_npc_selects_by_path_head() {
+        let origin = tile(3200, 3200);
+        let rendered_player = tile(3100, 3200);
+        let mut player = local_player(rendered_player);
+        player.player.network = origin;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(player);
+        snapshot.seed_npcs(vec![
+            bank_npc(7, tile(3210, 3200), tile(3201, 3200)),
+            bank_npc(8, tile(3201, 3200), tile(3205, 3200)),
+        ]);
+        let mut request = BankSeatArgs::new(BankSeatOperation::OpenNpc);
+        request.npc_access = Some(BankSeatNpcAccess::new("Banker".into(), "Bank".into(), None));
+        let args = OpeningArgs {
+            request,
+            facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
+            preferences: BankPreferences::default(),
+            hooks: Arc::new(Mutex::new(TransferHooks::default())),
+            selection_refused: false,
+        };
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick.actions.begin::<Opening>(args, &mut tick.cx).unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Interaction(InteractReq::Npc {
+                name,
+                action,
+                index: Some(7),
+            }) if name == "Banker" && action == "Bank"
+        ));
     }
 
     #[test]

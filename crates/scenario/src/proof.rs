@@ -799,41 +799,27 @@ impl Proof {
             Proof::NpcAt { r#type, x, z } => snap
                 .npcs()
                 .iter()
-                .any(|n| n.r#type == Some(*r#type) && n.x == *x && n.z == *z),
+                .any(|n| n.r#type == Some(*r#type) && n.network.x == *x && n.network.z == *z),
             Proof::NpcNear { r#type, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = WorldTile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
                 snap.npcs().iter().any(|n| {
                     n.r#type == Some(*r#type)
-                        && n.tile.level == tl
-                        && chebyshev(
-                            Tile {
-                                x: tx,
-                                z: tz,
-                                level: tl,
-                            },
-                            Tile {
-                                x: n.tile.x,
-                                z: n.tile.z,
-                                level: n.tile.level,
-                            },
-                        ) <= *radius
+                        && api::query::chebyshev_to(here, n.network) <= *radius
                 })
             }),
             Proof::NpcIdsAbsentNear { ids, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = WorldTile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
                 !snap.npcs().iter().any(|n| {
                     n.r#type.is_some_and(|kind| ids.contains(&kind))
-                        && n.tile.level == tl
-                        && chebyshev(
-                            Tile {
-                                x: tx,
-                                z: tz,
-                                level: tl,
-                            },
-                            Tile {
-                                x: n.tile.x,
-                                z: n.tile.z,
-                                level: n.tile.level,
-                            },
-                        ) <= *radius
+                        && api::query::chebyshev_to(here, n.network) <= *radius
                 })
             }),
             Proof::GroundItemIdsAbsentNear {
@@ -861,8 +847,14 @@ impl Proof {
                 radius,
             } => snap.npcs().iter().any(|npc| {
                 npc.name.as_deref() == Some(*name)
-                    && npc.tile.level == *level
-                    && (npc.tile.x - *x).abs().max((npc.tile.z - *z).abs()) <= *radius
+                    && api::query::chebyshev_to(
+                        npc.network,
+                        WorldTile {
+                            x: *x,
+                            z: *z,
+                            level: *level,
+                        },
+                    ) <= *radius
             }),
             Proof::NpcNameTargetingLocal { name } => {
                 let slot = snap.self_slot();
@@ -948,6 +940,7 @@ fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool 
             .get((lx * scene.height + lz) as usize)
             .copied()
     };
+    let player_tile = WorldTile { x, z, level };
     let player = Footprint {
         lx: x - scene.base_x,
         lz: z - scene.base_z,
@@ -965,7 +958,7 @@ fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool 
         };
         npc.name.as_deref() == Some(name)
             && tile.level == level
-            && (tile.x - x).abs().max((tile.z - z).abs()) <= radius
+            && api::query::chebyshev_to(tile, player_tile) <= radius
             && !npc.in_combat
             && npc.target.is_none()
             && (npc.total_health == 0 || npc.health > 0)
@@ -2054,6 +2047,8 @@ mod tests {
         let npc = c.npc[3].as_mut().unwrap();
         npc.entity.x = 2880;
         npc.entity.z = 1600;
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
         c.bump_gens(ServerProt::NPC_INFO);
         let s = snap(&mut c);
         assert!(Proof::NpcNear {
@@ -2098,6 +2093,48 @@ mod tests {
     }
 
     #[test]
+    fn npc_near_ignores_a_rendered_only_nearby_pose() {
+        let mut c = seeded();
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            !Proof::NpcNear {
+                r#type: 708,
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "the path head is outside the player's radius even when the rendered pose is near"
+        );
+    }
+
+    #[test]
+    fn npc_ids_absent_near_uses_network_position() {
+        let mut c = seeded();
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            Proof::NpcIdsAbsentNear {
+                ids: &[708],
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "a rendered-only nearby NPC does not block the absent-set proof"
+        );
+    }
+
+    #[test]
     fn npc_name_near_matches_a_dormant_resource_in_a_bounded_world_area() {
         let mut c = seeded();
         let mut npcs = (0..=708)
@@ -2114,6 +2151,8 @@ mod tests {
         let npc = c.npc[3].as_mut().unwrap();
         npc.entity.x = 2880;
         npc.entity.z = 1600;
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
         c.bump_gens(ServerProt::NPC_INFO);
         let s = snap(&mut c);
         assert!(Proof::NpcNameNear {
@@ -2132,6 +2171,41 @@ mod tests {
             radius: 2,
         }
         .check(&s, None));
+    }
+
+    #[test]
+    fn npc_name_near_ignores_a_rendered_only_nearby_pose() {
+        let mut c = seeded();
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Rocks".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            !Proof::NpcNameNear {
+                name: "Rocks",
+                x: 3220,
+                z: 3212,
+                level: 0,
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "the path head is outside the queried area despite its rendered pose"
+        );
     }
 
     #[test]
@@ -2810,19 +2884,33 @@ mod tests {
     }
 
     #[test]
-    fn npc_at_matches_type_and_tile() {
-        let s = snap(&mut seeded());
+    fn npc_at_matches_type_and_network_tile() {
+        let mut client = seeded();
+        let npc = client.npc[3].as_mut().unwrap();
+        npc.entity.route_x[0] = 5;
+        npc.entity.route_z[0] = 7;
+        client.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut client);
         assert!(Proof::NpcAt {
             r#type: 708,
-            x: 100,
-            z: 200
+            x: 3205,
+            z: 3207
         }
-        .check(&s, None));
+        .check(&snapshot, None));
+        assert!(
+            !Proof::NpcAt {
+                r#type: 708,
+                x: 100,
+                z: 200
+            }
+            .check(&snapshot, None),
+            "rendered pixel aliases are not world tile coordinates"
+        );
         assert!(!Proof::NpcAt {
             r#type: 709,
-            x: 100,
-            z: 200
+            x: 3205,
+            z: 3207
         }
-        .check(&s, None));
+        .check(&snapshot, None));
     }
 }

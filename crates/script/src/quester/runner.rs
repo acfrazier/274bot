@@ -5567,6 +5567,65 @@ mod tests {
         assert_eq!(script.step_attempts, 9);
     }
 
+    #[test]
+    fn network_coords_quest_anchor_and_watchdog_ignore_rendered_motion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, mut snapshot) = fixture();
+        let network = api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let rendered = api::WorldTile { x: 3195, ..network };
+        snapshot.seed_local_player(super::super::families::tests::local_player_with_network(
+            rendered, network,
+        ));
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |native| {
+            script.tick(native).unwrap();
+        });
+        assert_eq!(script.anchor, Some(network));
+        script.stage = Some(FactKey::new("network-watchdog-stage"));
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |native| {
+            script.on_step_boundary_with_watchdog(native, true);
+        });
+        assert_eq!(script.watchdog.unchanged(), 0);
+        let rendered = api::WorldTile {
+            x: rendered.x + 1,
+            ..rendered
+        };
+        snapshot.seed_local_player(super::super::families::tests::local_player_with_network(
+            rendered, network,
+        ));
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |native| {
+            script.on_step_boundary_with_watchdog(native, true);
+        });
+        assert_eq!(script.anchor, Some(network));
+        assert_eq!(
+            script.watchdog.unchanged(),
+            1,
+            "animation is not server progress"
+        );
+        let network = api::WorldTile {
+            x: network.x + 1,
+            ..network
+        };
+        snapshot.seed_local_player(super::super::families::tests::local_player_with_network(
+            rendered, network,
+        ));
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |native| {
+            script.on_step_boundary_with_watchdog(native, true);
+        });
+        assert_eq!(script.anchor, Some(network));
+        assert_eq!(
+            script.watchdog.unchanged(),
+            0,
+            "server movement resets the watchdog"
+        );
+    }
+
     /// The Quester holds no bank table of its own (design-bank-snapshot D8):
     /// the account's memory is the host's and reaches it as a borrow.
     #[test]

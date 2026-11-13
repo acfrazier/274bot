@@ -547,7 +547,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
             .enumerate()
             .map(|(i, npc)| {
                 let (reachable, reachable_adj) =
-                    entity_reach(npc.tile.x, npc.tile.z, npc.tile.level);
+                    entity_reach(npc.network.x, npc.network.z, npc.network.level);
                 let (target_kind, target_index) = scene_entity_target(npc.target.as_ref());
                 SceneEntityInput {
                     index: npc.index as i32,
@@ -648,11 +648,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
             .iter()
             .enumerate()
             .map(|(i, player)| {
-                let (reachable, reachable_adj) = entity_reach(
-                    player.actor.tile.x,
-                    player.actor.tile.z,
-                    player.actor.tile.level,
-                );
+                let (reachable, reachable_adj) =
+                    entity_reach(player.network.x, player.network.z, player.network.level);
                 let (target_kind, target_index) = scene_entity_target(player.actor.target.as_ref());
                 SceneEntityInput {
                     index: player.index as i32,
@@ -672,9 +669,9 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     combat_level: player.combat_level,
                     target_kind,
                     target_index,
-                    size: 0,
-                    nx: 0,
-                    nz: 0,
+                    size: 1,
+                    nx: player.network.x,
+                    nz: player.network.z,
                     shape: 0,
                     angle: 0,
                 }

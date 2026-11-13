@@ -33,10 +33,6 @@ fn run_key() -> RunKey {
     }
 }
 
-fn tile(x: i32, z: i32) -> WorldTile {
-    WorldTile { x, z, level: 0 }
-}
-
 fn chat_line(sequence: i32, text: &str) -> ChatLineView {
     ChatLineView {
         type_: 0,
@@ -97,7 +93,11 @@ fn wizard(at: WorldTile) -> NpcView {
         r#type: Some(1007),
         name: Some("Zamorak Wizard".into()),
         actions: vec![Some("Attack".into())],
-        tile: tile(at.x + 1, at.z),
+        tile: WorldTile {
+            x: at.x + 1,
+            z: at.z,
+            level: at.level,
+        },
         distance: 1,
         animation: -1,
         animation_frame: -1,
@@ -116,7 +116,11 @@ fn wizard(at: WorldTile) -> NpcView {
         in_combat: false,
         level: 65,
         size: 1,
-        network: tile(at.x + 1, at.z),
+        network: WorldTile {
+            x: at.x + 1,
+            z: at.z,
+            level: at.level,
+        },
         x: 0,
         z: 0,
         yaw: 0,
@@ -525,6 +529,33 @@ fn until_combat(
         script.outcome,
         script.blocked
     );
+}
+
+#[test]
+fn network_coords_native_clue_reads_snapshot_heads_without_a_v8_scene() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    crate::compat::clue::on_reset();
+    crate::scene::observed::on_reset();
+    let mut world = World::new(0);
+    world.local.player.actor.tile.x += 40;
+    world.local.player.actor.tile.z += 40;
+    world.npcs[0].tile = WorldTile {
+        x: world.stand.x + 60,
+        z: world.stand.z + 60,
+        level: world.stand.level,
+    };
+    world.npcs[0].network = WorldTile {
+        x: world.stand.x + 1,
+        z: world.stand.z,
+        level: world.stand.level,
+    };
+    world.npcs[0].distance = 60;
+    world.refresh();
+    let mut script = script(&world, false);
+    let mut ledger = None;
+    until_combat(&mut script, &mut world, &mut ledger, 1);
 }
 
 #[test]
@@ -1374,7 +1405,7 @@ fn keeper_retry_world() -> World {
         level: spawn.plane,
     };
     let far = WorldTile {
-        x: stand.x + 20,
+        x: stand.x + 10,
         z: stand.z,
         level: stand.level,
     };
@@ -1502,7 +1533,7 @@ fn begin_clue_stand_walk(
     };
     let mut slot = start_sherlock_slot(&world);
     let far = WorldTile {
-        x: world.stand.x + 20,
+        x: world.stand.x + 10,
         z: world.stand.z,
         level: world.stand.level,
     };

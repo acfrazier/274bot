@@ -8,6 +8,7 @@
 use crate::materialize::selected_facts_v8::client_adapter_v8::{
     new_object, ClientAdapterObjectShape,
 };
+use crate::scene::scene_query::EntityCategory;
 use flatbuffers::{ForwardsUOffset, Vector};
 use rustyscript::Runtime;
 
@@ -52,6 +53,7 @@ pub(crate) fn materialize_snapshot(
         || snap.has_players()
         || snap.has_ground()
         || snap.has_self_slot()
+        || snap.has_here()
     {
         let mut generation = crate::scene::scene_query::entity_generation();
         if !snap.has_npcs() {
@@ -761,16 +763,26 @@ pub(crate) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let (npcs, rows) =
-            scene_entity_array(&mut scope, snap.npcs(), true, common_row, npc_network_row)?;
+        let (npcs, rows) = scene_entity_array(
+            &mut scope,
+            snap.npcs(),
+            EntityCategory::Npcs,
+            common_row,
+            npc_network_row,
+        )?;
         staged_entity_pages.npcs = Some(rows);
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let (locs, rows) =
-            scene_entity_array(&mut scope, snap.locs(), false, common_row, npc_network_row)?;
+        let (locs, rows) = scene_entity_array(
+            &mut scope,
+            snap.locs(),
+            EntityCategory::Locs,
+            common_row,
+            npc_network_row,
+        )?;
         staged_entity_pages.locs = Some(rows);
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
@@ -780,7 +792,7 @@ pub(crate) fn materialize_snapshot(
         let (players, rows) = scene_entity_array(
             &mut scope,
             snap.players(),
-            false,
+            EntityCategory::Players,
             common_row,
             npc_network_row,
         )?;
@@ -793,7 +805,7 @@ pub(crate) fn materialize_snapshot(
         let (ground, rows) = scene_entity_array(
             &mut scope,
             snap.ground(),
-            false,
+            EntityCategory::Ground,
             common_row,
             npc_network_row,
         )?;
@@ -1913,13 +1925,13 @@ fn tile_array<'s, 'a>(
 fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::wire::SceneEntity<'_>,
-    npc: bool,
+    category: EntityCategory,
     common_row: v8::Local<'s, v8::ObjectTemplate>,
     npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
     // The template creates every field as an ordinary data property, so the
     // stores below update a fast-property row instead of growing a dictionary.
-    let network = npc && ent.size() >= 1;
+    let network = matches!(category, EntityCategory::Npcs) && ent.size() >= 1;
     let template = if network { npc_network_row } else { common_row };
     let o = template
         .new_instance(scope)
@@ -1993,11 +2005,19 @@ fn scene_entity_object<'s>(
     };
     let face_entity = num(scope, face_entity as f64);
     set(scope, o, "faceEntity", face_entity)?;
-    let size = num(scope, ent.size() as f64);
+    // PlayerSnapshot has no network fields (ClientAdapter.ts:254-261).
+    // Keep the legacy common-row values; player path heads stay native-only.
+    let (public_size, public_nx, public_nz) = match category {
+        EntityCategory::Players => (0, 0, 0),
+        EntityCategory::Npcs | EntityCategory::Locs | EntityCategory::Ground => {
+            (ent.size(), ent.nx(), ent.nz())
+        }
+    };
+    let size = num(scope, public_size as f64);
     set(scope, o, "size", size)?;
-    let nx = num(scope, ent.nx() as f64);
+    let nx = num(scope, public_nx as f64);
     set(scope, o, "nx", nx)?;
-    let nz = num(scope, ent.nz() as f64);
+    let nz = num(scope, public_nz as f64);
     set(scope, o, "nz", nz)?;
     if network {
         // Frozen `ClientAdapter.ts:243,879`: the route-head centre is the
@@ -2010,11 +2030,10 @@ fn scene_entity_object<'s>(
     }
     Ok(o)
 }
-
 fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     ents: TableVector<'a, crate::wire::SceneEntity<'a>>,
-    npc: bool,
+    category: EntityCategory,
     common_row: v8::Local<'s, v8::ObjectTemplate>,
     npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<(v8::Local<'s, v8::Value>, Vec<v8::Global<v8::Object>>), String> {
@@ -2022,7 +2041,7 @@ fn scene_entity_array<'s, 'a>(
     let arr = v8::Array::new(scope, len as i32);
     let mut rows = Vec::with_capacity(len);
     for (i, ent) in ents.into_iter().flat_map(|ents| ents.iter()).enumerate() {
-        let ent = scene_entity_object(scope, &ent, npc, common_row, npc_network_row)?;
+        let ent = scene_entity_object(scope, &ent, category, common_row, npc_network_row)?;
         rows.push(v8::Global::new(scope, ent));
         arr.set_index(scope, i as u32, ent.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;

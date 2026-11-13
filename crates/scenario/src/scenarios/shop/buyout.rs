@@ -1083,11 +1083,7 @@ pub(crate) fn shop_buyout_open_npc_bank(
                 }
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
                     npc.name.as_deref() == Some(banker)
-                        && npc.tile.level == approach.level
-                        && (npc.tile.x - approach.x)
-                            .abs()
-                            .max((npc.tile.z - approach.z).abs())
-                            <= 12
+                        && api::query::chebyshev_to(npc.network, approach) <= 12
                         && npc.actions.iter().any(|published| {
                             published
                                 .as_deref()

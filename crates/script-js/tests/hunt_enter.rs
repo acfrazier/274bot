@@ -302,6 +302,7 @@ fn choose_hit_answers_the_fragment_index_not_the_last() {
         name: "Guard".into(),
         actions: vec!["Talk-to".into()],
         distance: 1,
+        network: Some(tile(10, 10, 0)),
     }];
     seen.chat_options = vec![
         "Go away".into(),
@@ -333,6 +334,7 @@ fn fragment_miss_logs_watch_tower_and_emits_no_answer() {
         name: "Guard".into(),
         actions: vec!["Talk-to".into()],
         distance: 1,
+        network: Some(tile(10, 10, 0)),
     }];
     seen.chat_options = vec!["Yes".into(), "No".into()];
     set_observation(seen);
@@ -376,6 +378,7 @@ fn fee_proof_is_not_the_walk_and_sets_prepaid_before_loc() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -463,6 +466,7 @@ fn fee_modal_is_close_modal_not_answer() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -496,6 +500,7 @@ fn prepaid_survives_yield_and_reset_and_drops_on_stop() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -757,6 +762,7 @@ fn hold_yields_false_and_leaves_prepaid_unchanged() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
