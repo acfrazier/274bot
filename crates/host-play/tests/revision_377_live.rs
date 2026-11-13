@@ -3,15 +3,15 @@
 //! Both tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
 //! They use the canonical `--revision 377` local profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
-//! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
-//! path in a private home.
+//! and `NAV_FLAGS`. `WORLD_GAME_PORT` and `WORLD_HTTP_PORT` may select another
+//! local engine. Template preparation uses the production runtime-cache path.
 //! Pre-Start mainland fixtures request a fresh login after observing logout:
 //! idle slots park on a server logout, so the fixture posts Login through its
 //! SlotArm once available rather than relying on automatic reconnect policy.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
-//! /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome env \
+//! ${ISOHOME:?} env \
 //!   LIVE=1 BOT_LIVE_NAME_PREFIX=f377 ENGINE_DIR=<377-engine> \
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
@@ -141,6 +141,8 @@ fn path_is_file(path: &Path, name: &str) -> Result<(), String> {
 
 fn load_bound_377() -> Result<Bound377, String> {
     require_live_guard()?;
+    let game_port = host_play::live_ports::env_port("WORLD_GAME_PORT", GAME_PORT);
+    let asset_port = host_play::live_ports::env_port("WORLD_HTTP_PORT", ASSET_PORT);
     let engine_dir = required_path("ENGINE_DIR")?;
     let cache_dir = required_path("CLIENT_377_CACHE_DIR")?;
     let unpack_dir = required_path("CLIENT_UNPACK_DIR")?;
@@ -162,6 +164,8 @@ fn load_bound_377() -> Result<Bound377, String> {
         ..ProfileEnvironment::default()
     };
     let options = ProfileOptions {
+        port: Some(game_port),
+        http_port: Some(asset_port),
         revision: Some(REVISION.to_string()),
         engine_dir: Some(engine_dir.clone()),
         cache_dir: Some(cache_dir.clone()),
@@ -174,16 +178,16 @@ fn load_bound_377() -> Result<Bound377, String> {
     if selection.revision() != ClientRevision::R377
         || selection.profile_class() != ProfileClass::Local
         || selection.game_host() != GAME_HOST
-        || selection.game_port() != GAME_PORT
+        || selection.game_port() != game_port
         || selection.asset_host() != GAME_HOST
-        || selection.asset_port() != ASSET_PORT
+        || selection.asset_port() != asset_port
         || selection.engine_dir() != engine_dir.as_path()
         || selection.cache_dir() != cache_dir.as_path()
         || selection.unpack_dir() != unpack_dir.as_path()
         || selection.nav_pack() != nav_pack.as_path()
         || selection.nav_flags() != nav_flags.as_path()
     {
-        return Err("resolved profile differs from the canonical 377 localhost resources".into());
+        return Err("resolved profile differs from the explicit 377 localhost resources".into());
     }
 
     let template = selection.prepare_template()?;
@@ -198,9 +202,9 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.profile_class() != ProfileClass::Local
         || profile.client().revision() != ClientRevision::R377
         || profile.client().game_host() != GAME_HOST
-        || profile.client().game_port() != GAME_PORT
+        || profile.client().game_port() != game_port
         || profile.client().asset_host() != GAME_HOST
-        || profile.client().asset_port() != ASSET_PORT
+        || profile.client().asset_port() != asset_port
         || profile.client().cache_dir() != prepared.jag_dir.as_path()
         || profile.client().unpack_dir() != prepared.unpack_root()
         || profile.nav_pack() != nav_pack.as_path()
@@ -782,7 +786,7 @@ fn direct_step_uses_loaded_collision_instead_of_the_npc_offset() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
+#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, explicit 377 cache/snapshot/nav inputs, and a local 377 engine (WORLD_GAME_PORT/WORLD_HTTP_PORT override 43595/81)"]
 fn live_377_attaches_walks_and_interacts_with_numeric_npc() -> Result<(), String> {
     run_live_interaction()
 }

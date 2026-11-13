@@ -87,6 +87,7 @@ globs = [
   "**/Cargo.toml",
   "**/build.rs",
   "crates/api/src/**",
+  "crates/build-stamp/src/lib.rs",
   "crates/api/build_support/catalog_codegen.rs",
   "crates/api/data/**",
   "crates/host/src/**",
@@ -128,6 +129,14 @@ globs = [
   "docs/**",
   ".github/**",
   "tools/**",
+  # Compile-time identity producers and declarations. Runtime stamp consumers
+  # remain live and are covered by the receipt and panel-label cells below.
+  "crates/build-stamp/Cargo.toml",
+  "crates/build-stamp/build.rs",
+  "crates/build-stamp/build_support/source_identity.rs",
+  # Deleted locations of the same compile-time identity producer.
+  "crates/build-stamp/source_identity.rs",
+  "crates/panel/build.rs",
   # Offline audit, toolchain and vendor dependency metadata. Full CI still
   # checks these inputs; they do not select a gameplay route.
   ".cargo/audit.toml",
@@ -1595,6 +1604,28 @@ globs = ["crates/host-play/src/script_bank.rs"]
 cells = [
   "host.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja",
   "compat.bank-core-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor",
+]
+
+# Receipt metadata runs inside real sessions. The client cell checks baked
+# identities; the raster Cook cell crosses durable PNG and sidecar publication.
+[[cover]]
+globs = [
+  "crates/api/src/build_info.rs",
+  "crates/build-stamp/src/lib.rs",
+  "crates/host-play/src/evidence_writer.rs",
+  "crates/scenario/src/evidence.rs",
+]
+cells = [
+  "host.receipt-377-client-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p tui --bin tui-play -- --revision 377 --host 127.0.0.1 --port ${LIVE_377_GAME_PORT:-43595} --asset-host 127.0.0.1 --http-port ${LIVE_377_HTTP_PORT:-81} --engine ${ENGINE_377_DIR:?} --cache ${CLIENT_377_CACHE_DIR:?} --unpack ${CLIENT_377_UNPACK_DIR:?} --nav-pack ${NAV_PACK_377:?} --nav-flags ${NAV_FLAGS_377:?} --live script_client_377|--locked -p scenario --features api/test-support --lib receipt_",
+  "host.receipt-377-cook-raster-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} ROUTE_A_RASTER=1 ROUTE_A_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1",
+]
+
+# Only the provider of the existing static label changed. Controlled formatting
+# tests prove the displayed line and tooltip; no gameplay or UI layout changed.
+[[cover]]
+globs = ["crates/panel/src/build_info.rs"]
+cells = [
+  "panel.build-info-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib build_info::tests:: -- --nocapture --test-threads=1",
 ]
 
 # Real fixed-prefix watch cell proves empty exact seed, target unstarted, bank proof, relogs and saved logout. Builder tests cover malformed/unknown inputs and the exact seed-to-Start campaign construction. Controlled runner tests cover fresh speed acknowledgement/restoration; no speed game scenario is proposed.

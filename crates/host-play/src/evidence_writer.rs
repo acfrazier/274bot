@@ -564,8 +564,17 @@ fn worker_loop(inner: Arc<WriterInner>) {
     }
 }
 
+#[derive(Default)]
+struct CaptureTimings {
+    convert_ms: f64,
+    encode_ms: f64,
+    write_ms: f64,
+    sync_ms: f64,
+}
+
 fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcome {
     let id = job.id;
+    let mut timings = CaptureTimings::default();
     let pixel_count = (request.width as usize)
         .checked_mul(request.height as usize)
         .filter(|count| *count > 0)
@@ -577,7 +586,7 @@ fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcom
             request.height,
             request.pixels.len()
         );
-        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0, None, job);
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let convert_start = Instant::now();
     let bytes_per_pixel = match request.color {
@@ -594,7 +603,7 @@ fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcom
             PngColor::Rgb => raw.extend_from_slice(&[red, green, blue]),
         }
     }
-    let convert_ms = convert_start.elapsed().as_secs_f64() * 1000.0;
+    timings.convert_ms = convert_start.elapsed().as_secs_f64() * 1000.0;
     let encode_start = Instant::now();
     let mut encoded = Vec::new();
     let encode_error = {
@@ -612,53 +621,36 @@ fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcom
             Err(error) => Some(error.to_string()),
         }
     };
-    let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+    timings.encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = encode_error {
         let error = format!("id={id}: encode {}: {error}", request.png_path.display());
-        return finish_with_sidecar(
-            request, error, 0, convert_ms, encode_ms, 0.0, 0.0, None, job,
-        );
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let write_start = Instant::now();
     let write_error = std::fs::write(&request.png_path, &encoded)
         .err()
         .map(|error| error.to_string());
-    let write_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+    timings.write_ms = write_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = write_error {
         let _ = std::fs::remove_file(&request.png_path);
         let error = format!("id={id}: write {}: {error}", request.png_path.display());
-        return finish_with_sidecar(
-            request, error, 0, convert_ms, encode_ms, write_ms, 0.0, None, job,
-        );
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let sync_start = Instant::now();
     let sync_error = sync_file(&request.png_path)
         .err()
         .map(|error| error.to_string());
-    let sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
+    timings.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = sync_error {
         let error = format!("id={id}: fsync {}: {error}", request.png_path.display());
-        return finish_with_sidecar(
-            request,
-            error,
-            encoded.len() as u64,
-            convert_ms,
-            encode_ms,
-            write_ms,
-            sync_ms,
-            None,
-            job,
-        );
+        return finish_with_sidecar(request, error, encoded.len() as u64, timings, None, job);
     }
     let sha256 = format!("{:x}", Sha256::digest(&encoded));
     let outcome = finish_with_sidecar(
         request,
         String::new(),
         encoded.len() as u64,
-        convert_ms,
-        encode_ms,
-        write_ms,
-        sync_ms,
+        timings,
         Some(&sha256),
         job,
     );
@@ -689,18 +681,20 @@ fn sync_file(path: &std::path::Path) -> std::io::Result<()> {
 /// Complete one capture: patch the receipt's error key on failure, write
 /// and fsync the sidecar when present, then report. An empty `error` means
 /// the PNG (and sidecar) are durable.
-#[allow(clippy::too_many_arguments)]
 fn finish_with_sidecar(
     request: &EvidenceRequest,
     error: String,
     png_bytes: u64,
-    convert_ms: f64,
-    encode_ms: f64,
-    write_ms: f64,
-    sync_ms: f64,
+    timings: CaptureTimings,
     png_sha256: Option<&str>,
     _job: &EvidenceJob,
 ) -> EvidenceOutcome {
+    let CaptureTimings {
+        convert_ms,
+        encode_ms,
+        write_ms,
+        sync_ms,
+    } = timings;
     let failed = !error.is_empty();
     if let Some(sidecar) = request.sidecar.as_ref() {
         // Sites whose historic receipts record the PNG error (bank core,
