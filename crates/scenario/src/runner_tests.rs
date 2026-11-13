@@ -5063,3 +5063,94 @@ fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
     runner.snapshot.rebuild(&c);
     assert!(!proof.check(&runner.snapshot, None));
 }
+
+#[test]
+fn receipt_records_step_intention_and_observed_result() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = serde_json::to_value(runner.evidence().expect("terminal")).unwrap();
+    let events = receipt["events"]
+        .as_array()
+        .expect("ordered receipt events");
+    assert_eq!(events[0]["event"], "STEP");
+    assert_eq!(events[0]["ordinal"], 1);
+    assert_eq!(events[0]["name"], "set run energy");
+    assert_eq!(events[0]["why"], events[0]["name"]);
+    assert_eq!(events[0]["why_source"], "step-name");
+    assert_eq!(events[1]["event"], "DISPATCH");
+    assert_eq!(events[1]["result"], "accepted");
+    assert_eq!(events[2]["event"], "OBSERVED");
+    assert_eq!(receipt["outcome"], "PASS");
+    assert_eq!(receipt["manifest"]["actor"], "test");
+    assert_eq!(receipt["manifest"]["revision"], 274);
+}
+
+#[test]
+fn receipt_records_refused_closure_without_claiming_observation() {
+    let mut scenario = stat_scenario(0, 10);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|_, _| false),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = serde_json::to_value(runner.evidence().expect("terminal")).unwrap();
+    let events = receipt["events"]
+        .as_array()
+        .expect("ordered receipt events");
+    assert_eq!(events[0]["event"], "STEP");
+    assert_eq!(events[1]["event"], "DISPATCH");
+    assert_eq!(events[1]["result"], "refused");
+    assert!(events.iter().all(|event| event["event"] != "OBSERVED"));
+    assert_eq!(receipt["outcome"], "FAIL");
+}
+
+#[test]
+fn receipt_can_disarm_rearm_and_bind_a_replacement_session() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_receipt_recording(false);
+    assert!(runner.receipt_manifest_mut().is_none());
+    runner.set_receipt_recording(true);
+    let mut client = seeded_client();
+    runner.bind_receipt(&client);
+    let first = client.gens.session;
+    client.gens.session += 1;
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = runner.evidence().unwrap().run_receipt.as_ref().unwrap();
+    assert_eq!(receipt.manifest.sessions, [first, first + 1]);
+    assert_eq!(receipt.events[0].session, first + 1);
+}
+
+#[test]
+fn receipt_retention_overflow_is_explicit_and_bounded() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    for _ in 0..crate::evidence::MAX_RECEIPT_EVENTS + 5 {
+        runner.receipt_event("STEP", "legacy-closure", None, None);
+    }
+    let receipt = runner.run_receipt.as_ref().unwrap();
+    assert_eq!(receipt.events.len(), crate::evidence::MAX_RECEIPT_EVENTS);
+    assert!(!receipt.manifest.complete);
+    assert_eq!(receipt.manifest.dropped_events, 5);
+}
+
+#[test]
+fn receipt_session_overflow_retains_the_current_event_identity() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    let mut client = seeded_client();
+    for _ in 0..crate::evidence::MAX_RECEIPT_EVENTS + 2 {
+        client.gens.session += 1;
+        runner.bind_receipt(&client);
+    }
+    runner.receipt_event("STEP", "legacy-closure", None, None);
+    let receipt = runner.run_receipt.as_ref().unwrap();
+    assert_eq!(
+        receipt.manifest.sessions.len(),
+        crate::evidence::MAX_RECEIPT_EVENTS
+    );
+    assert!(!receipt.manifest.complete);
+    assert_eq!(receipt.events[0].session, client.gens.session);
+}

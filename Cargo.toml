@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/rs2vm", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc", "tools/xtask"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/build-stamp", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/rs2vm", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc", "tools/xtask"]
 default-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/script", "crates/script-js", "crates/scenario", "crates/tui", "tools/seat-model", "tools/hold-model", "tools/seed-calc"]
 
 [workspace.lints.clippy]
