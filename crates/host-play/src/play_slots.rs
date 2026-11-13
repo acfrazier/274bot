@@ -1179,6 +1179,7 @@ fn spawn_slot_thread(
                         publish_login_latched_from_arm(&slot_statuses, &username, &arm);
                     }
                 }
+                let mut cold_login = false;
                 if !client.ingame && should_handshake(&arm, client.ingame) {
                     // A request raised after the observe armed this handshake
                     // must not survive the ownership handoff and undo a later
@@ -1374,6 +1375,7 @@ fn spawn_slot_thread(
                     match login {
                         Ok(false) => continue,
                         Ok(true) => {
+                            cold_login = !reconnect;
                             show_title_message(&mut client, "", "");
                             backoff.reset();
                             if let Some(round) = world_round.as_mut() { round.reset(); }
@@ -1643,7 +1645,7 @@ fn spawn_slot_thread(
                             nav_snapshot
                                 .set_loc_projection_wanted(run_policy.loc_projection_wanted());
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
-                            if session_boundary && c.ingame && !reconnect {
+                            if session_boundary && c.ingame && cold_login {
                                 nav_snapshot.begin_fresh_login_quest_colours();
                             }
                             if session_boundary && c.ingame {

@@ -124,12 +124,10 @@ pub fn observe_quest_gate(
     } else {
         match gate {
             QuestGate::Complete(_) => status_truth(status),
-            QuestGate::Window(window) if window.signal == facts.varp => stage_colour_range(
-                status,
-                facts,
-                snapshot.quest_green_since_fresh_login(index),
-            )
-            .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
+            QuestGate::Window(window) if window.signal == facts.varp => {
+                stage_colour_range(status, facts, snapshot.quest_green_since_fresh_login(index))
+                    .map_or(Truth::Unknown, |possible| window.values.test(&possible))
+            }
             QuestGate::Window(_) => Truth::Unknown,
         }
     };
@@ -158,7 +156,9 @@ fn stage_colour_range(
     }
     if status == QuestListStatus::Complete {
         let range = if green_since_login {
-            facts.completion_range_after_login.or(facts.completion_range)
+            facts
+                .completion_range_after_login
+                .or(facts.completion_range)
         } else {
             facts.completion_range
         };
@@ -662,14 +662,21 @@ mod quest_list_tests {
         assert!(facts.completion_range.unwrap().min.unwrap() <= 5);
         assert_eq!(
             facts.completion_range_after_login,
-            Some(InclusiveRange { min: Some(15), max: Some(15) })
+            Some(InclusiveRange {
+                min: Some(15),
+                max: Some(15)
+            })
         );
         for colour in [0x00F800, 0xF8F800, 0xF80000] {
             assert_window_from_colour(&quests, "hero", colour, 15, 15, Truth::Unknown);
             let mut snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
             snapshot.seed_tick(1);
             snapshot.begin_fresh_login_quest_colours();
-            let expected = if colour == 0x00F800 { Truth::True } else { Truth::Unknown };
+            let expected = if colour == 0x00F800 {
+                Truth::True
+            } else {
+                Truth::Unknown
+            };
             assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, expected);
         }
     }
