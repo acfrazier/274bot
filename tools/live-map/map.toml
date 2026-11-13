@@ -143,6 +143,10 @@ globs = [
   "rust-toolchain.toml",
   "vendor/fr-client-rust/Cargo.lock",
   "vendor/fr-client-rust/rust-toolchain.toml",
+  # These 377-only client paths are never reached by 274/289. The
+  # revision_377_rebuild and build.rs region_tests provide offline proof.
+  "vendor/fr-client-rust/crates/client/src/client/runtime_377.rs",
+  "vendor/fr-client-rust/crates/client/src/core/build.rs",
   "crates/script/paths/path.schema.json",
   "crates/e2e/**",
   "crates/nav-bake/src/bake.rs",

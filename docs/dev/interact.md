@@ -228,7 +228,7 @@ binding or native consumer is activated here.
 On 64-bit macOS, the permanent dispatch state adds 256 Rust live bytes per
 active native slot: 208 bytes in `SlotInput`, 32 bytes for its outbound
 observer and 16 bytes in the existing native ledger. `Packet` remains
-2,128 bytes and `Client` remains 28,872 bytes. The observer allocates once;
+2,128 bytes and `Client` is 28,904 bytes. The observer allocates once;
 replacement, socket adoption and packet commits reuse its state. Inbound,
 sound and retained appearance packets acquire no observer storage.
 
