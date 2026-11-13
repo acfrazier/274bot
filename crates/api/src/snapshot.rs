@@ -542,14 +542,14 @@ impl GameSnapshot {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;
         self.quest_statuses_root = if available { 1 } else { -1 };
-        self.observe_login_quest_colours();
+        self.observe_login_quest_colours(self.tick > 0);
     }
 
     /// Arm proof from the first complete quest-list frame of a cold login.
     /// A reconnect must not call this: its server queues can survive.
     pub fn begin_fresh_login_quest_colours(&mut self) {
         self.login_quest_colours.begin_fresh_login();
-        self.observe_login_quest_colours();
+        self.observe_login_quest_colours(self.tick > 0);
     }
 
     /// Whether this row was green at that login and has stayed green.
@@ -557,11 +557,11 @@ impl GameSnapshot {
         self.ingame && self.quest_statuses_available && self.login_quest_colours.eligible(index)
     }
 
-    fn observe_login_quest_colours(&mut self) {
+    fn observe_login_quest_colours(&mut self, first_player_info_seen: bool) {
         self.login_quest_colours.observe(
             self.quest_statuses_root,
             &self.quest_statuses,
-            self.ingame && self.tick > 0 && self.quest_statuses_available,
+            self.ingame && first_player_info_seen && self.quest_statuses_available,
         );
     }
 
@@ -911,6 +911,17 @@ impl GameSnapshot {
     /// watermark; the host handles session changes before this rebuild.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
         client_adapter_cache::publish(&client.cache);
+        // The first PLAYER_INFO follows the login script's quest-colour refresh.
+        // A new observer that missed it cannot recover login-colour history.
+        let login_player_info = client
+            .gens
+            .player_info
+            .wrapping_sub(client.session_start_gens().player_info);
+        self.login_quest_colours.observe_session(
+            client.gens.session,
+            client.ingame && client.last_login_reconnect == Some(false),
+            login_player_info,
+        );
         let player_info_ticks = if player_info {
             client.gens.player_info.wrapping_sub(self.gens.player_info)
         } else {
@@ -947,7 +958,7 @@ impl GameSnapshot {
         let quests_changed = self.rebuild_family(client, Family::QuestStatuses);
         dirty |= quests_changed;
         if quests_changed || self.login_quest_colours.needs_initial_observation() {
-            self.observe_login_quest_colours();
+            self.observe_login_quest_colours(login_player_info != 0);
         }
         dirty |= self.rebuild_family(client, Family::Modals);
         dirty |= self.rebuild_family(client, Family::Controls);

@@ -7,6 +7,7 @@ const BITSET_WORDS: usize = MAX_QUEST_ROWS / WORD_BITS;
 #[derive(Debug, Default)]
 pub(super) struct LoginQuestColours {
     eligible: [u64; BITSET_WORDS],
+    session: Option<u64>,
     root: i32,
     count: u16,
     armed: bool,
@@ -14,6 +15,24 @@ pub(super) struct LoginQuestColours {
 }
 
 impl LoginQuestColours {
+    pub(super) fn observe_session(
+        &mut self,
+        session: u64,
+        cold_login: bool,
+        player_info_since_login: u64,
+    ) {
+        if self.session != Some(session) {
+            self.invalidate();
+            self.session = Some(session);
+            if cold_login && player_info_since_login <= 1 {
+                self.begin_fresh_login();
+            }
+        }
+        if self.needs_initial_observation() && player_info_since_login > 1 {
+            self.invalidate();
+        }
+    }
+
     pub(super) fn begin_fresh_login(&mut self) {
         self.eligible = [0; BITSET_WORDS];
         self.root = 0;
@@ -186,6 +205,48 @@ mod tests {
         proof.observe(ROOT, &rows(&[GREEN, GREEN]), true);
         assert!(!proof.eligible(0));
         assert!(!proof.eligible(1));
+    }
+
+    #[test]
+    fn only_a_new_cold_session_arms_proof() {
+        let mut proof = LoginQuestColours::default();
+        let green = rows(&[GREEN]);
+        proof.observe_session(1, true, 1);
+        proof.observe(ROOT, &green, true);
+        assert!(proof.eligible(0));
+
+        proof.observe(ROOT + 1, &green, true);
+        proof.observe_session(1, true, 1);
+        proof.observe(ROOT, &green, true);
+        assert!(!proof.eligible(0));
+
+        proof.observe_session(2, false, 1);
+        proof.observe(ROOT, &green, true);
+        assert!(!proof.eligible(0));
+
+        proof.observe_session(3, true, 1);
+        proof.observe(ROOT, &green, true);
+        assert!(proof.eligible(0));
+    }
+
+    #[test]
+    fn missing_the_first_player_info_does_not_prove_login_colour() {
+        let mut proof = LoginQuestColours::default();
+        let green = rows(&[GREEN]);
+        proof.observe_session(1, true, 2);
+        proof.observe(ROOT, &green, true);
+        assert!(!proof.eligible(0));
+
+        proof.observe_session(2, true, 0);
+        proof.observe(ROOT, &green, false);
+        proof.observe_session(2, true, 2);
+        proof.observe(ROOT, &green, true);
+        assert!(!proof.eligible(0));
+
+        proof.observe_session(3, true, 1);
+        proof.observe(ROOT, &green, true);
+        proof.observe_session(3, true, 50);
+        assert!(proof.eligible(0));
     }
 
     #[test]
