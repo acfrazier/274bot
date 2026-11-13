@@ -31,6 +31,7 @@ mod scenarios;
 pub mod shot;
 pub mod teardown;
 pub mod tutorial;
+mod ui_actions;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -478,6 +479,11 @@ pub enum StepKind {
     /// An explicit [`Proof::LoggedOut`] arm completes on the observed
     /// off-world frame; every other arm also requires the new online session.
     Relog,
+    /// Select the exact product's Make-X control from an already-open
+    /// production panel through the normal interaction API.
+    MakeProduct { product_id: i32 },
+    /// Answer the currently observed Make-X quantity prompt.
+    EnterAmount { value: i32 },
     /// Like [`StepKind::Perform`], but re-sends once per observed game
     /// tick (one `PLAYER_INFO`) until `wait.arm` holds (`getvar` polls,
     /// sticky `setvar tutorial`). Client cycles do not re-send it.

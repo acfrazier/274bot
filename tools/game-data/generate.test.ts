@@ -1144,14 +1144,39 @@ data=levelrequired,31
 data=runesrequired,earthrune,1,airrune,3,lawrune,1
 data=experience,410
 data=tele_coord,0_50_50_21_18
+[magic_spell_teleother_lumbridge]
+table=magic_spell_table
+data=spell,^teleother_lumbridge
+data=spellcom,magic:com_511
+data=name,Teleother Lumbridge
+data=members,true
+data=levelrequired,74
+data=runesrequired,soulrune,1,lawrune,1,earthrune,1
+data=experience,840
+data=tele_coord,0_50_50_21_18
+data=anim,human_teleport_other_casting
+data=spotanim_origin,teleport_other_casting
+data=spotanim_target,teleport_other_impact,92
+data=sound_cast,tele_other_cast
+data=sound_hit,teleport_all
 `);
 const teleportItems = [
     ...magicItems,
     { id: 9, debugname: 'lawrune', name: 'Law rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 10, debugname: 'naturerune', name: 'Nature rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
 ];
+const teleportScripts = path.join(content, 'scripts/skill_magic/scripts/spells');
+fs.mkdirSync(teleportScripts, { recursive: true });
+const teleportScript = path.join(teleportScripts, 'teleport.rs2');
+fs.writeFileSync(teleportScript, `[if_button,magic:varrock_teleport] @magic_teleport(^varrock_teleport);
+[if_button,magic:lumbridge_teleport] @magic_teleport(^lumbridge_teleport);
+[applayert,magic:com_511] @teleother_offer(^teleother_lumbridge);
+/*
+[applayert,magic:varrock_teleport] @commented_cast(^varrock_teleport);
+*/
+`);
 const teleports = extractTeleportSpells(content, teleportItems);
-assert.equal(teleports.length, 2, 'only tele_coord rows are teleports');
+assert.equal(teleports.length, 2, 'only self-teleport tele_coord rows belong in the catalogue');
 assert.equal(teleports[0].name, 'Varrock');
 assert.equal(teleports[0].component_id, 1164);
 assert.equal(teleports[0].level, 25);
@@ -1162,6 +1187,79 @@ assert.deepEqual(teleports[0].runes.map((rune) => [rune.name, rune.count]), [['F
 assert.equal(teleports[1].name, 'Lumbridge');
 assert.equal(teleports[1].component_id, 1167);
 assert.equal(teleports.some((row) => row.spell === 'highlvl_alchemy'), false);
+assert.deepEqual(teleports.map(row => row.source_row), ['magic_spell_teleport_varrock', 'magic_spell_teleport_lumbridge']);
+const teleportRowsFile = path.join(content, 'scripts/skill_magic/configs/magic_spells.dbrow');
+const knownTeleportRows = fs.readFileSync(teleportRowsFile, 'utf8');
+const knownTeleportScript = fs.readFileSync(teleportScript, 'utf8');
+for (const [destination, component] of [['falador', '521'], ['camelot', '541']]) {
+    fs.writeFileSync(teleportRowsFile, knownTeleportRows.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    fs.writeFileSync(teleportScript, knownTeleportScript.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    assert.deepEqual(extractTeleportSpells(content, teleportItems), teleports, `Tele Other ${destination} must not enter the self-teleport catalogue`);
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+const ancientTeleports = [
+    ['paddewwa', 179, 54, 'lawrune,2,firerune,1,airrune,1', 640],
+    ['senntisten', 189, 60, 'lawrune,2,soulrune,1,null,null', 700],
+    ['kharyrll', 197, 66, 'lawrune,2,bloodrune,1,null,null', 760],
+    ['lassar', 205, 72, 'lawrune,2,waterrune,4,null,null', 820],
+    ['dareeyak', 213, 78, 'lawrune,2,firerune,3,airrune,2', 880],
+    ['carrallangar', 223, 84, 'lawrune,2,soulrune,2,null,null', 940],
+    ['annakarl', 231, 90, 'lawrune,2,bloodrune,2,null,null', 1000],
+    ['ghorrock', 239, 96, 'lawrune,2,waterrune,8,null,null', 1060],
+] as const;
+const ancientTeleportScript = path.join(teleportScripts, 'ancient_teleport.rs2');
+fs.writeFileSync(ancientTeleportScript, ancientTeleports.map(([destination, component]) =>
+    `[if_button,inter_267:com_${component}] @ancient_teleport(^${destination}_teleport);\n`,
+).join(''));
+fs.appendFileSync(teleportRowsFile, ancientTeleports.map(([destination, , level, runes, experience]) => `[magic_spell_teleport_${destination}]
+table=magic_spell_table
+data=spell,^${destination}_teleport
+data=members,true
+data=levelrequired,${level}
+data=runesrequired,${runes}
+data=experience,${experience}
+data=tele_coord,^${destination}_teleport_arrival
+`).join(''));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    teleports,
+    'all eight Ancient Magicks teleports are excluded by their cast interface',
+);
+fs.rmSync(ancientTeleportScript);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript.replace('magic:varrock_teleport', 'magic_extra:varrock_teleport'));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    [teleports[1]],
+    'another spellbook interface excludes even a known name with a literal arrival and an available standard component',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /unknown_coordinate_spell.*unrecognized teleport trigger/,
+    'a destination and a teleport suffix do not classify an unknown spell',
+);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+for (const trigger of ['if_button2,magic:unknown_teleport', 'if_button,unknown_component']) {
+    fs.writeFileSync(teleportScript, `${knownTeleportScript}[${trigger}] @unknown_cast(^unknown_teleport);\n`);
+    assert.throws(
+        () => extractTeleportSpells(content, teleportItems),
+        /unknown_coordinate_spell.*unrecognized teleport trigger/,
+        'an unknown cast class must fail with the row name',
+    );
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+fs.appendFileSync(teleportScript, '[applayert,magic:varrock_teleport] @targeted_cast(^varrock_teleport);\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /magic_spell_teleport_varrock.*unrecognized teleport trigger/,
+    'conflicting cast kinds must not select either interpretation',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
 
 assert.equal(herbKeyFromName('Guam leaf'), 'guam');
 assert.equal(herbKeyFromName('Dwarf weed'), 'dwarf weed');

@@ -80,6 +80,11 @@ The client cell checks source identities without completing a quest.
 `panel.build-info-headless` checks the existing build label and tooltip.
 It proves formatting, not a headed frame.
 
+`host.quantity-377-make-x-live` uses the same 377 resources and port
+variables as the Cook cell. It seeds only the account's knife, two logs and
+Fletching level, and writes the account witness under `LIVE_EVIDENCE_DIR`.
+It passes on 30 new arrow shafts, two consumed logs and 10 Fletching XP.
+
 ## Quarantined map cells
 
 These cells stay out of the active map until their fixtures are repaired.

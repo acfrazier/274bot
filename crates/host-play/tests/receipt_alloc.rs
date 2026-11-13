@@ -9,25 +9,26 @@ use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, St
 #[test]
 fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
     std::thread::spawn(|| {
+        static QUANTITY_PROOFS: [Proof; 3] = [
+            Proof::ProductDelta { id: 52, count: 30 },
+            Proof::XpDelta { id: 9, min: 10 },
+            Proof::InputConsumed { id: 1511, count: 2 },
+        ];
         let scenario = Scenario {
-            name: "receipt-allocation",
+            name: "receipt-allocation-unarmed-quantity",
             seed: Seed {
                 profiles: vec![("test", "test")],
                 mainland: false,
             },
             steps: vec![Step {
-                name: "wait for a host observation",
-                kind: StepKind::Await {
-                    evidence: "pending",
-                    ready: Box::new(|_| false),
-                    summary: None,
-                },
+                name: "observe without sending a quantity action",
+                kind: StepKind::Shot { label: "unarmed" },
                 wait: Wait {
                     arm: Proof::IngameScene2,
                     budget_ticks: u32::MAX,
                 },
             }],
-            proof: Proof::IngameScene2,
+            proof: Proof::All(&QUANTITY_PROOFS),
             companions: vec![],
             settings: ScenarioSettings::default(),
         };
@@ -66,11 +67,22 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
             });
             assert_eq!(
                 counts.count_total, 0,
-                "disarmed observer allocated: {counts:?}"
+                "disarmed quantity observer allocated: {counts:?}"
             );
             assert_eq!(counts.bytes_total, 0, "disarmed observer retained bytes");
         }
     })
     .join()
     .expect("producer thread");
+}
+
+#[test]
+fn scenario_runner_quantity_baseline_storage_stays_within_ceiling() {
+    // Measured 5,648 B + 64 B per the default-headroom rule.
+    // The +8 B over 5,640 comes from merged dev's FollowRun::walk_packet_budget
+    // in crates/nav-executor/src/traveller.rs, not this branch's quantity fields.
+    assert!(
+        std::mem::size_of::<ScenarioRunner>() <= 5_712,
+        "ScenarioRunner exceeded its 5,648 B measurement + 64 B default headroom"
+    );
 }

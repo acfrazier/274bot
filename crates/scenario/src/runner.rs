@@ -18,7 +18,7 @@ use crate::evidence::{
     Evidence, GroundGuardEvidence, GroundGuardItem, ReceiptEvent, ReceiptManifest, RunReceipt,
     SeedDepositEvidence,
 };
-use crate::proof::Proof;
+use crate::proof::{DeltaBaseline, Proof};
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
 use crate::Wait;
@@ -472,6 +472,9 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
+    /// Exact inventory/stat baselines for armed quantity-delta proofs.
+    /// Empty until a named quantity action or delta predicate is armed.
+    delta_baselines: Vec<DeltaBaseline>,
     /// Chat-sequence baseline for the current FreshTutorial, FreshChat,
     /// FreshChatSincePreviousStep, or FreshQuestCompletion wait. Latched
     /// when the step begins (the previous step for
@@ -625,6 +628,7 @@ impl ScenarioRunner {
             ground_guard: None,
             seed_deposits: Vec::new(),
             xp_baselines: Vec::new(),
+            delta_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
             next_fresh_chat_baseline: None,
@@ -1085,6 +1089,8 @@ impl ScenarioRunner {
             return;
         }
         self.bind_receipt(client);
+        self.delta_baselines
+            .retain(|baseline| baseline.session == client.gens.session);
         let dirty = self.snapshot.rebuild(client);
         // Observed game ticks since the last poll: `snapshot.tick()`
         // advances once per `PLAYER_INFO` (the server's world cycle),
@@ -1103,12 +1109,23 @@ impl ScenarioRunner {
             self.fresh_xp_baseline = None;
             self.fresh_chat_baseline = None;
             self.next_fresh_chat_baseline = None;
+            self.delta_baselines.clear();
             self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
         }
         self.retry_xp_baselines();
         self.retry_chat_baseline();
+        if matches!(self.phase, Phase::Running) && !self.step_sent {
+            let wait_arm = self.current_step().wait.arm;
+            self.capture_delta_baselines(wait_arm, client.gens.session);
+            if matches!(
+                self.current_step().kind,
+                StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. }
+            ) {
+                self.capture_delta_baselines(self.scenario.proof, client.gens.session);
+            }
+        }
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -1134,7 +1151,7 @@ impl ScenarioRunner {
         }
         if matches!(self.phase, Phase::Seeding) && self.seed_done() {
             self.phase = Phase::Running;
-            self.begin_step();
+            self.begin_step(client.gens.session);
         }
         if matches!(self.phase, Phase::Running) {
             // Scene-settle gate: never start a step until the scene has
@@ -1378,7 +1395,7 @@ impl ScenarioRunner {
                             sink(label, &self.snapshot);
                         }
                     }
-                    self.advance_step();
+                    self.advance_step(client.gens.session);
                 }
             } else if waited_game_ticks >= budget {
                 let tick_unit = if budget == 1 {
@@ -1493,7 +1510,7 @@ impl ScenarioRunner {
         &self.scenario.steps[self.step]
     }
 
-    fn begin_step(&mut self) {
+    fn begin_step(&mut self, session: u64) {
         self.step_sent = false;
         self.repeat_sent_game_tick = None;
         self.relog_logout_sent = false;
@@ -1607,6 +1624,17 @@ impl ScenarioRunner {
             }
         }
         self.capture_xp_baseline(self.current_step().wait.arm);
+        self.capture_delta_baselines(self.current_step().wait.arm, session);
+        if matches!(
+            self.current_step().kind,
+            StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. }
+        ) {
+            self.capture_delta_baselines(self.scenario.proof, session);
+        }
+    }
+
+    fn capture_delta_baselines(&mut self, proof: Proof, session: u64) {
+        proof.capture_delta_baselines(&self.snapshot, session, &mut self.delta_baselines);
     }
 
     /// Whether `proof` holds on this tick: snapshot predicates against the
@@ -1617,6 +1645,7 @@ impl ScenarioRunner {
         }
         match proof {
             Proof::ScriptIdle => self.script_idle,
+            Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
                 .script_receipts
                 .iter()
@@ -1660,11 +1689,12 @@ impl ScenarioRunner {
                 )
             }),
             Proof::VisitedWithin { .. } => self.visited_within,
-            other => other.check_with_xp_context(
+            other => other.check_with_delta_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
                 Some(&self.xp_baselines),
                 self.fresh_xp_baseline,
+                Some(&self.delta_baselines),
             ),
         }
     }
@@ -2170,7 +2200,7 @@ impl ScenarioRunner {
         }
     }
 
-    fn advance_step(&mut self) {
+    fn advance_step(&mut self, session: u64) {
         if self.run_receipt.is_some() {
             let predicate = self.current_predicate_name();
             self.receipt_event("OBSERVED", "predicate", Some("held"), Some(&predicate));
@@ -2182,7 +2212,7 @@ impl ScenarioRunner {
             }
             self.phase = Phase::Proving;
         } else {
-            self.begin_step();
+            self.begin_step(session);
         }
     }
 
@@ -2220,6 +2250,7 @@ impl ScenarioRunner {
     fn dispatch_kind(&self) -> &'static str {
         match self.current_step().kind {
             StepKind::Perform { .. } | StepKind::Repeat { .. } => "legacy-closure",
+            StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. } => "interaction",
             StepKind::NativeSeedDeposit { .. } => "fixture-deposit",
             StepKind::DrainDialogs { .. } => "dialogue",
             StepKind::Relog => "relog",
@@ -2286,6 +2317,13 @@ impl ScenarioRunner {
                     Ok(crate::SeedDepositProgress::BankPending) => Ok("pending"),
                     Err(failure) => Err(failure.to_string()),
                 }
+            }
+            StepKind::MakeProduct { product_id } => {
+                crate::ui_actions::make_product(&self.snapshot, client, *product_id)
+                    .map(|()| "accepted")
+            }
+            StepKind::EnterAmount { value } => {
+                crate::ui_actions::enter_amount(&self.snapshot, client, *value).map(|()| "accepted")
             }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
