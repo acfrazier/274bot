@@ -68,8 +68,10 @@ Run `host.receipt-377-client-live` and `host.receipt-377-cook-raster-live`
 against a local revision-377 engine. Set `ENGINE_377_DIR`,
 `CLIENT_377_CACHE_DIR`, `CLIENT_377_UNPACK_DIR`, `NAV_PACK_377`, and
 `NAV_FLAGS_377` to its resources. Use disposable copies for writable cache
-and unpack inputs. Set `LIVE_377_GAME_PORT` and `LIVE_377_HTTP_PORT` for
-non-default ports. They default to `43595` and `81`.
+and unpack inputs. The Cook cell reads `LIVE_377_GAME_PORT` and
+`LIVE_377_HTTP_PORT`, which default to `43595` and `81`. For the client cell,
+configure those ports in the disposable HOME's `local-377` server roster.
+Do not use endpoint CLI overrides: they disable generated 377 game data.
 
 Both cells need `ISOHOME`, an owned `BOT_LIVE_NAME_PREFIX`, and
 `LIVE_EVIDENCE_DIR`. The Cook cell enables CPU raster capture. Check its

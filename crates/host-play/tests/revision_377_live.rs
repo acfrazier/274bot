@@ -155,6 +155,20 @@ fn load_bound_377() -> Result<Bound377, String> {
     path_is_file(&nav_flags, "NAV_FLAGS")?;
 
     let home = ScratchHome::new()?;
+    if game_port != GAME_PORT || asset_port != ASSET_PORT {
+        let mut servers = host_play::Servers::builtins();
+        let local = servers
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "local-377")
+            .expect("built-in local-377 profile");
+        local.worlds[0].port = game_port;
+        local.worlds[0].asset_port = asset_port;
+        let bot_dir = home.0.join(".274bot");
+        fs::create_dir_all(&bot_dir).map_err(|error| error.to_string())?;
+        let bytes = serde_json::to_vec_pretty(&servers).map_err(|error| error.to_string())?;
+        fs::write(bot_dir.join("servers.json"), bytes).map_err(|error| error.to_string())?;
+    }
     let environment = ProfileEnvironment {
         home: Some(home.0.clone()),
         engine_dir: Some(engine_dir.clone()),
@@ -164,8 +178,7 @@ fn load_bound_377() -> Result<Bound377, String> {
         ..ProfileEnvironment::default()
     };
     let options = ProfileOptions {
-        port: Some(game_port),
-        http_port: Some(asset_port),
+        // A saved local roster retains generated-data admission at custom ports.
         revision: Some(REVISION.to_string()),
         engine_dir: Some(engine_dir.clone()),
         cache_dir: Some(cache_dir.clone()),
