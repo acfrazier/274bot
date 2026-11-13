@@ -1361,6 +1361,7 @@ where
             };
             bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
+            bot.bank_preferences = slot.bank_preferences();
             bot.compat_v1 = slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
             bot.cure_poison = cure_poison;
         }
@@ -1669,6 +1670,7 @@ where
                         bot.work_scope = slot.work_scope();
                         bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
                         bot.native_permissions = slot.native_walk_permissions();
+                        bot.bank_preferences = slot.bank_preferences();
                         bot.compat_v1 =
                             slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
                     }

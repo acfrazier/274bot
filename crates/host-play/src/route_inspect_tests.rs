@@ -3630,6 +3630,7 @@ fn inspect_corpus_capture(
         allow_teleports: case.allow_teleports,
         allow_wilderness: case.allow_wilderness,
         allow_bank_fetch: case.allow_bank_fetch,
+        bank_preferences: Default::default(),
         prefer_target_order: false,
         essence: None,
         zones,

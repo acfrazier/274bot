@@ -33,8 +33,9 @@ const withoutStrings = (text: string) => text.replace(/"(?:\\.|[^"\\])*"/g, stri
 
 /** One optional choice fits the existing packed NPC access. Ordinary Bank options need none. */
 function bankChoice(blocks: Rs2Block[]): string | null | undefined {
-    const choices = blocks.flatMap(block => [...code(block).matchAll(/def_int\s+(\$\w+)\s*=\s*~p_choice2\(\s*("(?:\\.|[^"\\])*")\s*,\s*(\d+)\s*,\s*("(?:\\.|[^"\\])*")\s*,\s*(\d+)\s*\)\s*;/g)].map(match => ({ block, match })));
-    const choiceCalls = blocks.reduce((count, block) => count + [...withoutStrings(code(block)).matchAll(/~p_choice\d+\s*\(/g)].length, 0);
+    const accessBlocks = blocks.length === 1 ? blocks : blocks.slice(0, -1);
+    const choices = accessBlocks.flatMap(block => [...code(block).matchAll(/def_int\s+(\$\w+)\s*=\s*~p_choice2\(\s*("(?:\\.|[^"\\])*")\s*,\s*(\d+)\s*,\s*("(?:\\.|[^"\\])*")\s*,\s*(\d+)\s*\)\s*;/g)].map(match => ({ block, match })));
+    const choiceCalls = accessBlocks.reduce((count, block) => count + [...withoutStrings(code(block)).matchAll(/~p_choice\d+\s*\(/g)].length, 0);
     if (choiceCalls === 0) return null;
     if (choiceCalls !== 1 || choices.length !== 1) return undefined;
     const { block, match } = choices[0];
@@ -82,6 +83,9 @@ function bankOpen(block: Rs2Block): BankOpen | null {
 
 function bankGateReason(block: Rs2Block, entry: Rs2Block): NpcBankAccessRefusal['reason'] | null {
     const open = bankOpen(block);
+    // Reaching this procedure is the NPC-access boundary. Its shared PIN and
+    // session checks belong to bank interaction, not NPC-bank discovery.
+    if (block !== entry && open) return null;
     let text = open?.prefix ?? withoutStrings(code(block));
     const boundary = open?.firstCall ?? text.length;
     const choice = choiceRefusal(block);

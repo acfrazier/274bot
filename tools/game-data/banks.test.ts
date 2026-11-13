@@ -13,6 +13,7 @@ try {
         '7=quest_guard', '8=else_guard', '9=members_guard', '10=nested_choice',
         '11=proc_guard', '12=label_guard', '13=approach_teller', '14=approach_misc',
         '15=arbitrary_range_guard', '16=early_return', '17=unsupported_choice',
+        '18=inline_guard',
     ].join('\n') + '\n');
     fs.writeFileSync(path.join(root, 'pack/loc.pack'), '1=crate\n');
     fs.writeFileSync(path.join(root, 'scripts/crate.loc'), '[crate]\nname=Crate\n');
@@ -71,6 +72,9 @@ op3=Bank
 [unsupported_choice]
 name=Keeper
 op1=Talk-to
+[inline_guard]
+name=Keeper
+op3=Bank
 `);
     fs.writeFileSync(path.join(root, 'scripts/banks.rs2'), `
 [apnpc3,_bank_teller]
@@ -137,7 +141,16 @@ switch_int ($choice) {
     case 1 : @renamed_open;
     case 2 : return;
 }
+[opnpc3,inline_guard]
+if (%some_quest >= 5) {
+    inv_transmit(bank, vault:items);
+    if_openmain_side(vault, vault_side);
+}
 [label,renamed_open]
+if (%bankpin_session = 0) {
+    ~unlock_bank_session;
+    return;
+}
 inv_transmit(bank, vault:items);
 if_openmain_side(vault, vault_side);
 `);
@@ -146,7 +159,7 @@ if_openmain_side(vault, vault_side);
     assert.deepEqual(evidence.rows.map(row => [row.id, row.op, row.choose]), [
         [1, 3, null], [2, 3, null], [5, 2, null], [6, 1, 'Use my vault.'],
         [13, 3, null], [14, 3, null],
-    ], 'plain, nested, supported-choice, teller-range, and Miscellania-range paths stay admitted');
+    ], 'plain, nested, supported-choice, and approach-range paths reach the bank procedure despite its shared session guard');
     assert.deepEqual(evidence.refusals.map(({ id, op, reason }) => [id, op, reason]), [
         [7, 3, 'conditional-control-flow'],
         [8, 3, 'conditional-control-flow'],
@@ -157,6 +170,7 @@ if_openmain_side(vault, vault_side);
         [15, 3, 'conditional-control-flow'],
         [16, 3, 'early-return'],
         [17, 1, 'unsupported-choice'],
+        [18, 3, 'conditional-control-flow'],
     ], 'guarded candidates remain visible with their refusal reasons');
     const catalog = [{ name: 'Test bank', tile: { x: 2851, z: 2954, level: 0 }, npcAccess: { name: 'Banker', op: 'Store' } }];
     assert.deepEqual(extractBankPlacements(root, catalog).facts.rows.map(row => row.id), [2]);
@@ -166,11 +180,13 @@ if_openmain_side(vault, vault_side);
     fs.rmSync(root, { recursive: true, force: true });
 }
 
-if (process.env.GAME_DATA_289_CONTENT) {
-    const { rows, refusals } = extractNpcBankAccesses(process.env.GAME_DATA_289_CONTENT);
+for (const revision of [274, 289, 377]) {
+    const content = process.env[`GAME_DATA_${revision}_CONTENT`];
+    if (!content) continue;
+    const { rows, refusals } = extractNpcBankAccesses(content);
     for (const alias of ['shilobanker', 'duel_fadli']) {
         const row = rows.find(candidate => candidate.alias === alias);
-        assert.ok(row, `the selected 289 content admits the ${alias} bank handler`);
+        assert.ok(row, `the selected ${revision} content admits the ${alias} bank handler`);
         assert.equal(row.op, 3);
         assert.equal(row.action, 'Bank');
         assert.equal(row.choose, null);

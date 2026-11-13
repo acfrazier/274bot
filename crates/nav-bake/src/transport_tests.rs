@@ -3242,6 +3242,7 @@ fn inspect_opts() -> nav_planner::router::FindOptions {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        bank_preferences: Default::default(),
         prefer_target_order: false,
         essence: None,
         zones: nav_planner::zones::ZoneExempt::all(),

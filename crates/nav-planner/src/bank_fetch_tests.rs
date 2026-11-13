@@ -925,6 +925,107 @@ fn packed_bank_fetch_walks_to_access_from_customer_streets() {
 }
 
 #[test]
+fn packed_optional_banks_require_their_existing_opt_ins() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let mage = tile(2534, 4714, 0);
+    let fairies = [
+        tile(3150, 9577, 0),
+        tile(3153, 9577, 0),
+        tile(3153, 9579, 0),
+        tile(3154, 9580, 0),
+    ];
+    let mut state = WorldState::empty();
+    state.quests.insert("Lost City".into());
+    let missing = [MissingReq::Carry { id: 995, count: 1 }];
+    for (use_mage_bank, use_zanaris_bank) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let preferences = api::named_banks::BankPreferences {
+            use_mage_bank,
+            use_zanaris_bank,
+        };
+        for (targets, allowed) in [
+            (&[mage][..], use_mage_bank),
+            (&fairies[..], use_zanaris_bank),
+        ] {
+            let stands: Vec<_> = world
+                .banks()
+                .iter()
+                .filter(|stand| targets.contains(&stand.tile))
+                .cloned()
+                .collect();
+            assert_eq!(
+                stands.len(),
+                targets.len(),
+                "real packed optional bank stands"
+            );
+            let from = stands
+                .iter()
+                .find_map(|stand| bank_access_tiles(&world.collision, stand).next())
+                .unwrap();
+            let result = plan_with(
+                &missing,
+                &state,
+                &[(995, 1)],
+                &stands,
+                from,
+                &world.collision,
+                &world.graph,
+                FindOptions {
+                    bank_preferences: preferences,
+                    ..Default::default()
+                },
+                &[],
+            );
+            if allowed {
+                let fetch = result.expect("an enabled real bank is usable from its access tile");
+                assert!(matches!(fetch.steps.first(), Some(BankStep::Walk { .. })));
+                assert_eq!(fetch.state.inv[&995], 1);
+            } else {
+                assert_eq!(result.unwrap_err(), super::BankFetchError::Unavailable);
+            }
+        }
+    }
+    let from = tile(2535, 4713, 0);
+    let collect = |stands: &[BankStand], preferences| {
+        let mut cursor = super::BankFetchCursor::new().with_preferences(preferences);
+        while !cursor.advance(
+            &missing,
+            &state,
+            &[(995, 1)],
+            stands,
+            from,
+            &world.collision,
+        ) {}
+        cursor.access_targets().to_vec()
+    };
+    let pre_fix_domain: Vec<_> = world
+        .banks()
+        .iter()
+        .filter(|stand| stand.tile != mage && !fairies.contains(&stand.tile))
+        .cloned()
+        .collect();
+    assert_eq!(
+        collect(world.banks(), Default::default()),
+        collect(&pre_fix_domain, Default::default()),
+        "both opt-ins off retain the candidate domain before these two banks were added"
+    );
+    let mut cursor = super::BankFetchCursor::new();
+    let allocation = allocation_counter::measure(|| {
+        cursor = std::mem::take(&mut cursor).with_preferences(api::named_banks::BankPreferences {
+            use_mage_bank: true,
+            use_zanaris_bank: true,
+        });
+    });
+    assert_eq!(
+        allocation.count_total, 0,
+        "capturing the opt-ins allocates nothing"
+    );
+}
+
+#[test]
 fn packed_shilo_bank_table_contains_both_content_bankers() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
