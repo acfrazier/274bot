@@ -37,8 +37,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Game client
 
 - On revision 274, the Report abuse form accepts a player's name and shows the
-  correct welcome and mute text. Menu and minimap clicks now follow the game's
-  input order.
+  correct welcome and mute text. Menu and minimap clicks follow the game's input
+  order, and inactive clients follow the game's idle schedule.
 
 
 ### Gatherer
