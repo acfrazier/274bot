@@ -1752,6 +1752,7 @@ if ($progress = 0) {
 }
 `;
     files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+    files['scripts/quests/quest_cook/scripts/complete.rs2'] = '[oploc3,cook_finish]\nif (%cookquest = 1) { %cookquest = ^cook_complete; }\n';
 }
 function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
     const byId = Object.fromEntries(facts.rows.map((row) => [row.id, row]));
@@ -1861,23 +1862,12 @@ for (const [entry, writer, maximum, authoritative] of [
     ['if (%cookquest = 5) { @cook_revisit; }', '1', 5, false],
 ] as const) {
     const root = questFixture((files) => {
-        files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
-if ($progress = 0) {
-    if_setcolour($component, ^red_rgb);
-} else if ($progress >= $complete_progress) {
-    if_setcolour($component, ^green_rgb);
-} else {
-    if_setcolour($component, ^yellow_rgb);
-}
-`;
-        files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+        addCookColourMetadata(files);
         files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[oploc1,cook_start]
 ${entry}
 [label,cook_revisit]
 ~update_questlist;
 %cookquest = ${writer};
-[oploc3,cook_finish]
-if (%cookquest = 0) { %cookquest = ^cook_complete; }
 `;
         if (maximum > 2) {
             files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] += `[oploc2,cook_start]
