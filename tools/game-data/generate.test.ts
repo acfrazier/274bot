@@ -1876,6 +1876,8 @@ ${entry}
 [label,cook_revisit]
 ~update_questlist;
 %cookquest = ${writer};
+[oploc3,cook_finish]
+if (%cookquest = 0) { %cookquest = ^cook_complete; }
 `;
         if (maximum > 2) {
             files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] += `[oploc2,cook_start]
