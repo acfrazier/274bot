@@ -1641,7 +1641,7 @@ globs = ["crates/scenario/src/quest_watch.rs"]
 cells = [
   "host.quest-watch-seed-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUEST_WATCH_ACCOUNT=${BOT_LIVE_NAME_PREFIX:?}qw QUEST_WATCH_PASSWORD=test QUEST_WATCH_SCENARIO=quest_watch_seed QUEST_WATCH_SEED=${PWD}/crates/host-play/tests/fixtures/quest-watch/priest.json ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed",
   "scenario.quest-watch-builder-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib quest_watch::tests:: -- --nocapture --test-threads=1|--locked -p scenario --lib quest_watch::tests:: --",
-  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib --features api/test-support world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib --features api/test-support world_speed --",
 ]
 
 # A live world-speed mutation is forbidden on Engine Q. Controlled runner tests prove exactly one initial command, zero restoration after pass/failure, original terminal result, and unchanged default behavior.
@@ -1650,7 +1650,7 @@ cells = [
 [[cover]]
 globs = ["crates/scenario/src/runner.rs"]
 cells = [
-  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib --features api/test-support world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib --features api/test-support world_speed --",
 ]
 
 # Exact shortage and once-only status text require controlled inventory/bank evidence; real provisioning cells do not deterministically force both shortages.
