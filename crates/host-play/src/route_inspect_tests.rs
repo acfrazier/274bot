@@ -162,6 +162,7 @@ fn req(from: WorldTile, to: WorldTile, request_id: u64) -> InspectRequest {
         avoid: Vec::new(),
         request_id,
         invalid_args: false,
+        state_capture_failed: false,
     }
 }
 
@@ -1401,6 +1402,36 @@ fn invalid_args_and_missing_graph() {
             .unwrap()
             .reason,
         "missing-graph"
+    );
+}
+
+#[test]
+fn state_capture_failure_is_spawn_failed() {
+    let world = Some(world_with(TransportGraph::default(), vec![]));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let mut request = req(tile(0, 0, 0), tile(1, 1, 0), 53);
+    request.state_capture_failed = true;
+    queue_inspect_shared(
+        &navs,
+        "p",
+        &world,
+        None,
+        BankRows::default(),
+        None,
+        None,
+        request,
+    );
+    assert_eq!(
+        navs.lock()
+            .unwrap()
+            .get("p")
+            .unwrap()
+            .inspect
+            .latest
+            .as_ref()
+            .unwrap()
+            .reason,
+        "spawn-failed"
     );
 }
 
