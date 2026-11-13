@@ -39,6 +39,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - On revision 274, the Report abuse form accepts a player's name and shows the
   welcome text and mute option. Menu and minimap clicks carry out the selected
   action.
+- On revision 274, the Report abuse form accepts typed names and displays the
+  correct welcome and mute text. Mouse movement and menu/minimap clicks now
+  follow the game's input order.
+
 
 ### Gatherer
 
