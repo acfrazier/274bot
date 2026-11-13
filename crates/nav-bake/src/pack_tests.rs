@@ -2117,6 +2117,15 @@ fn v8_roundtrips_bank_stands() {
     assert!(g.edges.is_empty());
 }
 
+fn write_bank_npc_fixture(dir: &std::path::Path, rows: &str) {
+    std::fs::create_dir_all(dir.join("289")).unwrap();
+    std::fs::write(
+        dir.join("289/bank_npcs.json"),
+        format!(r#"{{"schema":1,"revision":289,"facts":{{"rows":{rows}}}}}"#),
+    )
+    .unwrap();
+}
+
 #[test]
 fn bake_emits_bankbooth_use_quickly_only() {
     // The bake derives booth stands from the same content loc pass as
@@ -2143,7 +2152,8 @@ fn bake_emits_bankbooth_use_quickly_only() {
             "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n0 12 32: 2213 10 1\n0 13 32: 2215 10 1\n0 14 32: 3045 10 1\n",
         )
         .unwrap();
-    let banks = derive_banks(&dir);
+    write_bank_npc_fixture(&dir, "[]");
+    let banks = derive_banks(&dir, &dir, 289).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(
         banks.len(),
@@ -2163,10 +2173,8 @@ fn bake_emits_bankbooth_use_quickly_only() {
 }
 
 #[test]
-fn bake_emits_bank_teller_npc_stands_and_skips_non_tellers() {
-    // NPC tellers (`category=bank_teller`) join from jm2 NPC placements.
-    // Closed/tutorial booths still stay out; a goblin without the
-    // category does not become a stand.
+fn bake_emits_derived_bank_npc_stands_and_skips_non_banks() {
+    // Only content-derived NPC identities join the placement table.
     let dir = std::env::temp_dir().join(format!("274bot-nav-banks-npc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     for sub in [
@@ -2204,7 +2212,11 @@ fn bake_emits_bank_teller_npc_stands_and_skips_non_tellers() {
         "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n0 12 32: 2213 10 1\n0 13 32: 2215 10 1\n0 14 32: 3045 10 1\n==== NPC ====\n0 20 21: 1036\n0 22 22: 1\n",
     )
     .unwrap();
-    let banks = derive_banks(&dir);
+    write_bank_npc_fixture(
+        &dir,
+        r#"[{"id":1036,"name":"Banker","op":3,"choose":null}]"#,
+    );
+    let banks = derive_banks(&dir, &dir, 289).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(banks.len(), 2, "booth + teller, not closed/tutorial/goblin");
     assert_eq!(banks[0].name, "Bank booth");
@@ -2256,7 +2268,11 @@ fn bake_emits_bank_teller_when_the_tree_has_no_booths() {
         "==== MAP ====\n==== LOC ====\n==== NPC ====\n0 20 21: 1036\n",
     )
     .unwrap();
-    let banks = derive_banks(&dir);
+    write_bank_npc_fixture(
+        &dir,
+        r#"[{"id":1036,"name":"Banker","op":3,"choose":null}]"#,
+    );
+    let banks = derive_banks(&dir, &dir, 289).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(banks.len(), 1, "tellers still pack without a bankbooth loc");
     assert_eq!(
