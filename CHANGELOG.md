@@ -34,6 +34,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - 377 trail challenge answers now fail generation when the decoded value
   disagrees with the final selected content parameter.
 
+### Game client
+
+- On revision 274, the Report abuse form accepts a player's name and shows the
+  welcome text and mute option. Menu and minimap clicks carry out the selected
+  action.
+
 ### Gatherer
 
 - The Iron option now covers two methods: regular iron rocks keep their fast
