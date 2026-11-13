@@ -1025,7 +1025,8 @@ const MAGE_CELLAR: WorldTile = WorldTile {
 };
 const MAGE_BANK_NAME: &str = "Mage Arena";
 const MAGE_NPC_NAME: &str = "Gundai";
-const MAGE_BANK_CHOICE: &str = "I'd like to access my bank account";
+// Source: content/scripts/areas/area_mage_arena/scripts/gundai.rs2:5.
+const MAGE_BANK_CHOICE: &str = "Cool, I'd like to access my bank account please.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TellerOutcome {
@@ -1564,6 +1565,100 @@ fn validate_teller_trace(trace: &TellerTrace) -> Result<(), String> {
         ))
     }
 }
+
+#[cfg(test)]
+mod teller_oracle_tests {
+    use super::*;
+
+    fn complete_trace() -> TellerTrace {
+        TellerTrace {
+            started_at: Some(tile_tuple(MAGE_CELLAR)),
+            selected_bank: Some(MAGE_BANK_NAME.to_owned()),
+            selected_kind: Some("Candidate".to_owned()),
+            access_kind: Some("npc".to_owned()),
+            access_npc: Some(MAGE_NPC_NAME.to_owned()),
+            access_choice: Some(MAGE_BANK_CHOICE.to_owned()),
+            access_operation: Some("Talk-to".to_owned()),
+            access_op_code: Some(1),
+            access_tile: Some([2534, 4713, 0]),
+            open_loaded: true,
+            inventory_law_before: Some(1),
+            bank_law_before: Some(5),
+            deposited: Some(1),
+            inventory_law_after_deposit: Some(0),
+            bank_law_after_deposit: Some(6),
+            withdrew_complete: Some(true),
+            inventory_law_after_withdraw: Some(1),
+            bank_law_after_withdraw: Some(5),
+            closed_observed: true,
+            final_tile: Some(tile_tuple(MAGE_CELLAR)),
+            final_bank_open: Some(false),
+            final_inventory_law: Some(1),
+            live_tile: Some(tile_tuple(MAGE_CELLAR)),
+            live_bank_open: Some(false),
+            live_inventory_law: Some(1),
+            failure: None,
+            outcome: Some(TellerOutcome::Passed),
+        }
+    }
+
+    fn assert_rejected(name: &str, trace: TellerTrace) {
+        assert!(
+            validate_teller_trace(&trace).is_err(),
+            "teller oracle accepted {name}: {trace:#?}"
+        );
+    }
+
+    #[test]
+    fn mage_teller_oracle_accepts_content_choice_and_complete_receipt() {
+        let trace = complete_trace();
+        assert_eq!(trace.outcome, Some(TellerOutcome::Passed));
+        assert_eq!(trace.live_tile, trace.final_tile);
+        assert_eq!(trace.live_bank_open, Some(false));
+        assert_eq!(trace.live_inventory_law, Some(1));
+        validate_teller_trace(&trace).expect("correct Mage Arena teller receipt");
+    }
+
+    #[test]
+    fn mage_teller_oracle_rejects_named_wrong_outcomes() {
+        let mut trace = complete_trace();
+        trace.selected_bank = Some("Falador East".to_owned());
+        assert_rejected("wrong bank name", trace);
+
+        let mut trace = complete_trace();
+        trace.access_npc = Some("Banker".to_owned());
+        assert_rejected("wrong NPC name", trace);
+
+        let mut trace = complete_trace();
+        trace.access_operation = Some("Bank".to_owned());
+        assert_rejected("wrong NPC operation instead of Talk-to", trace);
+
+        let mut trace = complete_trace();
+        trace.access_choice = Some("I'd like to access my bank account".to_owned());
+        assert_rejected("stale catalogue choice", trace);
+
+        let mut trace = complete_trace();
+        trace.started_at = Some([2534, 4714, 0]);
+        assert_rejected("wrong session start", trace);
+
+        let mut trace = complete_trace();
+        trace.deposited = Some(0);
+        assert_rejected("unsuccessful deposit", trace);
+
+        let mut trace = complete_trace();
+        trace.withdrew_complete = Some(false);
+        assert_rejected("incomplete withdrawal", trace);
+
+        let mut trace = complete_trace();
+        trace.final_bank_open = Some(true);
+        assert_rejected("bank left open", trace);
+
+        let mut trace = complete_trace();
+        trace.final_inventory_law = Some(0);
+        assert_rejected("missing final law rune", trace);
+    }
+}
+
 type TellerProfile = (
     Arc<super::ServerProfile>,
     Arc<SharedClientTemplate>,
@@ -1644,13 +1739,10 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
     let npc = definition
         .npc
         .ok_or("Mage Arena bank definition has no teller NPC")?;
-    if npc.name != MAGE_NPC_NAME
-        || npc.op != "Talk-to"
-        || definition.choose != Some(MAGE_BANK_CHOICE)
-    {
+    // Native dialogue comes from the packed access, not catalogue wording.
+    if npc.name != MAGE_NPC_NAME || npc.op != "Talk-to" {
         return Err(format!(
-            "unexpected Mage Arena teller metadata: npc={npc:?} choose={:?}",
-            definition.choose
+            "unexpected Mage Arena teller metadata: npc={npc:?}"
         ));
     }
     Ok((profile, template, selected, facts))

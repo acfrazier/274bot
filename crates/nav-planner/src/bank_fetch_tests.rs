@@ -924,6 +924,202 @@ fn packed_bank_fetch_walks_to_access_from_customer_streets() {
     }
 }
 
+#[test]
+fn packed_optional_banks_require_their_existing_opt_ins() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let mage = tile(2534, 4714, 0);
+    let fairies = [
+        tile(3150, 9577, 0),
+        tile(3153, 9577, 0),
+        tile(3153, 9579, 0),
+        tile(3154, 9580, 0),
+    ];
+    let mut state = WorldState::empty();
+    state.quests.insert("Lost City".into());
+    let missing = [MissingReq::Carry { id: 995, count: 1 }];
+    for (use_mage_bank, use_zanaris_bank) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let preferences = api::named_banks::BankPreferences {
+            use_mage_bank,
+            use_zanaris_bank,
+        };
+        for (targets, allowed) in [
+            (&[mage][..], use_mage_bank),
+            (&fairies[..], use_zanaris_bank),
+        ] {
+            let stands: Vec<_> = world
+                .banks()
+                .iter()
+                .filter(|stand| targets.contains(&stand.tile))
+                .cloned()
+                .collect();
+            assert_eq!(
+                stands.len(),
+                targets.len(),
+                "real packed optional bank stands"
+            );
+            let from = stands
+                .iter()
+                .find_map(|stand| bank_access_tiles(&world.collision, stand).next())
+                .unwrap();
+            let result = plan_with(
+                &missing,
+                &state,
+                &[(995, 1)],
+                &stands,
+                from,
+                &world.collision,
+                &world.graph,
+                FindOptions {
+                    bank_preferences: preferences,
+                    ..Default::default()
+                },
+                &[],
+            );
+            if allowed {
+                let fetch = result.expect("an enabled real bank is usable from its access tile");
+                assert!(matches!(fetch.steps.first(), Some(BankStep::Walk { .. })));
+                assert_eq!(fetch.state.inv[&995], 1);
+            } else {
+                assert_eq!(result.unwrap_err(), super::BankFetchError::Unavailable);
+            }
+        }
+    }
+    let from = tile(2535, 4713, 0);
+    let collect = |stands: &[BankStand], preferences| {
+        let mut cursor = super::BankFetchCursor::new().with_preferences(preferences);
+        while !cursor.advance(
+            &missing,
+            &state,
+            &[(995, 1)],
+            stands,
+            from,
+            &world.collision,
+        ) {}
+        cursor.access_targets().to_vec()
+    };
+    let pre_fix_domain: Vec<_> = world
+        .banks()
+        .iter()
+        .filter(|stand| stand.tile != mage && !fairies.contains(&stand.tile))
+        .cloned()
+        .collect();
+    assert_eq!(
+        collect(world.banks(), Default::default()),
+        collect(&pre_fix_domain, Default::default()),
+        "both opt-ins off retain the candidate domain before these two banks were added"
+    );
+    let mut cursor = super::BankFetchCursor::new();
+    let allocation = allocation_counter::measure(|| {
+        cursor = std::mem::take(&mut cursor).with_preferences(api::named_banks::BankPreferences {
+            use_mage_bank: true,
+            use_zanaris_bank: true,
+        });
+    });
+    assert_eq!(
+        allocation.count_total, 0,
+        "capturing the opt-ins allocates nothing"
+    );
+}
+
+#[test]
+fn packed_shilo_bank_table_contains_both_content_bankers() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    for expected in [tile(2851, 2954, 0), tile(2853, 2955, 0)] {
+        assert!(world.banks().iter().any(|stand| {
+            stand.tile == expected
+                && matches!(&stand.access, BankAccess::Npc { name, op: 3, choose: None } if name == "Banker")
+        }), "packed Shilo bank must include the content banker at {expected:?}");
+    }
+}
+
+#[test]
+fn packed_shilo_bank_fetch_uses_npc_access_without_held_coins() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let shilo_tiles = [tile(2851, 2954, 0), tile(2853, 2955, 0)];
+    let shilo_stands: Vec<_> = world
+        .banks()
+        .iter()
+        .filter(|stand| {
+            shilo_tiles.contains(&stand.tile)
+                && matches!(&stand.access, BankAccess::Npc { name, op: 3, choose: None } if name == "Banker")
+        })
+        .collect();
+    let shilo_origin = crate::transport::SHILO_CART_ROUTES
+        .iter()
+        .find(|route| route.npc_id() == 511)
+        .expect("the original Shilo cart origin")
+        .origin();
+    let from = (0..=8)
+        .flat_map(|ring: i32| {
+            (-ring..=ring).flat_map(move |dx| {
+                (-ring..=ring)
+                    .filter(move |dz| dx.abs().max(dz.abs()) == ring)
+                    .map(move |dz| {
+                        tile(shilo_origin.x + dx, shilo_origin.z + dz, shilo_origin.level)
+                    })
+            })
+        })
+        .find(|&candidate| world.collision.standable(candidate))
+        .expect("a standable origin near the original Shilo cart origin");
+    let state = WorldState::empty();
+    assert_eq!(
+        state.inv.get(&995).copied().unwrap_or_default(),
+        0,
+        "the traveller starts with no held coins"
+    );
+    let fetch = plan_with(
+        &[MissingReq::Carry {
+            id: 995,
+            count: 100,
+        }],
+        &state,
+        &[(995, 100)],
+        world.banks(),
+        from,
+        &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
+    )
+    .expect("the packed Shilo bank supplies a 100-coin withdrawal");
+    let BankStep::Walk { x, z, level } = fetch.steps[0] else {
+        panic!("a bank fetch from inside Shilo starts with a Walk");
+    };
+    let access = tile(x, z, level);
+    assert!(
+        shilo_stands.iter().copied().any(|stand| {
+            bank_access_tiles(&world.collision, stand).any(|candidate| candidate == access)
+        }),
+        "planned access {access:?} must belong to a packed Shilo NPC bank stand"
+    );
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        access,
+        FindOptions::default(),
+        &state,
+    )
+    .expect("the selected Shilo access is strictly reachable before withdrawal");
+    assert_eq!(route.dest, access);
+    assert!(
+        fetch.steps.contains(&BankStep::Withdraw {
+            id: 995,
+            count: 100,
+        }),
+        "the bank fetch withdraws the full 100 coins"
+    );
+    assert_eq!(fetch.state.inv.get(&995).copied(), Some(100));
+}
+
 fn rows(origin: Origin, rows: &[(i32, i32)]) -> BankRows {
     BankRows {
         origin,

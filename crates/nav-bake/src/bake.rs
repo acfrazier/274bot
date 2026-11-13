@@ -1318,9 +1318,12 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         notes.push(format!("omitted non-transmitted varp-gated edges without a unique completed journal proof: {omitted:?}"));
     }
 
-    // The bank stand table from the same content tree (every `bankbooth`
-    // placement with Use-quickly, plus `category=bank_teller` NPC stands).
-    let banks = derive_banks(content_root);
+    // NPC access comes from the same content-derived facts as named-bank placements.
+    let banks = derive_banks(
+        content_root,
+        request.game_data_dir,
+        request.revision.unwrap_or(274),
+    )?;
 
     let bank_zones_path = content_root.join(BANK_ZONES_REL);
     let bank_zones_bytes = std::fs::read(&bank_zones_path).map_err(|source| {

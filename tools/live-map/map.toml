@@ -144,6 +144,9 @@ globs = [
   # Exact offline producer/template paths. README's final-head pack, corpus
   # and affected-cell rule applies; no generated-route proof is waived.
   "crates/nav-bake/src/bin/nav-pack.rs",
+  # Offline bank-stand producer, not a live action path. Fresh packs and the
+  # route corpus prove its output; the required bank cells exercise new stands.
+  "crates/nav-bake/src/pack/banks.rs",
   "crates/nav-bake/src/transport/engine_obstacle_procs.rs2",
   "crates/nav-bake/src/transport/legends.rs",
   "crates/nav-bake/src/transport/legends_axe_template.rs2",

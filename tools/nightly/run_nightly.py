@@ -1616,6 +1616,8 @@ LOCAL_DATA_REQUIRED_OUTPUTS = (
     Path("crates/api/data/game-data/289/quests.json"),
     Path("crates/api/data/game-data/274/gathering.json"),
     Path("crates/api/data/game-data/289/gathering.json"),
+    Path("crates/api/data/game-data/274/bank_npcs.json"),
+    Path("crates/api/data/game-data/289/bank_npcs.json"),
     Path("crates/api/data/game-data/289/prereq_steps.json"),
     Path("crates/api/data/game-data/bank-catalog.json"),
     Path("crates/api/data/game-data/cook-catalog.json"),

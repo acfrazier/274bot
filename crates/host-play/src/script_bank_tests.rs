@@ -123,6 +123,13 @@ export async function tick(api) {{
                 other => panic!("Load start failed: {other:?}"),
             }
         }
+        assert_eq!(
+            slot.bank_preferences(),
+            api::named_banks::BankPreferences {
+                use_mage_bank: defaults,
+                use_zanaris_bank: defaults,
+            }
+        );
         slot.on_is_up(true);
         let navs = navs(banks);
         let world = Some(world(false));
@@ -787,6 +794,62 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
     assert_eq!(access.kind, NativeAccessKind::Booth);
     assert_eq!(access.name.as_deref(), Some("Shantay chest"));
     assert_eq!(access.stand_op, 0);
+}
+
+#[test]
+fn native_bank_access_uses_packed_gundai_stand_choice() {
+    if std::env::var_os("NAV_PACK").is_none() {
+        eprintln!("SKIP: NAV_PACK is not set");
+        return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "branch nav pack with the packed Gundai stand",
+    ) else {
+        return;
+    };
+    let world = NavWorld::load_pack(&path).expect("branch nav pack");
+    let gundai_tile = tile(2534, 4714);
+    let packed_gundai = world
+        .banks()
+        .iter()
+        .find(|stand| stand.tile == gundai_tile)
+        .expect("branch nav pack contains the packed Gundai stand");
+    match &packed_gundai.access {
+        nav_planner::pack::BankAccess::Npc { name, op, choose } => {
+            assert_eq!(name.as_str(), "Gundai");
+            assert_eq!(*op, 1);
+            assert_eq!(
+                choose.as_deref(),
+                Some("Cool, I'd like to access my bank account please.")
+            );
+        }
+        access => panic!("packed Gundai stand is not NPC access: {access:?}"),
+    }
+
+    let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
+    let definition = catalog
+        .iter()
+        .find(|definition| definition.name == "Mage Arena")
+        .expect("Mage Arena bank definition");
+    let mage_bank = api::named_banks::NamedBank {
+        name: definition.name,
+        tile: definition.tile,
+        definition: Some(definition),
+        routable: true,
+    };
+    let (access_tiles, access) =
+        native_bank_access(&world, mage_bank).expect("native access to packed Gundai stand");
+    assert!(!access_tiles.is_empty());
+    assert_eq!(access.stand_tile, gundai_tile);
+    assert_eq!(access.kind, NativeAccessKind::Teller);
+    assert_eq!(access.name.as_deref(), Some("Gundai"));
+    assert_eq!(access.stand_op, 1);
+    assert_eq!(
+        access.choose.as_deref(),
+        Some("Cool, I'd like to access my bank account please.")
+    );
 }
 
 #[test]

@@ -72,8 +72,9 @@ cargo run --locked -p nav-bake --bin nav-pack -- \
 
 `--cache` supplies the local client-cache directory. Revisions 289 and 377 read
 its `config`. Revision 274 reads the server `config` beside that directory.
-Nav-pack also reads the generated `<revision>.json` and
-`<revision>/quests.json` files. It writes all five payloads beside `--out`.
+Nav-pack also reads the generated `<revision>.json`,
+`<revision>/quests.json`, and `<revision>/bank_npcs.json` files.
+It writes all five payloads beside `--out`.
 Use `--flags-out`, `--reach-out`, `--canlight-out`, and `--pois-out` only to
 select different sidecar paths.
 

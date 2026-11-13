@@ -34,18 +34,17 @@
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.
 //! 4. `live_fetch_closed_hero_guild_post_bank`: an independent fresh account
-//!    with 100 bank coins and the quest stages `zanaris=6`, `dragon=10`,
-//!    `arthur=7`, `black=4`, and `heroquest=15`.
+//!    with 100 bank coins and the selected prerequisites `zombiequeen=15`,
+//!    `zanaris=6`, `dragon=10`, `arthur=7`, `black=4`, and `heroquest=15`.
 //!    Attack, Strength, Defence, and Hitpoints start at 30 so ordinary road
 //!    NPC danger does not block this fare-and-quest proof.
 //!    After a real Draynor open/close, the cell reads back `heroquest`, logs
 //!    out and relogs, and requires Hero's Quest green on a stable fresh-login
-//!    snapshot. It then starts in Al Kharid with no held coins and calls
-//!    compat `Traversal.walkTo` with the public `avoidZones` option. The
-//!    rectangles only remove free routes so the route needs the 10-coin toll.
-//!    The bank session must finish, and the resumed route must cross the real
-//!    Hero's Quest Window[15,15] edge with captured gate truth `True`;
-//!    90 coins remain banked.
+//!    snapshot. It then starts at the selected Shilo cart origin and sends
+//!    one Load-script `walk-near` with bank fetch enabled to the selected
+//!    Heroes' Guild interior. The fare bank session must finish, and the
+//!    resumed route must cross the selected real Hero's Quest Window[15,15]
+//!    edge with captured gate truth `True`; 60 coins remain banked.
 //!
 //! The two manual WalkTo cells also compile without JS. The solid-radius and
 //! Heroes' Guild Load cells require the `js` feature.
@@ -96,6 +95,7 @@ const HERO_GUILD_SEED: &[&str] = &[
     "setstat strength 30",
     "setstat defence 30",
     "setstat hitpoints 30",
+    "setvar zombiequeen 15",
     "setvar zanaris 6",
     "setvar dragon 10",
     "setvar arthur 7",
@@ -104,7 +104,7 @@ const HERO_GUILD_SEED: &[&str] = &[
 ];
 /// The bank's coins after the Session, stale-hint, solid-radius, and guild
 /// post-bank route cells.
-const BANKED_AFTER: [i32; 4] = [70, 40, 10, 90];
+const BANKED_AFTER: [i32; 4] = [70, 40, 10, 60];
 const CELL_BOUND: Duration = Duration::from_secs(600);
 const SAVE_GRACE: Duration = Duration::from_secs(15);
 const LOGOUT_DEADLINE: Duration = Duration::from_secs(120);
@@ -120,12 +120,6 @@ const PORT_SARIM: WorldTile = WorldTile {
 const KARAMJA: WorldTile = WorldTile {
     x: 2954,
     z: 3147,
-    level: 0,
-};
-#[cfg(feature = "js")]
-const AL_KHARID: WorldTile = WorldTile {
-    x: 3290,
-    z: 3180,
     level: 0,
 };
 /// West of the selected guild doors; incoming mainland travel must cross one.
@@ -204,32 +198,24 @@ export function tick(api) {{
         level = target.level,
     )
 }
-// `avoidZones` is public: compat-js/index.d.ts:4514-4515 and
-// docs/api/script.md:2072-2081. These rectangles only remove free routes so
-// the route needs the 10-coin Al Kharid toll. They change no route data.
 #[cfg(feature = "js")]
 fn hero_guild_walk_script(target: WorldTile) -> String {
     format!(
-        r#"import {{ Traversal }} from '../../api/walking/Traversal.js';
-globalThis.__sent = false;
-export default class HeroGuildBankWalk extends LoopingBot {{
-  async loop() {{
-    if (globalThis.__sent) return;
-    globalThis.__sent = true;
-    const walked = await Traversal.walkTo(
-      {{ x: {x}, z: {z}, level: {level} }},
-      {{
-        radius: 0,
-        timeoutMs: 300000,
-        useTeleportCatalog: false,
-        avoidZones: [
-          {{ minX: 3268, maxX: 3268, minZ: 0, maxZ: 3226 }},
-          {{ minX: 3268, maxX: 3268, minZ: 3229, maxZ: 16383 }},
-        ],
-      }},
-    );
-    if (!walked) throw new Error('post-bank Heroes Guild walk failed');
-  }}
+        r#"export const apiVersion = 2;
+export function tick(api) {{
+  if (globalThis.__sent) return;
+  if (api.snapshot.ingame !== true || api.snapshot.here == null) return;
+  globalThis.__sent = true;
+  api.request({{
+    op: 'walk-near',
+    x: {x},
+    z: {z},
+    level: {level},
+    radius: 0,
+    allow_teleports: false,
+    allow_wilderness: false,
+    allow_bank_fetch: true,
+  }});
 }}
 "#,
         x = target.x,
@@ -272,8 +258,13 @@ impl Variant {
     fn expected_withdraw(self) -> i32 {
         #[cfg(feature = "js")]
         if self == Self::HeroGuildPostBank {
-            // border_gate.rs2:47-54 requires and consumes 10 coins.
-            return 10;
+            return nav_planner::transport::SHILO_CART_ROUTES
+                .iter()
+                .find(|route| route.npc_id() == 511)
+                .expect("the selected Shilo cart route")
+                .minimum_fare()
+                .1
+                + FARE;
         }
         FARE
     }
@@ -300,6 +291,7 @@ struct FetchTrace {
     arm_walk_outcome_target: Option<[i32; 3]>,
     planned_steps: Option<Vec<String>>,
     planned_withdraw: Option<i32>,
+    selected_fetch_bank: Option<String>,
     /// The armed route's legs: walk spans and transport hops (the
     /// solid-radius cell: the session's post-session route).
     route_legs: Option<Vec<String>>,
@@ -698,6 +690,25 @@ fn fare_trip(steps: &[BankStep], fare: i32) -> (bool, Option<i32>) {
         && steps.last() == Some(&BankStep::Close);
     (shape && withdraw == Some(fare), withdraw)
 }
+#[cfg(feature = "js")]
+fn selected_fetch_bank(world: &NavWorld, steps: &[BankStep]) -> Option<String> {
+    let access = steps.iter().find_map(|step| match step {
+        BankStep::Walk { x, z, level } => Some(WorldTile {
+            x: *x,
+            z: *z,
+            level: *level,
+        }),
+        _ => None,
+    })?;
+    let stand = world
+        .banks()
+        .iter()
+        .find(|stand| nav_planner::bank_fetch::is_bank_access(&world.collision, stand, access))?;
+    Some(format!(
+        "{} at {:?} via access {:?}",
+        stand.name, stand.tile, access
+    ))
+}
 
 #[allow(clippy::too_many_arguments)] // the frame closure's handles, as the panel's per-frame pump
 fn pump_frame(
@@ -868,11 +879,15 @@ fn run_cell(variant: Variant) {
         guard.solid_radius = Some(SOLID_RADIUS);
     }
     #[cfg(feature = "js")]
+    let shilo_cart_origin = nav_planner::transport::SHILO_CART_ROUTES
+        .iter()
+        .find(|route| route.npc_id() == 511)
+        .expect("the selected Shilo cart route")
+        .origin();
+    #[cfg(feature = "js")]
+    let shilo_start = standable_near(&world, shilo_cart_origin);
+    #[cfg(feature = "js")]
     if variant == Variant::HeroGuildPostBank {
-        assert!(
-            world.collision.standable(AL_KHARID),
-            "the Al Kharid account origin is standable"
-        );
         assert!(
             world.collision.standable(HEROES_GUILD_INSIDE),
             "the destination is inside the selected Heroes' Guild"
@@ -884,7 +899,7 @@ fn run_cell(variant: Variant) {
     }
     let start_tile = match variant {
         #[cfg(feature = "js")]
-        Variant::HeroGuildPostBank => AL_KHARID,
+        Variant::HeroGuildPostBank => shilo_start,
         _ => PORT_SARIM,
     };
     let goal = match variant {
@@ -924,7 +939,7 @@ fn run_cell(variant: Variant) {
             "radius": 0,
             "from": [start_tile.x, start_tile.z, start_tile.level],
             "allow_bank_fetch": true,
-            "owner": "compat Traversal.walkTo; the host's post-bank route replan",
+            "owner": "Load script (apiVersion 2) isolate walk-near; the post-bank route replan",
             "script": hero_guild_walk_script(goal),
         }),
         Variant::Session | Variant::StaleNegative => serde_json::json!({
@@ -1181,7 +1196,7 @@ fn run_cell(variant: Variant) {
                                     }
                                 }
                                 Err(refusal) => {
-                                    fail(format!("the Al Kharid route-start teleport: {refusal}"))
+                                    fail(format!("the Shilo route-start teleport: {refusal}"))
                                 }
                             }
                         }
@@ -1255,14 +1270,9 @@ fn run_cell(variant: Variant) {
                         variant,
                         Variant::StaleSolidRadius | Variant::HeroGuildPostBank
                     ) {
-                        let (script, shape) = match variant {
-                            Variant::StaleSolidRadius => {
-                                (solid_walk_script(solid), script_js::LoadShape::NativeTick)
-                            }
-                            Variant::HeroGuildPostBank => (
-                                hero_guild_walk_script(goal),
-                                script_js::LoadShape::CompatClass,
-                            ),
+                        let script = match variant {
+                            Variant::StaleSolidRadius => solid_walk_script(solid),
+                            Variant::HeroGuildPostBank => hero_guild_walk_script(goal),
                             _ => unreachable!("only script-walk variants enter this arm"),
                         };
                         let previous = script_walk(&play, &account, &world);
@@ -1273,7 +1283,13 @@ fn run_cell(variant: Variant) {
                             guard.arm_walk_outcome_failed = Some(previous.failed);
                             guard.arm_walk_outcome_target = previous.outcome_target;
                         }
-                        match play.script_start_load(&account, script, shape, None, vec![]) {
+                        match play.script_start_load(
+                            &account,
+                            script,
+                            script_js::LoadShape::NativeTick,
+                            None,
+                            vec![],
+                        ) {
                             Ok(_) => {
                                 play.wake(&account);
                                 stage = Stage::AwaitPlan {
@@ -1366,11 +1382,21 @@ fn run_cell(variant: Variant) {
                     let walk = script_walk(&play, &account, &world);
                     if let Some(steps) = walk.steps {
                         let (trip, withdraw) = fare_trip(&steps, variant.expected_withdraw());
+                        let fetch_bank = if hero_guild {
+                            selected_fetch_bank(&world, &steps)
+                        } else {
+                            None
+                        };
+                        if hero_guild && fetch_bank.is_none() {
+                            fail("the bank-fetch route did not identify its selected bank".into());
+                            continue;
+                        }
                         {
                             let mut guard = trace.lock();
                             guard.planned_steps =
                                 Some(steps.iter().map(|step| format!("{step:?}")).collect());
                             guard.planned_withdraw = withdraw;
+                            guard.selected_fetch_bank = fetch_bank;
                             guard.route_legs = walk.final_route;
                         }
                         if trip {

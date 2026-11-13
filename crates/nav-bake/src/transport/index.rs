@@ -20,11 +20,6 @@ pub(crate) fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
     pack_ids_by_name(content_root, "loc.pack")
 }
 
-/// `pack/npc.pack` id→name lines → name → id (bank-teller bake).
-pub(crate) fn npc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
-    pack_ids_by_name(content_root, "npc.pack")
-}
-
 /// `pack/obj.pack` id→name lines → name → id (the spell-rune and jewellery
 /// item id map).
 pub(super) fn obj_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
@@ -255,11 +250,6 @@ pub(super) fn parse_jm2_npcs(text: &str, mx: i32, mz: i32) -> Vec<NpcPlacement> 
 /// Every `.loc` config text under `scripts`, recursively.
 pub(crate) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
     visit_configs(dir, "loc", cb);
-}
-
-/// Every `.npc` config text under `scripts`, recursively.
-pub(crate) fn visit_npc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
-    visit_configs(dir, "npc", cb);
 }
 
 /// Every `.<ext>` config text under `dir`, recursively.

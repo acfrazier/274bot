@@ -5159,6 +5159,72 @@ fn in_place_load_rig() -> Rig {
 
 #[cfg(feature = "js")]
 #[test]
+fn bank_trip_options_capture_the_existing_script_bank_preferences() {
+    for (mage, zanaris) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut rig = open_rig(false);
+        rig.slot().lock().unwrap().stop();
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                "bank trip preferences",
+                "export const apiVersion = 2; export function tick(api) {}".into(),
+                script_js::LoadShape::NativeTick,
+                Vec::new(),
+            ),
+            serde_json::json!({"useMageBank": mage, "useZanarisBank": zanaris})
+                .as_object()
+                .cloned()
+                .map(Arc::new),
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        {
+            let slot = rig.slot();
+            let mut slot = slot.lock().unwrap();
+            slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
+            slot.start_surface_with_settings(start).unwrap();
+        }
+        rig.slot().lock().unwrap().probe("true").unwrap();
+        rig.observe(1);
+        let expected = api::named_banks::BankPreferences {
+            use_mage_bank: mage,
+            use_zanaris_bank: zanaris,
+        };
+        assert_eq!(rig.navs.lock().unwrap()["alice"].bank_preferences, expected);
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: rig.world.clone(),
+            navs: Arc::clone(&rig.navs),
+            name: "alice".into(),
+            state: None,
+            bank: BankRows::default(),
+        };
+        assert!(arm.queue_route_in_snapshot(
+            &rig.snapshot,
+            4,
+            0,
+            0,
+            nav_planner::router::FindOptions {
+                allow_bank_fetch: true,
+                zones: nav_planner::zones::ZoneExempt::all(),
+                ..Default::default()
+            },
+            0,
+            true,
+            1,
+        ));
+        let bots = rig.navs.lock().unwrap();
+        let Some(crate::script_runtime::RouteDemand::Pending { request, .. }) =
+            bots["alice"].pending_route.as_deref()
+        else {
+            panic!("bank trip request must be queued");
+        };
+        assert_eq!(request.opts.bank_preferences, expected);
+    }
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     if !api::test_support::game_data_available() {
         return;

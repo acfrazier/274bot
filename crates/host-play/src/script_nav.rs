@@ -2432,7 +2432,8 @@ impl RouteJob {
                 self.plan_item_limit(),
                 self.request.world.banks().len(),
             )
-            .ok_or(RouteJobError::Budget)?,
+            .ok_or(RouteJobError::Budget)?
+            .with_preferences(self.request.opts.bank_preferences),
         );
         self.bank_plan_capture_step = 0;
         self.bank_undo_reserved = false;
@@ -5108,6 +5109,7 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
+    pub(crate) bank_preferences: api::named_banks::BankPreferences,
     pub(crate) compat_v1: bool,
     /// The held runtime-net setting was reported during this session.
     pub(crate) runtime_gate_logged: bool,
@@ -5607,6 +5609,12 @@ impl ScriptWalkArm {
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
+        options.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let empty = WorldState::empty();
         let state = self.state.as_deref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
@@ -6273,7 +6281,7 @@ impl ScriptWalkArm {
         x: i32,
         z: i32,
         level: i32,
-        opts: FindOptions,
+        mut opts: FindOptions,
         radius: i32,
         retarget: bool,
         request_id: u64,
@@ -6290,6 +6298,12 @@ impl ScriptWalkArm {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
         }
+        opts.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
             log_walk_arm(&self.name, || {

@@ -55,8 +55,7 @@ use gates::*;
 use gliders::*;
 use index::*;
 pub(crate) use index::{
-    loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
-    visit_npc_configs, Placement,
+    loc_ids_by_name, loc_positions, npc_positions, visit_loc_configs, Placement,
 };
 use legends::*;
 use levers::*;

@@ -57,6 +57,7 @@ import './extractors/prereq-steps.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
+import './banks.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 import { extractCookSurfaces } from './generate.ts';
