@@ -1043,6 +1043,7 @@ impl GameSnapshot {
         }
         self.quest_statuses.clear();
         self.quest_statuses_available = false;
+        self.quest_statuses_root = -1;
         let Some(root) = client.side_icon.get(2).copied() else {
             return true;
         };
@@ -1053,6 +1054,7 @@ impl GameSnapshot {
             return true;
         }
         self.quest_statuses_available = true;
+        self.quest_statuses_root = root;
         let mut queue = vec![root];
         let mut head = 0;
         while head < queue.len() {

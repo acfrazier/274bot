@@ -1017,6 +1017,9 @@ pub struct QuestIdentityRow {
     /// Values reachable while a completed quest-list colour remains displayed.
     #[serde(default)]
     pub completion_range: Option<crate::selected::InclusiveRange>,
+    /// Values reachable after green was observed at a fresh, empty-queue login.
+    #[serde(default)]
+    pub completion_range_after_login: Option<crate::selected::InclusiveRange>,
     #[serde(default)]
     pub stage_domain: Option<crate::selected::InclusiveRange>,
     #[serde(default)]

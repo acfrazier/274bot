@@ -102,6 +102,7 @@ fn quest_state(
     };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
+    snapshot.seed_tick(1);
     snapshot.seed_quest_statuses(
         catalog
             .iter()
@@ -126,6 +127,8 @@ fn quest_state(
             .collect(),
         true,
     );
+    // Each canonical account starts with its first post-login quest list.
+    snapshot.begin_fresh_login_quest_colours();
     let provider = CorpusEvidence {
         completion: QuestListEvidenceProvider::from_snapshot(
             &catalog,
@@ -1102,6 +1105,7 @@ fn main() -> Result<(), String> {
     ] {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        snapshot.seed_tick(1);
         snapshot.seed_quest_statuses(
             vec![QuestStatusView {
                 component_id: 1,
@@ -1110,6 +1114,7 @@ fn main() -> Result<(), String> {
             }],
             true,
         );
+        snapshot.begin_fresh_login_quest_colours();
         let provider = QuestListEvidenceProvider::from_snapshot(
             &quests,
             SnapshotView::new(Some(&snapshot), stamp),

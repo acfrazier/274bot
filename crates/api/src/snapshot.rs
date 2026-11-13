@@ -26,6 +26,8 @@ pub use native::{
     JournalModalView, Observed, SnapshotView,
 };
 mod decode;
+mod login_quest_colours;
+use login_quest_colours::LoginQuestColours;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
 mod context;
@@ -283,6 +285,10 @@ pub struct GameSnapshot {
     main_make: Vec<ItemView>,
     quest_statuses: Vec<QuestStatusView>,
     quest_statuses_available: bool,
+    #[serde(skip)]
+    quest_statuses_root: i32,
+    #[serde(skip)]
+    login_quest_colours: LoginQuestColours,
     run_controls: Option<ToggleControlsView>,
     retaliate_controls: Option<ToggleControlsView>,
     /// The Note/Item toggle pair on the open bank main modal; None while
@@ -443,6 +449,8 @@ impl Default for GameSnapshot {
             main_make: Vec::new(),
             quest_statuses: Vec::new(),
             quest_statuses_available: false,
+            quest_statuses_root: -1,
+            login_quest_colours: LoginQuestColours::default(),
             run_controls: None,
             retaliate_controls: None,
             bank_note_controls: None,
@@ -533,6 +541,28 @@ impl GameSnapshot {
     pub fn seed_quest_statuses(&mut self, rows: Vec<QuestStatusView>, available: bool) {
         self.quest_statuses = rows;
         self.quest_statuses_available = available;
+        self.quest_statuses_root = if available { 1 } else { -1 };
+        self.observe_login_quest_colours();
+    }
+
+    /// Arm proof from the first complete quest-list frame of a cold login.
+    /// A reconnect must not call this: its server queues can survive.
+    pub fn begin_fresh_login_quest_colours(&mut self) {
+        self.login_quest_colours.begin_fresh_login();
+        self.observe_login_quest_colours();
+    }
+
+    /// Whether this row was green at that login and has stayed green.
+    pub fn quest_green_since_fresh_login(&self, index: usize) -> bool {
+        self.ingame && self.quest_statuses_available && self.login_quest_colours.eligible(index)
+    }
+
+    fn observe_login_quest_colours(&mut self) {
+        self.login_quest_colours.observe(
+            self.quest_statuses_root,
+            &self.quest_statuses,
+            self.ingame && self.tick > 0 && self.quest_statuses_available,
+        );
     }
 
     pub fn seed_varps(&mut self, rows: Vec<VarpView>) {
@@ -914,7 +944,11 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::ChatOptions);
         dirty |= self.rebuild_family(client, Family::MakeProducts);
         dirty |= self.rebuild_family(client, Family::MainMake);
-        dirty |= self.rebuild_family(client, Family::QuestStatuses);
+        let quests_changed = self.rebuild_family(client, Family::QuestStatuses);
+        dirty |= quests_changed;
+        if quests_changed || self.login_quest_colours.needs_initial_observation() {
+            self.observe_login_quest_colours();
+        }
         dirty |= self.rebuild_family(client, Family::Modals);
         dirty |= self.rebuild_family(client, Family::Controls);
         dirty |= self.rebuild_family(client, Family::Menu);

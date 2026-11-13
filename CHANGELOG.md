@@ -18,9 +18,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Vigroy's cart now requires Shilo Village completion on revision 289, as
   its updated dialogue requires. On revision 274, the cart still accepts
   accounts that have not completed the quest.
-- Completed Hero's Quest accounts can enter the Heroes' Guild again. Quest
-  colour checks now account for the completed quest's required quests when
-  they test whether a later action can change its stage.
+- Accounts that have completed Hero's Quest can enter the Heroes' Guild
+  again after logging in. Quest checks retain the completed quest's
+  requirements and account for later stage changes.
 
 ### Login
 

@@ -1643,6 +1643,9 @@ fn spawn_slot_thread(
                             nav_snapshot
                                 .set_loc_projection_wanted(run_policy.loc_projection_wanted());
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            if session_boundary && c.ingame && !reconnect {
+                                nav_snapshot.begin_fresh_login_quest_colours();
+                            }
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
                                     .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));

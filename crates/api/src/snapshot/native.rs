@@ -415,6 +415,12 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// True only for a row that was green at a fresh login and stayed green.
+    pub fn quest_green_since_fresh_login(&self, index: usize) -> bool {
+        self.snapshot
+            .is_some_and(|snapshot| snapshot.quest_green_since_fresh_login(index))
+    }
+
     pub fn widgets(&self) -> Option<Observed<&'a [super::WidgetView]>> {
         let snapshot = self.snapshot?;
         snapshot.ingame().then(|| Observed {
