@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 api = { path = "../api" }
+build-stamp = { path = "../build-stamp" }
 # `wayland-data-control`: on a Wayland desktop read and write the Wayland
 # clipboard directly; without it arboard only reaches X11, whose clipboard is
 # empty while a Wayland window has focus, so Ctrl+V never pasted.

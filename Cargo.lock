@@ -469,6 +469,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "build-stamp"
+version = "0.2.9"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2065,6 +2072,7 @@ version = "0.2.9"
 dependencies = [
  "allocation-counter",
  "api",
+ "build-stamp",
  "bzip2",
  "client",
  "crossterm",
@@ -3433,6 +3441,7 @@ version = "0.2.9"
 dependencies = [
  "api",
  "arboard",
+ "build-stamp",
  "client",
  "dear-imgui-rs",
  "dear-imgui-wgpu",

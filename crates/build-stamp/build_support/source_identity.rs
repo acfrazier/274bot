@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,7 +25,7 @@ pub fn bake(manifest_dir: &Path) -> io::Result<()> {
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "API manifest directory must be inside the repository's crates directory",
+                "build-stamp manifest directory must be inside the repository's crates directory",
             )
         })?;
     let client_repo = host_repo.join("vendor/fr-client-rust");
@@ -38,15 +37,15 @@ pub fn bake(manifest_dir: &Path) -> io::Result<()> {
     let client = identity(&client_repo, &["CLIENT_GIT_COMMIT"], "CLIENT_GIT_DIRTY");
     let short: String = host.commit.chars().take(7).collect();
 
-    println!("cargo:rustc-env=API_HOST_COMMIT={}", host.commit);
-    println!("cargo:rustc-env=API_HOST_SHORT={short}");
+    println!("cargo:rustc-env=STAMP_HOST_COMMIT={}", host.commit);
+    println!("cargo:rustc-env=STAMP_HOST_SHORT={short}");
     println!(
-        "cargo:rustc-env=API_HOST_DIRTY={}",
+        "cargo:rustc-env=STAMP_HOST_DIRTY={}",
         if host.worktree_dirty { "1" } else { "0" }
     );
-    println!("cargo:rustc-env=API_CLIENT_COMMIT={}", client.commit);
+    println!("cargo:rustc-env=STAMP_CLIENT_COMMIT={}", client.commit);
     println!(
-        "cargo:rustc-env=API_CLIENT_DIRTY={}",
+        "cargo:rustc-env=STAMP_CLIENT_DIRTY={}",
         if client.worktree_dirty { "1" } else { "0" }
     );
     Ok(())
@@ -98,26 +97,11 @@ fn git_text(repo: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn emit_git_rerun_paths(repo: &Path) {
-    let git_marker = repo.join(".git");
-    if git_marker.is_file() {
-        emit_rerun_path(&git_marker);
-    }
-
-    for name in ["HEAD", "index", "packed-refs"] {
+    for name in ["HEAD", "index"] {
         emit_git_path(repo, name);
     }
     if let Some(branch) = git_text(repo, &["symbolic-ref", "-q", "HEAD"]) {
         emit_git_path(repo, &branch);
-    }
-    if let Some(tracked_paths) = git_output(repo, &["ls-files", "-z"]) {
-        for tracked_path in tracked_paths
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-        {
-            if let Some(relative_path) = path_from_git(tracked_path) {
-                emit_tracked_path(repo, relative_path);
-            }
-        }
     }
 }
 
@@ -135,28 +119,4 @@ fn emit_git_path(repo: &Path, git_path: &str) {
 
 fn emit_rerun_path(path: &Path) {
     println!("cargo:rerun-if-changed={}", path.display());
-}
-
-fn emit_tracked_path(repo: &Path, relative_path: PathBuf) {
-    let path = repo.join(relative_path);
-    if matches!(
-        fs::symlink_metadata(&path),
-        Ok(metadata) if metadata.file_type().is_dir()
-    ) {
-        return;
-    }
-    emit_rerun_path(&path);
-}
-
-#[cfg(unix)]
-fn path_from_git(path: &[u8]) -> Option<PathBuf> {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-
-    Some(PathBuf::from(OsStr::from_bytes(path)))
-}
-
-#[cfg(not(unix))]
-fn path_from_git(path: &[u8]) -> Option<PathBuf> {
-    String::from_utf8(path.to_vec()).ok().map(PathBuf::from)
 }

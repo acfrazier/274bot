@@ -54,6 +54,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Live scenario manifests include the build's host and client source identities
   and the selected core game-data hash. Cook's opt-in raster capture adds durable
   EvidenceWriter files to the terminal manifest without tick-time inspection.
+  Source stamps rebuild on Git metadata changes, not unrelated tracked edits.
+  They no longer rebuild embedded game data. Builds without the scenario harness
+  do not retain unused artifact records.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 

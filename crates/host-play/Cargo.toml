@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 api = { path = "../api", features = ["embedded-game-data"] }
+build-stamp = { path = "../build-stamp" }
 client = { workspace = true }
 host = { path = "../host" }
 nav-planner = { path = "../nav-planner" }

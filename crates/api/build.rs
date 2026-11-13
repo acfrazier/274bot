@@ -9,8 +9,6 @@ mod catalog_codegen;
 mod local_asset_path;
 #[path = "src/test_support/local_asset_path_377.rs"]
 mod local_asset_path_377;
-#[path = "build_support/source_identity.rs"]
-mod source_identity;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -87,14 +85,12 @@ fn main() -> io::Result<()> {
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_support/catalog_codegen.rs");
-    println!("cargo:rerun-if-changed=build_support/source_identity.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path_377.rs");
 
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
-    source_identity::bake(&manifest_dir)?;
     fs::write(out.join("game_data_pack_identities.rs"), "&[]\n")?;
     if env::var_os("CARGO_FEATURE_EMBEDDED_GAME_DATA").is_none() {
         return Ok(());

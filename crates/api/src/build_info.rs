@@ -1,34 +1,6 @@
-//! Source and embedded game-data identities baked by the API build script.
+//! Embedded game-data identities baked by the API build script.
 
 use serde::Serialize;
-
-/// Source identity captured while compiling one repository.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct SourceIdentity {
-    /// Full commit identifier, or `"unknown"` when Git identity is unavailable.
-    pub commit: &'static str,
-    /// Whether the repository had a dirty worktree when this crate was built.
-    pub worktree_dirty: bool,
-}
-
-/// Identity of the 274bot host repository at build time.
-pub const HOST: SourceIdentity = SourceIdentity {
-    commit: env!("API_HOST_COMMIT"),
-    worktree_dirty: matches!(env!("API_HOST_DIRTY").as_bytes(), b"1"),
-};
-
-/// Identity of the checked-out `vendor/fr-client-rust` repository at build time.
-pub const CLIENT: SourceIdentity = SourceIdentity {
-    commit: env!("API_CLIENT_COMMIT"),
-    worktree_dirty: matches!(env!("API_CLIENT_DIRTY").as_bytes(), b"1"),
-};
-
-/// Full host commit identifier used by the panel's existing build label.
-pub const COMMIT: &str = HOST.commit;
-/// Seven-character host commit identifier, or `"unknown"`.
-pub const SHORT: &str = env!("API_HOST_SHORT");
-/// Whether the host worktree was dirty when this crate was built.
-pub const DIRTY: bool = HOST.worktree_dirty;
 
 /// Identity of one exact uncompressed core game-data pack embedded in this build.
 #[derive(Debug, Clone, Copy, Serialize)]

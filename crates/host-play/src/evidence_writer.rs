@@ -31,14 +31,14 @@ use sha2::{Digest, Sha256};
 /// Add the build's source commit and worktree state to a live-test receipt.
 #[cfg(any(test, feature = "test-support"))]
 pub fn record_source_identity(receipt: &mut serde_json::Value) {
-    let api::build_info::SourceIdentity {
+    let build_stamp::SourceIdentity {
         commit: host_commit,
         worktree_dirty: host_dirty,
-    } = api::build_info::HOST;
-    let api::build_info::SourceIdentity {
+    } = build_stamp::HOST;
+    let build_stamp::SourceIdentity {
         commit: client_commit,
         worktree_dirty: client_dirty,
-    } = api::build_info::CLIENT;
+    } = build_stamp::CLIENT;
     if !receipt.is_object() {
         *receipt = serde_json::json!({});
     }
@@ -80,10 +80,7 @@ pub fn record_scenario_sources(runner: &mut scenario::ScenarioRunner, revision: 
     let Some(manifest) = runner.receipt_manifest_mut() else {
         return;
     };
-    for (name, identity) in [
-        ("host", api::build_info::HOST),
-        ("client", api::build_info::CLIENT),
-    ] {
+    for (name, identity) in [("host", build_stamp::HOST), ("client", build_stamp::CLIENT)] {
         manifest.sources.insert(
             name.into(),
             serde_json::to_value(identity).expect("build identity serializes"),
@@ -192,9 +189,21 @@ impl Default for WriterConfig {
 struct JobSlot {
     outcome: parking_lot::Mutex<Option<EvidenceOutcome>>,
     ready: parking_lot::Condvar,
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
     artifacts: parking_lot::Mutex<Vec<WrittenArtifact>>,
 }
 
+#[cfg(any(
+    test,
+    feature = "live-harness",
+    feature = "test-support",
+    feature = "memory-profile"
+))]
 struct WrittenArtifact {
     path: PathBuf,
     bytes: u64,
@@ -216,6 +225,12 @@ impl EvidenceJob {
             slot: Arc::new(JobSlot {
                 outcome: parking_lot::Mutex::new(Some(outcome)),
                 ready: parking_lot::Condvar::new(),
+                #[cfg(any(
+                    test,
+                    feature = "live-harness",
+                    feature = "test-support",
+                    feature = "memory-profile"
+                ))]
                 artifacts: parking_lot::Mutex::new(Vec::new()),
             }),
         }
@@ -227,6 +242,12 @@ impl EvidenceJob {
             slot: Arc::new(JobSlot {
                 outcome: parking_lot::Mutex::new(None),
                 ready: parking_lot::Condvar::new(),
+                #[cfg(any(
+                    test,
+                    feature = "live-harness",
+                    feature = "test-support",
+                    feature = "memory-profile"
+                ))]
                 artifacts: parking_lot::Mutex::new(Vec::new()),
             }),
         }
@@ -504,8 +525,7 @@ fn worker_loop(inner: Arc<WriterInner>) {
         if let Some(hook) = inner.config.before_write.clone() {
             hook(job.id);
         }
-        let mut artifacts = Vec::new();
-        let outcome = write_capture(job.id, &request, &mut artifacts);
+        let outcome = write_capture(&job, &request);
         {
             let mut state = inner.state.lock();
             state.active -= 1;
@@ -514,7 +534,6 @@ fn worker_loop(inner: Arc<WriterInner>) {
             } else {
                 state.stats.written += 1;
             }
-            *job.slot.artifacts.lock() = artifacts;
             *job.slot.outcome.lock() = Some(outcome.clone());
             job.slot.ready.notify_all();
             // Wake flush waiters (and any submitter rechecking state):
@@ -545,11 +564,8 @@ fn worker_loop(inner: Arc<WriterInner>) {
     }
 }
 
-fn write_capture(
-    id: u64,
-    request: &EvidenceRequest,
-    artifacts: &mut Vec<WrittenArtifact>,
-) -> EvidenceOutcome {
+fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcome {
+    let id = job.id;
     let pixel_count = (request.width as usize)
         .checked_mul(request.height as usize)
         .filter(|count| *count > 0)
@@ -561,7 +577,7 @@ fn write_capture(
             request.height,
             request.pixels.len()
         );
-        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0, None, artifacts);
+        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0, None, job);
     }
     let convert_start = Instant::now();
     let bytes_per_pixel = match request.color {
@@ -600,7 +616,7 @@ fn write_capture(
     if let Some(error) = encode_error {
         let error = format!("id={id}: encode {}: {error}", request.png_path.display());
         return finish_with_sidecar(
-            request, error, 0, convert_ms, encode_ms, 0.0, 0.0, None, artifacts,
+            request, error, 0, convert_ms, encode_ms, 0.0, 0.0, None, job,
         );
     }
     let write_start = Instant::now();
@@ -612,7 +628,7 @@ fn write_capture(
         let _ = std::fs::remove_file(&request.png_path);
         let error = format!("id={id}: write {}: {error}", request.png_path.display());
         return finish_with_sidecar(
-            request, error, 0, convert_ms, encode_ms, write_ms, 0.0, None, artifacts,
+            request, error, 0, convert_ms, encode_ms, write_ms, 0.0, None, job,
         );
     }
     let sync_start = Instant::now();
@@ -631,7 +647,7 @@ fn write_capture(
             write_ms,
             sync_ms,
             None,
-            artifacts,
+            job,
         );
     }
     let sha256 = format!("{:x}", Sha256::digest(&encoded));
@@ -644,9 +660,15 @@ fn write_capture(
         write_ms,
         sync_ms,
         Some(&sha256),
-        artifacts,
+        job,
     );
-    artifacts.push(WrittenArtifact {
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
+    job.slot.artifacts.lock().push(WrittenArtifact {
         path: request.png_path.clone(),
         bytes: encoded.len() as u64,
         sha256,
@@ -677,7 +699,7 @@ fn finish_with_sidecar(
     write_ms: f64,
     sync_ms: f64,
     png_sha256: Option<&str>,
-    artifacts: &mut Vec<WrittenArtifact>,
+    _job: &EvidenceJob,
 ) -> EvidenceOutcome {
     let failed = !error.is_empty();
     if let Some(sidecar) = request.sidecar.as_ref() {
@@ -739,7 +761,13 @@ fn finish_with_sidecar(
                     std::fs::write(&sidecar.path, &bytes).and_then(|()| sync_file(&sidecar.path));
                 match result {
                     Ok(()) => {
-                        artifacts.push(WrittenArtifact {
+                        #[cfg(any(
+                            test,
+                            feature = "live-harness",
+                            feature = "test-support",
+                            feature = "memory-profile"
+                        ))]
+                        _job.slot.artifacts.lock().push(WrittenArtifact {
                             path: sidecar.path.clone(),
                             bytes: bytes.len() as u64,
                             sha256: format!("{:x}", Sha256::digest(&bytes)),
