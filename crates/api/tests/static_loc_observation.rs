@@ -4,11 +4,9 @@
 
 use api::snapshot::{Family, GameSnapshot, LocLayer, WorldTile};
 use client::client::{Client, ClientConfig};
-use client::config::runtime_377::{
-    CacheFields377, InterfaceFields377, LocFields377, MorphTable377,
-};
+use client::config::runtime_377::{CacheFields377, InterfaceFields377};
 use client::config::LocType;
-use client::config::{Cache, CacheRevision377, VarpType};
+use client::config::{Cache, CacheRevision377, LocMorph, VarpType};
 use client::dash3d::ClientPlayer;
 use client::io::{ClientRevision, ServerProt};
 use std::sync::Arc;
@@ -309,20 +307,17 @@ fn client_with_multiloc(revision: ClientRevision) -> Client {
                 ..Default::default()
             },
         ],
+        loc_morphs: vec![(
+            0,
+            LocMorph {
+                varbit: -1,
+                varp: 0,
+                targets: vec![1, 2, -1],
+            },
+        )],
         varps: vec![VarpType::default()],
         revision_377: Some(Box::new(CacheRevision377 {
             config: CacheFields377 {
-                locs: vec![
-                    LocFields377 {
-                        morph: Some(MorphTable377 {
-                            varbit: -1,
-                            varp: 0,
-                            targets: vec![1, 2, -1],
-                        }),
-                    },
-                    LocFields377 { morph: None },
-                    LocFields377 { morph: None },
-                ],
                 ..Default::default()
             },
             interfaces: InterfaceFields377 {

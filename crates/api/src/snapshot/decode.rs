@@ -2908,9 +2908,7 @@ mod tests {
     const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
 
     fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
-        use client::config::runtime_377::{
-            CacheFields377, InterfaceFields377, LocFields377, NpcFields377,
-        };
+        use client::config::runtime_377::{CacheFields377, InterfaceFields377, NpcFields377};
         use client::config::{CacheRevision377, LocType, NpcType};
 
         let mut cache = Cache::default();
@@ -2937,7 +2935,6 @@ mod tests {
         if revision == ClientRevision::R377 {
             cache.revision_377 = Some(Box::new(CacheRevision377 {
                 config: CacheFields377 {
-                    locs: vec![LocFields377 { morph: None }],
                     npcs: vec![NpcFields377 {
                         field_1451: -1,
                         field_1430: -1,

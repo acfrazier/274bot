@@ -283,10 +283,19 @@ fn assert_377_client(client: &Client, lowmem: bool) -> Result<(), String> {
         return Err("prepared 377 client fell back to a legacy cache without 377 sidecars".into());
     };
     let config = &sidecar.config;
+    if client.cache.locs.is_empty()
+        || client.cache.loc_morphs.is_empty()
+        || client.cache.loc_morphs.len() >= client.cache.locs.len()
+    {
+        return Err(format!(
+            "377 location cache is empty or its morph records are not sparse: locations={}, morphs={}",
+            client.cache.locs.len(),
+            client.cache.loc_morphs.len()
+        ));
+    }
     for (name, decoded, adapted) in [
         ("objs", config.objs.len(), client.cache.objs.len()),
         ("npcs", config.npcs.len(), client.cache.npcs.len()),
-        ("locs", config.locs.len(), client.cache.locs.len()),
         ("seqs", config.seqs.len(), client.cache.seqs.len()),
         ("varps", config.varps.len(), client.cache.varps.len()),
         ("varbits", config.varbits.len(), client.cache.varbits.len()),
