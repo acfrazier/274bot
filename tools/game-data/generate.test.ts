@@ -40,6 +40,7 @@ import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, buildDebugArtifact, categoryName, debugArtifactBytes, extractQuestsFamily, familyBytes, parseGenerationArgs, revisions, runtimeNpcOperations } from './generate.ts';
+import { extractShopFacts, SHOP_INVENTORY_SOURCES, SHOP_KEEPER_SOURCES } from './generate.ts';
 import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
@@ -3742,6 +3743,68 @@ default=1000
     fs.writeFileSync(path.join(content, 'scripts/skill_cooking/scripts/cooking.rs2'), '[oplocu,_cooking_fire] @attempt_cook_item(last_useitem);\n');
     assert.throws(() => extractCookSurfaces(content, undefined, 377), /cooking_oven cooking handler is not derived/);
     fs.rmSync(content, { recursive: true });
+}
+
+// The 377 shopkeeper lookup resolves a missing unpacked keeper by section name.
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'shops-377-'));
+    const write = (relative: string, text: string) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    try {
+        const ordinaryShops = SHOP_INVENTORY_SOURCES
+            .map(({ inv }) => inv)
+            .filter((inv) => inv !== 'death_pub');
+        const ordinaryKeepers = SHOP_KEEPER_SOURCES
+            .flatMap(({ configs }) => [...configs])
+            .filter((config) => config !== 'death_barman');
+        const ownerByConfig = new Map<string, string>();
+        ordinaryKeepers.forEach((config, index) => ownerByConfig.set(config, ordinaryShops[index] ?? 'death_pub'));
+        ownerByConfig.set('death_barman', 'death_pub');
+        const keeperSections = SHOP_KEEPER_SOURCES.flatMap(({ configs }) =>
+            configs.filter((config) => config !== 'death_barman').map((config) => {
+                const shop = ownerByConfig.get(config);
+                if (!shop) throw new Error(`fixture has no shop for ${config}`);
+                return `[${config}]\nname=${config}\nparam=owned_shop,${shop}\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,${config} shop\n`;
+            }),
+        );
+        write('scripts/_unpack/377/all.npc', keeperSections.join('\n'));
+        const deathConfigFile = 'scripts/fixtures/shops/death_barman.npc';
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
+        write('scripts/_unpack/377/shops.inv', SHOP_INVENTORY_SOURCES
+            .map(({ inv }) => `[${inv}]\nscope=world\nallstock=no\nstock=fixture_item,1,1`)
+            .join('\n') + '\n');
+        const fixtureItems = [
+            { alias: 'fixture_item', name: 'Fixture item', cost: 1, stackable: false, members: false },
+        ];
+        const shops = extractShopFacts(content, fixtureItems, 377);
+        const deathPub = shops.find(({ inv }) => inv === 'death_pub');
+        assert.ok(deathPub?.keeper_configs.includes('death_barman'));
+        assert.ok(deathPub?.keepers.includes('Tostig'));
+        write(deathConfigFile, '[death_barman]\nname=Tostig\n[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile),
+            'repeated section names within one file must identify the source file',
+        );
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
+        const duplicateConfigFile = 'scripts/fixtures/other/death_barman.npc';
+        write(duplicateConfigFile, '[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile)
+                && error.message.includes(duplicateConfigFile),
+            'duplicate section names must identify both source files',
+        );
+    } finally {
+        fs.rmSync(content, { recursive: true, force: true });
+    }
 }
 
 // The real 377 selected corpus exercises the same source joins, never the

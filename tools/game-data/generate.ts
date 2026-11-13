@@ -864,7 +864,7 @@ function dropTokens(body: string) {
     return tokens;
 }
 
-const SHOP_INVENTORY_SOURCES = [
+export const SHOP_INVENTORY_SOURCES = [
     { inv: 'adventurershop', file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.inv' },
     { inv: 'magearena_runeshop', file: 'scripts/areas/area_mage_arena/configs/mage_arena.inv' },
     { inv: 'magicshop', file: 'scripts/areas/area_port_sarim/configs/port_sarim.inv' },
@@ -889,7 +889,7 @@ const SHOP_INVENTORY_SOURCES = [
     { inv: 'boozeshop', file: 'scripts/areas/area_karamja/configs/karamja.inv' },
 ] as const;
 
-const SHOP_KEEPER_SOURCES = [
+export const SHOP_KEEPER_SOURCES = [
     { file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc', configs: ['aemad', 'kortan'] },
     { file: 'scripts/areas/area_mage_arena/configs/mage_arena.npc', configs: ['magearena_runeshop'] },
     { file: 'scripts/areas/area_port_sarim/configs/port_sarim.npc', configs: ['betty', 'gerrant'] },
@@ -975,18 +975,18 @@ function parseShopInventory(text: string, inv: string): ShopInventory {
     return { inv, scope, allstock, stock: parseInvShopStock(text, inv) };
 }
 
-function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
+export function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
     const keepers: ParsedShopKeeper[] = [];
-    const selectedNpcs = revision === 377
-        ? fs.readFileSync(path.join(content, 'scripts/_unpack/377/all.npc'), 'utf8')
-        : undefined;
+    const selectedNpcSections = revision === 377 ? parseNpcSectionsFromContent(content) : undefined;
     const selectedInventories = revision === 377
         ? contentTreeFiles(content, 'scripts', '.inv').map((file) => fs.readFileSync(path.join(content, file), 'utf8'))
         : undefined;
     for (const source of SHOP_KEEPER_SOURCES) {
-        const text = selectedNpcs ?? fs.readFileSync(path.join(content, source.file), 'utf8');
+        const text = selectedNpcSections ? undefined : fs.readFileSync(path.join(content, source.file), 'utf8');
         for (const config of source.configs) {
-            const values = parseNpcSection(text, config);
+            const selected = selectedNpcSections?.get(config);
+            if (selectedNpcSections && !selected) throw new Error(`npc config: missing [${config}]`);
+            const values = selected?.values ?? parseNpcSection(text!, config);
             const required = (key: string) => {
                 const value = values[key];
                 if (value === undefined || value === '') throw new Error(`${config}: missing ${key}`);
@@ -1092,6 +1092,30 @@ function parseNpcConfigSections(text: string) {
     }
     return sections;
 }
+/** Resolve each keeper section by name from the selected content tree, rejecting ambiguous sources. */
+function parseNpcSectionsFromContent(content: string) {
+    const sections = new Map<string, { file: string; values: Record<string, string> }>();
+    for (const relative of contentTreeFiles(content, 'scripts', '.npc')) {
+        const text = fs.readFileSync(path.join(content, relative), 'utf8');
+        const names = new Set<string>();
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line.startsWith('[') || !line.endsWith(']')) continue;
+            const name = line.slice(1, -1);
+            if (names.has(name)) throw new Error(`npc config: duplicate [${name}] in ${relative}`);
+            names.add(name);
+        }
+        for (const [name, values] of parseNpcConfigSections(text)) {
+            const previous = sections.get(name);
+            if (previous) {
+                throw new Error(`npc config: duplicate [${name}] in ${previous.file} and ${relative}`);
+            }
+            sections.set(name, { file: relative, values });
+        }
+    }
+    return sections;
+}
+
 
 export function parseNpcSection(text: string, alias: string) {
     const section = parseNpcConfigSections(text).get(alias);
@@ -1438,6 +1462,9 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
             const selected = typeof decoded === 'string' ? decoded : typeof decoded === 'number' && Number.isInteger(decoded) ? String(decoded) : undefined;
             if (selected === undefined) {
                 throw new Error(`${alias}: decoded trail_challenge_answer is missing`);
+            }
+            if (selected !== answers[answers.length - 1]!.value) {
+                throw new Error(`${alias}: decoded trail_challenge_answer does not match selected source params`);
             }
             answer = selected;
         }

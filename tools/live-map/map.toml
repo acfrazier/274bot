@@ -139,6 +139,8 @@ globs = [
   "crates/nav-bake/src/bake.rs",
   "crates/nav-bake/src/transport.rs",
   "crates/nav-bake/src/transport/static_routes.rs",
+  # The NPC loop analysis affects nav-shadow diagnostics only.
+  "crates/rs2vm/src/machine/rows/npc.rs",
   # Exact offline producer/template paths. README's final-head pack, corpus
   # and affected-cell rule applies; no generated-route proof is waived.
   "crates/nav-bake/src/bin/nav-pack.rs",
