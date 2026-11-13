@@ -384,7 +384,7 @@ impl PrereqRun {
         let (_, row) = catalog
             .for_gate(&gate.gate, &gate.crossing)
             .ok_or_else(|| ActionError::Unavailable("no matching prerequisite row".into()))?;
-        Ok(step_identity(row, &gate.crossing))
+        Ok(step_identity(row))
     }
     pub fn walk_handle(&self) -> Option<&ActionHandle<Walk>> {
         match &self.phase {
@@ -412,7 +412,7 @@ impl PrereqRun {
         })
     }
     fn step(&self, row: &PrereqStep) -> PrereqStepIdentity {
-        step_identity(row, &self.gate.crossing)
+        step_identity(row)
     }
 
     pub(crate) fn revoker(&self) -> Option<crate::native::ActionRevoker> {
@@ -1243,16 +1243,14 @@ fn catalog(cx: &ActionContext<'_>) -> Option<Arc<PrereqCatalog>> {
         .ok()?
         .try_prereq_steps()
 }
-fn step_identity(row: &PrereqStep, crossing: &api::prereq_steps::CrossingId) -> PrereqStepIdentity {
+fn step_identity(row: &PrereqStep) -> PrereqStepIdentity {
     PrereqStepIdentity {
         id: Arc::clone(&row.id),
-        source: Arc::clone(&row.crossing(crossing).expect("matched crossing").1.source.0),
     }
 }
 fn journal_identity(journal: &PrereqJournal) -> PrereqStepIdentity {
     PrereqStepIdentity {
         id: Arc::clone(&journal.id),
-        source: Arc::clone(&journal.source.0),
     }
 }
 fn failed(step: PrereqStepIdentity, why: PrereqFailure) -> PrereqRefusal {

@@ -2023,7 +2023,7 @@ fn load_gather_inspect_route_keeps_load_script_options() {
             _ => None,
         })
         .expect("the Load script's inspect-route row survives while Gather owns foreground");
-    let options = crate::walk_permissions::compiled_options(
+    let (options, _) = crate::walk_permissions::compiled_options(
         &rig.navs,
         SLOT,
         nav_planner::router::FindOptions {
@@ -2032,6 +2032,7 @@ fn load_gather_inspect_route_keeps_load_script_options() {
             allow_bank_fetch,
             ..nav_planner::router::FindOptions::default()
         },
+        false,
     );
     assert_eq!(
         (
@@ -2138,6 +2139,7 @@ fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
             .lock()
             .unwrap()
             .api_gather_walk_permissions(),
+        false,
     )
     .0;
     let allowed_options = crate::walk_permissions::native_admission(
@@ -2145,6 +2147,7 @@ fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
         SLOT,
         script::native::WalkOptions::default(),
         allowed.slot().lock().unwrap().api_gather_walk_permissions(),
+        false,
     )
     .0;
 

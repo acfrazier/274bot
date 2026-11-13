@@ -40,6 +40,18 @@ impl AssignmentSnapshot {
     }
 }
 
+/// The move-aside refusal an unlock gives for a vault in a format older
+/// than the previous release's. 0.2.9 reads every vault shape 0.2.8 read,
+/// so no product reader gives it; tests make it here to cover the prompt.
+pub fn old_vault_refusal(path: &std::path::Path) -> crate::saved_data::SavedDataRefusal {
+    crate::saved_data::SavedDataRefusal::from_vault_error(
+        &vault::VaultError::UnsupportedSavedFormat {
+            path: path.to_path_buf(),
+        },
+    )
+    .expect("an older-format vault error is a saved-data refusal")
+}
+
 /// The stored assignment of `username`, if it has one.
 pub fn vault_assignment(fixture: &VaultFixture, username: &str) -> Option<AssignmentSnapshot> {
     let assignment = fixture

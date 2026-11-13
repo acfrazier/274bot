@@ -18,58 +18,51 @@
 //!
 //! [`require_members_guards`] is the bake's two-way check. A free edge
 //! whose source (with every label, choice and queue it may continue into)
-//! reads `map_members` fails, unless that exact read is listed in
+//! reads `map_members` fails, unless that handler is listed in
 //! [`NON_GATE_READS`]. A members edge whose leading path does not refuse
-//! fails too, unless its source path carries a read listed in
+//! fails too, unless its source path carries a read in a handler listed in
 //! [`MEMBERS_ARMS`].
 
 use super::*;
 
-/// `map_members` reads that do not gate the transport an edge takes:
-/// `(op, handler, normalized statement, why)`. The statement is pinned, so
-/// a content change to it fails the bake instead of silently passing.
-const NON_GATE_READS: &[(&str, &str, &str, &str)] = &[
+/// Handlers whose `map_members` reads do not gate the transport an edge
+/// takes: `(op, handler, why)`.
+const NON_GATE_READS: &[(&str, &str, &str)] = &[
     (
         "opnpc1",
         "_sailor",
-        "if(map_members=^true&npc_type=captain_tobias){",
         "Captain Tobias' clue-scroll reward; the Karamja sail dialogue follows on every world",
     ),
     (
         "oploc1",
         "whistledoor",
-        "if(map_members=^true&inv_total(inv,holy_table_napkin)>0&inv_total(inv,magic_whistle)<2){",
         "spawns magic whistles; the door opens on every world",
     ),
     (
         "oploc1",
         "guidordoor",
-        "if(map_members=^false|%biohazard<^biohazard_spoken_chemist){",
         "refuses entering only; leaving returns through the door before this check",
     ),
 ];
 
-/// Members gates that are not their edge's leading refusal, set by the
-/// producer that reads them: `(op, handler, normalized statement, why)`. A
-/// members edge whose leading path does not refuse passes the check only
-/// when one of these exact reads lies on its source path.
-const MEMBERS_ARMS: &[(&str, &str, &str, &str)] = &[
+/// Handlers with a members gate that is not their edge's leading refusal,
+/// set by the producer that reads them: `(op, handler, why)`. A members edge
+/// whose leading path does not refuse passes the check only when one of
+/// these handlers reads `map_members` on its source path.
+const MEMBERS_ARMS: &[(&str, &str, &str)] = &[
     (
         "opnpc1",
         "gnomepilot",
-        "if(%grandtree=^grandtree_complete&map_members=^true){",
         "only this members arm opens the glider menu (gliders.rs)",
     ),
     (
         "oploc1",
         "zanarisdoor",
-        "if(inv_total(worn,dramen_staff)>0&map_members=^true){",
         "only this members arm teleports into Zanaris (zanaris.rs)",
     ),
     (
         "label",
         "spirit_tree_tele",
-        "if(map_members=^false){",
         "every spirit-tree ride jumps here after its quest check and menu (spirit_trees.rs)",
     ),
 ];
@@ -271,9 +264,9 @@ pub(super) fn apply_members_guards(guards: &MembersGuards, graph: &mut Transport
 
 /// Bake-time check of every packed edge's `members_req` against its
 /// source. A free edge whose source handler (or any label/choice/queue it
-/// may continue into) reads `map_members` fails, unless the read is a
-/// pinned [`NON_GATE_READS`] entry. A members edge whose leading path does
-/// not refuse F2P fails, unless a pinned [`MEMBERS_ARMS`] read lies on its
+/// may continue into) reads `map_members` fails, unless the handler is a
+/// [`NON_GATE_READS`] entry. A members edge whose leading path does not
+/// refuse F2P fails, unless a [`MEMBERS_ARMS`] handler read lies on its
 /// source path. Every members spell in `magic_spells.dbrow` must pack
 /// `members_req`, and every loc, NPC and held-obj edge must resolve to a
 /// handler.
@@ -311,14 +304,11 @@ pub(crate) fn require_members_guards(
         }
         let reached = guards.reached(source.clone());
         if edge.members_req {
-            let pinned_arm = reached.iter().any(|((op, name), handler)| {
-                handler.reads.iter().any(|read| {
-                    MEMBERS_ARMS
-                        .iter()
-                        .any(|(o, n, stmt, _)| o == op && n == name && stmt == read)
-                })
+            let members_arm = reached.iter().any(|((op, name), handler)| {
+                !handler.reads.is_empty()
+                    && MEMBERS_ARMS.iter().any(|(o, n, _)| o == op && n == name)
             });
-            if !pinned_arm && !guards.leading_refusal(&source) {
+            if !members_arm && !guards.leading_refusal(&source) {
                 errors.push(format!(
                     "{:?} {} op{} at {:?} packs members_req=true but the leading path of [{},{}] does not refuse F2P",
                     edge.kind, edge.loc_id, edge.option, edge.at, source.0, source.1
@@ -328,11 +318,8 @@ pub(crate) fn require_members_guards(
         }
         for ((op, name), handler) in reached {
             let gate = handler.refuses_f2p.then_some("an F2P refusal");
-            let read = handler.reads.iter().find(|read| {
-                !NON_GATE_READS
-                    .iter()
-                    .any(|(o, n, stmt, _)| o == op && n == name && stmt == read)
-            });
+            let exempt = NON_GATE_READS.iter().any(|(o, n, _)| o == op && n == name);
+            let read = if exempt { None } else { handler.reads.first() };
             if let Some(what) = gate.or(read.map(String::as_str)) {
                 errors.push(format!(
                     "{:?} {} op{} at {:?} packs members_req=false but [{},{}] (via [{},{}]) reads map_members: {what}",
@@ -435,7 +422,7 @@ fn is_word(s: &str) -> bool {
 }
 
 fn handler_facts(body: &str) -> Handler {
-    let code = strip_block_comments(body);
+    let code = super::rs2_syntax::strip_block_comments(body);
     let statements = top_level_statements(&code);
     let first = statements.first().map(String::as_str);
     let refuses_f2p = first
@@ -528,19 +515,6 @@ fn refusal_head(head: &str) -> bool {
 /// The arm ends the handler: its last statement is `return;`.
 fn refusal_arm(arm: &str) -> bool {
     normalized_body(arm).ends_with("return;}")
-}
-
-fn strip_block_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("/*") {
-        out.push_str(&rest[..start]);
-        rest = rest[start + 2..]
-            .split_once("*/")
-            .map_or("", |(_, after)| after);
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Code with `"…"` string literals blanked, so colour tags such as

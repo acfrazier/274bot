@@ -38,21 +38,30 @@ fn cli_collects_old_lazy_stores_and_quits_without_moving_or_initializing() {
     let preferences = root.join("panel-ui.json");
     let preference_bytes = br#"{"server_revision":289}"#;
     vault::write_private_file(&preferences, preference_bytes).unwrap();
+    // Shapes older than anything 0.2.8 read are refused and named.
     let refused = [
-        (
-            root.join("loadouts.json"),
-            br#"[{"name":"old","worn":["Bronze sword"],"carry":["Coins"]}]"#.as_slice(),
-        ),
         (
             root.join("worlds.json"),
             br#"{"schema_version":1,"worlds":[{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#.as_slice(),
+        ),
+        (
+            root.join("bank-hints/local-289/unversioned.json"),
+            br#"{"profile":"local-289","account":"unversioned","observed_at_unix":3,"rows":[[995,3]]}"#.as_slice(),
+        ),
+    ];
+    // Shapes 0.2.8 read as its own (legacy loadout rows, an unscoped
+    // schema-1 hint) load: the startup check neither names nor touches them.
+    let supported = [
+        (
+            root.join("loadouts.json"),
+            br#"[{"name":"old","worn":["Bronze sword"],"carry":["Coins"]}]"#.as_slice(),
         ),
         (
             root.join("bank-hints/local-289/unopened.json"),
             br#"{"schema_version":1,"profile":"local-289","account":"unopened","observed_at_unix":3,"rows":[[995,3]]}"#.as_slice(),
         ),
     ];
-    for (path, bytes) in &refused {
+    for (path, bytes) in refused.iter().chain(&supported) {
         vault::write_private_file(path, bytes).unwrap();
     }
 
@@ -78,17 +87,24 @@ fn cli_collects_old_lazy_stores_and_quits_without_moving_or_initializing() {
     for (path, bytes) in &refused {
         assert!(stderr.contains(path.to_string_lossy().as_ref()), "{stderr}");
         assert_eq!(std::fs::read(path).unwrap(), *bytes);
-        assert_eq!(
-            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            if path.parent() == Some(root.as_path()) {
-                4
-            } else {
-                1
-            },
-            "no move-aside backup is created for {}",
-            path.display()
-        );
     }
+    for (path, bytes) in &supported {
+        assert!(
+            !stderr.contains(path.to_string_lossy().as_ref()),
+            "a 0.2.8 shape must not be refused: {stderr}"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), *bytes);
+    }
+    // No move-aside backup is created: the root holds panel-ui.json,
+    // loadouts.json, worlds.json and bank-hints; the hint folder holds the two
+    // hints.
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
+    assert_eq!(
+        std::fs::read_dir(root.join("bank-hints/local-289"))
+            .unwrap()
+            .count(),
+        2
+    );
     assert_eq!(std::fs::read(preferences).unwrap(), preference_bytes);
     assert!(!root.join("servers.json").exists());
     assert!(!root.join("vault-289").exists());

@@ -51,13 +51,6 @@ pub(super) struct FreeDoorArm {
     /// The `~check_axis(coord, loc_coord, loc_angle)` value the block opens
     /// on without any gate.
     free_when_check_axis: bool,
-    /// Resolved `^const` minimum on the gated disjunct.
-    gated_min: i32,
-    /// Proven `getbit_range` varp id, lower bit, and upper bit. Completion
-    /// is attached only when this identity is `%death_map` bits 0..3.
-    bitfield_varp: i32,
-    bitfield_lo: i32,
-    bitfield_hi: i32,
 }
 
 impl FreeDoorArm {
@@ -157,74 +150,34 @@ pub(super) fn free_door_arm(
     let axis_bool = check_axis_def(stmts.first()?)?;
     let (head, arm) = if_head_and_arm(stmts.get(1)?)?;
     let (free_when_check_axis, proc, cname) = check_axis_or_proc(&head, &axis_bool)?;
-    let gated_min = *constants.get(&cname)?;
+    constants.get(&cname)?;
     if !arm_opens_directly(&arm, &axis_bool) {
         return None;
     }
-    let (bitfield_varp, bitfield_lo, bitfield_hi) =
-        proc_bitfield_varp(script_text, &proc, constants, varps)?;
+    proc_bitfield_varp(script_text, &proc, constants, varps)?;
     Some(FreeDoorArm {
         free_when_check_axis,
-        gated_min,
-        bitfield_varp,
-        bitfield_lo,
-        bitfield_hi,
     })
 }
 
 /// Journal name of Death Plateau as the client stores a completed quest.
 pub(super) const DEATH_PLATEAU_QUEST: &str = "Death Plateau";
-/// Front hut door (`death_sherpa_door`): gated min is `^death_spoken_tenzing`,
-/// free when `$leaving = true`.
+/// Front hut door (`death_sherpa_door`), gated on `^death_spoken_tenzing`.
 pub(super) const DEATH_FRONT_DOOR: &str = "death_sherpa_door";
-pub(super) const DEATH_FRONT_GATED_MIN: i32 = 2;
-pub(super) const DEATH_FRONT_FREE_WHEN_CHECK_AXIS: bool = true;
-/// Rear hut door (`death_sherpa_backdoor`): gated min is `^death_got_map`,
-/// free when `$leaving = false`.
+/// Rear hut door (`death_sherpa_backdoor`), gated on `^death_got_map`.
 pub(super) const DEATH_BACK_DOOR: &str = "death_sherpa_backdoor";
-pub(super) const DEATH_BACK_GATED_MIN: i32 = 7;
-pub(super) const DEATH_BACK_FREE_WHEN_CHECK_AXIS: bool = false;
-/// `%death_map` bits `^death_map_lower..^death_map_upper` (0..3).
-pub(super) const DEATH_MAP_VARP: &str = "death_map";
-pub(super) const DEATH_MAP_LO: i32 = 0;
-pub(super) const DEATH_MAP_HI: i32 = 3;
 
 /// Conservative completed-quest requirement for a directional door's gated
-/// reverse, from an explicit source-backed mapping: only the two Death
-/// Plateau hut doors whose proven free-arm shape still carries the current
-/// thresholds, polarities, and `%death_map` bits 0..3 (front entry ≥ 2
-/// leaving-true, garden exit ≥ 7 leaving-false). Completion is reachable
-/// only after `death_get_map >= death_scouted_area` (8), so a completed
-/// journal row implies both thresholds; in-progress map stages stay
+/// reverse, modelled by loc name: the two Death Plateau hut doors gate on
+/// `%death_map` stages that a completed quest has passed (completion is
+/// reachable only after `death_get_map >= death_scouted_area`), so a
+/// completed journal row implies the gate. In-progress map stages stay
 /// unsupported. Loc ids resolve from the selected content's `loc.pack`.
-/// An unrelated varp, a different bit range, the wrong polarity, or a
-/// loc that is not the canonical sherpa door does not borrow completion.
 /// This is not a general quest-implication engine and does not read varp
 /// 315 as a raw gate.
-pub(super) fn completed_quest_reverse(
-    id: i32,
-    arm: &FreeDoorArm,
-    ids: &HashMap<String, i32>,
-    varps: &HashMap<String, i32>,
-) -> Option<&'static str> {
-    let &death_map = varps.get(DEATH_MAP_VARP)?;
-    if arm.bitfield_varp != death_map
-        || arm.bitfield_lo != DEATH_MAP_LO
-        || arm.bitfield_hi != DEATH_MAP_HI
-    {
-        return None;
-    }
-    if ids.get(DEATH_FRONT_DOOR) == Some(&id)
-        && arm.gated_min == DEATH_FRONT_GATED_MIN
-        && arm.free_when_check_axis == DEATH_FRONT_FREE_WHEN_CHECK_AXIS
-    {
-        return Some(DEATH_PLATEAU_QUEST);
-    }
-    if ids.get(DEATH_BACK_DOOR) == Some(&id)
-        && arm.gated_min == DEATH_BACK_GATED_MIN
-        && arm.free_when_check_axis == DEATH_BACK_FREE_WHEN_CHECK_AXIS
-    {
-        return Some(DEATH_PLATEAU_QUEST);
-    }
-    None
+pub(super) fn completed_quest_reverse(id: i32, ids: &HashMap<String, i32>) -> Option<&'static str> {
+    [DEATH_FRONT_DOOR, DEATH_BACK_DOOR]
+        .into_iter()
+        .any(|name| ids.get(name) == Some(&id))
+        .then_some(DEATH_PLATEAU_QUEST)
 }

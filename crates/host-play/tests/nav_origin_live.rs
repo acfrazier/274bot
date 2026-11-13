@@ -157,7 +157,7 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
             .expect("confirm WalkTo");
         let state = WorldState::from_snapshot(&snapshot);
         let admission = host_play::admission::Admission::manual(
-            command.options(),
+            host_play::WalkGlobals::default().manual_decision(command.options().zones.is_all()),
             host_play::admission::capture(
                 &snapshot,
                 state.map_members,
@@ -166,7 +166,6 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
                 None,
             ),
             0,
-            host_play::WalkGlobals::default(),
         );
         let route = command
             .walk_on(

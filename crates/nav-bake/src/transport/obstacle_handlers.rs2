@@ -1,4 +1,4 @@
-// 289 source handlers. Paths and line ranges are recorded in obstacle tests.
+// Test fixture: 289 source handlers. Paths and line ranges are recorded in obstacle tests.
 [oploc1,death_fullstyle]
 def_coord $start_coord = loc_coord;
 def_int $mod = 1;

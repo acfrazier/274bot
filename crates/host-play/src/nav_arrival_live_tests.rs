@@ -3,6 +3,9 @@
 //! Run with `NAV_ARRIVAL_SCENARIO` set to `return`, `yew`, `tower-top`,
 //! `tower-basement`, `lumbridge-door`, or `gnome-maze`. Each run requires the
 //! copied cache and the caller-supplied throwaway HOME under `BOT_EVIDENCE_DIR`.
+//! Gnome maze relogs after the tutorial skip, then proves 80 Hitpoints,
+//! 40 Defence and six lobsters before Start. Its real danger request must pass
+//! the 1% assessment; no global danger override replaces the timing check.
 
 use super::*;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -137,6 +140,7 @@ struct WalkSpec {
     target: WorldTile,
     radius: u16,
     allow_danger_zones: bool,
+    food_guard: bool,
     loc_id: Option<i32>,
     loc_name: Option<String>,
     loc_actions: Vec<String>,
@@ -148,6 +152,7 @@ impl WalkSpec {
             target: RETURN_TARGET,
             radius: 12,
             allow_danger_zones: false,
+            food_guard: false,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -163,6 +168,19 @@ impl WalkSpec {
             },
             radius: 3,
             allow_danger_zones: false,
+            food_guard: false,
+            loc_id: None,
+            loc_name: None,
+            loc_actions: Vec::new(),
+        }
+    }
+
+    fn gnome_walk() -> Self {
+        Self {
+            target: GNOME_MAZE_TARGET,
+            radius: 0,
+            allow_danger_zones: true,
+            food_guard: true,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -185,9 +203,12 @@ impl WalkSpec {
             cross: Box::default(),
             avoid: Box::default(),
             protect: false,
-            food_guard: false,
+            food_guard: self.food_guard,
             cure_guard: false,
-            allow: Default::default(),
+            allow: script::native::WalkAllow {
+                food: self.food_guard,
+                ..Default::default()
+            },
         }
     }
 }
@@ -212,6 +233,18 @@ struct SceneProof {
     lumbridge_door: Option<DoorObservation>,
 }
 
+#[derive(Clone, Copy, Default)]
+enum GnomeSetup {
+    #[default]
+    SkipTutorial,
+    ReadTutorial,
+    AwaitTutorial,
+    AwaitMainland,
+    Seed(usize),
+    AwaitFacts,
+    Ready,
+}
+
 #[derive(Default)]
 struct LiveState {
     teleport_sent: bool,
@@ -222,6 +255,10 @@ struct LiveState {
     ready: bool,
     setup_error: Option<String>,
     door_close_wait: Option<Value>,
+    gnome_setup: GnomeSetup,
+    gnome_initial_facts: Option<Value>,
+    gnome_ready_facts: Option<Value>,
+    gnome_start_facts: Option<Value>,
     target: Option<WalkSpec>,
     scene: SceneProof,
     walk_started: bool,
@@ -248,6 +285,9 @@ impl Script for NativeWalkScript {
             }
         };
         if begin {
+            if self.walk.food_guard {
+                self.state.lock().gnome_start_facts = Some(combat_facts_json(tick.cx.snapshot()));
+            }
             match tick
                 .actions
                 .begin::<Walk>(self.walk.request(tick.cx.evidence()), &mut tick.cx)
@@ -439,6 +479,7 @@ fn yew_walk(snapshot: &GameSnapshot, origin: WorldTile) -> Option<WalkSpec> {
                     target: loc.tile,
                     radius: 1,
                     allow_danger_zones: false,
+                    food_guard: false,
                     loc_id: Some(loc.id),
                     loc_name: Some(name.to_owned()),
                     loc_actions: loc.actions.iter().flatten().cloned().collect(),
@@ -449,11 +490,154 @@ fn yew_walk(snapshot: &GameSnapshot, origin: WorldTile) -> Option<WalkSpec> {
         .map(|(_, walk)| walk)
 }
 
+fn diagnostic_view(snapshot: &GameSnapshot) -> api::snapshot::SnapshotView<'_> {
+    api::snapshot::SnapshotView::new(
+        Some(snapshot),
+        api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 0,
+                run: 0,
+                session: 0,
+            },
+            tick: u64::from(snapshot.tick()),
+            sequence: u64::from(snapshot.tick()),
+        },
+    )
+}
+
+fn combat_input(view: api::snapshot::SnapshotView<'_>) -> Option<script::combat::risk::RiskInput> {
+    let frame = script::combat::frame::Frame::borrow(view)?;
+    let tables = script::combat::guard::shared_tables().ok()?;
+    let mut threats = script::combat::ThreatSet::default();
+    threats.observe(&frame, &tables, frame.tick);
+    Some(script::combat::risk::RiskInput::capture(
+        &frame,
+        &tables,
+        &threats,
+        api::condition::PoisonState::Unknown { since: frame.tick },
+        false,
+    ))
+}
+
+fn combat_facts_json(view: api::snapshot::SnapshotView<'_>) -> Value {
+    json!({
+        "stats": view.stats().map(|observed| observed.value.iter()
+            .filter(|stat| matches!(stat.index, 1 | 3 | 5))
+            .map(|stat| json!({
+                "index": stat.index, "effective": stat.effective, "base": stat.base,
+            })).collect::<Vec<_>>()),
+        "inventory_available": view.inventory().is_some(),
+        "inventory_capacity": view.inventory_capacity().map(|observed| observed.value),
+        "equipment_available": view.equipment().is_some(),
+        "combat_level": view.local_player().map(|observed| observed.value.player.combat_level),
+        "run_varp": view.varps().and_then(|observed| observed.value.iter()
+            .find(|varp| varp.index == 173).map(|varp| varp.value)),
+        "input": combat_input(view).map(|input| json!({
+            "missing_facts": input.missing_facts(),
+            "overflow": input.overflow(),
+            "hp": input.hp,
+            "hp_max": input.hp_max,
+            "defence": input.defence,
+            "prayer_base": input.prayer_base,
+            "combat": input.combat,
+            "foods": input.food_iter().collect::<Vec<_>>(),
+        })),
+    })
+}
+
+fn gnome_facts_ready(snapshot: &GameSnapshot) -> bool {
+    combat_input(diagnostic_view(snapshot)).is_some_and(|input| {
+        !input.missing_facts()
+            && !input.overflow()
+            && input.hp == 80
+            && input.hp_max == 80
+            && input.defence == 40
+            && input.combat.is_some_and(|level| level > 0 && level < 57)
+            && input.food_iter().any(|(id, count)| id == 379 && count == 6)
+    })
+}
+
+fn prepare_gnome_account(
+    client: &mut client::client::Client,
+    snapshot: &GameSnapshot,
+    arm: &SlotArm,
+    state: &mut LiveState,
+) -> bool {
+    const SEEDS: [&str; 4] = [
+        "setvar tutorial 1000",
+        "setstat hitpoints 80",
+        "setstat defence 40",
+        "give lobster 6",
+    ];
+    if state.setup_error.is_some() {
+        return false;
+    }
+    let ingame = client.ingame && client.scene_state == 2;
+    match state.gnome_setup {
+        GnomeSetup::SkipTutorial if ingame => {
+            state.gnome_initial_facts = Some(combat_facts_json(diagnostic_view(snapshot)));
+            api::interact::mainland_hop(client);
+            state.gnome_setup = GnomeSetup::ReadTutorial;
+        }
+        GnomeSetup::ReadTutorial => {
+            if !api::interact::cheat(client, "getvar tutorial").is_sent() {
+                state.setup_error = Some("Gnome tutorial proof command was refused".into());
+            }
+            state.gnome_setup = GnomeSetup::AwaitTutorial;
+        }
+        GnomeSetup::AwaitTutorial
+            if snapshot.chat_lines().iter().any(|line| {
+                line.text
+                    .to_ascii_lowercase()
+                    .contains("get tutorial: 1000")
+            }) || snapshot
+                .chat_modal_texts()
+                .iter()
+                .any(|line| line.to_ascii_lowercase().contains("get tutorial: 1000")) =>
+        {
+            let ifaces = Arc::clone(&client.ifaces);
+            if !api::interact::logout(client, &ifaces) {
+                state.setup_error = Some("Gnome tutorial logout interface was unavailable".into());
+            } else {
+                // Tutorial clears both item tabs. A varp cheat alone does not
+                // restore them: login.rs2 initalltabs transmits inventory/worn.
+                arm.arm_explicit_login();
+                state.gnome_setup = GnomeSetup::AwaitMainland;
+            }
+        }
+        GnomeSetup::AwaitMainland
+            if ingame
+                && diagnostic_view(snapshot).inventory().is_some()
+                && diagnostic_view(snapshot).equipment().is_some() =>
+        {
+            state.gnome_setup = GnomeSetup::Seed(0);
+        }
+        GnomeSetup::Seed(index) if ingame => {
+            if !api::interact::cheat(client, SEEDS[index]).is_sent() {
+                state.setup_error = Some(format!("Gnome seed was refused: {}", SEEDS[index]));
+            }
+            state.gnome_setup = if index + 1 == SEEDS.len() {
+                GnomeSetup::AwaitFacts
+            } else {
+                GnomeSetup::Seed(index + 1)
+            };
+        }
+        GnomeSetup::AwaitFacts if ingame && gnome_facts_ready(snapshot) => {
+            state.gnome_ready_facts = Some(combat_facts_json(diagnostic_view(snapshot)));
+            state.gnome_setup = GnomeSetup::Ready;
+        }
+        GnomeSetup::Ready => return true,
+        _ => {}
+    }
+    false
+}
+
 fn frame_hook(
     state: Arc<parking_lot::Mutex<LiveState>>,
     account: String,
     scenario: Scenario,
     door_state_changed: Arc<parking_lot::Condvar>,
+    arm: Arc<SlotArm>,
 ) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
     let prime_tower_door = std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1");
     move |client, username, _hold| {
@@ -540,6 +724,11 @@ fn frame_hook(
                 sample["lumbridge_door"] = door_observation_json(lumbridge_door);
             }
             state.samples.push(sample);
+        }
+        if scenario == Scenario::GnomeMaze
+            && !prepare_gnome_account(client, &snapshot, &arm, &mut state)
+        {
+            return;
         }
         if !(client.ingame && client.scene_state == 2) || state.setup_error.is_some() {
             return;
@@ -800,6 +989,46 @@ fn route_sample(play: &Play, account: &str) -> Option<RouteSample> {
     })
 }
 
+fn risk_sample(play: &Play, account: &str) -> Option<Value> {
+    let navs = play.navs.lock().unwrap();
+    let bot = navs.get(account)?;
+    let admission = bot.admission.as_deref()?;
+    let assessment = risk_assessment(bot)?;
+    Some(json!({
+        "request_id": bot.route_request_id,
+        "admission": format!("{admission:?}"),
+        "verdict": format!("{:?}", assessment.verdict),
+        "bound": assessment.bound,
+        "complete": assessment.plan.complete,
+        "crossings": assessment.crossings.len(),
+        "missing_facts": assessment.input.missing_facts(),
+        "overflow": assessment.input.overflow(),
+        "foods": assessment.input.food_iter().collect::<Vec<_>>(),
+        "reason": assessment.reason.as_ref(),
+    }))
+}
+
+// Successful publication keeps the current assessment; only refusals must be
+// retained after the route is cleared. Do not read the refusal cache alone.
+fn risk_assessment(
+    bot: &crate::script_runtime::NavBot,
+) -> Option<&script::combat::risk::RouteAssessment> {
+    bot.assessment.as_deref().or(bot.last_assessment.as_deref())
+}
+
+fn gnome_risk_proven(assessment: Option<&Value>) -> bool {
+    assessment.is_some_and(|row| {
+        row["verdict"] == "Survivable"
+            && row["bound"]
+                .as_f64()
+                .is_some_and(|bound| (0.0..=0.01).contains(&bound))
+            && row["complete"] == true
+            && row["crossings"].as_u64().is_some_and(|count| count > 0)
+            && row["missing_facts"] == false
+            && row["overflow"] == false
+    })
+}
+
 fn route_json(sample: Option<&RouteSample>) -> Value {
     let Some(sample) = sample else {
         return Value::Null;
@@ -919,6 +1148,8 @@ impl EvidenceContext<'_> {
                 "radius": walk.radius,
                 "loc_id": walk.loc_id,
                 "allow_danger_zones": walk.allow_danger_zones,
+                "food_guard": walk.food_guard,
+                "allow_food": walk.food_guard,
                 "allow_teleports": false,
                 "allow_wilderness": false,
                 "allow_bank_fetch": false,
@@ -1075,6 +1306,95 @@ fn write_capture_flushes_its_json_without_a_frame() {
 }
 
 #[test]
+fn gnome_maze_keeps_the_real_food_guard_and_complete_giant_facts() {
+    let walk = WalkSpec::gnome_walk();
+    let request = walk.request(api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    });
+    assert_eq!(
+        request.options.allow_danger_zones,
+        script::native::WalkBit::Allow
+    );
+    assert!(request.food_guard && request.allow.food);
+    assert!(!request.protect);
+
+    script::require_local_game_data_for_test!(api::selected::ClientRevision::R289);
+    let tables = script::combat::guard::shared_tables().expect("selected R289 combat facts");
+    let giant = tables.selected().npc_by_config("giant").expect("Giant row");
+    assert_eq!(giant.id, 117);
+    let risk = script::combat::risk::KindRisk::from_npc(giant, &tables);
+    assert_eq!(risk.unknown, script::combat::risk::UnknownKind::Known);
+    assert!(risk.max_hit > 0 && risk.attack_roll > 0);
+    assert_eq!(risk.rate, 6);
+}
+
+#[test]
+fn gnome_maze_samples_current_success_before_retained_refusal() {
+    use script::combat::risk::{PoisonTest, RouteAssessment, Verdict};
+
+    let assessment = |reason: &str| {
+        Arc::new(RouteAssessment {
+            verdict: Verdict::Survivable,
+            plan: Default::default(),
+            crossings: Box::default(),
+            more: 0,
+            supplies: Box::default(),
+            hp_after: 80,
+            volley: 0,
+            bound: 0.0,
+            poison_test: PoisonTest::NotNeeded,
+            input: Default::default(),
+            generation: 1,
+            reason: Arc::from(reason),
+        })
+    };
+    let mut bot = crate::script_runtime::NavBot {
+        assessment: Some(assessment("current")),
+        last_assessment: Some(assessment("retained")),
+        ..Default::default()
+    };
+    assert_eq!(
+        risk_assessment(&bot).map(|row| row.reason.as_ref()),
+        Some("current")
+    );
+    bot.assessment = None;
+    assert_eq!(
+        risk_assessment(&bot).map(|row| row.reason.as_ref()),
+        Some("retained")
+    );
+    bot.last_assessment = None;
+    assert!(risk_assessment(&bot).is_none());
+}
+
+#[test]
+fn gnome_maze_requires_a_complete_admitted_one_percent_assessment() {
+    let good = json!({
+        "verdict": "Survivable", "bound": 0.009,
+        "complete": true, "crossings": 1, "missing_facts": false, "overflow": false,
+    });
+    assert!(gnome_risk_proven(Some(&good)));
+    assert!(!gnome_risk_proven(None));
+    for (field, value) in [
+        ("verdict", json!("Unknown(MissingFacts)")),
+        ("bound", json!(0.01001)),
+        ("complete", json!(false)),
+        ("crossings", json!(0)),
+        ("missing_facts", json!(true)),
+        ("overflow", json!(true)),
+    ] {
+        let mut bad = good.clone();
+        bad[field] = value;
+        assert!(!gnome_risk_proven(Some(&bad)), "{field}: {bad}");
+    }
+}
+
+#[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, and the local R289 engine/nav fixtures"]
 fn live_native_walk_arrival_retains_arrived_receipt() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
@@ -1155,19 +1475,12 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
                 target: LUMBRIDGE_DOOR_TARGET,
                 radius: 0,
                 allow_danger_zones: false,
+                food_guard: false,
                 loc_id: None,
                 loc_name: None,
                 loc_actions: Vec::new(),
             }),
-            Scenario::GnomeMaze => Some(WalkSpec {
-                target: GNOME_MAZE_TARGET,
-                radius: 0,
-                // This fixture tests walk timing, not fresh-account danger admission.
-                allow_danger_zones: true,
-                loc_id: None,
-                loc_name: None,
-                loc_actions: Vec::new(),
-            }),
+            Scenario::GnomeMaze => Some(WalkSpec::gnome_walk()),
             Scenario::Yew => None,
         },
         ..LiveState::default()
@@ -1176,12 +1489,14 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let frame_mailbox = Arc::clone(&mailbox);
     let frame_state = Arc::clone(&state);
     let door_state_changed = Arc::new(parking_lot::Condvar::new());
+    let profile = live_profile(account.clone(), password);
+    let arm = SlotArm::new(profile.uid, true);
     let frame_door_state_changed = Arc::clone(&door_state_changed);
     let frame_account = account.clone();
-    let play = run_with_template(
+    let mut play = run_with_template(
         template,
         false,
-        vec![live_profile(account.clone(), password)],
+        vec![],
         move |username| {
             if username == frame_account {
                 (None, Some(Arc::clone(&frame_mailbox)))
@@ -1194,9 +1509,12 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
             account.clone(),
             scenario,
             frame_door_state_changed,
+            Arc::clone(&arm),
         ),
     )
     .expect("start one-slot live Play");
+    play.try_spawn_slot(profile, None, Some(Arc::clone(&mailbox)), Some(arm))
+        .expect("spawn the owned arrival account");
 
     let setup_result = wait_for_setup(&play, &account, &state).and_then(|()| {
         if scenario == Scenario::LumbridgeDoor {
@@ -1241,6 +1559,11 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         setup_report["lumbridge_door_close_wait"] =
             state.lock().door_close_wait.clone().unwrap_or(Value::Null);
     }
+    if scenario == Scenario::GnomeMaze {
+        let state = state.lock();
+        setup_report["gnome_initial_combat_facts"] = state.gnome_initial_facts.clone().into();
+        setup_report["gnome_ready_combat_facts"] = state.gnome_ready_facts.clone().into();
+    }
     let setup_png = write_capture(
         &run_dir,
         &timestamp,
@@ -1282,10 +1605,14 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
 
     let deadline = Instant::now() + WALK_TIMEOUT;
     let mut route = None;
+    let mut risk = None;
     let mut timed_out = false;
     loop {
         if route.is_none() {
             route = route_sample(&play, &account);
+        }
+        if scenario == Scenario::GnomeMaze && risk.is_none() {
+            risk = risk_sample(&play, &account);
         }
         let (terminal, start_error) = {
             let state = state.lock();
@@ -1340,6 +1667,12 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         result.as_ref(),
         start_error.as_deref(),
     );
+    if scenario == Scenario::GnomeMaze {
+        let state = state.lock();
+        final_report["gnome_initial_combat_facts"] = state.gnome_initial_facts.clone().into();
+        final_report["gnome_start_combat_facts"] = state.gnome_start_facts.clone().into();
+        final_report["gnome_admission"] = risk.clone().into();
+    }
     if let Some(proof) = door_walk {
         final_report["lumbridge_door_crossing"] = json!({
             "source": "observed GameSnapshot::locs() and per-game-tick player tiles",
@@ -1386,6 +1719,10 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     assert!(
         door_crossing_proven,
         "lumbridge-door requires the native Walk to observe the closed door, its opened state, the door tile, and the target in order"
+    );
+    assert!(
+        scenario != Scenario::GnomeMaze || gnome_risk_proven(risk.as_ref()),
+        "Gnome timing requires a real complete 1% admission, not an override: {risk:?}"
     );
     assert!(
         scene.ingame && scene.scene_state == 2 && scene.player_tile.is_some(),

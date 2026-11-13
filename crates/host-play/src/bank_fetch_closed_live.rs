@@ -975,13 +975,9 @@ fn run_cell(variant: Variant) {
                         &bank,
                         // The panel's manual WalkTo admission (Play::map_walk).
                         crate::admission::Admission::manual(
-                            FindOptions {
-                                allow_bank_fetch: true,
-                                ..FindOptions::default()
-                            },
+                            crate::WalkGlobals::default().manual_decision(false),
                             risk_input,
                             0,
-                            crate::WalkGlobals::default(),
                         ),
                         &arms,
                         Some(&account),

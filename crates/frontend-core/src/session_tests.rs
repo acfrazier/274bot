@@ -106,7 +106,7 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = WalkGlobals::new(true, true, true, true, false, true, true);
+    let granted = WalkGlobals::new(true, true, true, true, true, true);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
     assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());
@@ -2187,6 +2187,62 @@ fn edited_random(s: &OperatorSession<u32>) -> bool {
         .unwrap()
         .settings
         .random_events
+}
+
+/// A vault written by the 0.1.8.1 release code (`a88d07764` vault crate,
+/// passphrase `bot`): alice with every profile field set, bob at defaults.
+const VAULT_0_1_8_1: &[u8] = include_bytes!("../tests/fixtures/vault-0.1.8.1.bin");
+
+#[test]
+fn a_0_1_8_1_vault_loads_spawns_and_saves_through_the_core_unchanged() {
+    let path = vault_path("vault-0181");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, VAULT_0_1_8_1).unwrap();
+    let mut s = OperatorSession::new(InstancePermit::SkipLock);
+    s.set_spawn_workers(false);
+    s.start(Vault::unlock(&path, "bot").unwrap(), empty_play());
+
+    let alice = s.vault().unwrap().get("alice").unwrap().clone();
+    assert_eq!(alice.password, "old-pass");
+    assert_eq!(alice.uid, 274_000_501);
+    assert!(alice.settings.auto_login && !alice.settings.lowmem);
+    assert_eq!(alice.settings.world, Some(2));
+    assert_eq!(alice.settings.tutorial_skipped, Some(true));
+    assert_eq!(alice.settings.raster, vault::RasterMode::Cpu);
+    assert!(!alice.settings.random_events && !alice.settings.lamp_auto);
+    assert_eq!(alice.settings.lamp_skill, "prayer");
+    assert_eq!(
+        alice.settings.script_assignment.as_ref().unwrap().identity,
+        "catalog:Thiever"
+    );
+    assert_eq!(
+        alice.settings.script_settings["catalog:Thiever"]["food"],
+        serde_json::json!("Lobster")
+    );
+
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let arm = arm(&s, "alice");
+    assert_eq!(arm.uid.load(Ordering::Relaxed), 274_000_501);
+    assert!(arm.wants_login(), "saved auto-login is honoured");
+
+    s.set_random_settings("alice", true, "attack", true)
+        .unwrap();
+    s.flush_writes();
+    let reread = Vault::unlock(&path, "bot").unwrap();
+    let saved = reread.get("alice").unwrap();
+    assert!(saved.settings.random_events);
+    assert_eq!(saved.settings.lamp_skill, "attack");
+    let mut expected = alice.settings.clone();
+    expected.random_events = true;
+    expected.lamp_skill = "attack".into();
+    expected.lamp_auto = true;
+    assert_eq!(
+        saved.settings, expected,
+        "every other field survives the rewrite"
+    );
+    assert_eq!(saved.password, "old-pass");
+    assert_eq!(reread.get("bob"), s.vault().unwrap().get("bob"));
 }
 
 // A profile form's saves settle by their write's operation id: a delayed

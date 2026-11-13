@@ -398,7 +398,7 @@ impl Combo {
                 if let Err(error) = cx.emit(InteractReq::IfButton {
                     component_id: CONFIRM,
                 }) {
-                    return Poll::Ready(Err(error));
+                    return budget_retry(error);
                 }
                 self.phase = ComboPhase::Confirm {
                     chat_since,
@@ -425,7 +425,7 @@ impl Combo {
         if let Err(error) = cx.emit(InteractReq::IfButton {
             component_id: dial_button(index, current, target),
         }) {
-            return Poll::Ready(Err(error));
+            return budget_retry(error);
         }
         self.phase = ComboPhase::Dial {
             index,
@@ -435,6 +435,16 @@ impl Combo {
         };
         Poll::Pending
     }
+}
+
+/// A dial or confirm click finds this observed tick's one event already spent
+/// (`ledger.rs` `TickBudget::event`), for example when a fresh snapshot in the
+/// same tick already shows the letter that the last click echoed
+/// (`quest_totem.rs2` `tribal_door_combo` ends in `if_settext`). Phase state
+/// is only committed after a successful emit, so waiting one tick repeats the
+/// same decision; any other emit error still ends the step.
+fn budget_retry(error: ActionError) -> Poll<Result<(), ActionError>> {
+    crate::native::defer_budget(Err(error))
 }
 
 fn door_ui_open(cx: &ActionContext<'_>) -> bool {
@@ -629,5 +639,120 @@ mod tests {
         };
         assert_eq!(request.target, tile);
         assert_eq!(request.required_after.tick, 3);
+    }
+
+    fn dial_widget(component_id: i32, letter: &str) -> api::snapshot::WidgetView {
+        use api::snapshot::{WidgetKind, WidgetRoot};
+        api::snapshot::WidgetView {
+            kind: WidgetKind::Widget,
+            component_id,
+            layer_id: component_id,
+            parent_id: DOOR_UI,
+            root_component_id: DOOR_UI,
+            root: WidgetRoot::Main,
+            type_: 4,
+            button_type: 0,
+            client_code: 0,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            scroll_height: 0,
+            inventory_ready: false,
+            scroll_position: 0,
+            hidden: false,
+            text: Some(letter.to_owned()),
+            alternate_text: None,
+            button_text: None,
+            target_verb: None,
+            target_base: None,
+            target_mask: 0,
+            model_type: 0,
+            model_id: -1,
+            alternate_model_type: 0,
+            alternate_model_id: -1,
+            scripts: None,
+            script_comparators: None,
+            script_operands: None,
+            varp_bindings: Vec::new(),
+            colour: 0,
+            actions: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+
+    fn lock_snapshot(letters: [&str; 4]) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_main_modal(
+            DOOR_UI,
+            DIAL_TEXT
+                .iter()
+                .zip(letters)
+                .map(|(id, letter)| dial_widget(*id, letter))
+                .collect(),
+        );
+        snapshot
+    }
+
+    /// One click spends the observed tick's only event. When the snapshot of
+    /// that same tick already shows the echoed letter, the next dial's click
+    /// has no event left: it waits for the next tick and then goes out, and
+    /// the step does not fail with `BudgetExhausted` (totem:4 receipt, the
+    /// third dial, after 17 clicks).
+    #[test]
+    fn dial_click_waits_for_the_next_tick_when_the_event_is_spent() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let before = lock_snapshot(["A", "A", "A", "A"]);
+        let echoed = lock_snapshot(["B", "A", "A", "A"]);
+        let mut ledger = None;
+        let handle = crate::quester::families::tests::with_tick_snapshots(
+            &before,
+            &echoed,
+            &mut ledger,
+            1,
+            |tick, echoed| {
+                let handle = tick
+                    .actions
+                    .begin::<Combo>(
+                        ComboArgs {
+                            word: Arc::from("BBAA"),
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap();
+                // The lock opens, then the first dial's click is sent.
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+                tick.cx.snapshot =
+                    api::snapshot::SnapshotView::new(Some(echoed), tick.cx.evidence());
+                // The first dial now reads its letter; the second dial's click
+                // has no event left in this tick.
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert!(
+                    tick.actions.poll(&handle, &mut tick.cx).is_pending(),
+                    "a spent tick event defers the click and does not fail the step"
+                );
+                assert_eq!(tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
+                handle
+            },
+        );
+        assert!(
+            crate::quester::families::tests::with_tick(&echoed, &mut ledger, 2, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending()
+        );
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 2, "the deferred click goes out on the next tick");
+        let crate::native::HostEffect::Interaction(InteractReq::IfButton { component_id }) =
+            &outbox.last().unwrap().effect
+        else {
+            panic!("the next tick sends the second dial's button");
+        };
+        assert_eq!(*component_id, DIAL_UP[1]);
     }
 }

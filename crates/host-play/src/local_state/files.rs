@@ -15,8 +15,9 @@
 //! and a fresh document is started ([`corrupt_preferences`],
 //! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
 //! unchanged. Duplicate loadout names are refused rather than renamed apart.
-//! Recognized pre-0.2.8 shapes are refused as a whole, never rewritten or
-//! partially loaded. The service logs each changed refusal with its file path.
+//! A hint document from before schema 1 is refused as a whole, never
+//! rewritten or partially loaded. The service logs each changed refusal with
+//! its file path.
 //! A file whose content the service cannot represent whole (a hint field it
 //! does not know, a loadout row it cannot write back as read, a preference or
 //! setting it cannot hold as a row) is read but never rewritten
@@ -41,7 +42,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
-use api::loadout::{loadouts_have_pre_0_2_8_shape, parse_loadout, Loadout};
+use api::loadout::{parse_loadout, Loadout};
 use api::local_state::{
     AccountKey, ContentScope, DomainIdentity, ErrorCode, FailureReason, LeaseSnapshot, LoadoutEdit,
     LoadoutOp, LocalStateDomain, PreferenceChange, PreferenceRow, RuntimeSettingsEdit,
@@ -508,6 +509,10 @@ impl ReadError {
 ///  "revision":289,"content":"lostcity-289",
 ///  "observed_at_unix":1759700000,"rows":[[379,12],[995,3400]]}
 /// ```
+///
+/// A schema 1 document without `revision` and `content` is also in the
+/// 0.2.8 format: 0.2.8 read it under the scope that asks and stamped the
+/// scope on its next write. This build does the same.
 #[derive(Debug, Serialize, Deserialize)]
 struct HintDocument {
     schema_version: u32,
@@ -671,7 +676,9 @@ pub(super) fn read(
             match (&document.revision, &document.content) {
                 (Some(found_revision), Some(found_content))
                     if found_revision == revision && found_content == content => {}
-                (None, None) => return Err(ReadError::UnsupportedSavedFormat),
+                // No scope recorded: read it under the scope that asks.
+                // The next write stamps the scope.
+                (None, None) => {}
                 _ => {
                     return Err(ReadError::Scope {
                         revision: document.revision,
@@ -784,6 +791,18 @@ pub(super) fn read(
         }
     }
 }
+
+/// Whether `raw` is a complete hint document from before schema 1: the
+/// shape [`read`] refuses as [`ReadError::UnsupportedSavedFormat`]. The
+/// startup probe uses this same check, so the probe and the reader agree.
+pub(crate) fn hint_has_pre_0_2_8_shape(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .as_ref()
+        .and_then(unversioned_hint_identity)
+        .is_some()
+}
+
 /// Profile and account from a complete pre-schema hint document. This
 /// recognizes the old envelope without copying the JSON tree, so identity
 /// mismatches still take precedence over its unsupported format.
@@ -827,12 +846,11 @@ pub(super) fn current_digest(
 }
 
 /// The rows a loadouts document holds, and whether a rewrite keeps all of
-/// it. Malformed current-schema rows are skipped; because the resulting
-/// rows are not everything the file holds, the service never rewrites it.
+/// it. A row 0.2.8 read in an older shape (array `worn`, string `carry`
+/// rows) or skipped as malformed is read or skipped the same way here; then
+/// the rows read are not everything the file holds, and the service never
+/// rewrites it.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
-    if loadouts_have_pre_0_2_8_shape(raw.as_bytes()) {
-        return Err(ReadError::UnsupportedSavedFormat);
-    }
     let Value::Array(elements) = serde_json::from_str(raw)? else {
         return Err(ReadError::NotAnArray);
     };

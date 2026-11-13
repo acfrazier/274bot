@@ -300,12 +300,23 @@ fn unclassified_rocks_stay_unknown_with_a_reason_and_are_never_resources() {
         .iter()
         .any(|span| span.file.ends_with(".loc")));
     assert!(slide.method.is_none());
+    // Each iron rock belongs to the method of its own handler: regular iron runs mining_rock_fast, the Haunted
+    // Mine veins (hauntedmine.loc) run mining_rock_normal.
+    for (loc, method) in [
+        (2092, "mining.iron"),
+        (2093, "mining.iron"),
+        (4982, "mining.iron.get_ore_normal"),
+        (4984, "mining.iron.get_ore_normal"),
+    ] {
+        let rock = catalog.rock(loc).expect("iron rocks are rocks");
+        assert_eq!(
+            (rock.class, rock.method.map(|m| &*m.id.0)),
+            (TargetClass::Resource, Some(method)),
+            "loc {loc}"
+        );
+    }
     // A loc with no handler anywhere is proven inert by content and engine dispatch
     // (M-215 R2), so it is excluded from the mining catalogue entirely: no rock fact.
-    assert!(
-        catalog.rock(4976).is_none(),
-        "loc 4976 has no handler, so it is not a rock at all"
-    );
     assert!(
         catalog.rock(3431).is_none(),
         "newbierocks1 has no handler, so it is not a rock at all"

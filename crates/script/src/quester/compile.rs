@@ -6,6 +6,8 @@ use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
+#[path = "inventory.rs"]
+pub(super) mod inventory;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
@@ -21,6 +23,7 @@ use api::selected::{
     FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
     Truth,
 };
+pub(crate) use inventory::{stage_inventory, StageInventory};
 use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
 use std::{
@@ -166,6 +169,13 @@ pub struct CompiledPath {
     pub warnings: Vec<Arc<str>>,
 }
 
+impl CompiledPath {
+    /// Return the deterministic narrow set of items owned by this compiled Path.
+    pub fn managed_item_ids(&self) -> &[i32] {
+        &self.provisioning.managed_items
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompiledItemKind {
     MustHave,
@@ -237,6 +247,13 @@ pub struct CompiledProvisioning {
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
+    /// Managed items owned by this compiled Path, excluding unrelated global
+    /// tool families and unrelated operator loadout rows.
+    pub managed_items: Arc<[i32]>,
+    /// Managed items that a Path step or predicate requires in the pack.
+    pub carried_items: Arc<[i32]>,
+    /// Exact must-have counts; carried-ID ownership is not a food exclusion.
+    pub food_reserves: Option<Arc<[crate::combat::FoodReserve]>>,
     /// Stage keys in compiled sequence order; item gates resolve against this.
     pub stages: Arc<[FactKey]>,
     pub tools: Arc<[BankItem]>,
@@ -247,7 +264,24 @@ pub struct CompiledProvisioning {
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
     pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
+    pub survival: Option<Arc<super::survival::CompiledSurvival>>,
 }
+
+pub(super) fn food_reserves(
+    items: &[CompiledQuestItem],
+) -> Option<Arc<[crate::combat::FoodReserve]>> {
+    let reserves: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind == CompiledItemKind::MustHave && item.qty > 0)
+        .map(|item| crate::combat::FoodReserve {
+            id: item.id,
+            qty: item.qty,
+        })
+        .collect();
+    (!reserves.is_empty()).then(|| Arc::from(reserves))
+}
+
+const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 416);
 
 pub struct CompiledSequence {
     pub stage: FactKey,
@@ -276,6 +310,9 @@ pub struct CompiledStep {
     pub tactic: Option<Arc<str>>,
     pub advances: bool,
     pub attempt_budget: Option<StepAttemptBudget>,
+    /// Content signal that a counted attempt ran and failed; see
+    /// `StepDocument::failure_signal`.
+    pub failure_signal: Option<Arc<dyn PredicatePlan>>,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
@@ -380,6 +417,10 @@ pub trait StepPlan: Send + Sync {
         std::time::Duration::from_secs(8)
     }
     fn compile_warning(&self) -> Option<&'static str> {
+        None
+    }
+    /// Declared fights expose their immutable request to stage provisioning.
+    fn combat_request(&self) -> Option<&crate::combat::CombatRequest> {
         None
     }
     /// A copy of this plan that knows its step's own `skip_if` and `settle`.
@@ -629,37 +670,6 @@ fn cross_id_error(
     error
 }
 
-fn route_cross_union_len(
-    ids: &[serde_json::Value],
-    stage_cross: &[super::path::RequiredZoneDocument],
-) -> usize {
-    let mut count = 0;
-    for (index, value) in ids.iter().enumerate() {
-        let Some(id) = value.as_str() else {
-            continue;
-        };
-        if ids[..index]
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .any(|previous| previous == id)
-            || stage_cross.iter().any(|zone| zone.id.as_str() == id)
-        {
-            continue;
-        }
-        count += 1;
-    }
-    for (index, zone) in stage_cross.iter().enumerate() {
-        if stage_cross[..index]
-            .iter()
-            .any(|previous| previous.id == zone.id)
-        {
-            continue;
-        }
-        count += 1;
-    }
-    count
-}
-
 fn is_route_cross_kind(kind: &str) -> bool {
     matches!(kind, "walk" | "combat")
 }
@@ -720,28 +730,10 @@ fn visit_nested_step_documents(
 
 fn validate_step_cross_array(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step_id: &FactKey,
-    sequence: Option<&super::path::SequenceDocument>,
     ids: &[serde_json::Value],
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
-    let maximum = nav_planner::contract::MAX_ZONE_KEYS;
-    if ids.len() > maximum {
-        let stage = sequence
-            .map(|sequence| format!(" in stage {:?}", sequence.stage.0))
-            .unwrap_or_default();
-        let mut error = CompileError::code("too-many-route-cross")
-            .with_path(document.id.clone())
-            .with_detail(format!(
-                "step {:?}{stage} declares {} cross values; the maximum per route is {maximum}",
-                step_id.0,
-                ids.len()
-            ));
-        error.step = Some(step_id.clone());
-        return Err(error);
-    }
-
     if ids.iter().any(serde_json::Value::is_string) && zones.is_none() {
         let mut error = CompileError::code("cross-catalog-unavailable")
             .with_path(document.id.clone())
@@ -762,67 +754,32 @@ fn validate_step_cross_array(
             ));
         }
     }
-
-    let check_stage = |stage: Option<&super::path::SequenceDocument>| -> Result<(), CompileError> {
-        let stage_cross = stage.map_or(&[][..], |sequence| sequence.cross.as_slice());
-        let union_len = route_cross_union_len(ids, stage_cross);
-        if union_len > maximum {
-            let stage_detail = stage
-                .map(|sequence| format!(" and stage {:?}", sequence.stage.0))
-                .unwrap_or_default();
-            let mut error = CompileError::code("too-many-route-cross")
-                    .with_path(document.id.clone())
-                    .with_detail(format!(
-                        "step {:?}{stage_detail} grants {union_len} unique cross ids; the maximum per route is {maximum}",
-                        step_id.0
-                    ));
-            error.step = Some(step_id.clone());
-            return Err(error);
-        }
-        Ok(())
-    };
-
-    if let Some(sequence) = sequence {
-        check_stage(Some(sequence))?;
-    } else if role.sequences.is_empty() {
-        check_stage(None)?;
-    } else {
-        // Unscoped steps, including automatically provisioned recipes, can
-        // run while any stage is current, so validate each possible union.
-        for sequence in &role.sequences {
-            check_stage(Some(sequence))?;
-        }
-    }
     Ok(())
 }
 
 fn validate_route_step_cross(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step_id: &FactKey,
-    sequence: Option<&super::path::SequenceDocument>,
     args: &serde_json::Value,
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
     if let Some(ids) = args.get("cross").and_then(serde_json::Value::as_array) {
-        validate_step_cross_array(document, role, step_id, sequence, ids, zones)?;
+        validate_step_cross_array(document, step_id, ids, zones)?;
     }
     Ok(())
 }
 
 fn validate_step_cross(
     document: &PathDocument,
-    role: &super::path::PathRoleDocument,
     step: &super::path::StepDocument,
-    sequence: Option<&super::path::SequenceDocument>,
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<(), CompileError> {
     if is_route_cross_kind(&step.kind) {
-        validate_route_step_cross(document, role, &step.id, sequence, &step.args, zones)?;
+        validate_route_step_cross(document, &step.id, &step.args, zones)?;
     }
     let mut validate_nested = |id: &str, kind: &str, args: &serde_json::Value| {
         if is_route_cross_kind(kind) {
-            validate_route_step_cross(document, role, &FactKey::new(id), sequence, args, zones)?;
+            validate_route_step_cross(document, &FactKey::new(id), args, zones)?;
         }
         Ok(())
     };
@@ -847,16 +804,6 @@ fn validate_cross_ids(
     }
 
     for sequence in &role.sequences {
-        if sequence.cross.len() > nav_planner::contract::MAX_ZONE_KEYS {
-            return Err(CompileError::code("too-many-stage-cross")
-                .with_path(document.id.clone())
-                .with_detail(format!(
-                    "stage {:?} declares {} cross identities; the maximum is {}",
-                    sequence.stage.0,
-                    sequence.cross.len(),
-                    nav_planner::contract::MAX_ZONE_KEYS
-                )));
-        }
         if sequence.cross.iter().enumerate().any(|(index, zone)| {
             sequence.cross[..index]
                 .iter()
@@ -901,11 +848,11 @@ fn validate_cross_ids(
         .chain(role.prelude.iter())
         .chain(role.progress_reader.iter())
     {
-        validate_step_cross(document, role, step, None, zones)?;
+        validate_step_cross(document, step, zones)?;
     }
     for sequence in &role.sequences {
         for step in &sequence.steps {
-            validate_step_cross(document, role, step, Some(sequence), zones)?;
+            validate_step_cross(document, step, zones)?;
         }
     }
     Ok(())
@@ -1558,6 +1505,17 @@ pub(super) fn compile_uncached(
             }
         }
     }
+    let (managed_items, carried_items) =
+        inventory::compile_managed_items(header, role, &recipe_ctx)
+            .map_err(|error| error.with_path(document.id.clone()))?;
+    let survival = super::survival::CompiledSurvival::compile(
+        &sequences,
+        role,
+        header,
+        &recipe_ctx,
+        zones,
+        &prelude,
+    )?;
     let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
         .into_iter()
         .map(|(name, steps)| {
@@ -1574,6 +1532,7 @@ pub(super) fn compile_uncached(
             ))
         })
         .collect::<Result<_, CompileError>>()?;
+    let food_reserves = food_reserves(&compiled_items);
     let provisioning = CompiledProvisioning {
         path: document.id.clone(),
         owns_inventory: header.owns_inventory,
@@ -1586,12 +1545,16 @@ pub(super) fn compile_uncached(
             .collect(),
         tools: Arc::from(tools),
         gather_tool_needs: Arc::from(gather_tool_needs),
+        managed_items,
+        carried_items,
+        food_reserves,
         keep_ids,
         coin_float,
         coin,
         loadout_carry,
         base_spillover_keep,
         recipes: provisioning_recipes,
+        survival,
     };
     Ok(CompiledPath {
         id: document.id.clone(),
@@ -1795,7 +1758,9 @@ fn compile_steps(
             error.step = Some(step.id.clone());
             error
         };
-        if !supports_attempt_budget && (step.max_attempts.is_some() || step.stop.is_some()) {
+        if !supports_attempt_budget
+            && (step.max_attempts.is_some() || step.stop.is_some() || step.failure_signal.is_some())
+        {
             return Err(step_error("step-attempt-budget-unsupported"));
         }
         let attempt_budget = match (step.max_attempts, step.stop.as_deref()) {
@@ -1813,6 +1778,9 @@ fn compile_steps(
             (Some(_), _) => return Err(step_error("step-max-attempts-needs-stop")),
             (None, Some(_)) => return Err(step_error("step-stop-without-max-attempts")),
         };
+        if step.failure_signal.is_some() && attempt_budget.is_none() {
+            return Err(step_error("step-failure-signal-without-budget"));
+        }
         let handler = step_handlers()
             .find(|handler| handler.kind == step.kind && handler.version == step.version)
             .ok_or_else(|| CompileError {
@@ -1851,6 +1819,19 @@ fn compile_steps(
         })?;
         let skip_if =
             families::compile_predicate(&step.skip_if, cx).map_err(|err| CompileError {
+                path: document.id.clone(),
+                role: None,
+                step: Some(step.id.clone()),
+                code: err.code,
+                detail: err.detail,
+                source: None,
+            })?;
+        let failure_signal = step
+            .failure_signal
+            .as_ref()
+            .map(|signal| families::compile_predicate(signal, cx))
+            .transpose()
+            .map_err(|err| CompileError {
                 path: document.id.clone(),
                 role: None,
                 step: Some(step.id.clone()),
@@ -1908,6 +1889,7 @@ fn compile_steps(
                 .flatten(),
             advances: step.advances.unwrap_or(false),
             attempt_budget,
+            failure_signal,
             skip_if,
             skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
@@ -2774,6 +2756,42 @@ mod tests {
     }
 
     #[test]
+    fn food_reserves_include_only_authored_must_have_quantities() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let mut document = decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items = vec![
+            QuestItemDocument {
+                obj: "bread".into(),
+                qty: 2,
+                kind: super::super::path::QuestItemKindDocument::MustHave,
+                acquire: None,
+                from_stage: None,
+            },
+            QuestItemDocument {
+                obj: "lobster".into(),
+                qty: 4,
+                kind: super::super::path::QuestItemKindDocument::Acquirable,
+                acquire: None,
+                from_stage: None,
+            },
+        ];
+        header.tools.push("obj:trout".into());
+        let data = selected();
+        let quests = quests(&data);
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert_eq!(
+            path.provisioning.food_reserves.as_deref(),
+            Some(
+                &[crate::combat::FoodReserve {
+                    id: data.item_by_alias("bread").unwrap().id,
+                    qty: 2,
+                }][..]
+            )
+        );
+    }
+
+    #[test]
     fn path_bank_required_is_preserved_in_compiled_provisioning() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
@@ -2977,14 +2995,12 @@ mod tests {
     }
 
     #[test]
-    fn stage_cross_accepts_eight_ids_and_rejects_nine() {
+    fn stage_cross_accepts_more_than_eight_ids() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("stage-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..12).map(|index| format!("stage-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
-        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+        document.roles[0].sequences[0].cross = id_refs
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
@@ -2996,21 +3012,10 @@ mod tests {
                 .iter()
                 .map(|id| id.as_ref())
                 .collect::<Vec<_>>(),
-            id_refs[..nav_planner::contract::MAX_ZONE_KEYS].to_vec(),
+            id_refs,
         );
-
-        document.roles[0].sequences[0]
-            .cross
-            .push(stage_cross_declaration(
-                id_refs[nav_planner::contract::MAX_ZONE_KEYS],
-                "Stage zone",
-                "Cross to the next room.",
-            ));
-        let error = compile_with_stage_cross(&document, &id_refs)
-            .err()
-            .expect("invalid zone declaration must fail");
-        assert_eq!(error.code.as_ref(), "too-many-stage-cross");
     }
+
     #[test]
     fn stage_cross_defaults_to_empty_without_a_catalog() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
@@ -3079,9 +3084,7 @@ mod tests {
     #[test]
     fn non_route_cross_arguments_are_not_route_authority() {
         let document = decode_cook().unwrap();
-        let role = &document.roles[0];
-        let sequence = &role.sequences[0];
-        let mut talk = sequence
+        let mut talk = document.roles[0].sequences[0]
             .steps
             .iter()
             .find(|step| step.kind == "talk")
@@ -3089,8 +3092,8 @@ mod tests {
             .clone();
         talk.args["cross"] = serde_json::json!(["missing-zone"]);
 
-        validate_step_cross(&document, role, &talk, Some(sequence), None)
-            .expect("unrelated family data is not route consent");
+        validate_step_cross(&document, &talk, None)
+            .expect("unrelated family data is not a danger request");
     }
 
     #[test]
@@ -3134,39 +3137,27 @@ mod tests {
     }
 
     #[test]
-    fn step_and_stage_cross_union_is_limited_to_eight_ids() {
+    fn step_and_stage_cross_union_over_eight_ids_compiles() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("route-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..12).map(|index| format!("route-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
-        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+        document.roles[0].sequences[0].cross = id_refs[..9]
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
         let mut walk = cook_cross_walk(&document);
-        walk.args["cross"] =
-            serde_json::json!([id_refs[0], id_refs[nav_planner::contract::MAX_ZONE_KEYS],]);
+        walk.args["cross"] = serde_json::json!([id_refs[0], id_refs[10], id_refs[11]]);
         document.roles[0].sequences[0].steps.push(walk);
 
-        let error = compile_with_stage_cross(&document, &id_refs)
-            .err()
-            .expect("invalid zone declaration must fail");
-        assert_eq!(error.code.as_ref(), "too-many-route-cross");
-        assert!(error
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("9 unique cross ids"));
+        compile_with_stage_cross(&document, &id_refs)
+            .expect("a route may declare more than eight distinct zones");
     }
 
     #[test]
     fn step_and_stage_cross_union_deduplicates_shared_ids() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let ids: Vec<_> = (0..nav_planner::contract::MAX_ZONE_KEYS)
-            .map(|index| format!("route-zone-{index}"))
-            .collect();
+        let ids: Vec<_> = (0..8).map(|index| format!("route-zone-{index}")).collect();
         let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = id_refs
@@ -3376,7 +3367,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<Option<StepHazard>>(), 6);
         assert_eq!(std::mem::size_of::<Option<Arc<str>>>(), 16);
         assert_eq!(std::mem::size_of::<Option<StepAttemptBudget>>(), 24);
-        assert_eq!(std::mem::size_of::<CompiledStep>(), 192);
+        // 192 B before `failure_signal` (one `Option<Arc<dyn PredicatePlan>>`, 16 B).
+        // A compiled step belongs to the shared compiled path, not to a bot; the
+        // bundled Paths hold about 1,800 steps, so the cost is about 29 KB per process.
+        assert_eq!(std::mem::size_of::<CompiledStep>(), 208);
     }
 
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
@@ -3389,6 +3383,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
             hazard: None,
@@ -3799,6 +3794,70 @@ mod tests {
         }
     }
 
+    fn miss_message_signal() -> PredicateDocument {
+        PredicateDocument::Fact {
+            kind: "message".into(),
+            version: 1,
+            args: serde_json::json!({ "any": ["but fail and cut yourself trying."] }),
+        }
+    }
+
+    #[test]
+    fn failure_signal_needs_a_budget_and_compiles_with_one() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let _home = crate::IsolatedEnv::enter("quester-step-failure-signal");
+        let without_budget = compile_err(|document| {
+            let step = document
+                .roles
+                .iter_mut()
+                .flat_map(|role| &mut role.sequences)
+                .flat_map(|sequence| &mut sequence.steps)
+                .find(|step| step.kind == "talk")
+                .expect("Cook has a default talk step");
+            step.failure_signal = Some(miss_message_signal());
+        });
+        assert_eq!(
+            without_budget.code.as_ref(),
+            "step-failure-signal-without-budget"
+        );
+
+        let mut document = decode_cook().unwrap();
+        let step = document
+            .roles
+            .iter_mut()
+            .flat_map(|role| &mut role.sequences)
+            .flat_map(|sequence| &mut sequence.steps)
+            .find(|step| step.kind == "talk")
+            .expect("Cook has a default talk step");
+        step.max_attempts = Some(4);
+        step.stop = Some("retry-stop".into());
+        step.failure_signal = Some(miss_message_signal());
+        let data = selected();
+        let quest_catalog = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quest_catalog)
+            .expect("signal with budget");
+        assert!(compiled
+            .sequences
+            .iter()
+            .flat_map(|sequence| &sequence.steps)
+            .any(|step| step.failure_signal.is_some() && step.attempt_budget.is_some()));
+
+        let mut unknown = document.clone();
+        let step = unknown
+            .roles
+            .iter_mut()
+            .flat_map(|role| &mut role.sequences)
+            .flat_map(|sequence| &mut sequence.steps)
+            .find(|step| step.failure_signal.is_some())
+            .unwrap();
+        step.failure_signal = Some(PredicateDocument::Fact {
+            kind: "no_such_fact".into(),
+            version: 1,
+            args: serde_json::json!({}),
+        });
+        assert!(compile_uncached_for_test(&unknown, &data, &quest_catalog).is_err());
+    }
+
     #[test]
     fn attempt_budgets_are_rejected_for_recipes_and_progress_readers() {
         crate::require_local_game_data_for_test!(ClientRevision::R289);
@@ -3812,6 +3871,7 @@ mod tests {
                 .expect("Cook has an egg recipe")[0];
             step.max_attempts = Some(2);
             step.stop = Some("recipe-stop".into());
+            step.failure_signal = Some(miss_message_signal());
         });
         assert_eq!(recipe.code.as_ref(), "step-attempt-budget-unsupported");
 
@@ -3842,6 +3902,7 @@ mod tests {
             advances: None,
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::Any(vec![]),
             hazard: None,

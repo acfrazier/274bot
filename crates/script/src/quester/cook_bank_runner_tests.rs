@@ -287,6 +287,9 @@ impl CookFixture {
                         prereq_allow: None,
                     });
                 }
+                HostEffect::ServicePick(_) => {
+                    panic!("the Cook bank fixture emits no generic service pick")
+                }
                 HostEffect::AssessWalk(_) => {
                     panic!("the Cook bank fixture emits no walk assessment")
                 }

@@ -128,6 +128,7 @@ impl Probe<'_> {
         budget.observe(evidence.tick);
         let cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -145,6 +146,7 @@ impl Probe<'_> {
             eligible: true,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
         };
         f(&PredicateContext {

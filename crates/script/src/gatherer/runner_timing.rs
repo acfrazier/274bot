@@ -32,15 +32,8 @@ impl Gatherer {
         let arm = &method.tick_arm;
         let tool = arm.for_tool(self.tool.id);
         let stock = cx.snapshot().stock();
-        let kit_missing = stock.bank.is_some_and(|bank| {
-            SupplyPlan::build(
-                &self.prepared,
-                cx.snapshot().stats().map_or(&[], |stats| stats.value),
-                stock,
-                |id| bank.count(id).unwrap_or(0),
-            )
-            .kit_missing()
-        });
+        let kit_missing =
+            stock.bank.is_some() && SupplyPlan::tick_kit_missing(&self.prepared, stock);
         let off = if method.id.0.as_ref() == "woodcutting.normal" {
             Some(OffReason::NotInRelease)
         } else if arm.kind == TickArmKind::None {
@@ -79,7 +72,13 @@ impl Gatherer {
         let snapshot = cx.snapshot();
         let spec = GatherTiming::spec(method, self.tool.id)?;
         let kit = self.prepared.supply.tick_kit.as_ref()?;
-        let cycle = self.parked_cycle.take().unwrap_or_else(|| {
+        // A parked cycle carries the facts of the method it served; one resource can span methods with
+        // different tick behaviour (delayed against immediate yield), so only an identical spec may continue.
+        let parked = self
+            .parked_cycle
+            .take()
+            .filter(|cycle| cycle.spec() == spec);
+        let cycle = parked.unwrap_or_else(|| {
             TickCycle::new(
                 spec,
                 cx.evidence().tick,

@@ -494,13 +494,17 @@ pub(crate) struct PendingSettings {
     pub(crate) quest_start: bool,
     pub(crate) danger: bool,
     pub(crate) scope_ack: bool,
-    pub(crate) survivable_ack: bool,
     pub(crate) pause: bool,
     pub(crate) special_areas: bool,
     pub(crate) map_bake: bool,
     pub(crate) quester: bool,
     /// The saved Load order (it has no popup row: the message line says so).
     pub(crate) load_order: bool,
+}
+
+pub(crate) enum ZoneScroll {
+    Rows(i32),
+    Page(i32),
 }
 
 /// Headless panel view model.
@@ -583,8 +587,6 @@ pub struct TuiApp {
     pub map_route_through_zones: bool,
     /// The shared one-time script-scope notice was dismissed.
     pub script_scope_notice_ack: bool,
-    /// The shared one-time danger-routing migration notice was dismissed.
-    pub survivable_routing_notice_ack: bool,
     /// Shared settings writes queued one nested nav preference at a time.
     pub nav_preferences_dirty: Vec<NavPreference>,
     pub settings_state: SettingsState,
@@ -759,7 +761,6 @@ impl TuiApp {
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
             script_scope_notice_ack: false,
-            survivable_routing_notice_ack: false,
             nav_preferences_dirty: Vec::new(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
@@ -870,27 +871,14 @@ impl TuiApp {
             NavPreference::AllowBankFetch => self.pending.bank_fetch,
             NavPreference::AllowPrereqDialogue => self.pending.prereq_dialogue,
             NavPreference::AllowQuestStart => self.pending.quest_start,
-            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
-                self.pending.danger
-            }
+            NavPreference::AllowDangerZones => self.pending.danger,
             NavPreference::ScriptScopeNoticeAck => self.pending.scope_ack,
-            NavPreference::SurvivableRoutingNoticeAck => self.pending.survivable_ack,
             NavPreference::PauseScriptOnManualWalkAbort => {
                 self.pending.pause || self.pause_script_on_manual_walk_abort_dirty
             }
             NavPreference::ShowSpecialAreas => self.pending.special_areas,
         };
-        let dirty = match preference {
-            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
-                self.nav_preferences_dirty.iter().any(|p| {
-                    matches!(
-                        p,
-                        NavPreference::AllowDangerZones | NavPreference::SurvivableRouting
-                    )
-                })
-            }
-            other => self.nav_preferences_dirty.contains(&other),
-        };
+        let dirty = self.nav_preferences_dirty.contains(&preference);
         self.pending.all || pending || dirty
     }
 
@@ -941,11 +929,7 @@ impl TuiApp {
             }
         }
         let view = self.shared_preferences.as_ref().map_or(
-            WalkGlobalsView::new(
-                self.nav,
-                self.script_scope_notice_ack,
-                self.survivable_routing_notice_ack,
-            ),
+            WalkGlobalsView::new(self.nav, self.script_scope_notice_ack),
             WalkGlobalsView::read,
         );
         if let Some(preferences) = self.shared_preferences.as_ref() {
@@ -975,6 +959,7 @@ impl TuiApp {
     pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
         let next = view.globals();
         let keep = |held: bool, draft: bool, next: bool| if held { draft } else { next };
+        let danger_held = self.holds(NavPreference::AllowDangerZones);
         self.nav = frontend_core::WalkGlobals::new(
             keep(
                 self.holds(NavPreference::AllowTeleports),
@@ -992,14 +977,9 @@ impl TuiApp {
                 next.allow_bank_fetch(),
             ),
             keep(
-                self.holds(NavPreference::AllowDangerZones),
+                danger_held,
                 self.nav.allow_danger_zones(),
                 next.allow_danger_zones(),
-            ),
-            keep(
-                self.holds(NavPreference::SurvivableRouting),
-                self.nav.survivable_routing(),
-                next.survivable_routing(),
             ),
             keep(
                 self.holds(NavPreference::AllowPrereqDialogue),
@@ -1011,16 +991,16 @@ impl TuiApp {
                 self.nav.allow_quest_start(),
                 next.allow_quest_start(),
             ),
-        );
+        )
+        .with_survivable_routing(keep(
+            danger_held,
+            self.nav.survivable_routing(),
+            next.survivable_routing(),
+        ));
         self.script_scope_notice_ack = keep(
             self.holds(NavPreference::ScriptScopeNoticeAck),
             self.script_scope_notice_ack,
             view.script_scope_notice_ack(),
-        );
-        self.survivable_routing_notice_ack = keep(
-            self.holds(NavPreference::SurvivableRoutingNoticeAck),
-            self.survivable_routing_notice_ack,
-            view.survivable_routing_notice_ack(),
         );
         self.walk_permissions = view;
         if !view.danger_this_walk(true) {
@@ -2020,7 +2000,7 @@ impl TuiApp {
         self.quester_start_zones = view;
     }
 
-    pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
+    pub(crate) fn scroll_quester_start_zones(&mut self, request: ZoneScroll) -> bool {
         let selected_quester = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
             == Some(frontend_core::scripts::CompiledCardId::QUESTER);
         #[cfg(feature = "js")]
@@ -2038,10 +2018,14 @@ impl TuiApp {
         {
             return false;
         }
-        let max = self.script_pane().max_vertical_scroll(self.script_area);
+        let (max, page_step) = self.script_pane().vertical_scroll_limits(self.script_area);
         if max == 0 {
             return false;
         }
+        let delta = match request {
+            ZoneScroll::Rows(delta) => delta,
+            ZoneScroll::Page(direction) => direction.saturating_mul(i32::from(page_step)),
+        };
         self.quester_start_zone_scroll = i32::from(self.quester_start_zone_scroll)
             .saturating_add(delta)
             .clamp(0, i32::from(max)) as u16;

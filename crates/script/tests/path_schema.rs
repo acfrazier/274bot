@@ -2759,3 +2759,76 @@ fn real_nav_lease() -> Option<&'static nav_planner::contract::NavLease> {
         });
     NAV.as_ref()
 }
+
+/// `x:mm:solve_reinitialisation` compiles in the shipped Monkey Madness guide,
+/// and refuses a piece prefix the selected content does not hold, a blank
+/// prefix, a bad arrival tile and an unknown field. Content: `quest_mm.rs2:638-641` opens the
+/// board; `quest_mm.obj` names the pieces `reinitialisation_01` to `_24`.
+#[test]
+fn mm_reinitialisation_step_compiles_and_refuses_bad_pieces() {
+    let _home = script::IsolatedEnv::enter("path-schema-mm-reinit");
+    let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let path = paths_dir().join("mm.json");
+
+    let value = read_path(&path);
+    compile_value(value, &selected, &quests).expect("mm.json compiles with its board step");
+
+    for (pieces, code) in [
+        ("no_such_pieces", "unresolved-item"),
+        ("reinitialisation_inactive", "unresolved-item"),
+        ("  ", "invalid-args"),
+    ] {
+        let mut value = read_path(&path);
+        let step = find_step_mut(&mut value, "solve-reinitialisation").expect("board step");
+        step["args"]["pieces"] = json!(pieces);
+        let error = expect_compile_error(value, &selected, &quests);
+        assert_eq!(error.step, Some(FactKey::new("solve-reinitialisation")));
+        assert_eq!(error.code.as_ref(), code, "pieces {pieces:?}");
+    }
+
+    for (arrival, code) in [
+        (
+            json!({"tile": [2649, 4507, 0], "source": " "}),
+            "tile-source-required",
+        ),
+        (
+            json!({"tile": [2649, 4507, 7], "source": "x"}),
+            "invalid-tile",
+        ),
+        (
+            json!({"tile": [-1, 4507, 0], "source": "x"}),
+            "nav-tile-uncovered",
+        ),
+    ] {
+        let mut value = read_path(&path);
+        let step = find_step_mut(&mut value, "solve-reinitialisation").expect("board step");
+        step["args"]["arrival"] = arrival;
+        let error = expect_compile_error(value, &selected, &quests);
+        assert_eq!(error.code.as_ref(), code);
+    }
+
+    let mut value = read_path(&path);
+    let step = find_step_mut(&mut value, "solve-reinitialisation").expect("board step");
+    step["args"]
+        .as_object_mut()
+        .expect("args")
+        .remove("arrival");
+    assert_eq!(
+        expect_compile_error(value, &selected, &quests)
+            .code
+            .as_ref(),
+        "invalid-args"
+    );
+
+    let mut value = read_path(&path);
+    let step = find_step_mut(&mut value, "solve-reinitialisation").expect("board step");
+    step["args"]["moves"] = json!(255);
+    let error = expect_compile_error(value, &selected, &quests);
+    assert_eq!(error.code.as_ref(), "invalid-args");
+    assert!(error
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("moves")));
+}

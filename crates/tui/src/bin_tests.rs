@@ -3042,7 +3042,7 @@ mod bank_fetch_fixtures {
 #[test]
 fn map_walk_options_keep_the_frontend_bank_fetch_permission() {
     let mut app = TuiApp::new("274bot headless");
-    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true, true);
     app.nav = app
         .nav
         .with_danger_level(frontend_core::DangerLevel::Always);
@@ -4102,10 +4102,8 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     let _iso = iso;
 }
 
-/// The settings popup's walk permissions reach the shared preferences
-/// through `SetNavPreference` and `SetDangerLevel`: a grant, the danger
-/// routing level (the middle level cycles to Always) and a notice
-/// acknowledgement.
+/// The settings popup's walk permissions reach shared preferences through
+/// `SetNavPreference` and `SetDangerLevel`, including both middle-level bits.
 #[test]
 fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands() {
     let iso = IsolatedStores::enter("tui-walk-globals-commands");
@@ -4133,8 +4131,8 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     let prefs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
     assert_eq!(prefs["nav"]["allow_teleports"], true);
-    assert_eq!(prefs["nav"]["allow_danger_zones"], true);
-    assert_eq!(prefs["nav"]["survivable_routing"], false);
+    assert_eq!(prefs["nav"]["allow_danger_zones"], false);
+    assert_eq!(prefs["nav"]["survivable_routing"], true);
     assert_eq!(prefs["nav"]["script_scope_notice_ack"], true);
     assert_eq!(
         prefs["nav"]["allow_prereq_dialogue"], false,
@@ -4149,9 +4147,64 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert!(!app.walk_permissions.globals().allow_quest_start());
     assert_eq!(
         app.walk_permissions.danger_level(),
-        frontend_core::DangerLevel::Always
+        frontend_core::DangerLevel::WhenSurvivable
     );
     assert!(app.walk_permissions.script_scope_notice_ack());
+
+    app.settings_state.row = 8;
+    assert_eq!(app.on_key(enter), AppAction::None);
+    settle_preferences(&mut session, &mut app);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["nav"]["allow_danger_zones"], true);
+    assert_eq!(prefs["nav"]["survivable_routing"], false);
+    assert_eq!(
+        app.walk_permissions.danger_level(),
+        frontend_core::DangerLevel::Always
+    );
+    let _iso = iso;
+}
+
+/// A saved middle-level pair remains selected without a read rewrite. A
+/// later level change writes the new pair.
+#[test]
+fn saved_middle_danger_preference_loads_unchanged_and_cycles_to_always() {
+    let iso = IsolatedStores::enter("tui-saved-middle-danger");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
+    let saved = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true,"survivable_routing_notice_ack":true,"script_scope_notice_ack":true}}"#;
+    std::fs::write(session.preferences.path(), saved).unwrap();
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    assert_eq!(
+        app.walk_permissions.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert_eq!(
+        app.nav.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert!(app.walk_permissions.script_scope_notice_ack());
+    assert_eq!(std::fs::read(session.preferences.path()).unwrap(), saved);
+
+    app.settings_state.open = true;
+    app.settings_state.row = 8;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    assert_eq!(app.error, None);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["nav"]["allow_danger_zones"], true);
+    assert_eq!(prefs["nav"]["survivable_routing"], false);
+    assert_eq!(
+        app.walk_permissions.danger_level(),
+        frontend_core::DangerLevel::Always
+    );
     let _iso = iso;
 }
 

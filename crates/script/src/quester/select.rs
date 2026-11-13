@@ -223,6 +223,7 @@ mod tests {
         let mut budget = TickBudget::default();
         let cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -234,6 +235,7 @@ mod tests {
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
@@ -759,6 +761,7 @@ mod tests {
             tactic: None,
             advances: false,
             attempt_budget: None,
+            failure_signal: None,
             skip_if: Arc::new(Skip(Truth::False)),
             skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),

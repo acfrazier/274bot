@@ -4666,6 +4666,74 @@ fn panel_parameter_rows_show_fact_errors_and_keep_saved_values() {
 }
 
 #[test]
+fn panel_quester_rows_show_allow_unqualified_guides_and_let_a_draft_be_picked_when_on() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::scripts::reset_quester_registry();
+    let mut session = crate::session::Session::new();
+    let schema = frontend_core::test_support::scripts::TestSchema::quester_card();
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let loadouts = frontend_core::scripts::Loadouts::default();
+    let quests_def = schema.schema_ref().get("quests").unwrap();
+    let draft = "druid";
+    let compact = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    for allowed in [false, true] {
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["priest", draft]));
+        bag.insert("include_draft_guides".into(), serde_json::json!(allowed));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(quests_def, &bag, &loadouts, None)
+                .unwrap();
+        assert_eq!(
+            options.selectable().iter().any(|value| value == draft),
+            allowed,
+            "a draft guide is pickable only while Allow unqualified guides is on"
+        );
+        assert!(
+            options
+                .label_for(draft)
+                .contains("Path has not been qualified by live testing."),
+            "the picker still says the guide is unqualified: {}",
+            options.label_for(draft)
+        );
+
+        let mut ctx = dock_host_context();
+        let drawn = DrawnText::default();
+        ctx.set_clipboard_backend(drawn.clone());
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 900.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("Allow unqualified guides row")
+                .size([420.0, 800.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    super::script_parameter_rows(
+                        ui,
+                        &mut session,
+                        &selection,
+                        None,
+                        schema.schema_ref(),
+                        bag.clone(),
+                    );
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+        let text = drawn.0.take();
+        assert!(
+            compact(&text).contains("Allowunqualifiedguides"),
+            "allowed={allowed}: the panel's Quester settings list the row: {text}"
+        );
+    }
+}
+
+#[test]
 fn discarding_invalid_script_parameter_removes_its_dock_banner() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut session = crate::session::Session::new();
@@ -7248,10 +7316,8 @@ fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
         );
         // The scope note, three checkboxes, the bank-fetch scope, the
         // prerequisite note, the two prerequisite checkboxes, the
-        // drop-down's label and the drop-down, plus the note under a held
-        // level and the Always warning.
-        let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
-            + usize::from(level == frontend_core::DangerLevel::Always);
+        // drop-down's label and the drop-down, plus the Always warning.
+        let notes = usize::from(level == frontend_core::DangerLevel::Always);
         assert_eq!(routing.items.len(), 10 + notes, "routing rows at {level:?}");
         for (index, item) in routing.items.iter().enumerate() {
             let [min_x, _, max_x, _] = *item;
@@ -7306,6 +7372,100 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
         assert!(changed, "picking {target:?} reports a change");
         assert_eq!(nav.danger_level(), target, "the picked entry is stored");
     }
+}
+
+/// The Nav config Danger routing drop-down offers all three levels. Picking
+/// Always in the open popup submits `SetDangerLevel(Always)`.
+#[test]
+fn nav_danger_routing_drop_down_offers_three_levels_and_always_submits_set_danger_level() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-three");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    assert_eq!(before.danger_level(), DangerLevel::Never);
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if !choices.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(
+        choices.len(),
+        3,
+        "the open drop-down lists exactly three items"
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
+        ["Never", "When survivable", "Always"]
+    );
+
+    let always = rect_centre(choices[2]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, always, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::Always);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::Always)]
+    );
+}
+
+/// Selecting the middle entry commits exactly one global danger-level command.
+#[test]
+fn nav_danger_routing_drop_down_submits_when_survivable() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-middle");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if choices.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(choices.len(), 3, "the open drop-down lists every level");
+
+    let middle = rect_centre(choices[1]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, middle, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::WhenSurvivable);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::WhenSurvivable)]
+    );
 }
 
 /// One headless frame of the render-all warning with the pointer at `point`,
@@ -9195,4 +9355,86 @@ fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
     let (banner, status) = draw_banner_and_status(&s);
     assert!(banner.contains(state), "{banner}");
     assert!(status.contains(state), "{status}");
+}
+
+/// The panel driver for a dim catalog card: the Browse card draws the typed
+/// reason in the operator's terms. A retired card reads `unavailable: …`; an
+/// unresolved import reads `failed import: …`. The two cards make the kinds
+/// observable in one frame.
+#[cfg(feature = "js")]
+#[test]
+fn browse_card_draws_policy_holds_and_import_failures_apart() {
+    use crate::session::Session;
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("browse-dim-reasons");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
+    std::fs::create_dir_all(scripts.join("AccountLeveler")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Woodcutter from './Woodcutter/Woodcutter.js';\n\
+         import AccountLeveler from './AccountLeveler/AccountLeveler.js';\n\
+         ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });\n\
+         ScriptRegistry.register({ name: 'AccountLeveler', create: () => new AccountLeveler() });\n",
+    )
+    .unwrap();
+    let body = "import { Game } from '../../api/game/Game.js';\n\
+                export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
+    std::fs::write(
+        scripts.join("AccountLeveler/AccountLeveler.ts"),
+        "import x from '../../event/webwalk/Something.js';\n\
+         export default class T extends LoopingBot { loop() {} }",
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    session
+        .scripts
+        .register_catalog(&root, &dir.join("rs2b0t-path"))
+        .expect("fixture catalog registers");
+
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("browse")
+                .size([520.0, 600.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    for card in session.scripts.browse_cards() {
+                        if matches!(card.name(), "Woodcutter" | "AccountLeveler") {
+                            super::browse_script_card(ui, &session, card, 480.0);
+                        }
+                    }
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("unavailable: replaced by the native Gatherer"),
+        "a retired card reads as unavailable:\n{text}"
+    );
+    assert!(
+        text.contains("failed import: ../../event/webwalk/Something.js"),
+        "an unsupported import names its specifier:\n{text}"
+    );
+    assert!(
+        !text.contains("failed import: replaced by the native Gatherer"),
+        "a policy hold is never a failed import:\n{text}"
+    );
+    assert!(
+        !text.contains("unavailable: ../../event/webwalk/Something.js"),
+        "an import failure is never a policy hold:\n{text}"
+    );
 }

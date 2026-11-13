@@ -72,6 +72,214 @@ export default class RowShapeProbe extends LoopingBot {
     loop() {}
 }
 "#;
+const CONTENT_SHAPE_SOURCE: &str = r#"
+export default class ContentShapeProbe extends LoopingBot {
+    loop() {}
+}
+"#;
+
+const POSTED_SHOP_KEYS: [&str; 22] = [
+    "adventurershop",
+    "magearena_runeshop",
+    "magicshop",
+    "runeshop",
+    "archeryshop",
+    "archeryshop2",
+    "fishingshop",
+    "fishingshop2",
+    "shilofishingshop",
+    "axeshop",
+    "pickaxeshop",
+    "magicguildshop",
+    "death_pub",
+    "generalshop1",
+    "generalshop2",
+    "generalshop6",
+    "shantayshop",
+    "khazardshop",
+    "gnomeshop_heck",
+    "wydinstore",
+    "clotheshop",
+    "boozeshop",
+];
+
+const NEW_SHOP_KEYS: [&str; 10] = [
+    "death_pub",
+    "generalshop1",
+    "generalshop2",
+    "generalshop6",
+    "shantayshop",
+    "khazardshop",
+    "gnomeshop_heck",
+    "wydinstore",
+    "clotheshop",
+    "boozeshop",
+];
+
+const SHOP_RECORD_FIELDS: [&str; 9] = [
+    "inv", "title", "keepers", "sell", "buy", "delta", "scope", "allstock", "items",
+];
+
+const SHOP_ITEM_FIELDS: [&str; 7] = [
+    "obj",
+    "name",
+    "baseline",
+    "restockTicks",
+    "cost",
+    "stackable",
+    "members",
+];
+
+const READ_SHOP_FACTS: &str = r#"(() => {
+    const fast = new Function('o', 'return %HasFastProperties(o)');
+    const plainDataObject = (object) =>
+        Object.getPrototypeOf(object) === Object.prototype &&
+        Object.keys(object).every((key) => {
+            const descriptor = Object.getOwnPropertyDescriptor(object, key);
+            return descriptor !== undefined && descriptor.writable &&
+                descriptor.enumerable && descriptor.configurable;
+        });
+    const shops = globalThis.__rs2b0t_host.content.shops;
+    const records = Object.entries(shops);
+    return {
+        selectedFacts: globalThis.__rs2b0t_host.content.selected_facts,
+        shopFast: fast(shops),
+        shopPlainDataObject: plainDataObject(shops),
+        shopKeys: Object.keys(shops).sort(),
+        recordCount: records.length,
+        records: records.map(([key, record]) => ({
+            key,
+            inv: record.inv,
+            fast: fast(record),
+            plainDataObject: plainDataObject(record),
+            keys: Object.keys(record),
+            keeperCount: Array.isArray(record.keepers) ? record.keepers.length : -1,
+            keepersAreStrings: Array.isArray(record.keepers) &&
+                record.keepers.every((keeper) => typeof keeper === 'string'),
+            keeperObjectCount: Array.isArray(record.keepers) ?
+                record.keepers.filter((keeper) =>
+                    keeper !== null && typeof keeper === 'object').length : -1,
+            items: Array.isArray(record.items) ? record.items.map((item) => ({
+                fast: fast(item),
+                plainDataObject: plainDataObject(item),
+                keys: Object.keys(item),
+            })) : null,
+        })),
+    };
+})()"#;
+
+fn assert_fast_shop_content(facts: &serde_json::Value, label: &str) {
+    assert_eq!(
+        facts["selectedFacts"],
+        serde_json::Value::Bool(true),
+        "{label}: selected revision content was not posted"
+    );
+    assert!(
+        facts["shopFast"].as_bool().unwrap_or(false),
+        "{label}: shop dictionary must have fast properties"
+    );
+    assert!(
+        facts["shopPlainDataObject"].as_bool().unwrap_or(false),
+        "{label}: shop dictionary must keep the ordinary writable/enumerable/configurable object contract"
+    );
+
+    let shop_keys: Vec<&str> = facts["shopKeys"]
+        .as_array()
+        .expect("shop keys array")
+        .iter()
+        .map(|key| key.as_str().expect("shop key string"))
+        .collect();
+    let mut expected_shop_keys = POSTED_SHOP_KEYS.to_vec();
+    expected_shop_keys.sort_unstable();
+    assert_eq!(
+        shop_keys, expected_shop_keys,
+        "{label}: exact posted shop inventory keys"
+    );
+    for key in NEW_SHOP_KEYS {
+        assert!(shop_keys.contains(&key), "{label}: missing new shop {key}");
+    }
+
+    let records = facts["records"].as_array().expect("shop records array");
+    assert_eq!(
+        facts["recordCount"].as_u64(),
+        Some(POSTED_SHOP_KEYS.len() as u64),
+        "{label}: every inventory must have one posted record"
+    );
+    assert_eq!(
+        records.len(),
+        POSTED_SHOP_KEYS.len(),
+        "{label}: record coverage"
+    );
+    let mut item_count = 0usize;
+    let mut keeper_count = 0usize;
+    for record in records {
+        let key = record["key"].as_str().expect("inventory key");
+        assert_eq!(record["inv"], key, "{label}: {key} record identity");
+        assert!(
+            record["fast"].as_bool().unwrap_or(false),
+            "{label}: record {key} must have fast properties"
+        );
+        assert!(
+            record["plainDataObject"].as_bool().unwrap_or(false),
+            "{label}: record {key} must keep Object.prototype and ordinary data properties"
+        );
+        let record_keys: Vec<&str> = record["keys"]
+            .as_array()
+            .expect("record keys array")
+            .iter()
+            .map(|field| field.as_str().expect("record field string"))
+            .collect();
+        assert_eq!(
+            record_keys.as_slice(),
+            SHOP_RECORD_FIELDS.as_slice(),
+            "{label}: record {key} field order"
+        );
+        assert!(
+            record["keepersAreStrings"].as_bool().unwrap_or(false),
+            "{label}: {key} keeper entries must retain their posted string shape"
+        );
+        assert_eq!(
+            record["keeperObjectCount"].as_i64(),
+            Some(0),
+            "{label}: {key} keepers are strings, not objects"
+        );
+        let keepers = record["keeperCount"].as_u64().expect("keeper count") as usize;
+        assert!(keepers > 0, "{label}: {key} has no keeper coverage");
+        keeper_count += keepers;
+
+        let items = record["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label}: {key} has no items array"));
+        assert!(!items.is_empty(), "{label}: {key} has no stocked items");
+        for (index, item) in items.iter().enumerate() {
+            assert!(
+                item["fast"].as_bool().unwrap_or(false),
+                "{label}: {key}.items[{index}] must have fast properties"
+            );
+            assert!(
+                item["plainDataObject"].as_bool().unwrap_or(false),
+                "{label}: {key}.items[{index}] must keep Object.prototype and ordinary data properties"
+            );
+            let item_keys: Vec<&str> = item["keys"]
+                .as_array()
+                .expect("item keys array")
+                .iter()
+                .map(|field| field.as_str().expect("item field string"))
+                .collect();
+            assert_eq!(
+                item_keys.as_slice(),
+                SHOP_ITEM_FIELDS.as_slice(),
+                "{label}: {key}.items[{index}] field order"
+            );
+            item_count += 1;
+        }
+    }
+    assert!(keeper_count > 0, "{label}: no keeper names were posted");
+    assert!(
+        item_count > 0,
+        "{label}: no inventory item objects were posted"
+    );
+}
 
 /// Rows posted cold, before any query: one 25-field NPC (size 2, network
 /// coordinates) and one 23-field NPC (size 0), plus null names in every
@@ -348,4 +556,29 @@ fn main() {
     assert_eq!(facts["npcs"][0]["networkX"], 3401);
 
     let _ = iso.join();
+    for revision in [
+        client::io::ClientRevision::R274,
+        client::io::ClientRevision::R289,
+    ] {
+        // Hosted builds embed no selected game data; local runs fail loudly here.
+        if !api::test_support::game_data_available() {
+            break;
+        }
+        let label = match revision {
+            client::io::ClientRevision::R274 => "R274",
+            client::io::ClientRevision::R289 => "R289",
+            client::io::ClientRevision::R377 => "R377",
+        };
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        let content_iso = LoadIsolate::spawn_with_game_data(
+            CONTENT_SHAPE_SOURCE.into(),
+            LoadShape::CompatClass,
+            vec![],
+            data,
+        )
+        .unwrap_or_else(|error| panic!("{label}: spawn content-shape isolate: {error}"));
+        let facts = probe(&content_iso, READ_SHOP_FACTS);
+        assert_fast_shop_content(&facts, label);
+        let _ = content_iso.join();
+    }
 }

@@ -4,12 +4,15 @@ use std::path::{Path, PathBuf};
 
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
+use client::config::LocType;
 use client::dash3d::{CollisionFlag, LocShape};
 use nav_planner::collision::WorldCollision;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
     CELLAR_SHIFT, SHILO_CART_ROUTES, WEB_USE_OPTION,
 };
+use rs2vm::profile::EngineProfile;
+use rs2vm::program::{LoadError as ProgramLoadError, Program};
 
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 
@@ -25,11 +28,15 @@ mod levers;
 mod magic_guild;
 mod membergate;
 mod members_guard;
+mod nav_shadow;
+mod nav_world;
 mod npc_hops;
 mod observable;
 mod quest_doors;
 mod ranging_guild;
 mod rs2_syntax;
+#[cfg(test)]
+mod rs2vm_engine_oracles;
 mod script_text;
 mod scripted_doors;
 mod shortcuts;
@@ -42,6 +49,55 @@ mod vertical;
 mod webs;
 mod wilderness;
 mod zanaris;
+pub(crate) use nav_shadow::NavShadow;
+
+/// Failures while loading or serializing an optional interpreter shadow.
+#[derive(Debug, thiserror::Error)]
+pub enum NavShadowError {
+    /// The engine bytecode or config input failed to load.
+    #[error("load interpreter program: {0}")]
+    Program(#[source] ProgramLoadError),
+    /// The map data could not form the shadow's base world.
+    #[error("load shadow navigation world: {detail}")]
+    World { detail: String },
+    /// The shadow result could not be encoded as JSON.
+    #[error("serialize nav-shadow report: {0}")]
+    Serialize(#[source] serde_json::Error),
+    /// The requested engine revision has no interpreter profile.
+    #[error("unsupported nav-shadow revision {revision}")]
+    UnsupportedRevision { revision: u16 },
+}
+
+/// Load the interpreter program and immutable map world for one shadow run.
+pub(crate) fn load_nav_shadow(
+    engine: &Path,
+    content_root: &Path,
+    maps_dir: &Path,
+    loc_types: &[LocType],
+    client_varbits: &[u8],
+    revision: u16,
+) -> Result<NavShadow, NavShadowError> {
+    let program =
+        Program::load(engine, content_root, client_varbits).map_err(NavShadowError::Program)?;
+    let world = nav_world::NavWorld::load(maps_dir, content_root, loc_types).map_err(|source| {
+        NavShadowError::World {
+            detail: source.to_string(),
+        }
+    })?;
+    let profile = match revision {
+        274 => EngineProfile::R274,
+        289 => EngineProfile::R289,
+        377 => EngineProfile::R377,
+        revision => return Err(NavShadowError::UnsupportedRevision { revision }),
+    };
+    Ok(NavShadow::new(
+        program,
+        world,
+        profile,
+        revision,
+        content_root,
+    ))
+}
 
 use brass_key::*;
 use condparse::{
@@ -96,28 +152,34 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None, None).0
 }
-/// The graph and accounting for source gates the live snapshot cannot prove.
+/// Derive the graph, gate accounting, and optional non-mutating interpreter report.
 pub(crate) fn derive_transports_for_bake(
     content_root: &Path,
     loc_defs: &LocDefs,
     collision: &WorldCollision,
-    configured_door_ids: &HashSet<i32>,
-    parsed_door_configs: &[PathBuf],
+    door_configs: (&HashSet<i32>, &[PathBuf]),
     quests: Option<&QuestSource<'_>>,
     game_data: &api::game_data::SelectedGameData,
-) -> (TransportGraph, VarpGateAudit) {
+    shadow: Option<NavShadow>,
+) -> Result<(TransportGraph, VarpGateAudit, Option<String>), NavShadowError> {
+    let mut shadow = shadow;
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
         loc_defs,
         collision,
-        Some((configured_door_ids, parsed_door_configs)),
+        Some(door_configs),
         quests,
         Some(game_data),
+        shadow.as_mut(),
     );
     report(content_root, &graph, &skipped);
-    (graph, audit)
+    let shadow_report = shadow
+        .map(NavShadow::finish)
+        .transpose()
+        .map_err(NavShadowError::Serialize)?;
+    Ok((graph, audit, shadow_report))
 }
 
 #[cfg(test)]
@@ -127,7 +189,7 @@ fn derive_transports_with_skips(
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
     let (graph, skipped, _) =
-        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None);
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None, None);
     (graph, skipped)
 }
 
@@ -138,6 +200,7 @@ fn derive_transports_with_audit(
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
     game_data: Option<&api::game_data::SelectedGameData>,
+    shadow: Option<&mut NavShadow>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
@@ -287,6 +350,7 @@ fn derive_transports_with_audit(
         &gates,
         &mut audit,
         quests,
+        shadow,
     );
     scripted_climb_edges(
         content_root,
@@ -424,23 +488,21 @@ const SKIP_FREE_ARM_GATE_CONFLICT: &str =
     "door reads as both a varp-gated door and a directional free arm (gate kept)";
 const SKIP_GATE_MEMBER_OVERRIDE: &str =
     "closed gate member has a loc-specific open script (named override wins)";
-const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no verified generic open handler";
+const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no generic open handler";
 const SKIP_GATE_MEMBER_SHAPE: &str = "closed gate member declares no Open op (unsupported shape)";
 const SKIP_DOOR_SHAPE: &str =
     "door placement shape has no ~door_open crossing (wall corner/L, or a non-generic diagonal)";
 const SKIP_DOOR_MEMBER_CONFLICT: &str = "closed door member is defined twice with different data";
 const SKIP_DOOR_MEMBER_SHAPE: &str = "closed door member declares no Open op";
-const SKIP_DOOR_MEMBER_HANDLER: &str = "closed door category has no verified generic open handler";
+const SKIP_DOOR_MEMBER_HANDLER: &str = "closed door category has no generic open handler";
 const SKIP_DOOR_MEMBER_OVERRIDE: &str =
     "closed door member has a loc-specific open script (named override wins)";
 const SKIP_DOOR_MEMBER_STAGE: &str = "closed door member's next_loc_stage open leaf is unresolved";
 const SKIP_SWAP_DOOR_BLOCKS: &str = "in-place swap door's open loc still blocks walk";
 const SKIP_SCRIPTED_DOOR_SOURCE: &str =
-    "scripted wall crossing opener is not the canonical form or its worn obj is unresolved";
+    "scripted wall crossing opener is missing or declared twice, or its worn obj is unresolved";
 const SKIP_STAGE_DOOR_PROCS: &str =
-    "no engine door open proc matches its pinned body (no stage doors)";
-const SKIP_STAGE_DOOR_PROC_DRIFT: &str =
-    "engine door/ladder proc differs from its pinned body (its crossings are not modelled)";
+    "no modelled engine door open proc is defined exactly once (no stage doors)";
 const SKIP_STAGE_DOOR_CONFLICT: &str =
     "named wall/ladder opener is declared more than once, unparsed, or split across aliases";
 const SKIP_STAGE_DOOR_UNPROVEN: &str =
@@ -449,15 +511,13 @@ const SKIP_STAGE_DOOR_UNOBSERVABLE: &str =
     "named wall/ladder opener moves the player only behind a varp with no transmission or unique journal proof";
 const SKIP_GATE_MEMBER_STAGE: &str =
     "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
-const SKIP_BRASS_KEY_SOURCE: &str =
-    "brass-key door aliases, config, or canonical item-use handler did not match";
+const SKIP_BRASS_KEY_SOURCE: &str = "brass-key door aliases, config, or handlers did not resolve";
 const SKIP_BRASS_KEY_SHAPE: &str = "brass-key door placement is not a level-0 straight wall";
 const SKIP_BRASS_KEY_ENDPOINT: &str = "brass-key door source teleport endpoint is not standable";
 const SKIP_GATE_MEMBER_PAIR: &str =
     "closed gate member has no adjacent paired open-stage placement";
 const SKIP_GATE_MEMBER_CONFLICT: &str = "closed gate member is defined twice with different data";
-const SKIP_MEMBERGATE_HANDLER: &str =
-    "membergate named handler is missing, extra-guarded, or not the canonical opener";
+const SKIP_MEMBERGATE_HANDLER: &str = "membergate named handler is missing";
 const SKIP_MEMBERGATE_CONFLICT: &str = "membergate is defined twice with different data";
 const SKIP_MEMBERGATE_STAGE: &str = "membergate open leaf is unresolved or mismatched";
 const SKIP_MEMBERGATE_PAIR: &str = "membergate has no complementary paired placement";
@@ -472,7 +532,6 @@ const SKIP_MAGICGUILD_SCRIPT: &str = "magic guild opener script did not load or 
 const SKIP_MAGICGUILD_CONFIG: &str = "magic guild door config did not admit named doors";
 const SKIP_MAGICGUILD_DOOR: &str = "magic guild door placement did not derive crossings";
 const SKIP_RANGINGGUILD_CONFIG: &str = "ranging guild ranging.loc did not load or admit Open";
-const SKIP_RANGINGGUILD_PACK: &str = "ranging guild door pack id does not match 2514";
 const SKIP_RANGINGGUILD_SCRIPT: &str = "ranging guild door opener did not parse";
 const SKIP_RANGINGGUILD_PLACEMENT: &str =
     "ranging guild door placement is not the expected single diagonal";

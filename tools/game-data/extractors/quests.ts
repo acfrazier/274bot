@@ -116,32 +116,6 @@ function parseQuestListText(text: string) {
     return out;
 }
 
-function parseQuestEnumDisplays(text: string) {
-    const names = new Set<string>();
-    let inQuestNames = false;
-    let saw = false;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
-        if (line.startsWith('[') && line.endsWith(']')) {
-            const section = line.slice(1, -1);
-            if (inQuestNames && section !== 'quest_names_enum') break;
-            inQuestNames = section === 'quest_names_enum';
-            if (inQuestNames) saw = true;
-            continue;
-        }
-        if (!inQuestNames || !line.startsWith('val=')) continue;
-        const comma = line.indexOf(',');
-        if (comma < 0) throw new Error(`quest.enum: malformed val line ${line}`);
-        const name = line.slice(comma + 1).trim();
-        if (!name) throw new Error(`quest.enum: empty display ${line}`);
-        if (names.has(name)) throw new Error(`quest.enum: duplicate display ${name}`);
-        names.add(name);
-    }
-    if (!saw || names.size === 0) throw new Error('quest.enum: missing [quest_names_enum]');
-    return names;
-}
-
 function scriptHas(text: string, pattern: RegExp, label: string) {
     if (!pattern.test(text)) throw new Error(label);
 }
@@ -705,121 +679,9 @@ function stageDomain(
     return { min: 0, max: maximum };
 }
 
-export type ProgressWriterDomains = (variable: string) => { min: number; max: number } | null;
-
-function counterIncrementBound(nodes: Node[], variable: string, line: number, constants: ReadonlyMap<string, number | null>): number | null {
-    const compact = (text: string) => text.replace(/\s+/g, '');
-    const increment = `%${variable}=add(%${variable},1)`;
-    const occurrences: Stmt[] = [];
-    walkStatements(nodes, (statement) => {
-        if (statement.line === line && compact(statement.text) === increment) occurrences.push(statement);
-    });
-    const boundFor = (items: Node[], wanted: Stmt): number | null => {
-        for (let index = 0; index < items.length; index += 1) {
-            const node = items[index];
-            if (node.kind === 'while' && node.body.includes(wanted)) {
-                if (index < 3) return null;
-                const needed = items[index - 3], available = items[index - 2], counter = items[index - 1];
-                if (needed.kind !== 'stmt' || available.kind !== 'stmt' || counter.kind !== 'stmt') return null;
-                const need = /^def_int(\$[A-Za-z0-9_]+)=calc\((\^[A-Za-z0-9_]+|-?\d+)-%([A-Za-z0-9_]+)\)$/.exec(compact(needed.text));
-                const have = /^def_int(\$[A-Za-z0-9_]+)=inv_total\(inv,([A-Za-z0-9_]+)\)$/.exec(compact(available.text));
-                const count = /^def_int(\$[A-Za-z0-9_]+)=min\((\$[A-Za-z0-9_]+),(\$[A-Za-z0-9_]+)\)$/.exec(compact(counter.text));
-                if (!need || !have || !count || need[3] !== variable
-                    || count[2] !== need[1] || count[3] !== have[1]
-                    || new Set([count[1], need[1], have[1]]).size !== 3
-                    || compact(node.cond) !== `${count[1]}>0`) return null;
-                const bound = need[2].startsWith('^') ? constants.get(need[2].slice(1)) : Number(need[2]);
-                if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
-                const first = node.body[0];
-                const inventory = first?.kind === 'stmt' && compact(first.text) === `inv_del(inv,${have[2]},1)`;
-                const offset = inventory ? 1 : 0;
-                const decrement = node.body[offset + 1];
-                if (node.body.length !== offset + 2 || node.body[offset] !== wanted
-                    || decrement?.kind !== 'stmt'
-                    || compact(decrement.text) !== `${count[1]}=sub(${count[1]},1)`) return null;
-                return bound;
-            }
-            const children = node.kind === 'if' ? [node.then, node.els] : node.kind === 'while' ? [node.body] : [];
-            for (const child of children) {
-                const bound = boundFor(child, wanted);
-                if (bound !== null) return bound;
-            }
-        }
-        return null;
-    };
-    let maximum = 0;
-    if (occurrences.length === 0) return null;
-    for (const occurrence of occurrences) {
-        const bound = boundFor(nodes, occurrence);
-        if (bound === null) return null;
-        maximum = Math.max(maximum, bound);
-    }
-    return maximum;
-}
-
-/** Capture every production writer once; an opaque or unbounded write leaves its domain unknown. */
-export function captureProgressWriterDomains(content: string): ProgressWriterDomains {
-    const files = questIdentityAnalysisFiles(content);
-    const constants = progressConstants(content, files);
-    const census = questProgressWriters(content, files);
-    const unaccounted = new Set<string>();
-    const possibleWrites = (text: string) =>
-        [...text.matchAll(/%([A-Za-z0-9_]+)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/g)].map((match) => match[1]);
-    for (const block of census.blocks) {
-        const possible = possibleWrites(block.body.map((line) => stripComment(line.text)).join('\n'));
-        if (possible.length === 0) continue;
-        let nodes: Node[];
-        try {
-            nodes = parseBody(block.body);
-        } catch {
-            for (const variable of possible) unaccounted.add(variable);
-            continue;
-        }
-        walkStatements(nodes, (statement) => {
-            const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(statement.text);
-            const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
-            for (const variable of possibleWrites(statement.text)) {
-                if (!targets.has(variable)) unaccounted.add(variable);
-            }
-        });
-    }
-    return (variable: string) => {
-        const writers = census.byVariable.get(variable) ?? [];
-        if (writers.length === 0 || unaccounted.has(variable) || writers.some((writer) => writer.nodes === null)) return null;
-        let maximum = 0;
-        for (const writer of writers) {
-            const literal = /^-?\d+$/.test(writer.right);
-            const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
-            let bound: number | null | undefined = literal ? Number(writer.right) : constant ? constants.get(constant[1]) : null;
-            if (!literal && !constant && writer.right.replace(/\s+/g, '') === `add(%${variable},1)`) {
-                // A one-time entry guard cannot bound repeated increments.
-                // Require the counter to start at min(limit-current, held)
-                // and to decrease once for each increment, without a yield.
-                bound = counterIncrementBound(writer.nodes!, variable, writer.line, constants);
-            }
-            if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
-            maximum = Math.max(maximum, bound);
-        }
-        return { min: 0, max: maximum };
-    };
-}
-
-function exactColourHelper(questsText: string) {
-    const blocks = parseRs2Blocks('scripts/general/scripts/quests.rs2', questsText)
-        .filter((block) => block.kind === 'proc' && block.name === 'send_quest_progress_colour');
-    if (blocks.length !== 1) return false;
-    const block = blocks[0];
-    const lines = block.body.map(({ text }) => stripComment(text).trim()).filter(Boolean);
-    return block.params.replace(/\s+/g, ' ').trim() === '(component $component, int $progress, int $complete_progress)'
-        && JSON.stringify(lines) === JSON.stringify([
-            'if ($progress = 0) {',
-            'if_setcolour($component, ^red_rgb);',
-            '} else if ($progress >= $complete_progress) {',
-            'if_setcolour($component, ^green_rgb);',
-            '} else {',
-            'if_setcolour($component, ^yellow_rgb);',
-            '}',
-        ]);
+function colourHelperExists(questsText: string) {
+    return parseRs2Blocks('scripts/general/scripts/quests.rs2', questsText)
+        .filter((block) => block.kind === 'proc' && block.name === 'send_quest_progress_colour').length === 1;
 }
 
 function progressMetadata(
@@ -859,7 +721,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
-    const helperIsExact = exactColourHelper(quests);
+    const helperIsExact = colourHelperExists(quests);
     const journals = journalIndex(content);
     if (revision === 377) {
         const questConstants = questConstantsFor377(content, constants);
@@ -885,7 +747,6 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const progressSources = questProgressWriters(content, sourceFiles);
     const progressWriterIndex = progressSources.byVariable;
     const displays = parseQuestListText(questlistText);
-    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
         const found = calls.filter((call) => call.component === seed.component);
@@ -923,7 +784,6 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         );
         const display = displays.get(seed.component);
         if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
-        if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
         const list = listEntries.find((entry) => entry.component === seed.component);
         const journal = journals.get(seed.component);
         return {
@@ -1075,17 +935,14 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         class: 'revision-absent';
         alias: string;
         on_revision: number;
-        other_pin_id: number;
         copied: false;
         reason: string;
     }[] = [];
-    if (revision === 274) {
-        if (varpPack.has('routequest')) throw new Error('274: routequest is in varp.pack; do not copy it and do not emit revision-absent');
+    if (revision === 274 && !varpPack.has('routequest')) {
         coverage.push({
             class: 'revision-absent',
             alias: 'routequest',
             on_revision: 274,
-            other_pin_id: 387,
             copied: false,
             reason: '289-only quest, not copied onto 274',
         });

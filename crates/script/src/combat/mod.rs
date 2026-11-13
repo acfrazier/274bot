@@ -29,7 +29,7 @@ pub mod style {
 pub use cast_npc::CastNpc;
 pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::{Combat, SwitchCause, SwitchState};
-pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};
+pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect, FoodReserve};
 pub use prayer::{
     begin_clear_owned_prayers, ClearPrayers, ClearPrayersArgs, Hygiene, PrayerSweepReport,
     RaisedPrayers,

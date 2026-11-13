@@ -229,6 +229,8 @@ struct LiveRouteRefresh {
     authority: Option<script::native::HostAuthority>,
     quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     compat_tile_intent: bool,
+    /// The walk's own danger decision, from its retained admission.
+    danger: super::walk_permissions::DangerDecision,
 }
 
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
@@ -1592,6 +1594,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 authority: bot.native_walk.clone(),
                 quest_evidence: bot.route_quest_evidence.clone(),
                 compat_tile_intent: bot.route_compat_tile_intent,
+                danger: super::walk_permissions::DangerDecision::for_refresh(
+                    bot.admission.as_deref(),
+                ),
             };
             // Keep the live owner and request correlation; only the old
             // endpoint and its Traveller run are replaced by route work.
@@ -1624,6 +1629,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             refresh.loc_id,
             refresh.arrival,
             refresh.compat_tile_intent,
+            refresh.danger,
         );
     }
     let defer_estimated_end = estimated_endpoint;
@@ -1931,12 +1937,13 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             bot.route_path_for_follow(),
             bot.admission.as_deref().copied(),
         ) {
-            admission.input = crate::admission::capture(
+            admission.input = crate::admission::capture_excluding(
                 snapshot,
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
                 Some(world),
+                bot.walk_protected_items.as_deref().unwrap_or(&[]),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             bot.assessment = Some(crate::admission::assess_route_path(
@@ -2113,12 +2120,13 @@ fn step_walk(
     let outcome = search(opts);
     let (outcome, assessment, refusal) =
         if let Some(mut admission) = bot.admission.as_deref().copied() {
-            admission.input = crate::admission::capture(
+            admission.input = crate::admission::capture_excluding(
                 snapshot,
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
                 Some(w),
+                bot.walk_protected_items.as_deref().unwrap_or(&[]),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             let route = match &outcome {

@@ -300,6 +300,87 @@ pub struct BankPickReceipt {
     pub outcome: BankPickOutcome,
 }
 
+/// Revision-bound service rows shared by every bot using the same nav world.
+///
+/// Bank placements come from the selected bank roster. Shop rows come from
+/// pinned `keepers.npc` config/`owned_shop` joins and selected NPC placements.
+#[derive(Debug, Clone)]
+pub enum ServiceFacts {
+    /// The existing selected-content named-bank roster.
+    Bank(Arc<NamedBankFacts>),
+    /// Pinned keeper placements with access rings resolved once at world bind.
+    ShopKeeper(Arc<api::service_pick::ShopKeeperFacts>),
+}
+
+impl ServiceFacts {
+    /// The row domain this shared selected-content owner contains.
+    pub fn kind(&self) -> api::service_pick::ServiceKind {
+        match self {
+            Self::Bank(_) => api::service_pick::ServiceKind::Bank,
+            Self::ShopKeeper(_) => api::service_pick::ServiceKind::ShopKeeper,
+        }
+    }
+}
+
+/// One off-pump route-cost pick over the complete account-eligible row domain.
+#[derive(Debug, Clone)]
+pub struct ServicePickRequest {
+    /// Must match `facts.kind()`; a mismatch is not a selectable domain.
+    pub kind: api::service_pick::ServiceKind,
+    /// The player's observed world tile and level.
+    pub from: WorldTile,
+    /// The account's walk restrictions; service searches force teleports off.
+    pub options: WalkOptions,
+    /// The revision-bound shared rows; a request copies no access lists.
+    pub facts: ServiceFacts,
+    /// Eligible owner row indices, air-nearest first only for equal-cost ties.
+    pub eligible: Arc<[u16]>,
+    /// Break equal route costs by `eligible` order, never by a partial search.
+    pub prefer_order: bool,
+}
+
+/// An established route result or an explicit undecided service pick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServicePickOutcome {
+    /// The cheapest reachable access in the complete eligible target set.
+    Routed {
+        /// The chosen row in the bound facts owner.
+        index: u16,
+        /// A prevalidated stand outside the selected service footprint.
+        access_tile: WorldTile,
+        /// The router's accumulated cost in half ticks.
+        cost: api::service_pick::RouteCost,
+        /// Eligible rows that the search could not judge because their stand
+        /// coverage is unknown. Banks and shops have none.
+        unjudged: u16,
+    },
+    /// No account-eligible row had usable access before searching.
+    NoCandidate,
+    /// The complete target search established absence of a permitted path.
+    NoPath {
+        /// Only still-unknown gates on the cheapest relaxed diagnosis route.
+        unresolved: Option<Arc<[api::selected::QuestGate]>>,
+        /// Eligible rows that the search could not judge: an absence of a path
+        /// is proven only when this is 0. Banks and shops have none.
+        unjudged: u16,
+    },
+    /// The search work limit was reached; reachability remains undecided.
+    BudgetExhausted,
+    /// The selection window expired or work was refused; not proof of absence.
+    NotSettled,
+}
+
+/// Run-fenced response to one [`ServicePickRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServicePickReceipt {
+    /// The native action request this observation answers.
+    pub request_id: u64,
+    /// The requesting run and observed snapshot stamp.
+    pub evidence: EvidenceStamp,
+    /// The established or undecided search result.
+    pub outcome: ServicePickOutcome,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Withdrawal {
     pub id: i32,
@@ -375,6 +456,8 @@ pub enum BankAction {
     /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
     DepositCapacity {
         keep: Arc<[i32]>,
+        /// One runtime-selected survival item preserved without copying `keep`.
+        extra_keep: Option<i32>,
         slots: u8,
     },
     Close,
@@ -398,6 +481,18 @@ pub struct BankCount {
     pub id: i32,
     pub count: i32,
 }
+
+const CAPACITY_PACK_SLOTS: usize = 28;
+
+enum ProtectedCounts {
+    Products(Vec<BankCount>),
+    // Zero-count entries are empty. The complete keep set stays in the request.
+    Capacity([BankCount; CAPACITY_PACK_SLOTS]),
+}
+
+// Measured at 232 B; the 64 B headroom retains the bounded inline 28-row
+// protected-count snapshot without per-check allocation.
+const _: () = assert!(std::mem::size_of::<ProtectedCounts>() <= 296);
 
 /// What a bank action settled to. The bank's rows are not carried here: the
 /// host observes the open table into the account's bank memory
@@ -518,7 +613,7 @@ pub struct BankMachine {
     session: u64,
     deposits: u8,
     withdraw_index: u8,
-    protected_before: Vec<BankCount>,
+    protected_before: ProtectedCounts,
     deposited: u32,
     capacity_freed: u8,
     item_mode_ensured: bool,
@@ -588,15 +683,10 @@ impl NativeMachine for BankMachine {
     type Output = BankReceipt;
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        let protected_capacity = match &request.action {
-            BankAction::DepositProducts { keep, .. } | BankAction::DepositCapacity { keep, .. } => {
-                keep.len()
-            }
-            _ => 0,
-        };
-        let mut protected_before = Vec::with_capacity(protected_capacity);
+        let mut protected_before = ProtectedCounts::Products(Vec::new());
         match &request.action {
             BankAction::DepositProducts { products, keep } => {
+                let mut before = Vec::with_capacity(keep.len());
                 if products.len() + keep.len() > MAX_MEMO {
                     return Err(ActionError::Unavailable(Arc::from(
                         "bank product/keep set exceeds 64 items",
@@ -607,17 +697,22 @@ impl NativeMachine for BankMachine {
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
                 for id in keep.iter().copied() {
-                    if protected_before.iter().any(|row: &BankCount| row.id == id) {
+                    if before.iter().any(|row: &BankCount| row.id == id) {
                         continue;
                     }
-                    protected_before.push(BankCount {
+                    before.push(BankCount {
                         id,
                         count: ops::count_id(inventory.value, id),
                     });
                 }
+                protected_before = ProtectedCounts::Products(before);
             }
-            BankAction::DepositCapacity { keep, slots } => {
-                if keep.len() > MAX_MEMO || *slots == 0 || *slots > MAX_DEPOSITS {
+            BankAction::DepositCapacity {
+                keep,
+                extra_keep,
+                slots,
+            } => {
+                if *slots == 0 || *slots > MAX_DEPOSITS {
                     return Err(ActionError::Unavailable(Arc::from(
                         "invalid exact bank capacity deposit plan",
                     )));
@@ -626,15 +721,28 @@ impl NativeMachine for BankMachine {
                     .snapshot()
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
-                for id in keep.iter().copied() {
-                    if protected_before.iter().any(|row: &BankCount| row.id == id) {
+                if inventory.value.len() > CAPACITY_PACK_SLOTS {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "inventory exceeds bank capacity snapshot bound",
+                    )));
+                }
+                let mut before = [BankCount { id: 0, count: 0 }; CAPACITY_PACK_SLOTS];
+                let mut used = 0;
+                for row in inventory.value {
+                    let id = row.def.id;
+                    if row.count <= 0
+                        || !(keep.contains(&id) || *extra_keep == Some(id))
+                        || before[..used].iter().any(|prior| prior.id == id)
+                    {
                         continue;
                     }
-                    protected_before.push(BankCount {
+                    before[used] = BankCount {
                         id,
                         count: ops::count_id(inventory.value, id),
-                    });
+                    };
+                    used += 1;
                 }
+                protected_before = ProtectedCounts::Capacity(before);
             }
             BankAction::WithdrawTo { withdrawals } => {
                 if withdrawals.len() > MAX_MEMO
@@ -1392,10 +1500,17 @@ impl NativeMachine for BankMachine {
                         }
                         let view_wait_expired =
                             self.view_armed && self.deadline_reached(cx.evidence().tick);
-                        let scan = if let BankAction::DepositCapacity { keep, .. } =
-                            &self.request.action
+                        let scan = if let BankAction::DepositCapacity {
+                            keep, extra_keep, ..
+                        } = &self.request.action
                         {
-                            ops::deposit_capacity_next(keep, side, pack, self.same_session(cx))
+                            ops::deposit_capacity_next(
+                                keep,
+                                *extra_keep,
+                                side,
+                                pack,
+                                self.same_session(cx),
+                            )
                         } else {
                             let spec = deposit_spec(&self.request.action)
                                 .expect("deposit actions have a deposit spec");
@@ -2478,11 +2593,34 @@ impl BankMachine {
 
     fn protected_unchanged<R: ops::BankRow>(&self, inventory: Option<&[R]>) -> Option<bool> {
         let inventory = inventory?;
-        Some(
-            self.protected_before
+        Some(match &self.protected_before {
+            ProtectedCounts::Products(before) => before
                 .iter()
                 .all(|before| ops::count_id(inventory, before.id) == before.count),
-        )
+            ProtectedCounts::Capacity(before) => {
+                let BankAction::DepositCapacity {
+                    keep, extra_keep, ..
+                } = &self.request.action
+                else {
+                    unreachable!("capacity counts belong to a capacity request");
+                };
+                before
+                    .iter()
+                    .filter(|row| row.count > 0)
+                    .all(|row| ops::count_id(inventory, row.id) == row.count)
+                    && inventory
+                        .iter()
+                        .filter(|row| {
+                            row.count() > 0
+                                && (keep.contains(&row.id()) || *extra_keep == Some(row.id()))
+                        })
+                        .all(|row| {
+                            before
+                                .iter()
+                                .any(|prior| prior.count > 0 && prior.id == row.id())
+                        })
+            }
+        })
     }
 
     pub(crate) fn interrupt(&mut self) {
@@ -2678,6 +2816,65 @@ impl NativeMachine for Select {
     fn cancel(&mut self) {}
 }
 
+/// One typed off-pump service pick, without a service owner's retry policy.
+///
+/// The host applies the run/request fence and returns an explicit undecided
+/// outcome on refusal or expiry. Owners decide whether that outcome merits a
+/// retry; this machine never substitutes an air-nearest result.
+pub struct SelectService {
+    request: Option<ServicePickRequest>,
+    request_id: Option<u64>,
+    immediate: Option<ServicePickOutcome>,
+}
+
+impl NativeMachine for SelectService {
+    type Args = ServicePickRequest;
+    type Output = ServicePickOutcome;
+
+    fn begin(request: Self::Args, _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        let immediate = if request.kind != request.facts.kind() {
+            Some(ServicePickOutcome::NotSettled)
+        } else if request.eligible.is_empty() {
+            Some(ServicePickOutcome::NoCandidate)
+        } else {
+            None
+        };
+        Ok(Self {
+            request: immediate.is_none().then_some(request),
+            request_id: None,
+            immediate,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(outcome) = self.immediate.take() {
+            return Poll::Ready(Ok(outcome));
+        }
+        if let Some(receipt) = self.request_id.and_then(|id| cx.service_pick_receipt(id)) {
+            return Poll::Ready(Ok(receipt.outcome.clone()));
+        }
+        if self.request_id.is_none() {
+            let Some(request) = self.request.take() else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            return match cx.service_pick(request) {
+                Ok(request_id) => {
+                    self.request_id = Some(request_id);
+                    Poll::Pending
+                }
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
+        Poll::Pending
+    }
+
+    fn cancel(&mut self) {
+        self.request = None;
+        self.request_id = None;
+        self.immediate = None;
+    }
+}
+
 /// The arguments of a pick that leaves one bank out.
 #[derive(Debug, Clone)]
 pub struct SelectOtherArgs {
@@ -2847,6 +3044,7 @@ impl NativeMachine for Withdraw {
 }
 
 impl Withdraw {
+    #[cfg(test)]
     pub(crate) fn transfer_in_flight(&self) -> bool {
         self.core.transfer_in_flight()
     }
@@ -2888,6 +3086,8 @@ impl NativeMachine for Close {
 
 #[cfg(test)]
 mod tests {
+    mod capacity;
+
     use super::*;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
     use crate::quester::families::tests::{
@@ -2991,14 +3191,15 @@ mod tests {
         let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
             panic!("Select must emit a real typed pick");
         };
+        let expected_eligible: &[u16] = if allow_air_fallback {
+            &[1, 2, 0]
+        } else {
+            &[0, 1, 2]
+        };
         assert_eq!(
             request.eligible.as_ref(),
-            if allow_air_fallback {
-                &[1, 2, 0]
-            } else {
-                &[0, 1, 2]
-            },
-            "only select-only requests capture a stable air-ranked eligible roster"
+            expected_eligible,
+            "selection applies its ranking to the eligible banks"
         );
         // Drop the real action without dispatch or receipt: the host never
         // admits it. Its authority stays for a test that answers it.
@@ -3404,6 +3605,168 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn service_request(
+        kind: api::service_pick::ServiceKind,
+        eligible: &[u16],
+    ) -> ServicePickRequest {
+        ServicePickRequest {
+            kind,
+            from: WorldTile {
+                x: 5,
+                z: 5,
+                level: 0,
+            },
+            options: WalkOptions::default(),
+            facts: ServiceFacts::Bank(Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+                "service",
+                WorldTile {
+                    x: 6,
+                    z: 5,
+                    level: 0,
+                },
+            )]))),
+            eligible: Arc::from(eligible),
+            prefer_order: false,
+        }
+    }
+
+    #[test]
+    fn service_select_refuses_empty_or_mismatched_domains_without_host_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::ServiceKind;
+        for (kind, eligible, expected) in [
+            (ServiceKind::Bank, &[][..], ServicePickOutcome::NoCandidate),
+            (
+                ServiceKind::ShopKeeper,
+                &[0][..],
+                ServicePickOutcome::NotSettled,
+            ),
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            let mut ledger = None;
+            let result = with_tick(&snapshot, &mut ledger, 1, |frame| {
+                let handle = frame
+                    .actions
+                    .begin::<SelectService>(service_request(kind, eligible), &mut frame.cx)
+                    .unwrap();
+                frame.actions.poll(&handle, &mut frame.cx)
+            });
+            assert_eq!(result, Poll::Ready(Ok(expected)));
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+
+    #[test]
+    fn service_select_waits_allocation_free_and_preserves_every_host_outcome() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::service_pick::ServiceKind;
+        for expected in [
+            ServicePickOutcome::Routed {
+                index: 0,
+                access_tile: WorldTile {
+                    x: 5,
+                    z: 5,
+                    level: 0,
+                },
+                cost: api::service_pick::RouteCost::ZERO,
+                unjudged: 0,
+            },
+            ServicePickOutcome::NoCandidate,
+            ServicePickOutcome::NoPath {
+                unresolved: None,
+                unjudged: 0,
+            },
+            ServicePickOutcome::BudgetExhausted,
+            ServicePickOutcome::NotSettled,
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
+                let handle = frame
+                    .actions
+                    .begin::<SelectService>(service_request(ServiceKind::Bank, &[0]), &mut frame.cx)
+                    .unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+                handle
+            });
+            let pending = ledger.as_mut().unwrap();
+            assert_eq!(pending.outbox.len(), 1);
+            let action = pending.outbox.remove(0);
+            assert!(matches!(action.effect, HostEffect::ServicePick(_)));
+            let allocations = allocation_counter::measure(|| {
+                for tick in 2..=1001 {
+                    with_tick(&snapshot, &mut ledger, tick, |frame| {
+                        frame.cx.active_now = Duration::from_secs(3_600);
+                        assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+                    });
+                }
+            });
+            assert_eq!(allocations, allocation_counter::AllocationInfo::default());
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+            ledger.as_mut().unwrap().complete_service_pick(
+                &action.authority(),
+                ServicePickReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: action.run(),
+                        tick: 1002,
+                        sequence: 1002,
+                    },
+                    outcome: expected.clone(),
+                },
+            );
+            let result = with_tick(&snapshot, &mut ledger, 1002, |frame| {
+                frame.actions.poll(&handle, &mut frame.cx)
+            });
+            assert_eq!(result, Poll::Ready(Ok(expected)));
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+    }
+
+    #[test]
+    fn cancelling_service_select_revokes_queued_work_and_rejects_its_late_result() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
+            let handle = frame
+                .actions
+                .begin::<SelectService>(
+                    service_request(api::service_pick::ServiceKind::Bank, &[0]),
+                    &mut frame.cx,
+                )
+                .unwrap();
+            assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            handle
+        });
+        let action = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(action.live());
+        drop(handle);
+        assert!(!action.live(), "cancelled work cannot reach host admission");
+        ledger.as_mut().unwrap().complete_service_pick(
+            &action.authority(),
+            ServicePickReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: action.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                outcome: ServicePickOutcome::NotSettled,
+            },
+        );
+        assert!(ledger.as_ref().unwrap().pick.is_none());
     }
 
     fn fishing(base: i32) -> [StatView; 1] {
@@ -8022,6 +8385,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 1,
                 },
                 partial_ok: false,
@@ -8118,6 +8482,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 2,
                 },
                 partial_ok: false,
@@ -8898,6 +9263,7 @@ mod tests {
                 bank: None,
                 action: BankAction::DepositCapacity {
                     keep: Arc::from([net]),
+                    extra_keep: None,
                     slots: 1,
                 },
                 partial_ok: false,

@@ -2943,7 +2943,13 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
     let mut f = native_fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
-    for entry in [None, Some(json!({"schema_version": 1, "values": {}}))] {
+    // The empty entry is the pre-envelope form. 0.2.8 read it as schema 1
+    // with no saved values, and 0.2.9 does the same.
+    for entry in [
+        None,
+        Some(json!({})),
+        Some(json!({"schema_version": 1, "values": {}})),
+    ] {
         let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
         row.settings.script_settings.remove(&key);
         if let Some(entry) = entry {
@@ -2972,7 +2978,6 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
         }
     }
     for entry in [
-        json!({}),
         json!({"schema_version": 2, "values": {"future": 9}}),
         json!({"schema_version": 1, "values": null}),
     ] {
@@ -3006,17 +3011,10 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
             .is_err());
         f.core.flush_writes();
         assert_eq!(std::fs::read(&vault_path).unwrap(), saved_bytes);
-        if entry.as_object().unwrap().is_empty() {
-            assert!(matches!(
-                Vault::unlock(&vault_path, "test-passphrase-01"),
-                Err(vault::VaultError::UnsupportedSavedFormat { path }) if path == vault_path,
-            ));
-        } else {
-            assert_eq!(
-                f.saved_bag("alice", &key),
-                Some(entry.as_object().unwrap().clone())
-            );
-        }
+        assert_eq!(
+            f.saved_bag("alice", &key),
+            Some(entry.as_object().unwrap().clone())
+        );
     }
     assert!(matches!(
         f.scripts.compiled_schema(
@@ -3024,6 +3022,86 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
             None,
             CompiledCardId::from_script(script::CompiledId("missing"))
         ),
+        super::SchemaView::Unavailable(_)
+    ));
+}
+
+/// Gatherer settings that 0.2.8 saved (schema 4) load in 0.2.9 (schema 5):
+/// each saved value stays, and `buyTools`, which schema 5 added, takes its
+/// default. The next save stamps schema 5. Schema 3 is older than 0.2.8 and
+/// stays refused.
+#[test]
+fn gatherer_settings_saved_by_0_2_8_load_and_resave_as_the_current_schema() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = native_fixture("native-gatherer-schema-4", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    let saved = json!({"schema_version": 4, "values": {"skill": "Mining", "bank": "Nearest"}});
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings
+        .script_settings
+        .insert(key.clone(), saved.as_object().unwrap().clone());
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "restore")
+        .unwrap();
+    f.core.flush_writes();
+
+    let super::SchemaView::Ready { version, .. } =
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id))
+    else {
+        panic!("0.2.8 Gatherer settings must stay usable");
+    };
+    assert_eq!(version, 5);
+    let bag = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
+    assert_eq!(bag["skill"], json!("Mining"));
+    assert_eq!(bag["bank"], json!("Nearest"));
+    assert_eq!(
+        bag["buyTools"],
+        json!(true),
+        "the new setting takes its default"
+    );
+    assert_eq!(
+        f.saved_bag("alice", &key),
+        Some(saved.as_object().unwrap().clone()),
+        "a read does not rewrite the saved settings"
+    );
+
+    let mut values = Map::new();
+    values.insert("skill".into(), json!("Mining"));
+    values.insert("bank".into(), json!("Nearest"));
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            values,
+        )
+        .unwrap();
+    f.core.flush_writes();
+    let resaved = f.saved_bag("alice", &key).unwrap();
+    assert_eq!(resaved["schema_version"], json!(5));
+
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings.script_settings.insert(
+        key.clone(),
+        json!({"schema_version": 3, "values": {"skill": "Mining"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "restore")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id)),
         super::SchemaView::Unavailable(_)
     ));
 }

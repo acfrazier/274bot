@@ -546,7 +546,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
     pack[0].def.stackable = true;
     let keep = [502];
     assert_eq!(
-        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[..]), true),
+        deposit_capacity_next(&keep, None, Some(&side[..]), Some(&pack[..]), true),
         DepositScan::Click(DepositClick {
             id: 500,
             slot: 0,
@@ -555,7 +555,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
         })
     );
     assert_eq!(
-        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[1..]), true),
+        deposit_capacity_next(&keep, None, Some(&side[..]), Some(&pack[1..]), true),
         DepositScan::Click(DepositClick {
             id: 501,
             slot: 1,
@@ -566,18 +566,19 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
 
     let wrong_op = [native(501, "Singles", 1, 1, 2001, &[Some("Deposit-All")])];
     assert_eq!(
-        deposit_capacity_next(&[], Some(&wrong_op[..]), Some(&pack[1..2]), true),
+        deposit_capacity_next(&[], None, Some(&wrong_op[..]), Some(&pack[1..2]), true),
         DepositScan::MissingRequired,
         "an unstackable must not fall back from missing Deposit-1 to Deposit-All"
     );
     assert_eq!(
-        deposit_capacity_next::<ItemView>(&[], None, Some(&pack[..1]), true),
+        deposit_capacity_next::<ItemView>(&[], None, None, Some(&pack[..1]), true),
         DepositScan::WaitView
     );
     let empty_side: [ItemView; 0] = [];
     assert_eq!(
         deposit_capacity_next(
             &[500, 501, 502],
+            None,
             Some(&empty_side[..]),
             Some(&pack[..]),
             true,
@@ -585,7 +586,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
         DepositScan::Done
     );
     assert_eq!(
-        deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), false),
+        deposit_capacity_next(&[], None, Some(&side[..]), Some(&pack[..]), false),
         DepositScan::SessionGone
     );
 }

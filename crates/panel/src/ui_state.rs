@@ -372,10 +372,9 @@ pub(crate) fn rebased<'a>(
         allow_bank_fetch: current.nav.allow_bank_fetch,
         allow_prereq_dialogue: current.nav.allow_prereq_dialogue,
         allow_quest_start: current.nav.allow_quest_start,
-        allow_danger_zones: current.nav.allow_danger_zones,
         survivable_routing: current.nav.survivable_routing,
+        allow_danger_zones: current.nav.allow_danger_zones,
         script_scope_notice_ack: current.nav.script_scope_notice_ack,
-        survivable_routing_notice_ack: current.nav.survivable_routing_notice_ack,
         show_special_areas: current.nav.show_special_areas,
         pause_script_on_manual_walk_abort: current.nav.pause_script_on_manual_walk_abort,
         ..next.nav
@@ -448,9 +447,8 @@ const MERGED_NAV_KEYS: &[(&str, bool)] = &[
     ("allow_prereq_dialogue", true),
     ("allow_quest_start", true),
     ("allow_danger_zones", false),
-    ("survivable_routing", true),
+    ("survivable_routing", false),
     ("script_scope_notice_ack", false),
-    ("survivable_routing_notice_ack", false),
     ("pause_script_on_manual_walk_abort", true),
     ("show_special_areas", false),
 ];
@@ -600,6 +598,7 @@ mod tests {
         let mut s = PanelUiState::default();
         s.nav.show_nav_path = true;
         s.nav.color_path = "#AABBCC".into();
+        s.nav.survivable_routing = true;
         s.nav.allow_bank_fetch = true;
         let bytes = serde_json::to_vec(&s).unwrap();
         let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
@@ -608,6 +607,10 @@ mod tests {
         assert!(
             back.nav.allow_bank_fetch,
             "the BankBudget flag round-trips like the other nav toggles"
+        );
+        assert!(
+            back.nav.survivable_routing,
+            "the saved middle-level bit round-trips with the global override bit"
         );
     }
 
@@ -670,10 +673,6 @@ mod tests {
         );
         assert!(back.nav.show_nav_path, "present fields keep their values");
         assert_eq!(back.nav.color_path, "#AABBCC");
-        assert!(
-            back.nav.survivable_routing,
-            "missing survivable routing defaults to When survivable"
-        );
     }
 
     #[test]
@@ -779,9 +778,8 @@ mod tests {
             "allow_wilderness": false,
             "allow_bank_fetch": false,
             "allow_danger_zones": false,
-            "survivable_routing": false,
+            "survivable_routing": true,
             "script_scope_notice_ack": false,
-            "survivable_routing_notice_ack": true,
             "show_nav_path": true
         });
         // Reproduce the stale panel snapshot deterministically before the
@@ -794,6 +792,7 @@ mod tests {
         assert_eq!(after_writer["nav"]["allow_teleports"], true);
         assert_eq!(after_writer["nav"]["allow_wilderness"], false);
         assert_eq!(after_writer["nav"]["show_nav_path"], true);
+        assert_eq!(after_writer["nav"]["survivable_routing"], true);
 
         patiently(|| save_to_checked(&prefs, &panel_state).map_err(|error| error.to_string()))
             .unwrap();
@@ -808,12 +807,8 @@ mod tests {
         assert_eq!(after_panel_save["nav"]["allow_prereq_dialogue"], true);
         assert_eq!(after_panel_save["nav"]["allow_quest_start"], true);
         assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
-        assert_eq!(after_panel_save["nav"]["survivable_routing"], false);
+        assert_eq!(after_panel_save["nav"]["survivable_routing"], true);
         assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
-        assert_eq!(
-            after_panel_save["nav"]["survivable_routing_notice_ack"],
-            true
-        );
         assert_eq!(after_panel_save["quester_paths"]["enabled"], true);
         assert_eq!(
             after_panel_save["quester_paths"]["folder"],
@@ -824,9 +819,8 @@ mod tests {
             "allow_wilderness": true,
             "allow_bank_fetch": true,
             "allow_danger_zones": true,
-            "survivable_routing": true,
             "script_scope_notice_ack": true,
-            "survivable_routing_notice_ack": false,
+            "survivable_routing": true,
             "show_nav_path": true
         });
         set_patiently(&peer, "nav", nav.clone());
@@ -836,12 +830,8 @@ mod tests {
         assert_eq!(after_second_writer["capture"], true);
         assert_eq!(after_second_writer["nav"]["show_nav_path"], true);
         assert_eq!(after_second_writer["nav"]["allow_danger_zones"], true);
-        assert_eq!(after_second_writer["nav"]["survivable_routing"], true);
         assert_eq!(after_second_writer["nav"]["script_scope_notice_ack"], true);
-        assert_eq!(
-            after_second_writer["nav"]["survivable_routing_notice_ack"],
-            false
-        );
+        assert_eq!(after_second_writer["nav"]["survivable_routing"], true);
         // The panel's preferences see the peer's write once they re-read.
         prefs.reload().unwrap();
         let mut refreshed_nav = panel_state.nav.clone();
@@ -852,9 +842,8 @@ mod tests {
         assert!(refreshed_nav.allow_prereq_dialogue);
         assert!(refreshed_nav.allow_quest_start);
         assert!(refreshed_nav.allow_danger_zones);
-        assert!(refreshed_nav.survivable_routing);
         assert!(refreshed_nav.script_scope_notice_ack);
-        assert!(!refreshed_nav.survivable_routing_notice_ack);
+        assert!(refreshed_nav.survivable_routing);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let panel_prefs = prefs.share();
@@ -887,9 +876,8 @@ mod tests {
         assert_eq!(document["nav"]["allow_wilderness"], true);
         assert_eq!(document["nav"]["allow_bank_fetch"], true);
         assert_eq!(document["nav"]["allow_danger_zones"], true);
-        assert_eq!(document["nav"]["survivable_routing"], true);
         assert_eq!(document["nav"]["script_scope_notice_ack"], true);
-        assert_eq!(document["nav"]["survivable_routing_notice_ack"], false);
+        assert_eq!(document["nav"]["survivable_routing"], true);
         assert_eq!(document["unrelated"]["keep"], 7);
     }
 

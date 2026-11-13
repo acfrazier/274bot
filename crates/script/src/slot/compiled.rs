@@ -187,6 +187,7 @@ struct StatusDetails<'a> {
     failure_message: Option<&'a str>,
     waiting_for: Option<&'a str>,
     action_state: Option<&'a str>,
+    block_reason: Option<&'a str>,
     method: Option<&'a str>,
     area: Option<&'a str>,
     target: Option<&'a str>,
@@ -233,6 +234,9 @@ impl std::fmt::Display for StatusDetails<'_> {
         }
         if let Some(value) = self.action_state {
             write!(f, " action_state={value}")?;
+        }
+        if let Some(value) = self.block_reason {
+            write!(f, " block_reason={value}")?;
         }
         let occupied = [
             self.failure_message.unwrap_or(""),
@@ -298,6 +302,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         None
     };
     let last_event_changed = gatherer && status_text_changed(previous, status, "last_event");
+    let block_reason_changed = status_text_changed(previous, status, "block_reason");
     let waiting_or_blocked_event = last_event_changed
         && (matches!(status.phase, NativePhase::Waiting | NativePhase::Blocked)
             || last_event.is_some_and(|event| event.starts_with("waiting")));
@@ -305,6 +310,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         || failure_changed
         || waiting_for_changed
         || action_state_changed
+        || block_reason_changed
         || last_event_changed)
     {
         return;
@@ -322,6 +328,7 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         failure_message: failure.map(|failure| failure.message.as_ref()),
         waiting_for,
         action_state,
+        block_reason: status_text(status, "block_reason"),
         method: if gatherer {
             status_text(status, "method")
         } else {
@@ -343,8 +350,9 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
         api::hostlog::Category::ScriptLifecycle,
         level,
         slot = slot,
-        "native {} phase={} failure={}{}",
+        "native {} run={} phase={} failure={}{}",
         status.card.0,
+        status.run.run,
         phase_label(status.phase),
         failure.map_or("none", |failure| failure.code.as_ref()),
         details,
@@ -413,6 +421,7 @@ pub(super) fn frame_context<'a>(
     runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
     ActionContext {
         walk_prereq: Default::default(),
+        protected_items: None,
         evidence,
         revision,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
@@ -428,6 +437,7 @@ pub(super) fn frame_context<'a>(
         }),
         poison_unknown_pulse: ctx.compiled.poison_unknown_pulse.unwrap_or(u8::MAX),
         cure_poison: ctx.compiled.cure_poison,
+        shop_keepers: ctx.compiled.shop_keepers,
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
@@ -578,6 +588,7 @@ impl CompiledRun {
                         collision: ctx.compiled.collision,
                         nav: ctx.compiled.nav,
                         walk_danger: ctx.compiled.walk_danger,
+                        shop_keepers: ctx.compiled.shop_keepers,
                         wilderness: ctx.compiled.wilderness,
                         pvp_globals: ctx.compiled.pvp_globals,
                         hold: ctx.compiled.hold,

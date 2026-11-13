@@ -136,9 +136,10 @@ pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
-    DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE,
-    ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE, SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
+    danger_routing_tooltip, DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE,
+    DANGER_ROUTING_LEVELS, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS,
+    NEVER_DANGER_NOTE, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE, ROUTING_SCOPE_NOTE,
+    SCRIPT_SCOPE_NOTICE,
 };
 
 #[cfg(test)]

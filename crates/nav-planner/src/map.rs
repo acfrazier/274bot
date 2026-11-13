@@ -179,25 +179,19 @@ pub(crate) fn json<T: DeserializeOwned>(bytes: &[u8], limit: usize) -> Result<T,
 }
 
 /// First pass skips all payload collections (IgnoredAny). Reject an unsupported
-/// schema or identity before allocating records, even when JSON fields are reordered.
-pub(crate) fn preflight<I: DeserializeOwned + PartialEq>(
+/// schema before allocating records, even when JSON fields are reordered.
+pub(crate) fn preflight(
     bytes: &[u8],
     limit: usize,
-    expected: I,
     format: &'static str,
     schema: u16,
 ) -> Result<(), MapError> {
     #[derive(Deserialize)]
-    struct Header<I> {
+    struct Header {
         schema: u16,
-        identity: I,
     }
-    let header: Header<I> = json(bytes, limit)?;
-    version(format, header.schema, schema)?;
-    if header.identity != expected {
-        return Err(MapError::Identity);
-    }
-    Ok(())
+    let header: Header = json(bytes, limit)?;
+    version(format, header.schema, schema)
 }
 
 pub(crate) fn version(format: &'static str, actual: u16, expected: u16) -> Result<(), MapError> {

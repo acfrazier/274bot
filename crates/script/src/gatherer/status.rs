@@ -1,11 +1,13 @@
+use crate::acquire::BankSeen;
 pub use crate::native::tickcycle::CycleStats as TickStats;
 use crate::native::{
     NativeOutput, NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue,
 };
 use crate::paint::{host_control_buttons, ScriptPaint};
 use crate::CompiledId;
+use api::bank_memory::Origin;
 use api::selected::RunKey;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Debug, Clone)]
 pub struct StatusData {
@@ -26,6 +28,8 @@ pub struct StatusData {
     pub xp: i32,
     pub xp_per_hour: Option<i32>,
     pub bank: Arc<str>,
+    pub bank_seen: Option<BankSeen>,
+    pub block_reason: Arc<str>,
     pub last_progress: u64,
     pub deaths: u8,
     pub recoveries: u8,
@@ -139,6 +143,18 @@ macro_rules! status_rows {
             ),
             $emit!("bank", "Bank", Text, Arc::clone(&$data.bank)),
             $emit!(
+                "bank_seen",
+                "Bank seen (at status update)",
+                Text,
+                bank_seen_text($data.bank_seen)
+            ),
+            $emit!(
+                "block_reason",
+                "Block reason (evidence when blocked)",
+                Text,
+                Arc::clone(&$data.block_reason)
+            ),
+            $emit!(
                 "last_progress",
                 "Last progress",
                 Integer,
@@ -247,6 +263,57 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
     })
 }
 
+pub(super) fn empty_block_reason() -> Arc<str> {
+    static EMPTY: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
+    Arc::clone(&EMPTY)
+}
+
+fn bank_seen_text(seen: Option<BankSeen>) -> Arc<str> {
+    seen.map_or_else(
+        || {
+            static UNKNOWN: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("unknown"));
+            Arc::clone(&UNKNOWN)
+        },
+        |seen| bank_seen_text_at(seen, std::time::SystemTime::now()),
+    )
+}
+
+fn bank_seen_text_at(seen: BankSeen, now: std::time::SystemTime) -> Arc<str> {
+    use std::fmt::Write;
+
+    let origin = match seen.origin {
+        Origin::Session => "Session",
+        Origin::Hint => "Hint (saved)",
+        Origin::Unknown => return Arc::from("unknown"),
+    };
+    // Match the core's relative-age rule, including future/overflow fallback.
+    // This text is fixed at publication; G2 owns typed clock presentation.
+    let age = std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(seen.observed_at_unix))
+        .and_then(|observed| now.duration_since(observed).ok());
+    let mut text = String::with_capacity(64);
+    text.push_str(origin);
+    if let Some(age) = age {
+        let seconds = age.as_secs();
+        if seconds < 60 {
+            text.push_str(", less than a minute ago");
+        } else if seconds < 3_600 {
+            let _ = write!(text, ", {} min ago", seconds / 60);
+        } else if seconds < 86_400 {
+            let _ = write!(text, ", {} hr ago", seconds / 3_600);
+        } else {
+            let days = seconds / 86_400;
+            let _ = write!(
+                text,
+                ", {days} {} ago",
+                if days == 1 { "day" } else { "days" }
+            );
+        }
+    }
+    let _ = write!(text, ", {} rows", seen.rows);
+    Arc::from(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +334,24 @@ mod tests {
         fn log(&mut self, _level: Level, _message: &str) {}
 
         fn settings_applied(&mut self, _revision: u64) {}
+    }
+
+    #[test]
+    fn unchanged_status_text_uses_bounded_shared_storage() {
+        let first = allocation_counter::measure(|| {
+            drop(empty_block_reason());
+            drop(bank_seen_text(None));
+        });
+        assert!(first.count_total <= 2);
+        assert!(first.bytes_total <= 39);
+        assert_eq!(std::mem::size_of::<LazyLock<Arc<str>>>(), 24);
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(empty_block_reason().is_empty());
+                assert_eq!(bank_seen_text(None).as_ref(), "unknown");
+            }
+        });
+        assert_eq!(warm.count_total, 0);
     }
 
     /// `publish` emits the shared [`KEYS`] key set with the table's value
@@ -292,6 +377,8 @@ mod tests {
             xp: 75,
             xp_per_hour: None,
             bank: Arc::from(""),
+            bank_seen: None,
+            block_reason: Arc::from(""),
             last_progress: 7,
             deaths: 0,
             recoveries: 0,
@@ -360,6 +447,42 @@ mod tests {
             StatusValue::Integer(-1),
             "missing xp_per_hour publishes -1",
         );
+        assert_eq!(value("bank_seen"), StatusValue::Text(Arc::from("unknown")),);
+    }
+
+    #[test]
+    fn bank_seen_keeps_provenance_and_relative_age_without_a_clock_formatter() {
+        assert_eq!(bank_seen_text(None).as_ref(), "unknown");
+        let now_secs = 1_000_000;
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_secs);
+        let mut seen = BankSeen {
+            origin: Origin::Session,
+            observed_at_unix: now_secs - 12 * 60,
+            rows: 37,
+            count: 0,
+        };
+        assert_eq!(
+            bank_seen_text_at(seen, now).as_ref(),
+            "Session, 12 min ago, 37 rows",
+        );
+        seen.origin = Origin::Hint;
+        seen.observed_at_unix = now_secs - 3 * 86_400;
+        assert_eq!(
+            bank_seen_text_at(seen, now).as_ref(),
+            "Hint (saved), 3 days ago, 37 rows",
+        );
+        for timestamp in [now_secs + 1, u64::MAX] {
+            seen.observed_at_unix = timestamp;
+            assert_eq!(
+                bank_seen_text_at(seen, now).as_ref(),
+                "Hint (saved), 37 rows"
+            );
+            seen.origin = Origin::Session;
+            assert_eq!(bank_seen_text_at(seen, now).as_ref(), "Session, 37 rows");
+            seen.origin = Origin::Hint;
+        }
+        seen.origin = Origin::Unknown;
+        assert_eq!(bank_seen_text_at(seen, now).as_ref(), "unknown");
     }
 
     /// The native Gatherer paint advertises the host Pause and Stop
@@ -384,6 +507,8 @@ mod tests {
             xp: 0,
             xp_per_hour: None,
             bank: Arc::from(""),
+            bank_seen: None,
+            block_reason: Arc::from(""),
             last_progress: 0,
             deaths: 0,
             recoveries: 0,

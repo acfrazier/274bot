@@ -343,7 +343,7 @@ mod tests {
         )];
         let pack = [compat(500, "Stack", 4, Some(0), Some(2001), &[])];
         assert_eq!(
-            deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), true),
+            deposit_capacity_next(&[], None, Some(&side[..]), Some(&pack[..]), true),
             DepositScan::MissingRequired
         );
     }

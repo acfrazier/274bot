@@ -7,6 +7,49 @@ pub const RUN_ORB_OFF: i32 = 152;
 /// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
 pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
+#[cfg(feature = "test-support")]
+thread_local! {
+    static DRIVER_PACKET_SCOPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CLASSIFIED_DRIVER_PACKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the current slot thread's real, host-classified Driver packet total.
+#[cfg(feature = "test-support")]
+pub fn classified_driver_packet_count_for_test() -> u64 {
+    CLASSIFIED_DRIVER_PACKETS.get()
+}
+
+/// Record a real sink commit after the host determines its request lineage.
+/// Ordinary Driver calls use a test-only scope; ordered requests retain their
+/// production lineage. Client-owned packets outside either scope do not count.
+#[cfg(feature = "test-support")]
+pub fn record_classified_driver_packet_for_test(owned_request: bool) {
+    if owned_request || DRIVER_PACKET_SCOPE.get() {
+        CLASSIFIED_DRIVER_PACKETS.set(
+            CLASSIFIED_DRIVER_PACKETS
+                .get()
+                .checked_add(1)
+                .expect("the test packet counter cannot exhaust u64"),
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn driver_packet_scope_for_test<T>(client: &mut Client, write: impl FnOnce(&mut Client) -> T) -> T {
+    struct RestoreScope(bool);
+    impl Drop for RestoreScope {
+        fn drop(&mut self) {
+            DRIVER_PACKET_SCOPE.set(self.0);
+        }
+    }
+    // A deferred packet belongs to its original producer, not this call.
+    client.out.finish_packet();
+    let _scope = RestoreScope(DRIVER_PACKET_SCOPE.replace(true));
+    let result = write(client);
+    client.out.finish_packet();
+    result
+}
+
 /// Checkpoint of the actual encrypted packet sink. The checkpoint retains only
 /// its cursor and cipher, never payload bytes or per-bot state.
 pub struct PacketCheckpoint {
@@ -180,6 +223,11 @@ impl Driver for Client {
         Client::cheat_admission(self)
     }
     fn send_cheat(&mut self, cmd: &str) -> client::CheatSend {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| Client::send_cheat(client, cmd))
+        }
+        #[cfg(not(feature = "test-support"))]
         Client::send_cheat(self, cmd)
     }
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
@@ -190,8 +238,18 @@ impl Driver for Client {
     }
 
     fn do_action(&mut self, slot: i32) -> bool {
-        self.doAction(slot);
-        true
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                client.doAction(slot);
+                true
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            self.doAction(slot);
+            true
+        }
     }
 
     fn try_move(
@@ -208,6 +266,25 @@ impl Driver for Client {
         forceapproach: i32,
         r#type: i32,
     ) -> bool {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                client.tryMove(
+                    src_x,
+                    src_z,
+                    dx,
+                    dz,
+                    try_nearest,
+                    loc_width,
+                    loc_length,
+                    loc_angle,
+                    loc_shape,
+                    forceapproach,
+                    r#type,
+                )
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
         self.tryMove(
             src_x,
             src_z,
@@ -261,6 +338,13 @@ impl Driver for Client {
     }
 
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
+        #[cfg(feature = "test-support")]
+        {
+            driver_packet_scope_for_test(self, |client| {
+                packet.write_for_revision(client.revision(), &mut client.out)
+            })
+        }
+        #[cfg(not(feature = "test-support"))]
         packet.write_for_revision(self.revision(), &mut self.out)
     }
     fn send_public_message(&mut self, text: &str) -> bool {
@@ -379,6 +463,9 @@ impl Driver for Client {
     }
 
     fn handle_chat_input(&mut self) {
+        #[cfg(feature = "test-support")]
+        driver_packet_scope_for_test(self, Client::handle_chat_input);
+        #[cfg(not(feature = "test-support"))]
         Client::handle_chat_input(self);
     }
 
@@ -387,8 +474,16 @@ impl Driver for Client {
     }
 
     fn consume_chat_key(&mut self, key: i32) {
-        self.out.observe_foreign_local_input();
-        Client::consume_chat_key(self, key);
+        #[cfg(feature = "test-support")]
+        driver_packet_scope_for_test(self, |client| {
+            client.out.observe_foreign_local_input();
+            Client::consume_chat_key(client, key);
+        });
+        #[cfg(not(feature = "test-support"))]
+        {
+            self.out.observe_foreign_local_input();
+            Client::consume_chat_key(self, key);
+        }
     }
 
     fn note_input_activity(&mut self) {
