@@ -2853,7 +2853,7 @@ impl GatherSlot {
                 .and_then(|npc| {
                     npc.r#type.map(|type_id| FishTarget {
                         type_id,
-                        tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                        tile: (npc.network.x, npc.network.z, npc.network.level),
                     })
                 })
         } else {
@@ -2868,7 +2868,7 @@ impl GatherSlot {
                         npc.index,
                         FishTarget {
                             type_id: 320,
-                            tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                            tile: (npc.network.x, npc.network.z, npc.network.level),
                         },
                     ))
                 })

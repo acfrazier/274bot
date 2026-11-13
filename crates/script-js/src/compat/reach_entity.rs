@@ -125,25 +125,12 @@ fn footprint_tile(here: Tile, origin: Tile, size: i32) -> Option<Tile> {
 }
 
 fn footprint_distance(here: Tile, origin: Tile, size: i32) -> Option<i32> {
-    let closest = footprint_tile(here, origin, size)?;
-    Some(observed::network_distance(here.into(), closest.into()))
+    npc_network_distance(here.world(), origin.world(), size)
 }
 
 /// Distance from the local server tile to the nearest tile in an NPC footprint.
 pub(crate) fn npc_network_distance(here: WorldTile, origin: WorldTile, size: i32) -> Option<i32> {
-    footprint_distance(
-        Tile {
-            x: here.x,
-            z: here.z,
-            level: here.level,
-        },
-        Tile {
-            x: origin.x,
-            z: origin.z,
-            level: origin.level,
-        },
-        size,
-    )
+    api::query::npc_footprint_distance(here, origin, size)
 }
 
 /// Whether the local server tile is on or beside an NPC's network footprint.

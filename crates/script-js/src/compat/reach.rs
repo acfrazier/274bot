@@ -60,7 +60,7 @@ impl Tile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
-    name: String,
+    name: Text,
     actions: Ops,
     index: i32,
     tile: Tile,
@@ -117,7 +117,7 @@ impl Observation {
                                 npc.size,
                             )?;
                             Some(Npc {
-                                name: npc.name.as_deref().unwrap_or_default().to_string(),
+                                name: npc.name.clone().unwrap_or_default(),
                                 actions: npc.actions.clone(),
                                 index: npc.index,
                                 tile,
@@ -815,6 +815,27 @@ mod tests {
             owned_adjacent(&obs, "Traiborn"),
             "the local player is beside the network footprint, not the rendered point"
         );
+    }
+
+    #[test]
+    fn network_coords_capture_shares_names_without_per_npc_allocations() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Traiborn", &actions, 2, 6, 5, 1, true)];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        observed::with(|scene| {
+            let posted = scene.since_login().npcs().unwrap();
+            let name = posted[0].name.as_ref().unwrap();
+            let measured = allocation_counter::measure(|| {
+                for _ in 0..1000 {
+                    let obs = Observation::from_scene(scene);
+                    assert_eq!(obs.npcs[0].name.as_ptr(), name.as_ptr());
+                }
+            });
+            assert_eq!(measured.count_total, 1000, "only the row vector allocates");
+        });
     }
 
     #[test]

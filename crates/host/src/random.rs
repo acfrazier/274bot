@@ -19,7 +19,7 @@ use api::interact::{
 };
 use api::query::npc_by_index;
 use api::snapshot::{
-    ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext, StatView,
+    ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext, StatView, WorldTile,
 };
 use vault::{ProfileSettings, RandomEventPolicy};
 
@@ -464,14 +464,19 @@ fn detect_adjacent_featureless_plant(
     cooldown: &CooldownMap,
     ignored_plants: &[PlantActor],
 ) -> Option<DetectedRandom> {
-    let (px, pz, _) = snap.tile()?;
+    let (px, pz, level) = snap.tile()?;
+    let player = WorldTile {
+        x: px,
+        z: pz,
+        level,
+    };
     snap.npcs()
         .iter()
         .find(|npc| {
             !binned(npc.index, now_ms, cooldown)
                 && featureless_pickable_plant(npc)
                 && PlantActor::from_npc(npc).is_some_and(|actor| !ignored_plants.contains(&actor))
-                && cheb((px, pz), (npc.tile.x, npc.tile.z)) <= 1
+                && api::query::chebyshev_to(player, npc.network) <= 1
         })
         .map(|npc| DetectedRandom {
             kind: RandomKind::Pick,
@@ -792,10 +797,13 @@ impl GearLoss {
     }
 
     fn observe(&mut self, snap: &GameSnapshot, now_ms: u64) {
-        let fishing_nearby = snap.npcs().iter().any(|npc| {
-            npc.distance <= LOST_GEAR_RADIUS
-                && (item_named(npc.name.as_deref(), "fishing spot")
-                    || npc.r#type.is_some_and(|id| WHIRLPOOL_NPC_IDS.contains(&id)))
+        let fishing_nearby = snap.tile().is_some_and(|(x, z, level)| {
+            let player = WorldTile { x, z, level };
+            snap.npcs().iter().any(|npc| {
+                api::query::chebyshev_to(player, npc.network) <= LOST_GEAR_RADIUS
+                    && (item_named(npc.name.as_deref(), "fishing spot")
+                        || npc.r#type.is_some_and(|id| WHIRLPOOL_NPC_IDS.contains(&id)))
+            })
         });
         let suppressed = snap.bank_component_id() >= 0 || snap.shop().open;
         let tick = snap.tick();

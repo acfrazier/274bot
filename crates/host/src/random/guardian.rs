@@ -836,7 +836,7 @@ impl Guardian {
                 self.evade_starts.push(EvadeSighting {
                     index: npc.index,
                     npc_type: npc.r#type,
-                    tile: (npc.tile.x, npc.tile.z),
+                    tile: (npc.network.x, npc.network.z),
                 });
             }
         }
@@ -882,7 +882,7 @@ impl Guardian {
             });
             let retain = if same_actor {
                 state.last_tile = actor
-                    .map(|npc| (npc.tile.x, npc.tile.z))
+                    .map(|npc| (npc.network.x, npc.network.z))
                     .expect("same actor is visible");
                 state.missing_ticks = 0;
                 if fresh {
@@ -1007,7 +1007,7 @@ impl Guardian {
             .iter()
             .find(|seen| seen.index == index && seen.npc_type == npc.r#type)
             .map(|seen| seen.tile)
-            .unwrap_or((npc.tile.x, npc.tile.z));
+            .unwrap_or((npc.network.x, npc.network.z));
         let state = EvadeState {
             index,
             npc_type: npc.r#type,
@@ -1015,7 +1015,7 @@ impl Guardian {
             maxrange,
             flee_distance,
             start_tile,
-            last_tile: (npc.tile.x, npc.tile.z),
+            last_tile: (npc.network.x, npc.network.z),
             outside_ticks: 0,
             missing_ticks: 0,
             elapsed_ticks: 0,
@@ -1397,11 +1397,16 @@ impl Guardian {
             self.acting = false;
             return;
         };
-        let Some((px, pz, _)) = snap.tile() else {
+        let Some((px, pz, level)) = snap.tile() else {
             return;
         };
-        if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
-            walk(driver, npc.tile.x, npc.tile.z);
+        let player = api::snapshot::WorldTile {
+            x: px,
+            z: pz,
+            level,
+        };
+        if api::query::chebyshev_to(player, npc.network) > 1 {
+            walk(driver, npc.network.x, npc.network.z);
             return;
         }
         let mut ix = Interactions::new(snap, driver);
@@ -1426,8 +1431,13 @@ impl Guardian {
         ev: &DetectedRandom,
         now_ms: u64,
     ) {
-        let Some((px, pz, _)) = snap.tile() else {
+        let Some((px, pz, level)) = snap.tile() else {
             return;
+        };
+        let player = api::snapshot::WorldTile {
+            x: px,
+            z: pz,
+            level,
         };
         let Some(index) = ev.npc_index else {
             self.acting = false;
@@ -1444,7 +1454,7 @@ impl Guardian {
             self.clear_plant();
             return;
         };
-        let distance = cheb((px, pz), (npc.tile.x, npc.tile.z));
+        let distance = api::query::chebyshev_to(player, npc.network);
 
         // Preserve the existing hard evidence path, including its allowed
         // walk to range. It does not need or inherit probe authentication.
@@ -1452,7 +1462,7 @@ impl Guardian {
             self.plant = PlantProbe::Idle;
             self.plant_ignored.retain(|ignored| ignored != &actor);
             if distance > 1 {
-                walk(driver, npc.tile.x, npc.tile.z);
+                walk(driver, npc.network.x, npc.network.z);
                 return;
             }
             let mut ix = Interactions::new(snap, driver);
@@ -1535,7 +1545,7 @@ impl Guardian {
                     return;
                 }
                 if distance > 1 {
-                    if !walk(driver, npc.tile.x, npc.tile.z) {
+                    if !walk(driver, npc.network.x, npc.network.z) {
                         self.ignore_current_plant();
                     } else if let PlantProbe::Authenticated { retry_at_ms, .. } = &mut self.plant {
                         *retry_at_ms = now_ms.saturating_add(PLANT_RETRY_INTERVAL_MS);
@@ -1586,10 +1596,15 @@ impl Guardian {
         if fallback_exhausted {
             return;
         }
-        let Some((px, pz, _)) = snap.tile() else {
+        let Some((px, pz, level)) = snap.tile() else {
             return;
         };
         let player = (px, pz);
+        let player_tile = api::snapshot::WorldTile {
+            x: px,
+            z: pz,
+            level,
+        };
         let Some(maxrange) = maxrange else {
             return;
         };
@@ -1608,7 +1623,7 @@ impl Guardian {
         }
         if !engaged
             && npc.map_or(reached_flee, |npc| {
-                cheb(player, (npc.tile.x, npc.tile.z)) > 3
+                api::query::chebyshev_to(player_tile, npc.network) > 3
             })
         {
             return;

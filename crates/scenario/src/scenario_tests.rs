@@ -8054,6 +8054,7 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
     // The Guard moved out of admission range: still a wait, no send.
     client.npc[1].as_mut().unwrap().entity.face_entity = -1;
     client.npc[1].as_mut().unwrap().entity.x = 28 * 128;
+    client.npc[1].as_mut().unwrap().entity.route_x[0] = 28;
     let snapshot = rebuild_npc_chat_snapshot(&mut client);
     assert!(send(&mut client, &snapshot));
     assert_eq!(client.out.pos, 0, "a Guard past range must not be attacked");
@@ -8061,6 +8062,7 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
     // and a repeat send on the next tick does not re-Attack it
     // while the fixture waits for it to target the player.
     client.npc[1].as_mut().unwrap().entity.x = 21 * 128;
+    client.npc[1].as_mut().unwrap().entity.route_x[0] = 21;
     let snapshot = rebuild_npc_chat_snapshot(&mut client);
     assert!(send(&mut client, &snapshot));
     assert!(client.out.pos > 0, "the real Guard receives an NPC Attack");
@@ -8109,6 +8111,32 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
         "a refused Attack dispatch must fail the fixture send"
     );
     assert_eq!(client.out.pos, 0, "a refused dispatch sends no Attack");
+}
+
+#[test]
+fn ardy_guard_attack_uses_network_distance_when_rendered_pose_lags() {
+    let scenario = get("ardy_thiever_fight").unwrap();
+    let attack = scenario
+        .steps
+        .iter()
+        .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
+        .expect("a real Guard must target the player before Start");
+    let StepKind::Repeat { send } = &attack.kind else {
+        panic!("the fixture Attack must re-admit once per game tick");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_named_banker(&mut client, "Guard", 21, 20);
+    std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
+        vec![Some("Attack".into()), None, None, None, None];
+    client.npc[1].as_mut().unwrap().entity.x = 28 * 128;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+
+    assert!(send(&mut client, &snapshot));
+    assert!(
+        client.out.pos > 0,
+        "a network-near Guard receives Attack despite a rendered pose outside five tiles"
+    );
 }
 
 #[test]
@@ -14028,6 +14056,8 @@ fn plant_named_banker(client: &mut Client, name: &str, local_x: i32, local_z: i3
     };
     npc.entity.x = local_x * 128;
     npc.entity.z = local_z * 128;
+    npc.entity.route_x[0] = local_x;
+    npc.entity.route_z[0] = local_z;
     client.npc[1] = Some(Box::new(npc));
     client.npc_ids[0] = 1;
     client.npc_count = 1;
@@ -14117,6 +14147,37 @@ fn shop_buyout_npc_opener_talks_to_a_distant_banker_once_instead_of_chasing() {
     assert_eq!(
         client.out.pos, after_talk,
         "no chase walk while the engine approaches for the Talk-to"
+    );
+}
+
+#[test]
+fn shop_buyout_npc_opener_ignores_a_rendered_only_nearby_banker() {
+    let approach = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    let step = shop_buyout_open_npc_bank(
+        "open Gundai's bank",
+        Proof::BankOpen,
+        "Gundai",
+        approach,
+        "Talk-to",
+        "Cool, I'd like to access my bank account please.",
+    );
+    let StepKind::Repeat { send } = &step.kind else {
+        panic!("teller open must Repeat");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_named_banker(&mut client, "Gundai", 26, 21);
+    client.npc[1].as_mut().unwrap().entity.route_x[0] = 40;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(
+        client.out.pos, 0,
+        "a banker whose path head is outside the approach radius must not receive Talk-to"
     );
 }
 

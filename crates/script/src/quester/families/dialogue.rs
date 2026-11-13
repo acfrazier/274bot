@@ -1121,11 +1121,18 @@ impl Dialogue {
     /// A visible target is outside the final two-tile server approach.
     /// Missing actors cannot prove movement; this check needs no reach flood.
     pub(crate) fn target_out_of_range(&self, cx: &ActionContext<'_>) -> bool {
-        cx.snapshot().local_player().is_some()
-            && self
-                .npc_id()
+        cx.snapshot().here().is_some_and(|here| {
+            self.npc_id()
                 .and_then(|id| nearest_talk(cx, id))
-                .is_some_and(|target| target.distance > 2)
+                .and_then(|target| {
+                    api::query::npc_footprint_distance(
+                        here.value,
+                        target.npc.network,
+                        target.npc.size,
+                    )
+                })
+                .is_some_and(|distance| distance > 2)
+        })
     }
 
     /// Quiet ticks this conversation waits after the chat closes, and after

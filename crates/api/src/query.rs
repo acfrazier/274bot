@@ -159,6 +159,21 @@ pub fn chebyshev_to(a: WorldTile, b: WorldTile) -> i32 {
     }
 }
 
+/// Distance to the nearest tile in an NPC's server footprint.
+/// Unknown sizes and different levels cannot establish proximity.
+pub fn npc_footprint_distance(from: WorldTile, origin: WorldTile, size: i32) -> Option<i32> {
+    if size <= 0 || from.level != origin.level {
+        return None;
+    }
+    let last = size - 1;
+    let closest = WorldTile {
+        x: from.x.clamp(origin.x, origin.x.saturating_add(last)),
+        z: from.z.clamp(origin.z, origin.z.saturating_add(last)),
+        level: origin.level,
+    };
+    Some(chebyshev_to(from, closest))
+}
+
 // --- view accessors (the trait bounds the extension traits impl over) ----
 
 trait EntityQueryView {

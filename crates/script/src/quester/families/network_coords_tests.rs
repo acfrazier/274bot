@@ -249,6 +249,42 @@ fn network_coords_recorded_near_server_tuple_still_permits_talk() {
 }
 
 #[test]
+fn network_coords_dialogue_range_uses_the_nearest_footprint_tile() {
+    for (player, expected) in [
+        (tile(9, 5), false),
+        (tile(5, 9), false),
+        (tile(10, 5), true),
+        (tile(5, 10), true),
+    ] {
+        let mut snapshot = actors(
+            tile(100, 100),
+            player,
+            tile(100, 100),
+            tile(5, 5),
+            open_scene(0, 0),
+        );
+        let mut npc = snapshot.npcs()[0].clone();
+        npc.size = 3;
+        snapshot.seed_npcs(vec![npc]);
+        let mut ledger = None;
+        with_tick_scene_reach(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<dialogue::Dialogue>(fred_args(), &mut tick.cx)
+                .unwrap();
+            assert_eq!(
+                handle
+                    .inspect_in(&mut tick.cx, |dialogue, cx| dialogue
+                        .target_out_of_range(cx))
+                    .unwrap(),
+                expected,
+                "range from {player:?} to a size-three footprint"
+            );
+        });
+    }
+}
+
+#[test]
 fn network_coords_dialogue_replans_when_only_the_network_target_moves() {
     let mut snapshot = actors(
         tile(100, 100),

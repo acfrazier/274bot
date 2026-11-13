@@ -3322,3 +3322,29 @@ fn static_queries_keep_posted_distance_without_actor_origin() {
     assert_eq!(query.first().map(|row| row.def.id), Some(2));
     assert_eq!(Query::new(&ground).nearest().map(|row| row.def.id), Some(2));
 }
+
+#[test]
+fn network_coords_footprint_distance_checks_every_side_and_invalid_facts() {
+    let origin = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    for (x, z, expected) in [
+        (9, 11, 1),
+        (11, 9, 1),
+        (13, 11, 1),
+        (11, 13, 1),
+        (11, 11, 0),
+    ] {
+        assert_eq!(
+            api::query::npc_footprint_distance(WorldTile { x, z, ..origin }, origin, 3),
+            Some(expected)
+        );
+    }
+    assert_eq!(api::query::npc_footprint_distance(origin, origin, 0), None);
+    assert_eq!(
+        api::query::npc_footprint_distance(WorldTile { level: 1, ..origin }, origin, 3),
+        None
+    );
+}

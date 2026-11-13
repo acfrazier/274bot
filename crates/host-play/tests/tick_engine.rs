@@ -611,21 +611,22 @@ impl SetupState {
     }
 
     fn approach_net(&mut self, client: &mut Client, snapshot: &GameSnapshot) -> Result<(), String> {
+        let (x, z, level) = snapshot.tile().ok_or("Net setup has no player tile")?;
+        let here = tile(x, z, level);
         let npc = snapshot
             .npcs()
             .iter()
             .filter(|npc| npc.r#type == Some(330))
-            .min_by_key(|npc| npc.distance)
+            .min_by_key(|npc| api::query::chebyshev_to(here, npc.network))
             .ok_or("Net setup has no ordinary small-net spot")?;
-        let (x, z, level) = snapshot.tile().ok_or("Net setup has no player tile")?;
         let (base_x, base_z) = snapshot.base().ok_or("Net setup has no scene base")?;
         // Spots move during normal content. Complete a real path to the
         // currently observed ordinary spot before the measured Start window.
         if !client.tryMove(
             x - base_x,
             z - base_z,
-            npc.tile.x - base_x,
-            npc.tile.z - base_z,
+            npc.network.x - base_x,
+            npc.network.z - base_z,
             false,
             npc.size,
             npc.size,
@@ -674,9 +675,9 @@ impl SetupState {
             ResourceKind::Net => snapshot.npcs().iter().any(|npc| {
                 npc.r#type == Some(330)
                     && (self.phase != SetupPhase::WaitNetPosition
-                        || (npc.tile.level == self.scenario.target.level
-                            && (npc.tile.x - self.scenario.target.x).abs()
-                                + (npc.tile.z - self.scenario.target.z).abs()
+                        || (npc.network.level == self.scenario.target.level
+                            && (npc.network.x - self.scenario.target.x).abs()
+                                + (npc.network.z - self.scenario.target.z).abs()
                                 == 1))
             }),
             ResourceKind::NpcRiver => {
@@ -685,7 +686,7 @@ impl SetupState {
                         level == target.level
                             && snapshot.npcs().iter().any(|npc| {
                                 npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
-                                    && npc.tile == target
+                                    && npc.network == target
                                     && (x - target.x).abs() + (z - target.z).abs() == 1
                                     && npc.actions.first().is_some_and(Option::is_some)
                             })
@@ -6155,7 +6156,7 @@ mod packet_oracle_tests {
     }
 
     #[test]
-    fn npc_observer_keeps_host_stamp_and_received_network_tile() {
+    fn network_coords_npc_observer_and_fixture_readiness_use_server_tiles() {
         let mut client = Client::new_with_revision(
             client::client::ClientConfig {
                 host: "127.0.0.1".into(),
@@ -6194,6 +6195,53 @@ mod packet_oracle_tests {
             interact::server_ordered::ExactNpcReference::new(3712, 309, tile(2382, 3415, 0), 3, 1)
                 .unwrap();
         assert_eq!(setup.npc_observations, vec![first]);
+        for scenario in [
+            Scenario::npc_river("network-freshfish"),
+            Scenario::net("network-net"),
+        ] {
+            let mut ready = GameSnapshot::new();
+            ready.seed_tile(scenario.target);
+            ready.seed_inv(
+                scenario
+                    .seed_items()
+                    .iter()
+                    .map(|item| (item.id, item.count))
+                    .collect(),
+            );
+            ready.seed_stats(vec![api::snapshot::StatView {
+                index: scenario.skill_index,
+                name: scenario.skill.into(),
+                effective: scenario.level,
+                base: scenario.level,
+                xp: 0,
+                used: true,
+            }]);
+            let mut npc = setup.npc_snapshot.npcs()[0].clone();
+            npc.r#type = Some(if scenario.resource == ResourceKind::Net {
+                330
+            } else {
+                309
+            });
+            npc.actions = vec![Some("Net".into())];
+            npc.network = scenario.required_npc.map_or(
+                WorldTile {
+                    x: scenario.target.x + 1,
+                    ..scenario.target
+                },
+                |(_, target)| target,
+            );
+            npc.tile = WorldTile {
+                x: scenario.target.x + 10,
+                ..scenario.target
+            };
+            ready.seed_npcs(vec![npc.clone()]);
+            let mut ready_setup = SetupState::new("network-setup".into(), scenario);
+            ready_setup.phase = SetupPhase::WaitNetPosition;
+            assert!(ready_setup.ready_in_snapshot(&ready));
+            std::mem::swap(&mut npc.network, &mut npc.tile);
+            ready.seed_npcs(vec![npc]);
+            assert!(!ready_setup.ready_in_snapshot(&ready));
+        }
         setup.observe_npc(&client);
         assert_eq!(
             setup.npc_observations,
