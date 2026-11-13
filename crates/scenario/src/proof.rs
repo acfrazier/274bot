@@ -2984,7 +2984,7 @@ mod tests {
 
         static COMBINED: [Proof; 2] = [
             Proof::ProductDelta { id: 52, count: 30 },
-            Proof::XpDelta { id: 9, min: 100 },
+            Proof::XpDelta { id: 9, min: 10 },
         ];
         let all = Proof::All(&COMBINED);
         let consumed = Proof::InputConsumed { id: 1511, count: 2 };
@@ -3007,6 +3007,8 @@ mod tests {
         let mut after = snap(&mut c);
         after.seed_transmission_ready(true, false);
 
+        assert!(!Proof::ProductDelta { id: 52, count: 30 }.check(&after, None));
+        assert!(!Proof::XpDelta { id: 9, min: 10 }.check(&after, None));
         assert!(Proof::AmountPrompt.check(&after, None));
         assert!(consumed.check_with_delta_context(&after, None, None, None, Some(&baselines)));
         assert!(COMBINED[0].check_with_delta_context(&after, None, None, None, Some(&baselines)));
@@ -3028,7 +3030,7 @@ mod tests {
 
         let inventory = c.iface_mut(inv_id).expect("inventory interface");
         inventory.link_obj_number = Some(vec![30]);
-        c.stat_xp[9] = 599;
+        c.stat_xp[9] = 509;
         c.bump_gens(ServerProt::UPDATE_INV_FULL);
         c.bump_gens(ServerProt::UPDATE_STAT);
         let mut short_xp = snap(&mut c);
@@ -3042,6 +3044,17 @@ mod tests {
         ));
         assert!(!COMBINED[1].check_with_delta_context(
             &short_xp,
+            None,
+            None,
+            None,
+            Some(&baselines)
+        ));
+        c.stat_xp[9] = 510;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut exact_xp = snap(&mut c);
+        exact_xp.seed_transmission_ready(true, false);
+        assert!(COMBINED[1].check_with_delta_context(
+            &exact_xp,
             None,
             None,
             None,

@@ -11,7 +11,7 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
     std::thread::spawn(|| {
         static QUANTITY_PROOFS: [Proof; 3] = [
             Proof::ProductDelta { id: 52, count: 30 },
-            Proof::XpDelta { id: 9, min: 100 },
+            Proof::XpDelta { id: 9, min: 10 },
             Proof::InputConsumed { id: 1511, count: 2 },
         ];
         let scenario = Scenario {
@@ -77,7 +77,9 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
 }
 
 #[test]
-fn scenario_runner_quantity_baseline_storage_stays_size_bounded() {
-    // The merged runner measures 5,648 bytes; retain 64 bytes of per-bot headroom.
-    assert!(std::mem::size_of::<ScenarioRunner>() <= 5_712);
+fn scenario_runner_quantity_baseline_storage_is_pinned() {
+    // The +8 bytes over the earlier 5,640 pin come from merged dev's
+    // FollowRun::walk_packet_budget in crates/nav-executor/src/traveller.rs,
+    // not this branch's quantity fields.
+    assert_eq!(std::mem::size_of::<ScenarioRunner>(), 5_648);
 }
