@@ -95,6 +95,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   They no longer rebuild embedded game data. Builds without the scenario harness
   do not retain unused artifact records.
 
+### Quantity actions
+
+- Named Make-X steps reuse published interface, count and button actions; Rust proofs
+  compare product, material and XP deltas with pre-action baselines.
+- The 377 two-log fletching proof expects 30 arrow shafts and 10 client XP;
+  the server divides its XP-tenths by ten before publishing the stat update.
+- The 377 quantity fixture completes the mainland hop and clean relog before
+  it seeds materials, so fresh accounts publish inventory updates.
+
 ## [0.2.9] — 2026-11-10 — Beta 2
 
 ### Breaking changes
