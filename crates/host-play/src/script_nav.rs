@@ -12094,25 +12094,26 @@ mod route_quest_provider_tests {
 
         let make_bot = |retain_evidence: bool| {
             let route_evidence = retain_evidence.then(|| evidence.clone());
-            let mut bot = NavBot::default();
-            bot.route_basis = Some(Arc::new(crate::admission::RouteBasis {
-                _route: RoutePath::legacy(Arc::clone(&initial_route)),
-                options,
-                avoid: Arc::from([]),
-                quest_evidence: route_evidence.clone(),
-            }));
-            bot.route_quest_evidence = route_evidence;
-            bot.bank_fetch = Some(PendingBankFetch::for_test_with_route(
-                VecDeque::from([BankStep::Walk {
-                    x: here.x,
-                    z: here.z,
-                    level: here.level,
-                }]),
-                destination,
-                options,
-                Arc::clone(&initial_route),
-            ));
-            bot
+            NavBot {
+                route_basis: Some(Arc::new(crate::admission::RouteBasis {
+                    _route: RoutePath::legacy(Arc::clone(&initial_route)),
+                    options,
+                    avoid: Arc::from([]),
+                    quest_evidence: route_evidence.clone(),
+                })),
+                route_quest_evidence: route_evidence,
+                bank_fetch: Some(PendingBankFetch::for_test_with_route(
+                    VecDeque::from([BankStep::Walk {
+                        x: here.x,
+                        z: here.z,
+                        level: here.level,
+                    }]),
+                    destination,
+                    options,
+                    Arc::clone(&initial_route),
+                )),
+                ..NavBot::default()
+            }
         };
 
         let mut admitted = make_bot(true);
