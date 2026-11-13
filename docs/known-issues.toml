@@ -12,6 +12,17 @@
 # tools/known-issues/known_issues.py.
 
 [[item]]
+id = "miscellania-bank-adjacent-access"
+kind = "known-issue"
+area = "Navigation"
+text = """Bots cannot use the Miscellania bank yet because they only bank from a
+  tile next to the banker."""
+first = "0.2.9.1"
+target = "0.3.0"
+severity = "low"
+owner = "navigation (bank interaction range)"
+
+[[item]]
 id = "legends-guild-bank-gate-conservative"
 kind = "not-in-release"
 area = "Navigation"

@@ -1385,6 +1385,29 @@ class CellsFileTests(unittest.TestCase):
 
 
 class LocalDataRunnerTests(unittest.TestCase):
+    def test_bank_access_facts_are_required_before_caching_local_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = root / "tree"
+            for relative in rn.LOCAL_DATA_REQUIRED_OUTPUTS:
+                output = tree / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("generated\n", encoding="utf-8")
+            bank_files = [
+                Path(f"crates/api/data/game-data/{revision}/bank_npcs.json")
+                for revision in ("274", "289")
+            ]
+            for relative in bank_files:
+                self.assertIn(relative, rn.LOCAL_DATA_REQUIRED_OUTPUTS)
+                output = tree / relative
+                output.unlink()
+                with self.assertRaisesRegex(RuntimeError, "omitted required output: .*bank_npcs.json"):
+                    rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+                output.write_text("generated\n", encoding="utf-8")
+            rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+            for relative in bank_files:
+                self.assertTrue((root / "cache" / "entry" / "outputs" / relative).is_file())
+
     def make_inputs(self, root: Path):
         tree = root / "tree"
         for relative, contents in (

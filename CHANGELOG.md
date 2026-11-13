@@ -10,8 +10,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Navigation
 
-- Bots can use the Shilo Village and Zanaris banks for automatic bank trips.
-  These trips can also use the Mage Arena, Duel Arena, and Miscellania bankers.
+- Bots in Shilo Village can use the local bankers for automatic bank trips.
+  These trips can also use the Duel Arena banker. The Mage Arena and Zanaris
+  banks remain disabled unless their existing bank options are on.
 - A danger crossing no longer stops just because one game update was missed
   while the bot waited on a safe tile for its poison to settle. The wait now
   starts over once after a missed update, so it can last up to 63 game ticks.
