@@ -1144,14 +1144,39 @@ data=levelrequired,31
 data=runesrequired,earthrune,1,airrune,3,lawrune,1
 data=experience,410
 data=tele_coord,0_50_50_21_18
+[magic_spell_teleother_lumbridge]
+table=magic_spell_table
+data=spell,^teleother_lumbridge
+data=spellcom,magic:com_511
+data=name,Teleother Lumbridge
+data=members,true
+data=levelrequired,74
+data=runesrequired,soulrune,1,lawrune,1,earthrune,1
+data=experience,840
+data=tele_coord,0_50_50_21_18
+data=anim,human_teleport_other_casting
+data=spotanim_origin,teleport_other_casting
+data=spotanim_target,teleport_other_impact,92
+data=sound_cast,tele_other_cast
+data=sound_hit,teleport_all
 `);
 const teleportItems = [
     ...magicItems,
     { id: 9, debugname: 'lawrune', name: 'Law rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 10, debugname: 'naturerune', name: 'Nature rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
 ];
+const teleportScripts = path.join(content, 'scripts/skill_magic/scripts/spells');
+fs.mkdirSync(teleportScripts, { recursive: true });
+const teleportScript = path.join(teleportScripts, 'teleport.rs2');
+fs.writeFileSync(teleportScript, `[if_button,magic:varrock_teleport] @magic_teleport(^varrock_teleport);
+[if_button,magic:lumbridge_teleport] @magic_teleport(^lumbridge_teleport);
+[applayert,magic:com_511] @teleother_offer(^teleother_lumbridge);
+/*
+[applayert,magic:varrock_teleport] @commented_cast(^varrock_teleport);
+*/
+`);
 const teleports = extractTeleportSpells(content, teleportItems);
-assert.equal(teleports.length, 2, 'only tele_coord rows are teleports');
+assert.equal(teleports.length, 2, 'only self-teleport tele_coord rows belong in the catalogue');
 assert.equal(teleports[0].name, 'Varrock');
 assert.equal(teleports[0].component_id, 1164);
 assert.equal(teleports[0].level, 25);
@@ -1162,6 +1187,31 @@ assert.deepEqual(teleports[0].runes.map((rune) => [rune.name, rune.count]), [['F
 assert.equal(teleports[1].name, 'Lumbridge');
 assert.equal(teleports[1].component_id, 1167);
 assert.equal(teleports.some((row) => row.spell === 'highlvl_alchemy'), false);
+assert.deepEqual(teleports.map(row => row.source_row), ['magic_spell_teleport_varrock', 'magic_spell_teleport_lumbridge']);
+const teleportRowsFile = path.join(content, 'scripts/skill_magic/configs/magic_spells.dbrow');
+const knownTeleportRows = fs.readFileSync(teleportRowsFile, 'utf8');
+const knownTeleportScript = fs.readFileSync(teleportScript, 'utf8');
+for (const [destination, component] of [['falador', '521'], ['camelot', '541']]) {
+    fs.writeFileSync(teleportRowsFile, knownTeleportRows.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    fs.writeFileSync(teleportScript, knownTeleportScript.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    assert.deepEqual(extractTeleportSpells(content, teleportItems), teleports, `Tele Other ${destination} must not enter the self-teleport catalogue`);
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /unknown_coordinate_spell.*unrecognized teleport trigger/,
+    'a destination and a teleport suffix do not classify an unknown spell',
+);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.appendFileSync(teleportScript, '[applayert,magic:varrock_teleport] @targeted_cast(^varrock_teleport);\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /magic_spell_teleport_varrock.*unrecognized teleport trigger/,
+    'conflicting cast kinds must not select either interpretation',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
 
 assert.equal(herbKeyFromName('Guam leaf'), 'guam');
 assert.equal(herbKeyFromName('Dwarf weed'), 'dwarf weed');

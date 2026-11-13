@@ -19,6 +19,7 @@ import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
 import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
 import { requireEnvPath } from './extractors/rs2b0t-literals.ts';
 import { extractNpcTransformClosure, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { parseRs2Blocks, stripComments, walkContent } from './extractors/gathering-content.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null; respawnrate?: number };
@@ -664,11 +665,32 @@ function titleDest(spell: string) {
 export function extractTeleportSpells(content: string, items: ObjType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
+    // Classify the cast, not the spell suffix: teleport.rs2:1-7 uses if_button,
+    // ancient_teleport.rs2:3-10 uses if_button, and teleother.rs2:1-3 uses applayert
+    // (all under scripts/skill_magic/scripts/spells). Reuse the script block parser.
+    const casts = new Map<string, { kind: string; component: string }[]>();
+    for (const file of walkContent(content, 'scripts/skill_magic/scripts/spells', ['.rs2'])) {
+        for (const block of parseRs2Blocks(file, stripComments(fs.readFileSync(path.join(content, file), 'utf8')))) {
+            if (block.kind !== 'if_button' && block.kind !== 'applayert') continue;
+            const call = /^@[A-Za-z0-9_]+\(\s*(\^[A-Za-z0-9_]+)\s*\);$/.exec(block.body.map(line => line.text).join('\n').trim());
+            if (!call) continue;
+            const spell = call[1];
+            const entries = casts.get(spell) ?? [];
+            entries.push({ kind: block.kind, component: block.name });
+            casts.set(spell, entries);
+        }
+    }
     const teleports = [];
     for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_magic/configs/magic_spells.dbrow'), 'utf8'))) {
         const packed = parsed.values.tele_coord?.[0]?.[0];
         if (!packed) continue;
         const spellConst = required(parsed.values, 'spell', parsed.name);
+        const matches = casts.get(spellConst) ?? [];
+        const spellComponent = parsed.values.spellcom?.[0]?.[0];
+        if (matches.length !== 1 || (spellComponent !== undefined && matches[0].component !== spellComponent)) {
+            throw new Error(`${parsed.name}: unrecognized teleport trigger for ${spellConst}`);
+        }
+        if (matches[0].kind === 'applayert') continue;
         const { key, name } = titleDest(spellConst);
         const componentId = interfaces.get(`magic:${key}`);
         if (componentId === undefined) throw new Error(`teleport: missing magic:${key}`);
