@@ -967,34 +967,31 @@ where
                         ..FindOptions::default()
                     },
                 );
-                let (zones, rects, invalid_args) =
-                    match (world.as_ref(), route_state_ref) {
-                        (Some(world), Some(route_state)) => {
-                            match super::script_nav::resolve_route_exclusions(
-                                opts,
-                                world,
-                                from,
-                                to,
-                                route_state,
-                                route_exclusions(avoid, cross),
-                            ) {
-                                Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
-                                Err(reason) => {
-                                    host_log!(
-                                        Category::NavTrace,
-                                        Level::Warn,
-                                        slot = name,
-                                        "inspect route refused {reason}"
-                                    );
-                                    (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true)
-                                }
+                let (zones, rects, invalid_args) = match (world.as_ref(), route_state_ref) {
+                    (Some(world), Some(route_state)) => {
+                        match super::script_nav::resolve_route_exclusions(
+                            opts,
+                            world,
+                            from,
+                            to,
+                            route_state,
+                            route_exclusions(avoid, cross),
+                        ) {
+                            Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
+                            Err(reason) => {
+                                host_log!(
+                                    Category::NavTrace,
+                                    Level::Warn,
+                                    slot = name,
+                                    "inspect route refused {reason}"
+                                );
+                                (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true)
                             }
                         }
-                        (Some(_), None) => {
-                            (nav_planner::zones::ZoneExempt::NONE, Vec::new(), false)
-                        }
-                        (None, _) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
-                    };
+                    }
+                    (Some(_), None) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), false),
+                    (None, _) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
+                };
                 route_inspect::queue_inspect_shared(
                     navs,
                     name,

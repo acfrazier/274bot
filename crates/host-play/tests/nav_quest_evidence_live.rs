@@ -39,9 +39,7 @@ fn required_path(name: &str) -> PathBuf {
     PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("{name} is required")))
 }
 
-fn quest_seed_commands(
-    selected: &SelectedGameData,
-) -> Result<(Vec<String>, Vec<Value>), String> {
+fn quest_seed_commands(selected: &SelectedGameData) -> Result<(Vec<String>, Vec<Value>), String> {
     let quests = selected
         .try_quests()
         .ok_or_else(|| "selected quest catalog was not prepared".to_owned())?;
@@ -90,15 +88,12 @@ fn hero_entrance_gate(world: &NavWorld) -> Result<String, String> {
             })
     });
     edge.map(|edge| format!("{edge:?}")).ok_or_else(|| {
-        "WORLD_NAV_PACK has no Heroes Guild entrance door with the Hero's Quest stage window"
-            .into()
+        "WORLD_NAV_PACK has no Heroes Guild entrance door with the Hero's Quest stage window".into()
     })
 }
 
-fn selected_template() -> Result<
-    (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>),
-    String,
-> {
+fn selected_template() -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String>
+{
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -202,9 +197,7 @@ impl QuestEvidenceLive {
                 RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
             }
         }
-        if !self.snapshot.ingame()
-            || !self.snapshot.attached()
-            || self.snapshot.scene_state() != 2
+        if !self.snapshot.ingame() || !self.snapshot.attached() || self.snapshot.scene_state() != 2
         {
             return;
         }
@@ -338,9 +331,7 @@ fn real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild() {
     assert!(!prefix.is_empty() && prefix.len() <= 4);
     let evidence_dir = required_path("LIVE_EVIDENCE_DIR");
     let (profile, template) = selected_template().expect("resolve real Engine A content");
-    let selected = profile
-        .game_data()
-        .expect("selected Engine A game data");
+    let selected = profile.game_data().expect("selected Engine A game data");
     let hero_display = selected
         .try_quests()
         .expect("selected quest catalog")
@@ -486,7 +477,11 @@ fn real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild() {
         .tile();
     assert_eq!(
         final_tile,
-        Some((HEROES_GUILD_INSIDE.x, HEROES_GUILD_INSIDE.z, HEROES_GUILD_INSIDE.level)),
+        Some((
+            HEROES_GUILD_INSIDE.x,
+            HEROES_GUILD_INSIDE.z,
+            HEROES_GUILD_INSIDE.level
+        )),
         "the live client must be inside the Guild"
     );
 

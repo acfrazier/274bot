@@ -32746,23 +32746,20 @@ export default class T extends LoopingBot {
     fn dispatch_inspect_route(rig: &NavRig, snapshot: &GameSnapshot, request_id: u64) {
         let from = tile(0, 0);
         let to = tile(3, 0);
-        let request: script::interact::InteractReq = serde_json::from_value(
-            serde_json::json!({
-                "op": "inspect-route",
-                "x": to.x,
-                "z": to.z,
-                "level": to.level,
-                "from_x": from.x,
-                "from_z": from.z,
-                "from_level": from.level,
-                "allow_wilderness": true,
-                "request_id": request_id,
-            }),
-        )
+        let request: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
+            "op": "inspect-route",
+            "x": to.x,
+            "z": to.z,
+            "level": to.level,
+            "from_x": from.x,
+            "from_z": from.z,
+            "from_level": from.level,
+            "allow_wilderness": true,
+            "request_id": request_id,
+        }))
         .expect("InspectRoute request");
         let bytes = script_js::wire::encode_interact_batch(&[request]);
-        let requests =
-            script_js::wire::decode_interact_batch(&bytes).expect("InspectRoute batch");
+        let requests = script_js::wire::decode_interact_batch(&bytes).expect("InspectRoute batch");
         let mut client = bank_client();
         assert!(dispatch_script_interact(
             &mut client,
@@ -32778,10 +32775,7 @@ export default class T extends LoopingBot {
     }
 
     #[cfg(feature = "js")]
-    fn await_inspection(
-        rig: &NavRig,
-        request_id: u64,
-    ) -> crate::route_inspect::InspectTerminal {
+    fn await_inspection(rig: &NavRig, request_id: u64) -> crate::route_inspect::InspectTerminal {
         let start = std::time::Instant::now();
         loop {
             crate::script_runtime::poll_inspection_for_test(&rig.navs, "alice");
@@ -32847,9 +32841,7 @@ export default class T extends LoopingBot {
         dispatch_inspect_route(&rig, &qualified, 901);
         {
             let mut navs = rig.navs.lock().unwrap();
-            navs.get_mut("alice")
-                .expect("navigation bot")
-                .quest_context = None;
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
         }
         drop(qualified);
         let opened = await_inspection(&rig, 901);
@@ -32873,9 +32865,7 @@ export default class T extends LoopingBot {
         dispatch_inspect_route(&rig, &unqualified, 903);
         {
             let mut navs = rig.navs.lock().unwrap();
-            navs.get_mut("alice")
-                .expect("navigation bot")
-                .quest_context = None;
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
         }
         drop(unqualified);
         let weak = await_inspection(&rig, 903);
