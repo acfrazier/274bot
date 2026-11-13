@@ -814,7 +814,7 @@ function feasiblePaths(
     return out;
 }
 
-/** Possible non-idempotent writes from completion; unresolved callers stay possible. */
+/** Fresh-login mode gates only statically bound future queues by their scheduling paths. */
 export function postCompletionProgressWriters(
     blocks: readonly Rs2Block[],
     variable: string,
@@ -823,18 +823,19 @@ export function postCompletionProgressWriters(
     candidates: readonly { block: Rs2Block; line: number; right: string }[],
     completionPrerequisite?: string | null,
     domainForVariable?: (name: string) => RangeWire | null,
+    afterFreshLogin = false,
 ) {
     const parsedPrerequisite = completionPrerequisite ? parseBool(completionPrerequisite) : null;
     const prerequisite = parsedPrerequisite && supportedBooleanExpression(parsedPrerequisite, constants)
         ? parsedPrerequisite : null;
     const graph = { ...controlGraph(blocks, variable, constants, selectorResolver(blocks, constants)), writers: [] as Writer[] };
-    // Content queues run through their scheduling callers, not as fresh interactions.
-    // Dynamic targets leave every queue possible; missing caller paths are handled below.
-    if (graph.queueTargetsComplete) {
+    if (afterFreshLogin && graph.queueTargetsComplete) {
         for (const block of graph.byId.values()) {
             if (block.block.kind === 'queue') block.entry = false;
         }
     }
+    // Default keeps queues as possible pending writes because they may predate completion.
+    // Fresh-login mode constrains them only when every queue target is bound.
     const byBlock = new Map([...graph.byId.values()].map((block) => [block.block, block]));
     const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`);
     const possible: { file: string; line: number; right: string }[] = [];

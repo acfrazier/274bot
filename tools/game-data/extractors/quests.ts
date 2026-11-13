@@ -40,6 +40,7 @@ type QuestIdentityOutputRow = {
     varp_id: number;
     complete: number;
     quest_points: number;
+    completion_range_after_login: { min: number; max: number } | null;
     unknown_sides: string[];
     requirements: QuestRequirements;
     members: boolean;
@@ -415,6 +416,7 @@ function questIdentityRowsFor377(
             varp_id: progress.varpId,
             complete: completion.complete,
             quest_points: questPoints ?? -1,
+            completion_range_after_login: null,
             unknown_sides: [...unknownSides].sort(),
             requirements,
             members: entry.members,
@@ -462,6 +464,7 @@ function barcrawlIdentityFor377(content: string, varpPack: ReadonlyMap<string, n
         varp_id: varpId,
         complete,
         quest_points: -1,
+        completion_range_after_login: null,
         unknown_sides: ['quest_points', 'requirements'],
         requirements: emptyMustHave(),
         members: true,
@@ -532,10 +535,12 @@ function questLocalConstant(content: string, component: string, name: string) {
     return values.size === 1 ? [...values][0] : null;
 }
 
+type ProgressRange = { min: number; max: number };
 type ProgressMetadata = {
     colour_authoritative: boolean;
-    completion_range: { min: number; max: number } | null;
-    stage_domain: { min: number; max: number } | null;
+    completion_range: ProgressRange | null;
+    completion_range_after_login: ProgressRange | null;
+    stage_domain: ProgressRange | null;
     transmission: 'posted_by_content' | 'not_transmitted' | 'unknown';
 };
 
@@ -793,10 +798,56 @@ function progressMetadata(
             && domain !== null,
         completion_range: direct && helperIsExact && transmission === 'not_transmitted' && domain !== null
             ? { min: complete, max: domain.max } : null,
+        completion_range_after_login: null,
         stage_domain: domain,
         transmission,
     };
 }
+function closePostCompletionRange(
+    blocks: readonly Rs2Block[],
+    variable: string,
+    initial: ProgressRange,
+    constants: ReadonlyMap<string, number>,
+    candidates: readonly ProgressWriter[],
+    completionPrerequisite: string | null,
+    domainForVariable: (name: string) => ProgressRange | null,
+    stageDomain: ProgressRange,
+    afterFreshLogin: boolean,
+) {
+    let range = initial;
+    let hasPossibleWriters = false;
+    for (;;) {
+        const possible = postCompletionProgressWriters(
+            blocks,
+            variable,
+            range,
+            constants,
+            candidates,
+            completionPrerequisite,
+            domainForVariable,
+            afterFreshLogin,
+        );
+        if (possible.length > 0) hasPossibleWriters = true;
+        let min = range.min;
+        let max = range.max;
+        let unknown = false;
+        for (const writer of possible) {
+            const literal = /^-?\d+$/.test(writer.right) ? Number(writer.right) : undefined;
+            const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+            const value = literal ?? (constant ? constants.get(constant[1]) : undefined);
+            if (value === undefined) {
+                unknown = true;
+                break;
+            }
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+        }
+        if (unknown) return { range: stageDomain, hasPossibleWriters: true };
+        if (min === range.min && max === range.max) return { range, hasPossibleWriters };
+        range = { min, max };
+    }
+}
+
 
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
@@ -876,6 +927,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             quest_points: questPoints,
             colour_authoritative: metadata.colour_authoritative,
             completion_range: metadata.completion_range,
+            completion_range_after_login: metadata.completion_range_after_login,
             stage_domain: metadata.stage_domain,
             transmission: metadata.transmission,
             unknown_sides: [] as string[],
@@ -947,6 +999,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             quest_points: questPoints,
             colour_authoritative: metadata.colour_authoritative,
             completion_range: metadata.completion_range,
+            completion_range_after_login: metadata.completion_range_after_login,
             stage_domain: metadata.stage_domain,
             transmission: metadata.transmission,
             unknown_sides: [],
@@ -968,6 +1021,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             quest_points: 0,
             colour_authoritative: false,
             completion_range: null,
+            completion_range_after_login: null,
             stage_domain: null,
             transmission: 'unknown',
             unknown_sides: [],
@@ -992,41 +1046,36 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     };
     for (const row of rows) {
         const initial = row.completion_range;
-        if (!initial) continue;
+        if (!initial || !row.stage_domain) continue;
         const writers = progressWriterIndex.get(row.varp) ?? [];
         const completionPrerequisite = questCompletionPrerequisites(
             progressSources.blocks, row.component, postWriterConstants,
         );
-        let range = initial;
-        // Include every later write, including writes reachable after an earlier reset.
-        for (;;) {
-            const possible = postCompletionProgressWriters(
-                progressSources.blocks, row.varp, range, postWriterConstants, writers, completionPrerequisite,
-                prerequisiteDomainForVariable,
-            );
-            if (possible.length > 0) row.colour_authoritative = false;
-            let min = range.min;
-            let max = range.max;
-            let unknown = false;
-            for (const writer of possible) {
-                const literal = /^-?\d+$/.test(writer.right) ? Number(writer.right) : undefined;
-                const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
-                const value = literal ?? (constant ? postWriterConstants.get(constant[1]) : undefined);
-                if (value === undefined) {
-                    unknown = true;
-                    break;
-                }
-                min = Math.min(min, value);
-                max = Math.max(max, value);
-            }
-            if (unknown) {
-                row.completion_range = row.stage_domain;
-                break;
-            }
-            row.completion_range = { min, max };
-            if (min === range.min && max === range.max) break;
-            range = { min, max };
-        }
+        const ordinary = closePostCompletionRange(
+            progressSources.blocks,
+            row.varp,
+            initial,
+            postWriterConstants,
+            writers,
+            completionPrerequisite,
+            prerequisiteDomainForVariable,
+            row.stage_domain,
+            false,
+        );
+        row.completion_range = ordinary.range;
+        if (ordinary.hasPossibleWriters) row.colour_authoritative = false;
+        const afterLogin = closePostCompletionRange(
+            progressSources.blocks,
+            row.varp,
+            { min: row.complete, max: row.complete },
+            postWriterConstants,
+            writers,
+            completionPrerequisite,
+            prerequisiteDomainForVariable,
+            row.stage_domain,
+            true,
+        );
+        row.completion_range_after_login = afterLogin.range;
     }
     if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
         throw new Error('quest_identity: requirements must stay partial');

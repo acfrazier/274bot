@@ -335,10 +335,14 @@ return(true);
 });
 
 for (const fixture of [
-    { call: 'queue(delayed, 0, 0);', extra: '', expected: [] },
-    { call: 'queue*(delayed, 0, 0);', extra: '', expected: [] },
-    { call: 'queue(delayed, 0, 0);', extra: 'queue($unknown_target, 0, 0);', expected: ['2'] },
-    { call: '', extra: '', expected: ['2'] },
+    { call: 'queue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'queue*(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'weakqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'strongqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'longqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'queue(delayed, 30, 0);', extra: 'queue($unknown_target, 30, 0);', expected: ['2'], freshExpected: ['2'] },
+    { call: 'queue(delayed, 30, 0);', extra: 'queue(unbound_target, 30, 0);', expected: ['2'], freshExpected: ['2'] },
+    { call: '', extra: '', expected: ['2'], freshExpected: ['2'] },
 ]) {
     const blocks = parseRs2Blocks('scripts/queued-progress.rs2', `[opnpc1,root]
 if (%progress < 5) {
@@ -350,11 +354,59 @@ ${fixture.extra}
 `);
     const queued = blocks.find((block) => block.kind === 'queue')!;
     const assignment = queued.body.find(({ text }) => text.includes('%progress ='))!;
+    const candidates = [{ block: queued, line: assignment.line, right: '2' }];
     const possible = postCompletionProgressWriters(
-        blocks, 'progress', { min: 5, max: 5 }, new Map(),
-        [{ block: queued, line: assignment.line, right: '2' }],
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates,
     );
     assert.deepEqual(possible.map(({ right }) => right), fixture.expected);
+    const afterLogin = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates, undefined, undefined, true,
+    );
+    assert.deepEqual(afterLogin.map(({ right }) => right), fixture.freshExpected);
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/post-login-queue.rs2', `[opnpc1,root]
+if (%progress >= 5) {
+    queue(delayed, 30, 0);
+}
+[queue,delayed]
+%progress = 2;
+`);
+    const queued = blocks.find((block) => block.kind === 'queue')!;
+    const assignment = queued.body.find(({ text }) => text.includes('%progress ='))!;
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        new Map(),
+        [{ block: queued, line: assignment.line, right: '2' }],
+        undefined,
+        undefined,
+        true,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['2'], 'a queue scheduled after completion remains possible');
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/direct-progress.rs2', `[opnpc1,root]
+if (%progress >= 5) {
+    %progress = 2;
+}
+`);
+    const entry = blocks.find((block) => block.kind === 'opnpc1')!;
+    const assignment = entry.body.find(({ text }) => text.includes('%progress ='))!;
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        new Map(),
+        [{ block: entry, line: assignment.line, right: '2' }],
+        '%progress < 5',
+        undefined,
+        true,
+    );
+    assert.deepEqual(possible, [], 'completion prerequisites exclude a direct contradictory writer');
 }
 
 {

@@ -1797,6 +1797,23 @@ const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
 
+if (process.env.GAME_DATA_289_CONTENT) {
+    const real289 = extractQuestIdentityFacts(process.env.GAME_DATA_289_CONTENT, 289);
+    const hero = real289.rows.find((row) => row.id === 'hero');
+    assert.ok(hero, 'the real 289 quest rows include Hero');
+    assert.equal(hero.colour_authoritative, false, 'Hero keeps weak raw colour authority for the queued Grip reset');
+    assert.ok(hero.completion_range, 'Hero has a full post-completion range');
+    assert.ok(
+        hero.completion_range.min <= 5 && hero.completion_range.max >= 5,
+        'Hero ordinary range retains the queued Grip reset to 5',
+    );
+    assert.deepEqual(
+        hero.completion_range_after_login,
+        { min: 15, max: 15 },
+        'Hero fresh-login range excludes the pre-completion Grip reset',
+    );
+}
+
 for (const [writer, expected] of [
     ['^cook_complete', { min: 0, max: 2 }],
     ['5', { min: 0, max: 5 }],
@@ -1878,20 +1895,23 @@ if (%cookquest = 0) { %cookquest = ${maximum}; }
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
-for (const [guard, authoritative, completionRange] of [
+for (const [guard, authoritative, completionRange, afterLoginRange] of [
     [
         '%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete',
         true,
+        { min: 2, max: 2 },
         { min: 2, max: 2 },
     ],
     [
         '%phoenixgang < ^phoenixgang_complete',
         false,
         { min: 1, max: 2 },
+        { min: 1, max: 2 },
     ],
     [
         '%phoenixgang < ^phoenixgang_complete & npc_find(coord, cook, 10, 0) = true',
         false,
+        { min: 1, max: 2 },
         { min: 1, max: 2 },
     ],
 ] as const) {
@@ -1914,6 +1934,42 @@ if (${guard}) {
         const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
         assert.equal(row?.colour_authoritative, authoritative, `post-completion writer uses its full content prerequisite: ${guard}`);
         assert.deepEqual(row?.completion_range, completionRange, `post-completion range includes reachable writes: ${guard}`);
+        assert.deepEqual(row?.completion_range_after_login, afterLoginRange, `fresh-login range preserves prerequisite reachability: ${guard}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const fixture of [
+    {
+        name: 'pre-completion queue',
+        schedule: 'if (%cookquest < ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 2, max: 2 },
+    },
+    {
+        name: 'post-completion queue',
+        schedule: 'if (%cookquest >= ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 1, max: 2 },
+    },
+    {
+        name: 'dynamic queue target',
+        schedule: 'queue($dynamic_target, 30, 0);',
+        afterLogin: { min: 1, max: 2 },
+    },
+]) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/queued-reset.rs2'] = `[opnpc1,schedule_reset]
+${fixture.schedule}
+[queue,reset_cook]
+%cookquest = 1;
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, `${fixture.name}: ordinary authority retains queued writes`);
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 }, `${fixture.name}: ordinary range includes pending queued resets`);
+        assert.deepEqual(row?.completion_range_after_login, fixture.afterLogin, `${fixture.name}: fresh-login range uses empty-queue reachability`);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -2275,7 +2331,7 @@ assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'trol
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
     const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
     assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
-    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'completion_range', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'completion_range', 'completion_range_after_login', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
     for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
     const first = familyBytes(draft, 'quests');
     const envelope = JSON.parse(first);
