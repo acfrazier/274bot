@@ -1092,3 +1092,17 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "medium"
 owner = "Gatherer hazard escape (review again for 0.3.0)"
+
+[[item]]
+id = "catalog-accountleveler-quest-definitions"
+kind = "known-issue"
+area = "Scripts"
+text = """The catalog script AccountLeveler does not load: it imports parts of
+  rs2b0t that 274bot does not provide to scripts (the Dragon Slayer quest
+  journal, rs2b0t's quest table and its desktop storage). Its card shows
+  **failed import**."""
+first = "0.2.9"
+listed = "0.2.9.1"
+target = "0.3.0"
+severity = "low"
+owner = "compat (rs2b0t quest-definition modules not served)"
