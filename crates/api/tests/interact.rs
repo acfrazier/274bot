@@ -5718,9 +5718,9 @@ fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
     legacy.out.pos = 0;
     legacy.last_outbound = std::time::Instant::now();
     legacy.game_loop();
-    assert_eq!(legacy.shell.idle_cycles, 4500);
+    assert_eq!(legacy.shell.idle_cycles, 4001);
     assert!(
-        !game_loop_wrote_idle_timer(&legacy),
-        "274 game_loop must not emit IDLE_TIMER"
+        game_loop_wrote_idle_timer(&legacy),
+        "inactive 274 client must still reach IDLE_TIMER"
     );
 }
