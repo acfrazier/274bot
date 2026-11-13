@@ -100,6 +100,65 @@ fn fletching_make_x_377() -> Result<(), String> {
             |state| state.ingame() && state.attached() && state.scene_state() == 2,
         )?;
 
+        writeln!(
+            log,
+            "{}",
+            json!({
+                "phase":"fixture-mainland",
+                "helper":"api::interact::mainland_hop",
+                "scope":"fresh account's own tutorial progress and position",
+                "state":sample(&snapshot),
+            })
+        )
+        .map_err(|error| error.to_string())?;
+        log.flush().map_err(|error| error.to_string())?;
+        // Match cook_377_route_a: normal inventory transmission starts after a clean relog.
+        interact::mainland_hop(&mut client);
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "fletching-mainland",
+            Duration::from_secs(60),
+            |state| {
+                state.ingame() && state.scene_state() == 2 && state.tile() == Some((3220, 3220, 0))
+            },
+        )?;
+        let ifaces = std::sync::Arc::clone(&client.ifaces);
+        if !interact::logout(&mut client, ifaces.as_slice()) {
+            return Err("Fletching mainland fixture: clean logout interface unavailable".into());
+        }
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "fletching-clean-logout",
+            Duration::from_secs(60),
+            |state| !state.ingame(),
+        )?;
+        if !interact::login(
+            &mut client,
+            &username,
+            &host_play::profile_password(&username),
+            false,
+        ) {
+            return Err("Fletching mainland fixture: clean relog refused".into());
+        }
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "fletching-relogin",
+            Duration::from_secs(90),
+            |state| {
+                state.ingame()
+                    && state.attached()
+                    && state.scene_state() == 2
+                    && state.tile() == Some((3220, 3220, 0))
+            },
+        )?;
+        write_sample(&mut log, "mainland-relogin", &snapshot)?;
+
         type Fixture = (&'static str, &'static str, fn(&GameSnapshot) -> bool);
         let fixture: [Fixture; 3] = [
             ("setstat fletching 5", "fletching-stat-seeded", |state| {
