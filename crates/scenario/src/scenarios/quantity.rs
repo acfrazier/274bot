@@ -12,7 +12,8 @@ const MAKE_X_PROOF: &[Proof] = &[
     },
     Proof::XpDelta {
         id: FLETCHING_STAT_ID,
-        min: 100,
+        // UPDATE_STAT publishes whole XP, not the server's XP-tenths.
+        min: 10,
     },
 ];
 

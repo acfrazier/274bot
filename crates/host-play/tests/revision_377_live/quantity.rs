@@ -221,13 +221,13 @@ fn fletching_make_x_377() -> Result<(), String> {
                         "product_delta":product_delta,
                         "material_consumed":material_delta,
                         "xp_delta":xp_delta,
-                        "expected":{"arrow_shafts":30,"logs_consumed":2,"fletching_xp":100},
+                        "expected":{"arrow_shafts":30,"logs_consumed":2,"fletching_xp":10},
                     })
                 )
                 .map_err(|error| error.to_string())?;
                 log.flush().map_err(|error| error.to_string())?;
                 result?;
-                if product_delta != 30 || material_delta != 2 || xp_delta != 100 {
+                if product_delta != 30 || material_delta != 2 || xp_delta != 10 {
                     return Err(format!(
                         "Make-X result delta mismatch: shafts={product_delta}, logs={material_delta}, xp={xp_delta}"
                     ));
