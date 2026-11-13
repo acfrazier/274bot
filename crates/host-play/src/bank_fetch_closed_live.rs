@@ -7,8 +7,8 @@
 //! session. The cell uses the Port Sarim → Karamja ship instead: a mandatory
 //! 30-coin fare, the nearest bank (Draynor) a real trip away.
 //!
-//! Three cells, each its own process (M-R2-3: the stale-negative hint must be
-//! loaded by a new process; an in-process relog never re-reads the file):
+//! Four cells exercise the closed-bank route (M-R2-3: the stale-negative hint
+//! must be loaded by a new process; an in-process relog never re-reads it).
 //!
 //! 1. `live_fetch_closed_session_port_sarim_to_karamja`: a fresh account,
 //!    pack cleared, 100 coins (and 5 bones) seeded in the bank; the native
@@ -33,14 +33,24 @@
 //!    coin-less `Hint` (REVIEW-BANK-SNAPSHOT-S5 H1). The slot's own script
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.
+//! 4. `live_fetch_closed_hero_guild_post_bank`: an independent fresh account
+//!    with 100 bank coins and the selected prerequisites `zombiequeen=15`,
+//!    `zanaris=6`, `dragon=10`, `arthur=7`, `black=4`, and `heroquest=15`.
+//!    After a real Draynor open/close, the cell reads back `heroquest`, logs
+//!    out and relogs, and requires Hero's Quest green on a stable fresh-login
+//!    snapshot. It then starts at the selected Shilo cart origin and sends
+//!    one Load-script `walk-near` with bank fetch enabled to the selected
+//!    Heroes' Guild interior. The fare bank session must finish, and the
+//!    resumed route must cross the selected real Hero's Quest Window[15,15]
+//!    edge with captured gate truth `True`; 90 coins remain banked.
 //!
-//! The two manual WalkTo cells also compile without JS. Only the
-//! solid-radius Load cell requires the `js` feature.
+//! The two manual WalkTo cells also compile without JS. The solid-radius and
+//! Heroes' Guild Load cells require the `js` feature.
 //!
 //! Evidence (JSON receipt and CPU-rendered PNG) lands below
 //! `LIVE_EVIDENCE_DIR`. Deadline: 10 minutes after the seed is posted.
 //!
-//! `ISOHOME_DIR=<dir> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<p> GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> isohome cargo test -p host-play --features live-harness,test-support --lib live_fetch_closed_session -- --ignored --nocapture --test-threads=1`, then the same with `S5_LIVE_ACCOUNT=<account>` and `live_fetch_closed_stale_negative`, then `live_fetch_closed_stale_solid_radius`.
+//! `ISOHOME_DIR=<dir> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<p> GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> isohome cargo test -p host-play --features live-harness,test-support --lib live_fetch_closed_session -- --ignored --nocapture --test-threads=1`; repeat with `S5_LIVE_ACCOUNT=<account>` for `live_fetch_closed_stale_negative` and `live_fetch_closed_stale_solid_radius`, then run `live_fetch_closed_hero_guild_post_bank` under the same base environment with JS enabled and no `S5_LIVE_ACCOUNT`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -76,9 +86,19 @@ const BONES: i32 = 526;
 const FARE: i32 = 30;
 const PROFILE: &str = "local-289";
 const SEED: &[&str] = &["givebank coins 100", "givebank bones 5"];
-/// The bank's coins after the Session cell's trip, the stale one, and the
-/// stale solid-radius one.
-const BANKED_AFTER: [i32; 3] = [70, 40, 10];
+#[cfg(feature = "js")]
+const HERO_GUILD_SEED: &[&str] = &[
+    "givebank coins 100",
+    "setvar zombiequeen 15",
+    "setvar zanaris 6",
+    "setvar dragon 10",
+    "setvar arthur 7",
+    "setvar black 4",
+    "setvar heroquest 15",
+];
+/// The bank's coins after the Session, stale-hint, solid-radius, and guild
+/// post-bank route cells.
+const BANKED_AFTER: [i32; 4] = [70, 40, 10, 90];
 const CELL_BOUND: Duration = Duration::from_secs(600);
 const SAVE_GRACE: Duration = Duration::from_secs(15);
 const LOGOUT_DEADLINE: Duration = Duration::from_secs(120);
@@ -94,6 +114,12 @@ const PORT_SARIM: WorldTile = WorldTile {
 const KARAMJA: WorldTile = WorldTile {
     x: 2954,
     z: 3147,
+    level: 0,
+};
+#[cfg(feature = "js")]
+const HEROES_GUILD_INSIDE: WorldTile = WorldTile {
+    x: 2824,
+    z: 3438,
     level: 0,
 };
 
@@ -165,6 +191,32 @@ export function tick(api) {{
         level = target.level,
     )
 }
+#[cfg(feature = "js")]
+fn hero_guild_walk_script(target: WorldTile) -> String {
+    format!(
+        r#"export const apiVersion = 2;
+export function tick(api) {{
+  if (globalThis.__sent) return;
+  if (api.snapshot.ingame !== true || api.snapshot.here == null) return;
+  globalThis.__sent = true;
+  api.request({{
+    op: 'walk-near',
+    x: {x},
+    z: {z},
+    level: {level},
+    radius: 0,
+    allow_teleports: false,
+    allow_wilderness: false,
+    allow_bank_fetch: true,
+  }});
+}}
+"#,
+        x = target.x,
+        z = target.z,
+        level = target.level,
+    )
+}
+
 
 #[cfg(feature = "js")]
 /// The solid-radius cell's walk-near radius.
@@ -179,12 +231,35 @@ enum Variant {
     #[cfg(feature = "js")]
     /// The edited hint again, and a script `walk-near` to a solid tile.
     StaleSolidRadius,
+    #[cfg(feature = "js")]
+    /// A bank fetch followed by a route replan through the real Heroes' Guild gate.
+    HeroGuildPostBank,
 }
 
 impl Variant {
     /// Whether this cell's process loads the edited, coin-less hint.
     fn stale(self) -> bool {
-        self != Self::Session
+        match self {
+            Self::Session => false,
+            Self::StaleNegative => true,
+            #[cfg(feature = "js")]
+            Self::StaleSolidRadius => true,
+            #[cfg(feature = "js")]
+            Self::HeroGuildPostBank => false,
+        }
+    }
+
+    fn expected_withdraw(self) -> i32 {
+        #[cfg(feature = "js")]
+        if self == Self::HeroGuildPostBank {
+            return nav_planner::transport::SHILO_CART_ROUTES
+                .iter()
+                .find(|route| route.npc_id() == 511)
+                .expect("the selected Shilo cart route")
+                .minimum_fare()
+                .1;
+        }
+        FARE
     }
 }
 
@@ -209,6 +284,11 @@ struct FetchTrace {
     /// The armed route's legs: walk spans and transport hops (the
     /// solid-radius cell: the session's post-session route).
     route_legs: Option<Vec<String>>,
+    /// The content-selected stage window and the route re-found after fetch.
+    content_gate: Option<String>,
+    resumed_route_legs: Option<Vec<String>>,
+    resume_gate_truth: Option<String>,
+    hero_quest_green: Option<bool>,
     /// The solid-radius cell's walk-near target and radius.
     solid_target: Option<[i32; 3]>,
     solid_radius: Option<i32>,
@@ -232,6 +312,9 @@ struct FetchTrace {
 #[derive(Default)]
 struct Pump {
     state: Option<WorldState>,
+    hero_quest_green: bool,
+    #[cfg(feature = "js")]
+    hero_seed_readback: bool,
     /// The panel's walk risk input for this frame (S2b `admission::capture`).
     risk_input: Option<crate::admission::RiskInput>,
     tile: Option<[i32; 3]>,
@@ -364,7 +447,20 @@ enum Stage {
         settled: Option<Instant>,
     },
     #[cfg(feature = "js")]
-    /// The solid-radius cell: the script's walk-near is routing off-pump.
+    QuestSeedAck {
+        since: Instant,
+    },
+    #[cfg(feature = "js")]
+    QuestLogout {
+        since: Instant,
+    },
+    #[cfg(feature = "js")]
+    QuestLogin {
+        since: Instant,
+        settled: Option<Instant>,
+    },
+    #[cfg(feature = "js")]
+    /// The script's walk-near is routing off-pump.
     AwaitPlan {
         since: Instant,
     },
@@ -486,6 +582,26 @@ pub(crate) fn final_route_lines(
         leg_lines,
     )
 }
+#[cfg(feature = "js")]
+fn hero_guild_window_edge(
+    world: &NavWorld,
+) -> Option<&nav_planner::transport::TransportEdge> {
+    world.graph.edges.iter().find(|edge| {
+        edge.quest_gates.as_ref().is_some_and(|gates| {
+            gates.gates().iter().any(|gate| {
+                matches!(
+                    gate,
+                    api::selected::QuestGate::Window(window)
+                        if window.quest.0.as_ref() == "hero"
+                            && window.signal.0.as_ref() == "heroquest"
+                            && window.values.min == Some(15)
+                            && window.values.max == Some(15)
+                )
+            })
+        })
+    })
+}
+
 
 #[cfg(feature = "js")]
 /// The slot's script walk as the host's own pump holds it (the solid-radius
@@ -495,6 +611,7 @@ struct ScriptWalk {
     steps: Option<Vec<BankStep>>,
     final_route: Option<Vec<String>>,
     routed: bool,
+    quest_evidence_truth: Option<String>,
     failed: bool,
 }
 
@@ -503,17 +620,41 @@ fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWal
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account);
     let pending = bot.and_then(|bot| bot.bank_fetch.as_ref());
+    let final_route = pending
+        .map(|pending| final_route_lines(&pending.final_route, world))
+        .or_else(|| {
+            bot.and_then(|bot| bot.route_path_for_follow())
+                .map(|route| final_route_lines(&route, world))
+        });
+    let quest_evidence_truth = bot.and_then(|bot| {
+        let edge = hero_guild_window_edge(world)?;
+        let gates = edge.quest_gates.as_ref()?;
+        let gate = gates.gates().iter().find(|gate| {
+            matches!(
+                gate,
+                api::selected::QuestGate::Window(window)
+                    if window.quest.0.as_ref() == "hero"
+                        && window.signal.0.as_ref() == "heroquest"
+                        && window.values.min == Some(15)
+                        && window.values.max == Some(15)
+            )
+        })?;
+        bot.route_quest_evidence
+            .as_ref()
+            .map(|evidence| format!("{:?}", evidence.test(gate)))
+    });
     ScriptWalk {
         steps: pending.map(|pending| pending.steps.iter().cloned().collect()),
-        final_route: pending.map(|pending| final_route_lines(&pending.final_route, world)),
+        final_route,
         routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
+        quest_evidence_truth,
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
     }
 }
 
 /// Whether a planned session is the one fare trip: Walk, Open, a Withdraw
 /// (or Withdraw-X amount) of exactly the fare, Close.
-fn fare_trip(steps: &[BankStep]) -> (bool, Option<i32>) {
+fn fare_trip(steps: &[BankStep], fare: i32) -> (bool, Option<i32>) {
     let withdraw = steps.iter().find_map(|step| match step {
         BankStep::Withdraw { id: COINS, count }
         | BankStep::WithdrawXAmount { id: COINS, count } => Some(*count),
@@ -522,7 +663,7 @@ fn fare_trip(steps: &[BankStep]) -> (bool, Option<i32>) {
     let shape = matches!(steps.first(), Some(BankStep::Walk { .. }))
         && steps.get(1) == Some(&BankStep::Open)
         && steps.last() == Some(&BankStep::Close);
-    (shape && withdraw == Some(FARE), withdraw)
+    (shape && withdraw == Some(fare), withdraw)
 }
 
 #[allow(clippy::too_many_arguments)] // the frame closure's handles, as the panel's per-frame pump
@@ -546,6 +687,16 @@ fn pump_frame(
     };
     let mut guard = pump.lock();
     guard.state = Some(WorldState::from_snapshot(snapshot).with_map_members(map_members));
+    guard.hero_quest_green = snapshot.quest_statuses().iter().any(|row| {
+        row.name == "Hero's Quest"
+            && row.status() == api::snapshot::QuestListStatus::Complete
+    });
+    #[cfg(feature = "js")]
+    guard.hero_seed_readback |= snapshot.chat_lines().iter().any(|line| {
+        line.text
+            .to_ascii_lowercase()
+            .contains("get heroquest: 15")
+    });
     guard.risk_input = Some(crate::admission::capture(
         snapshot,
         map_members,
@@ -608,9 +759,17 @@ fn run_cell(variant: Variant) {
     let home = std::env::var("HOME").expect("HOME is the throwaway isohome directory");
     let account = match variant {
         Variant::Session => super::mint_live_names(1).pop().expect("one live account"),
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => {
+            super::mint_live_names(1).pop().expect("one live account")
+        }
         _ => std::env::var("S5_LIVE_ACCOUNT")
             .expect("S5_LIVE_ACCOUNT names the account the earlier cells left"),
     };
+    #[cfg(feature = "js")]
+    let hero_guild = variant == Variant::HeroGuildPostBank;
+    #[cfg(not(feature = "js"))]
+    let hero_guild = false;
     let hint = hint_path(&account);
     assert!(
         hint.starts_with(&home),
@@ -637,6 +796,8 @@ fn run_cell(variant: Variant) {
         Variant::StaleNegative => "l-fetch-closed-stale",
         #[cfg(feature = "js")]
         Variant::StaleSolidRadius => "l-fetch-closed-solid",
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => "l-fetch-closed-hero-guild",
     };
     let evidence_dir = root.join(format!("{label}_{account}_utc-{}Z", unix_now()));
     let scratch = evidence_dir.join("scratch");
@@ -675,6 +836,36 @@ fn run_cell(variant: Variant) {
         guard.solid_target = Some([solid.x, solid.z, solid.level]);
         guard.solid_radius = Some(SOLID_RADIUS);
     }
+    #[cfg(feature = "js")]
+    let shilo_cart_origin = nav_planner::transport::SHILO_CART_ROUTES
+        .iter()
+        .find(|route| route.npc_id() == 511)
+        .expect("the selected Shilo cart route")
+        .origin();
+    #[cfg(feature = "js")]
+    let shilo_start = standable_near(&world, shilo_cart_origin);
+    #[cfg(feature = "js")]
+    if variant == Variant::HeroGuildPostBank {
+        assert!(
+            world.collision.standable(HEROES_GUILD_INSIDE),
+            "the destination is inside the selected Heroes' Guild"
+        );
+        let edge =
+            hero_guild_window_edge(&world).expect("selected pack's Heroes' Guild Window[15,15]");
+        trace.lock().content_gate = Some(format!("{edge:?}"));
+    }
+    let start_tile = match variant {
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => shilo_start,
+        _ => PORT_SARIM,
+    };
+    let goal = match variant {
+        #[cfg(feature = "js")]
+        Variant::StaleSolidRadius => solid,
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => HEROES_GUILD_INSIDE,
+        _ => karamja,
+    };
     let bank_name: Arc<str> = Arc::from(
         facts
             .banks()
@@ -685,6 +876,8 @@ fn run_cell(variant: Variant) {
     );
     let seed: &'static [&'static str] = match variant {
         Variant::Session => SEED,
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => HERO_GUILD_SEED,
         _ => &[],
     };
     let request = match variant {
@@ -692,27 +885,43 @@ fn run_cell(variant: Variant) {
         Variant::StaleSolidRadius => serde_json::json!({
             "walk_near": [solid.x, solid.z, solid.level],
             "radius": SOLID_RADIUS,
-            "from": [PORT_SARIM.x, PORT_SARIM.z, PORT_SARIM.level],
+            "from": [start_tile.x, start_tile.z, start_tile.level],
             "allow_bank_fetch": true,
             "owner": "Load script (apiVersion 2) isolate walk-near; the slot's script walk pump",
             "script": solid_walk_script(solid),
         }),
+        #[cfg(feature = "js")]
+        Variant::HeroGuildPostBank => serde_json::json!({
+            "walk_near": [goal.x, goal.z, goal.level],
+            "radius": 0,
+            "from": [start_tile.x, start_tile.z, start_tile.level],
+            "allow_bank_fetch": true,
+            "owner": "Load script (apiVersion 2) isolate walk-near; the post-bank route replan",
+            "script": hero_guild_walk_script(goal),
+        }),
         Variant::Session | Variant::StaleNegative => serde_json::json!({
             "walk_to": [KARAMJA.x, KARAMJA.z, KARAMJA.level],
-            "from": [PORT_SARIM.x, PORT_SARIM.z, PORT_SARIM.level],
+            "from": [start_tile.x, start_tile.z, start_tile.level],
             "allow_bank_fetch": true,
             "owner": "WalkArm (panel/TUI)",
         }),
     };
+    #[cfg(feature = "js")]
+    let watch: &'static [i32] = match variant {
+        Variant::HeroGuildPostBank => &[COINS],
+        _ => &[COINS, BONES],
+    };
+    #[cfg(not(feature = "js"))]
+    let watch: &'static [i32] = &[COINS, BONES];
     let cell = Cell::new(
         CELL_BOUND,
         seed,
         |_| true,
-        &[COINS, BONES],
+        watch,
         serde_json::json!({
             "scenario": "bank_fetch_l_fetch_closed",
             "variant": variant,
-            "seed": { "bank": SEED, "pack": "cleared" },
+            "seed": { "bank_and_quest_vars": seed, "pack": "cleared" },
             "request": request,
             "login_deadline_ms": LOGIN_DEADLINE.as_millis(),
             "preparation_deadline_ms": PREPARATION_DEADLINE.as_millis(),
@@ -774,22 +983,14 @@ fn run_cell(variant: Variant) {
     let mut script_front: Option<Option<BankStep>> = None;
     #[cfg(feature = "js")]
     let mut script_session = false;
-    // Where the walk must end: the exact Karamja tile, or (solid radius)
-    // within the radius of the solid target on its level.
-    let goal = match variant {
-        #[cfg(feature = "js")]
-        Variant::StaleSolidRadius => solid,
-        Variant::Session | Variant::StaleNegative => karamja,
-    };
+    // Where the walk must end, as selected from the real profile pack.
     let arrived = |tile: Option<[i32; 3]>| match (variant, tile) {
         (_, None) => false,
         #[cfg(feature = "js")]
         (Variant::StaleSolidRadius, Some([x, z, level])) => {
             level == solid.level && (x - solid.x).abs().max((z - solid.z).abs()) <= SOLID_RADIUS
         }
-        (Variant::Session | Variant::StaleNegative, Some(tile)) => {
-            tile == [karamja.x, karamja.z, karamja.level]
-        }
+        (_, Some(tile)) => tile == [goal.x, goal.z, goal.level],
     };
     let fail = |message: String| {
         trace.lock().failure = Some(message.clone());
@@ -827,43 +1028,40 @@ fn run_cell(variant: Variant) {
                     };
                     if ready {
                         cell.lock().script_started = Some(Instant::now());
-                        match variant {
-                            Variant::Session => {
-                                let script = OpenClose {
-                                    facts: Arc::clone(&facts),
-                                    bank_name: Arc::clone(&bank_name),
-                                    cell: Arc::clone(&cell),
-                                    trace: Arc::clone(&trace),
-                                    select: None,
-                                    open: None,
-                                    close: None,
-                                    access: None,
-                                    opened: false,
-                                };
-                                match start.start_test_script(
-                                    &account,
-                                    Box::new(script),
-                                    Some(Arc::clone(&selected)),
-                                ) {
-                                    Ok(_) => {
-                                        play.wake(&account);
-                                        stage = Stage::OpenClose;
-                                    }
-                                    Err(error) => fail(format!("Play refused the script: {error}")),
-                                }
+                        if variant.stale() {
+                            let rows = play.bank_rows(&account);
+                            if rows.origin != Origin::Hint
+                                || rows.rows.iter().any(|&(id, _)| id == COINS)
+                                || rows.rows.is_empty()
+                            {
+                                fail(format!(
+                                    "the new process must load the edited hint (Hint, no coins): {rows:?}"
+                                ));
+                            } else {
+                                stage = Stage::OpenClose;
                             }
-                            _ => {
-                                let rows = play.bank_rows(&account);
-                                if rows.origin != Origin::Hint
-                                    || rows.rows.iter().any(|&(id, _)| id == COINS)
-                                    || rows.rows.is_empty()
-                                {
-                                    fail(format!(
-                                        "the new process must load the edited hint (Hint, no coins): {rows:?}"
-                                    ));
-                                } else {
+                        } else {
+                            let script = OpenClose {
+                                facts: Arc::clone(&facts),
+                                bank_name: Arc::clone(&bank_name),
+                                cell: Arc::clone(&cell),
+                                trace: Arc::clone(&trace),
+                                select: None,
+                                open: None,
+                                close: None,
+                                access: None,
+                                opened: false,
+                            };
+                            match start.start_test_script(
+                                &account,
+                                Box::new(script),
+                                Some(Arc::clone(&selected)),
+                            ) {
+                                Ok(_) => {
+                                    play.wake(&account);
                                     stage = Stage::OpenClose;
                                 }
+                                Err(error) => fail(format!("Play refused the script: {error}")),
                             }
                         }
                     }
@@ -871,24 +1069,98 @@ fn run_cell(variant: Variant) {
                 Stage::OpenClose => {
                     let done = variant.stale() || trace.lock().open_close_done;
                     if done {
-                        match play.cheat(&account, &tele_args(PORT_SARIM)) {
+                        #[cfg(feature = "js")]
+                        if variant == Variant::HeroGuildPostBank {
+                            match play.cheat(&account, "getvar heroquest") {
+                                Ok(()) => {
+                                    stage = Stage::QuestSeedAck {
+                                        since: Instant::now(),
+                                    };
+                                }
+                                Err(refusal) => {
+                                    fail(format!("the Heroes' Quest seed readback: {refusal}"))
+                                }
+                            }
+                            continue;
+                        }
+                        match play.cheat(&account, &tele_args(start_tile)) {
                             Ok(()) => {
                                 stage = Stage::Teleport {
                                     since: Instant::now(),
                                 }
                             }
-                            Err(refusal) => fail(format!("the Port Sarim teleport: {refusal}")),
+                            Err(refusal) => fail(format!("the route-start teleport: {refusal}")),
                         }
+                    }
+                }
+                #[cfg(feature = "js")]
+                Stage::QuestSeedAck { since } => {
+                    if pump.lock().hero_seed_readback {
+                        slot_arm.request_logout();
+                        play.wake(&account);
+                        stage = Stage::QuestLogout {
+                            since: Instant::now(),
+                        };
+                    } else if since.elapsed() > Duration::from_secs(30) {
+                        fail("the seeded Heroes' Quest stage was not acknowledged".into());
+                    }
+                }
+                #[cfg(feature = "js")]
+                Stage::QuestLogout { since } => {
+                    if !play.slot_connected(&account) {
+                        slot_arm.arm_explicit_login();
+                        play.wake(&account);
+                        stage = Stage::QuestLogin {
+                            since: Instant::now(),
+                            settled: None,
+                        };
+                    } else if since.elapsed() > Duration::from_secs(30) {
+                        fail("the Heroes' Quest seed relog did not disconnect".into());
+                    }
+                }
+                #[cfg(feature = "js")]
+                Stage::QuestLogin { since, settled } => {
+                    let ready = status_tile(&play, &account)
+                        .is_some_and(|(ready, _)| ready);
+                    let green = pump.lock().hero_quest_green;
+                    if ready && green {
+                        let Some(settled_since) = settled else {
+                            stage = Stage::QuestLogin {
+                                since,
+                                settled: Some(Instant::now()),
+                            };
+                            continue;
+                        };
+                        if settled_since.elapsed() >= Duration::from_secs(3) {
+                            trace.lock().hero_quest_green = Some(true);
+                            match play.cheat(&account, &tele_args(start_tile)) {
+                                Ok(()) => {
+                                    stage = Stage::Teleport {
+                                        since: Instant::now(),
+                                    }
+                                }
+                                Err(refusal) => {
+                                    fail(format!("the Shilo route-start teleport: {refusal}"))
+                                }
+                            }
+                        }
+                    } else if since.elapsed() > Duration::from_secs(60) {
+                        fail("Hero's Quest was not green on the fresh login".into());
+                    } else if settled.is_some() {
+                        stage = Stage::QuestLogin {
+                            since,
+                            settled: None,
+                        };
                     }
                 }
                 Stage::Teleport { since } => {
                     let at = status_tile(&play, &account).is_some_and(|(ready, tile)| {
-                        ready && tile == [PORT_SARIM.x, PORT_SARIM.z, 0]
+                        ready && tile == [start_tile.x, start_tile.z, start_tile.level]
                     });
                     if at {
                         stage = Stage::Arm { settled: None };
                     } else if since.elapsed() > Duration::from_secs(30) {
-                        fail("the Port Sarim teleport did not land".into());
+                        fail("the route-start teleport did not land".into());
                     }
                 }
                 Stage::Arm { settled } => {
@@ -937,10 +1209,18 @@ fn run_cell(variant: Variant) {
                         continue;
                     }
                     #[cfg(feature = "js")]
-                    if variant == Variant::StaleSolidRadius {
+                    if matches!(
+                        variant,
+                        Variant::StaleSolidRadius | Variant::HeroGuildPostBank
+                    ) {
+                        let script = match variant {
+                            Variant::StaleSolidRadius => solid_walk_script(solid),
+                            Variant::HeroGuildPostBank => hero_guild_walk_script(goal),
+                            _ => unreachable!("only script-walk variants enter this arm"),
+                        };
                         match play.script_start_load(
                             &account,
-                            solid_walk_script(solid),
+                            script,
                             script_js::LoadShape::NativeTick,
                             None,
                             vec![],
@@ -1013,7 +1293,7 @@ fn run_cell(variant: Variant) {
                                 .map(|pending| pending.steps.iter().cloned().collect())
                         })
                         .unwrap_or_default();
-                    let (trip, withdraw) = fare_trip(&steps);
+                    let (trip, withdraw) = fare_trip(&steps, variant.expected_withdraw());
                     {
                         let mut guard = trace.lock();
                         guard.planned_steps =
@@ -1022,7 +1302,8 @@ fn run_cell(variant: Variant) {
                     }
                     if !trip {
                         fail(format!(
-                            "the session must be Walk/Open/Withdraw {FARE} coins/Close: {steps:?}"
+                            "the session must be Walk/Open/Withdraw {} coins/Close: {steps:?}",
+                            variant.expected_withdraw()
                         ));
                         continue;
                     }
@@ -1035,7 +1316,7 @@ fn run_cell(variant: Variant) {
                 Stage::AwaitPlan { since } => {
                     let walk = script_walk(&play, &account, &world);
                     if let Some(steps) = walk.steps {
-                        let (trip, withdraw) = fare_trip(&steps);
+                        let (trip, withdraw) = fare_trip(&steps, variant.expected_withdraw());
                         {
                             let mut guard = trace.lock();
                             guard.planned_steps =
@@ -1049,7 +1330,8 @@ fn run_cell(variant: Variant) {
                             };
                         } else {
                             fail(format!(
-                                "the session must be Walk/Open/Withdraw {FARE} coins/Close: {steps:?}"
+                                "the session must be Walk/Open/Withdraw {} coins/Close: {steps:?}",
+                                variant.expected_withdraw()
                             ));
                         }
                     } else if walk.failed {
@@ -1062,7 +1344,10 @@ fn run_cell(variant: Variant) {
                 }
                 Stage::Walking { since } => {
                     #[cfg(feature = "js")]
-                    if variant == Variant::StaleSolidRadius {
+                    if matches!(
+                        variant,
+                        Variant::StaleSolidRadius | Variant::HeroGuildPostBank
+                    ) {
                         let walk = script_walk(&play, &account, &world);
                         let (tile, held, loaded) = {
                             let guard = pump.lock();
@@ -1076,7 +1361,15 @@ fn run_cell(variant: Variant) {
                             script_front = Some(front);
                         }
                         if script_session && walk.steps.is_none() {
-                            trace.lock().held_after_session = Some(held);
+                            let mut guard = trace.lock();
+                            if guard.held_after_session.is_none() {
+                                guard.held_after_session = Some(held);
+                            }
+                        }
+                        if hero_guild && walk.steps.is_none() {
+                            let mut guard = trace.lock();
+                            guard.resumed_route_legs = walk.final_route.clone();
+                            guard.resume_gate_truth = walk.quest_evidence_truth.clone();
                         }
                         script_session = walk.steps.is_some();
                         if walk.failed {
@@ -1107,10 +1400,46 @@ fn run_cell(variant: Variant) {
                             .find(|&&(id, _)| id == COINS)
                             .map(|&(_, count)| count);
                         let want_banked = BANKED_AFTER[variant as usize];
-                        let problem = if guard.held_after_session != Some(FARE) {
+                        let expected_withdraw = variant.expected_withdraw();
+                        #[cfg(feature = "js")]
+                        let hero_gate_in_route = if hero_guild {
+                            let edge = hero_guild_window_edge(&world)
+                                .expect("selected pack's Heroes' Guild stage-window edge");
+                            let marker = format!(
+                                "loc={} at={:?} to={:?}",
+                                edge.loc_id(),
+                                edge.anchor(),
+                                edge.landing()
+                            );
+                            guard.resumed_route_legs.as_ref().is_some_and(|legs| {
+                                legs.iter().any(|line| {
+                                    line.contains(&marker) && line.contains("quest_gate=true")
+                                })
+                            })
+                        } else {
+                            true
+                        };
+                        #[cfg(not(feature = "js"))]
+                        let hero_gate_in_route = true;
+                        let problem = if guard.held_after_session != Some(expected_withdraw) {
                             Some(format!(
                                 "the session must leave exactly the fare held: {:?}",
                                 guard.held_after_session
+                            ))
+                        } else if hero_guild
+                            && (guard.hero_quest_green != Some(true)
+                                || guard.resume_gate_truth.as_deref() != Some("True"))
+                        {
+                            Some(format!(
+                                "the post-relog Hero's Quest gate must be proven True: green={:?}, truth={:?}",
+                                guard.hero_quest_green, guard.resume_gate_truth
+                            ))
+                        } else if hero_guild
+                            && (guard.content_gate.is_none() || !hero_gate_in_route)
+                        {
+                            Some(format!(
+                                "the resumed route must cross the selected Heroes' Guild gate: gate={:?}, route={:?}",
+                                guard.content_gate, guard.resumed_route_legs
                             ))
                         } else if !arrived(tile) {
                             Some(format!("the walk ended at {tile:?}, not at {goal:?}"))
@@ -1151,7 +1480,12 @@ fn run_cell(variant: Variant) {
                     let want = BANKED_AFTER[variant as usize];
                     match hint_rows(&hint) {
                         Ok((contents, rows))
-                            if rows.contains(&(COINS, want)) && rows.contains(&(BONES, 5)) =>
+                            if rows.contains(&(COINS, want))
+                                && (if hero_guild {
+                                    !rows.iter().any(|&(id, _)| id == BONES)
+                                } else {
+                                    rows.contains(&(BONES, 5))
+                                }) =>
                         {
                             trace.lock().hint_after = Some(contents);
                             let mut guard = cell.lock();
@@ -1223,4 +1557,11 @@ fn live_fetch_closed_stale_negative_hint() {
 #[ignore = "requires LIVE=1, S5_LIVE_ACCOUNT after the stale cell under the same HOME, and a local 289 engine"]
 fn live_fetch_closed_stale_solid_radius() {
     run_cell(Variant::StaleSolidRadius);
+}
+
+#[cfg(feature = "js")]
+#[test]
+#[ignore = "requires LIVE=1 and a local Engine A/R289 pack/catalog"]
+fn live_fetch_closed_hero_guild_post_bank() {
+    run_cell(Variant::HeroGuildPostBank);
 }
