@@ -1097,6 +1097,14 @@ function parseNpcSectionsFromContent(content: string) {
     const sections = new Map<string, { file: string; values: Record<string, string> }>();
     for (const relative of contentTreeFiles(content, 'scripts', '.npc')) {
         const text = fs.readFileSync(path.join(content, relative), 'utf8');
+        const names = new Set<string>();
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line.startsWith('[') || !line.endsWith(']')) continue;
+            const name = line.slice(1, -1);
+            if (names.has(name)) throw new Error(`npc config: duplicate [${name}] in ${relative}`);
+            names.add(name);
+        }
         for (const [name, values] of parseNpcConfigSections(text)) {
             const previous = sections.get(name);
             if (previous) {

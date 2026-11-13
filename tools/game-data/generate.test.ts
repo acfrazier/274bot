@@ -3783,6 +3783,15 @@ default=1000
         const deathPub = shops.find(({ inv }) => inv === 'death_pub');
         assert.ok(deathPub?.keeper_configs.includes('death_barman'));
         assert.ok(deathPub?.keepers.includes('Tostig'));
+        write(deathConfigFile, '[death_barman]\nname=Tostig\n[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile),
+            'repeated section names within one file must identify the source file',
+        );
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
         const duplicateConfigFile = 'scripts/fixtures/other/death_barman.npc';
         write(duplicateConfigFile, '[death_barman]\n');
         assert.throws(

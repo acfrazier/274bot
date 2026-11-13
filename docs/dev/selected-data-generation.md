@@ -255,14 +255,10 @@ classifications, unknown kinds, and tool rows that are duplicate or incomplete.
 
 Revision 377 resolves woodcutting animations through the selected tool struct's
 `skill_anim` parameter. It separates incompatible mining handlers into distinct
-methods for the same resource. Shop keepers come from the
-selected unpacked NPC definitions. Shop inventories join their unique definitions
-in the selected content tree.
-The 377 unpacked NPC list omits `death_barman`; shop extraction locates it by
-section name in the selected content tree and rejects duplicate section names.
-The current 377 section is in `scripts/quests/quest_death/configs/death.npc`.
-The 377 trail answer uses the engine-decoded value and refuses it when it
-differs from the last `trail_challenge_answer` in the selected object config.
+methods for the same resource. Shop keepers are resolved by section name across
+the selected `.npc` files, and duplicate section names fail generation. The 377
+trail answer uses the engine-decoded value and refuses it when it differs from
+the last `trail_challenge_answer` in the selected object config.
 The 377 run does not rewrite the tracked historical hidden-site catalogue.
 
 Regenerate both revisions when changing this family schema. A revision 274
