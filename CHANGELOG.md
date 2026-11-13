@@ -79,6 +79,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
     quests. As in rs2b0t, the list is then empty and every status is `unknown`.
     A new account on Tutorial Island is in that state, and AccountLeveler reads
     the list when it paints and when it chooses what to train.
+  - AccountLeveler, unchanged, ran ten game ticks without a script error on a
+    test server, once on a new Tutorial Island account and once on a mainland
+    account. That was a start-and-run check, not a full training session.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 
