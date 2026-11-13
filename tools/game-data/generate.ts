@@ -899,7 +899,7 @@ export const SHOP_KEEPER_SOURCES = [
     { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['bob'] },
     { file: 'scripts/areas/area_falador/configs/dwarven_mine.npc', configs: ['nurmof'] },
     { file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc', configs: ['magic_store_owner'] },
-    { file: 'scripts/quests/quest_death/configs/quest_death.npc', file377: 'scripts/quests/quest_death/configs/death.npc', configs: ['death_barman'] },
+    { file: 'scripts/quests/quest_death/configs/quest_death.npc', configs: ['death_barman'] },
     { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['generalshopkeeper1'] },
     { file: 'scripts/areas/area_varrock/configs/varrock.npc', configs: ['generalshopkeeper2', 'thessalia'] },
     { file: 'scripts/areas/area_rimmington/configs/rimmington.npc', configs: ['generalshopkeeper6'] },
@@ -977,21 +977,16 @@ function parseShopInventory(text: string, inv: string): ShopInventory {
 
 export function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
     const keepers: ParsedShopKeeper[] = [];
-    const selectedNpcs = revision === 377
-        ? fs.readFileSync(path.join(content, 'scripts/_unpack/377/all.npc'), 'utf8')
-        : undefined;
-    const selectedNpcSections = selectedNpcs ? parseNpcConfigSections(selectedNpcs) : undefined;
+    const selectedNpcSections = revision === 377 ? parseNpcSectionsFromContent(content) : undefined;
     const selectedInventories = revision === 377
         ? contentTreeFiles(content, 'scripts', '.inv').map((file) => fs.readFileSync(path.join(content, file), 'utf8'))
         : undefined;
     for (const source of SHOP_KEEPER_SOURCES) {
-        const text = selectedNpcs ?? fs.readFileSync(path.join(content, source.file), 'utf8');
+        const text = selectedNpcSections ? undefined : fs.readFileSync(path.join(content, source.file), 'utf8');
         for (const config of source.configs) {
-            const file377 = revision === 377 && 'file377' in source ? source.file377 : undefined;
-            const values = selectedNpcSections?.get(config)
-                ?? (file377
-                    ? parseNpcSection(fs.readFileSync(path.join(content, file377), 'utf8'), config)
-                    : parseNpcSection(text, config));
+            const selected = selectedNpcSections?.get(config);
+            if (selectedNpcSections && !selected) throw new Error(`npc config: missing [${config}]`);
+            const values = selected?.values ?? parseNpcSection(text!, config);
             const required = (key: string) => {
                 const value = values[key];
                 if (value === undefined || value === '') throw new Error(`${config}: missing ${key}`);
@@ -1097,6 +1092,22 @@ function parseNpcConfigSections(text: string) {
     }
     return sections;
 }
+/** Resolve each keeper section by name from the selected content tree, rejecting ambiguous sources. */
+function parseNpcSectionsFromContent(content: string) {
+    const sections = new Map<string, { file: string; values: Record<string, string> }>();
+    for (const relative of contentTreeFiles(content, 'scripts', '.npc')) {
+        const text = fs.readFileSync(path.join(content, relative), 'utf8');
+        for (const [name, values] of parseNpcConfigSections(text)) {
+            const previous = sections.get(name);
+            if (previous) {
+                throw new Error(`npc config: duplicate [${name}] in ${previous.file} and ${relative}`);
+            }
+            sections.set(name, { file: relative, values });
+        }
+    }
+    return sections;
+}
+
 
 export function parseNpcSection(text: string, alias: string) {
     const section = parseNpcConfigSections(text).get(alias);

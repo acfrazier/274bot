@@ -3745,8 +3745,7 @@ default=1000
     fs.rmSync(content, { recursive: true });
 }
 
-// The 377 shopkeeper lookup falls back to its selected config file when the
-// unpacked NPC inventory omits a keeper.
+// The 377 shopkeeper lookup resolves a missing unpacked keeper by section name.
 {
     const content = fs.mkdtempSync(path.join(os.tmpdir(), 'shops-377-'));
     const write = (relative: string, text: string) => {
@@ -3772,20 +3771,28 @@ default=1000
             }),
         );
         write('scripts/_unpack/377/all.npc', keeperSections.join('\n'));
-        const deathSource = SHOP_KEEPER_SOURCES.find(({ configs }) => configs.includes('death_barman'))!;
-        const file377 = 'file377' in deathSource ? deathSource.file377 : undefined;
-        if (!file377) throw new Error('death_barman fixture has no selected source file');
-        assert.equal(file377, 'scripts/quests/quest_death/configs/death.npc');
-        write(file377, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
+        const deathConfigFile = 'scripts/fixtures/shops/death_barman.npc';
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
         write('scripts/_unpack/377/shops.inv', SHOP_INVENTORY_SOURCES
             .map(({ inv }) => `[${inv}]\nscope=world\nallstock=no\nstock=fixture_item,1,1`)
             .join('\n') + '\n');
-        const shops = extractShopFacts(content, [
+        const fixtureItems = [
             { alias: 'fixture_item', name: 'Fixture item', cost: 1, stackable: false, members: false },
-        ], 377);
+        ];
+        const shops = extractShopFacts(content, fixtureItems, 377);
         const deathPub = shops.find(({ inv }) => inv === 'death_pub');
         assert.ok(deathPub?.keeper_configs.includes('death_barman'));
         assert.ok(deathPub?.keepers.includes('Tostig'));
+        const duplicateConfigFile = 'scripts/fixtures/other/death_barman.npc';
+        write(duplicateConfigFile, '[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile)
+                && error.message.includes(duplicateConfigFile),
+            'duplicate section names must identify both source files',
+        );
     } finally {
         fs.rmSync(content, { recursive: true, force: true });
     }
