@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::SelectedGameData;
-use api::interact::{self, Interactions};
+use api::interact;
 use api::selected::QuestGate;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
@@ -175,8 +175,6 @@ struct QuestEvidenceLive {
     phase: u8,
     seed_commands: Vec<String>,
     relogger: ScenarioRunner,
-    seeded: bool,
-    quest_tab_open: bool,
     ready: bool,
     failure: Option<String>,
     fresh_hero: Option<Value>,
@@ -207,39 +205,14 @@ impl QuestEvidenceLive {
                 self.phase = 1;
             }
             1 => {
-                if !self.seeded {
-                    for command in &self.seed_commands {
-                        if !interact::cheat(client, command).is_sent() {
-                            self.failure =
-                                Some(format!("quest seed command was refused: {command}"));
-                            return;
-                        }
-                    }
-                    self.seeded = true;
-                }
-                if !self.quest_tab_open {
-                    let available = self
-                        .snapshot
-                        .side_tabs()
-                        .iter()
-                        .any(|tab| tab.index == 2 && tab.available);
-                    if !available {
+                for command in &self.seed_commands {
+                    if !interact::cheat(client, command).is_sent() {
+                        self.failure = Some(format!("quest seed command was refused: {command}"));
                         return;
                     }
-                    if self.snapshot.active_side_tab() != 2
-                        && !matches!(
-                            Interactions::new(&self.snapshot, client).click_side_tab(2),
-                            interact::SendResult::Sent { .. }
-                        )
-                    {
-                        self.failure = Some("quest side tab could not be opened".into());
-                        return;
-                    }
-                    self.quest_tab_open = true;
                 }
-                if self.snapshot.quest_statuses_available() {
-                    self.phase = 2;
-                }
+                // mainland_hop leaves side icons tutorial-locked until a cold login.
+                self.phase = 2;
             }
             2 => {}
             3 => {
@@ -359,8 +332,6 @@ fn real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild() {
         phase: 0,
         seed_commands,
         relogger: cold_relog_runner(),
-        seeded: false,
-        quest_tab_open: false,
         ready: false,
         failure: None,
         fresh_hero: None,

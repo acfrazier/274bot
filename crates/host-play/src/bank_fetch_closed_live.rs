@@ -1190,7 +1190,8 @@ fn run_cell(variant: Variant) {
                         guard.arm_bank_loaded = Some(loaded);
                         guard.arm_held_coins = Some(held);
                     }
-                    let expected = if variant.stale() {
+                    // The quest seed cold login demotes the earlier bank observation to Hint.
+                    let expected = if variant.stale() || hero_guild {
                         Origin::Hint
                     } else {
                         Origin::Session

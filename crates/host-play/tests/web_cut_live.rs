@@ -396,7 +396,12 @@ fn wait_for_closed_webs(
         let waited_for_revert = slashed_since
             .iter()
             .all(|since| since.is_none_or(|since| tick.saturating_sub(since) >= 100));
-        if ids.iter().all(|id| *id == Some(WEB_LOC)) && waited_for_revert {
+        // web.rs2:30 keeps each shared-world slash open for 100 ticks.
+        // Wait out that window before asking the next account to prove another cut.
+        if tick.saturating_sub(start_tick) >= 100
+            && ids.iter().all(|id| *id == Some(WEB_LOC))
+            && waited_for_revert
+        {
             return json!({
                 "start_tick": start_tick,
                 "start_webs": web_ids_json(start_ids),
