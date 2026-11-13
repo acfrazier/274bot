@@ -198,13 +198,13 @@ KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 # Every cell enforces its own scenario deadline inside the frontend; this outer
 # cap only stops a process that never reaches a terminal state.
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
-# Two cells need more than the Windows host's 1200 s outer cap. The proven
-# walls come from the 2026-10-21 night (summary.json in each run folder).
-# jive_kbd reached a verdict at 2543.0 s on Linux and 2529.6 s on Mac TUI.
-# Its scenario deadline is 2700 s. quester_queue passed at 1987.9 s on Linux
-# and at 1022.0 s on Windows TUI. A cap of 3600 s covers each proven wall.
-# It also keeps the runner default for the other platforms.
-CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 3600}
+# Two cells need more than the Windows host's 1200 s outer cap, and a cell's cap
+# must exceed its own scenario deadline, or the runner kills it before it can
+# report PASS or FAIL. jive_kbd: scenario deadline 2700 s, proven wall 2543.0 s
+# (2026-10-21, Linux). quester_queue: QUESTER_QUEUE_DEADLINE_S below plus the
+# live test's 15 s margin (crates/host-play/tests/quester_queue_live.rs).
+QUESTER_QUEUE_DEADLINE_S = 7200  # crates/scenario/src/scenarios/quester.rs QUEUE_DEADLINE
+CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 7500}
 
 
 def parse_cell_caps(text: str, defaults: dict) -> dict:

@@ -1276,14 +1276,16 @@ fn command_output(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[cfg(unix)]
 fn set_executable(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).map_err(io_error)?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).map_err(io_error)
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 

@@ -27,6 +27,7 @@ import io
 import hashlib
 import gc
 import os
+import re
 import shutil
 import socket
 import stat
@@ -1048,11 +1049,22 @@ class SeedLaneHomeTests(unittest.TestCase):
 
 class CellCapTests(unittest.TestCase):
     def test_long_cells_keep_a_cap_above_their_proven_walls(self):
-        # 2026-10-21 summary.json walls: jive_kbd 2543.0 s (Linux verdict),
-        # quester_queue 1987.9 s (Linux pass).
+        # 2026-10-21 summary.json wall: jive_kbd 2543.0 s (Linux verdict).
         self.assertGreater(rn.cell_cap_s("jive_kbd"), 2543)
-        self.assertGreater(rn.cell_cap_s("quester_queue"), 1988)
         self.assertEqual(rn.cell_cap_s("walk"), rn.CELL_CAP_S)
+
+    def test_queue_cap_outlasts_its_scenario_deadline(self):
+        # A cap at or below the scenario deadline turns every failing queue run
+        # into an outer-cap TIMEOUT with no verdict (Windows 2026-11-12).
+        self.assertGreater(rn.cell_cap_s("quester_queue"), rn.QUESTER_QUEUE_DEADLINE_S + 15)
+
+    def test_queue_deadline_matches_the_scenario_source(self):
+        source = Path(__file__).resolve().parents[2] / "crates/scenario/src/scenarios/quester.rs"
+        if not source.is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        match = re.search(r"QUEUE_DEADLINE: Duration = Duration::from_secs\((\d+)\)", source.read_text())
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), rn.QUESTER_QUEUE_DEADLINE_S)
 
     def test_parse_cell_caps_overrides_and_refuses_bad_entries(self):
         caps = rn.parse_cell_caps("jive_kbd=4000, other=900", {"jive_kbd": 3600})

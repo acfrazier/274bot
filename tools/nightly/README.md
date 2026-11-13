@@ -92,10 +92,11 @@ Jobs run sequentially and share the runner's lock and build tree:
 Each cell gets an isolated `HOME` and evidence directory, `BOT_CPU=1` unless
 its name matches `NIGHTLY_GPU_CELLS`, and its job's distinct name prefix.
 The outer cap (`NIGHTLY_CELL_CAP_S`, default 3600 s) stops a process if it does
-not reach a terminal state. Two cells keep a 3600 s cap on each host:
-`jive_kbd` and `quester_queue`. Their proven walls pass the Windows host's
-1200 s cap (2026-10-21: `jive_kbd` 2543.0 s on Linux, `quester_queue`
-1987.9 s on Linux). `NIGHTLY_CELL_CAPS_S` (`cell=seconds,...`) overrides
+not reach a terminal state. Two cells have their own cap on each host,
+because their runs pass the Windows host's 1200 s cap: `jive_kbd` (3600 s;
+wall 2543.0 s on Linux, 2026-10-21) and `quester_queue` (7500 s, above its
+7200 s scenario deadline plus the live test's 15 s margin, so a stuck queue
+still ends with its own verdict). `NIGHTLY_CELL_CAPS_S` (`cell=seconds,...`) overrides
 one cell's cap. The summary records each cap in `cell_caps_s`. A paired
 proof refuses to start without the pair witness. The runner retries it
 with `--pair-core` and records the gate.
