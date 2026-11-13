@@ -1739,13 +1739,10 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
     let npc = definition
         .npc
         .ok_or("Mage Arena bank definition has no teller NPC")?;
-    if npc.name != MAGE_NPC_NAME
-        || npc.op != "Talk-to"
-        || definition.choose != Some(MAGE_BANK_CHOICE)
-    {
+    // Native dialogue comes from the packed access, not catalogue wording.
+    if npc.name != MAGE_NPC_NAME || npc.op != "Talk-to" {
         return Err(format!(
-            "unexpected Mage Arena teller metadata: npc={npc:?} choose={:?}",
-            definition.choose
+            "unexpected Mage Arena teller metadata: npc={npc:?}"
         ));
     }
     Ok((profile, template, selected, facts))
