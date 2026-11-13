@@ -1198,6 +1198,43 @@ for (const [destination, component] of [['falador', '521'], ['camelot', '541']])
 }
 fs.writeFileSync(teleportRowsFile, knownTeleportRows);
 fs.writeFileSync(teleportScript, knownTeleportScript);
+const ancientTeleports = [
+    ['paddewwa', 179, 54, 'lawrune,2,firerune,1,airrune,1', 640],
+    ['senntisten', 189, 60, 'lawrune,2,soulrune,1,null,null', 700],
+    ['kharyrll', 197, 66, 'lawrune,2,bloodrune,1,null,null', 760],
+    ['lassar', 205, 72, 'lawrune,2,waterrune,4,null,null', 820],
+    ['dareeyak', 213, 78, 'lawrune,2,firerune,3,airrune,2', 880],
+    ['carrallangar', 223, 84, 'lawrune,2,soulrune,2,null,null', 940],
+    ['annakarl', 231, 90, 'lawrune,2,bloodrune,2,null,null', 1000],
+    ['ghorrock', 239, 96, 'lawrune,2,waterrune,8,null,null', 1060],
+] as const;
+const ancientTeleportScript = path.join(teleportScripts, 'ancient_teleport.rs2');
+fs.writeFileSync(ancientTeleportScript, ancientTeleports.map(([destination, component]) =>
+    `[if_button,inter_267:com_${component}] @ancient_teleport(^${destination}_teleport);\n`,
+).join(''));
+fs.appendFileSync(teleportRowsFile, ancientTeleports.map(([destination, , level, runes, experience]) => `[magic_spell_teleport_${destination}]
+table=magic_spell_table
+data=spell,^${destination}_teleport
+data=members,true
+data=levelrequired,${level}
+data=runesrequired,${runes}
+data=experience,${experience}
+data=tele_coord,^${destination}_teleport_arrival
+`).join(''));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    teleports,
+    'all eight Ancient Magicks teleports are excluded by their cast interface',
+);
+fs.rmSync(ancientTeleportScript);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript.replace('magic:varrock_teleport', 'magic_extra:varrock_teleport'));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    [teleports[1]],
+    'another spellbook interface excludes even a known name with a literal arrival and an available standard component',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
 fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
 assert.throws(
     () => extractTeleportSpells(content, teleportItems),
@@ -1205,6 +1242,17 @@ assert.throws(
     'a destination and a teleport suffix do not classify an unknown spell',
 );
 fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+for (const trigger of ['if_button2,magic:unknown_teleport', 'if_button,unknown_component']) {
+    fs.writeFileSync(teleportScript, `${knownTeleportScript}[${trigger}] @unknown_cast(^unknown_teleport);\n`);
+    assert.throws(
+        () => extractTeleportSpells(content, teleportItems),
+        /unknown_coordinate_spell.*unrecognized teleport trigger/,
+        'an unknown cast class must fail with the row name',
+    );
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
 fs.appendFileSync(teleportScript, '[applayert,magic:varrock_teleport] @targeted_cast(^varrock_teleport);\n');
 assert.throws(
     () => extractTeleportSpells(content, teleportItems),

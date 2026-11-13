@@ -665,9 +665,9 @@ function titleDest(spell: string) {
 export function extractTeleportSpells(content: string, items: ObjType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
-    // Classify the cast, not the spell suffix: teleport.rs2:1-7 uses if_button,
-    // ancient_teleport.rs2:3-10 uses if_button, and teleother.rs2:1-3 uses applayert
-    // (all under scripts/skill_magic/scripts/spells). Reuse the script block parser.
+    // Cast interfaces define the catalogue: teleport.rs2:1-7 uses if_button on magic,
+    // ancient_teleport.rs2:3-10 uses another spellbook's interface (excluded), and
+    // teleother.rs2:1-3 uses applayert (excluded), under scripts/skill_magic/scripts/spells.
     const casts = new Map<string, { kind: string; component: string }[]>();
     for (const file of walkContent(content, 'scripts/skill_magic/scripts/spells', ['.rs2'])) {
         for (const block of parseRs2Blocks(file, stripComments(fs.readFileSync(path.join(content, file), 'utf8')))) {
@@ -691,6 +691,9 @@ export function extractTeleportSpells(content: string, items: ObjType[]) {
             throw new Error(`${parsed.name}: unrecognized teleport trigger for ${spellConst}`);
         }
         if (matches[0].kind === 'applayert') continue;
+        const castInterface = /^([A-Za-z0-9_]+):[A-Za-z0-9_]+$/.exec(matches[0].component)?.[1];
+        if (castInterface === undefined) throw new Error(`${parsed.name}: unrecognized teleport trigger for ${spellConst}`);
+        if (castInterface !== 'magic') continue; // Teleport cast from another spellbook's interface.
         const { key, name } = titleDest(spellConst);
         const componentId = interfaces.get(`magic:${key}`);
         if (componentId === undefined) throw new Error(`teleport: missing magic:${key}`);
