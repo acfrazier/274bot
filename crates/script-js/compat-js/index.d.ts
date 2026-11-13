@@ -603,6 +603,62 @@ export class SolveClue implements Task {
 
 }
 
+declare module '*api/ai/quests/data/quests.js' {
+interface SkillReq {
+    skill: string;
+    level: number;
+}
+interface QuestRequirements {
+    minQuestPoints?: number;
+    skills?: SkillReq[];
+    quests?: string[];
+}
+interface QuestItem {
+    name: string;
+    qty: number;
+    kind: 'mustHave' | 'acquirable';
+}
+interface QuestRecord {
+    id: string;
+    name: string;
+    questPoints: number;
+    requirements: QuestRequirements;
+    items: QuestItem[];
+}
+export const QUESTS: QuestRecord[];
+
+}
+
+declare module '*api/ai/quests/defs/dragonslayer/journal.js' {
+interface QuestProgress {
+    stage: number;
+    /** Journal-visible sub-progress. `name`, or `name:N` for a counted flag. */
+    flags: ReadonlySet<string>;
+}
+/** Mirrors quest_dragon.constant; the engine skips 4-6. */
+export const DRAGON_STAGE: {
+    readonly NOT_STARTED: 0;
+    readonly SPOKEN_GUILDMASTER: 1;
+    readonly SPOKEN_OZIACH: 2;
+    readonly BOUGHT_SHIP: 3;
+    readonly REPAIRED_SHIP: 7;
+    readonly NED_GIVEN_MAP: 8;
+    readonly SAILED_TO_CRANDOR: 9;
+    readonly COMPLETE: 10;
+};
+/** What the last journal read saw. */
+export interface JournalRead {
+    reads: number;
+    failures: number;
+    cached: boolean;
+    chars: number;
+    stage?: number;
+    flags: string[];
+}
+export function readDragonProgress(): Promise<QuestProgress | undefined>;
+
+}
+
 declare module '*api/ai/quests/defs/murder/areas.js' {
 import Tile from "*geometry/Tile.js";
 import { NpcStop } from "*api/ai/quests/exec/primitives.js";
@@ -4868,6 +4924,24 @@ export function isBotManifest(value: unknown): value is BotManifest;
 
 }
 
+declare module '*runtime/desktopStorage.js' {
+export interface DesktopStorage {
+    getItem(key: string): string | null;
+    setItem(key: string, value: string): void;
+    removeItem(key: string): void;
+    keys(): string[];
+    compareAndSet(key: string, expected: string | null, value: string): boolean;
+    subscribe(callback: (key: string, oldValue: string | null, newValue: string | null) => void): void;
+}
+global {
+    interface Window {
+        rs2b0tDesktopStorage?: DesktopStorage;
+    }
+}
+export const desktopStorage: DesktopStorage | undefined;
+
+}
+
 declare module '*runtime/randomevents/eventEvade.js' {
 interface Pt {
     x: number;
@@ -4914,59 +4988,7 @@ export const RunManager: {
 }
 
 declare module '*runtime/Scheduler.js' {
-type ScriptState = 'running' | 'paused' | 'stopping' | 'stopped' | 'crashed';
-type LogLevel = 'info' | 'warn' | 'error';
-interface LogLine {
-    time: number;
-    level: LogLevel;
-    msg: string;
-}
-type WaiterSpec = {
-    kind: 'time';
-    dueAt: number;
-} | {
-    kind: 'tick';
-    dueTick: number;
-} | {
-    kind: 'cond';
-    cond: () => boolean;
-    timeoutAt: number | null;
-};
-type Waiter = WaiterSpec & {
-    resolve: (value: boolean) => void;
-    reject: (err: Error) => void;
-};
-class ScriptContext {
-    state: ScriptState;
-    waiters: Waiter[];
-    loopInFlight: boolean;
-    /** Wall-clock eligibility (0 = no wall-clock gate). */
-    nextLoopAt: number;
-    /** Server-tick eligibility via `BotHost.tickCount` (0 = no tick gate); when set, both this and `nextLoopAt` must pass before the next loop. */
-    nextLoopTick: number;
-    loopCount: number;
-    lastProgressAt: number;
-    lastReportedProgressAt: number;
-    watchdogWarned: boolean;
-    crashError: Error | null;
-    /** Why {@link ScriptRunner.stop} was called. Survives into the next run's log. */
-    stopReason: string | null;
-    activeEvent: string | null;
-    /** Expected work on the host queue, such as random-event handling. */
-    watchdogHold: string | null;
-    startedAt: number;
-    private pausedAt;
-    log: LogLine[];
-    private logListeners;
-    get aborted(): boolean;
-    addLog(level: LogLevel, msg: string): void;
-    onLog(cb: () => void): () => void;
-    progress(): void;
-    noteProgress(): void;
-    pause(): void;
-    resume(): void;
-    abortWaiters(): void;
-}
+import { ScriptContext } from "*runtime/ScriptContext.js";
 export const Scheduler: {
     active: ScriptContext | null;
 };
@@ -4989,6 +5011,64 @@ export class ScriptActivity {
     loop(): Promise<void>;
     interrupt(reason: string): void;
     stop(): void;
+}
+
+}
+
+declare module '*runtime/ScriptContext.js' {
+export class ScriptAborted extends Error {
+    constructor();
+}
+type ScriptState = 'running' | 'paused' | 'stopping' | 'stopped' | 'crashed';
+type LogLevel = 'info' | 'warn' | 'error';
+interface LogLine {
+    time: number;
+    level: LogLevel;
+    msg: string;
+}
+export type WaiterSpec = {
+    kind: 'time';
+    dueAt: number;
+} | {
+    kind: 'tick';
+    dueTick: number;
+} | {
+    kind: 'cond';
+    cond: () => boolean;
+    timeoutAt: number | null;
+};
+export type Waiter = WaiterSpec & {
+    resolve: (value: boolean) => void;
+    reject: (err: Error) => void;
+};
+export interface ScriptContext {
+    state: ScriptState;
+    waiters: Waiter[];
+    loopInFlight: boolean;
+    /** Wall-clock eligibility (0 = no wall-clock gate). */
+    nextLoopAt: number;
+    /** Server-tick eligibility via `BotHost.tickCount` (0 = no tick gate); when set, both this and `nextLoopAt` must pass before the next loop. */
+    nextLoopTick: number;
+    loopCount: number;
+    lastProgressAt: number;
+    lastReportedProgressAt: number;
+    watchdogWarned: boolean;
+    crashError: Error | null;
+    /** Why {@link ScriptRunner.stop} was called. Survives into the next run's log. */
+    stopReason: string | null;
+    activeEvent: string | null;
+    /** Expected work on the host queue, such as random-event handling. */
+    watchdogHold: string | null;
+    startedAt: number;
+    log: LogLine[];
+    get aborted(): boolean;
+    addLog(level: LogLevel, msg: string): void;
+    onLog(cb: () => void): () => void;
+    progress(): void;
+    noteProgress(): void;
+    pause(): void;
+    resume(): void;
+    abortWaiters(): void;
 }
 
 }
@@ -5018,60 +5098,8 @@ export function registerScript(manifest: BotManifestInput, origin?: string): Scr
 
 declare module '*runtime/ScriptRunner.js' {
 import { PaintFrame } from "*paint/Paint.js";
+import { ScriptContext } from "*runtime/ScriptContext.js";
 import { ScriptMeta } from "*runtime/ScriptRegistry.js";
-type ScriptState = 'running' | 'paused' | 'stopping' | 'stopped' | 'crashed';
-type LogLevel = 'info' | 'warn' | 'error';
-interface LogLine {
-    time: number;
-    level: LogLevel;
-    msg: string;
-}
-type WaiterSpec = {
-    kind: 'time';
-    dueAt: number;
-} | {
-    kind: 'tick';
-    dueTick: number;
-} | {
-    kind: 'cond';
-    cond: () => boolean;
-    timeoutAt: number | null;
-};
-type Waiter = WaiterSpec & {
-    resolve: (value: boolean) => void;
-    reject: (err: Error) => void;
-};
-class ScriptContext {
-    state: ScriptState;
-    waiters: Waiter[];
-    loopInFlight: boolean;
-    /** Wall-clock eligibility (0 = no wall-clock gate). */
-    nextLoopAt: number;
-    /** Server-tick eligibility via `BotHost.tickCount` (0 = no tick gate); when set, both this and `nextLoopAt` must pass before the next loop. */
-    nextLoopTick: number;
-    loopCount: number;
-    lastProgressAt: number;
-    lastReportedProgressAt: number;
-    watchdogWarned: boolean;
-    crashError: Error | null;
-    /** Why {@link ScriptRunner.stop} was called. Survives into the next run's log. */
-    stopReason: string | null;
-    activeEvent: string | null;
-    /** Expected work on the host queue, such as random-event handling. */
-    watchdogHold: string | null;
-    startedAt: number;
-    private pausedAt;
-    log: LogLine[];
-    private logListeners;
-    get aborted(): boolean;
-    addLog(level: LogLevel, msg: string): void;
-    onLog(cb: () => void): () => void;
-    progress(): void;
-    noteProgress(): void;
-    pause(): void;
-    resume(): void;
-    abortWaiters(): void;
-}
 export const ScriptRunner: {
     ctx: ScriptContext | null;
     meta: ScriptMeta | null;

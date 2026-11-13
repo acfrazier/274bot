@@ -452,7 +452,7 @@ function normalizeBundle(text) {
         if (ts.isInterfaceDeclaration(s)) return [ts.factory.updateInterfaceDeclaration(s, mods, s.name, s.typeParameters, s.heritageClauses, s.members)];
         if (ts.isTypeAliasDeclaration(s)) return [ts.factory.updateTypeAliasDeclaration(s, mods, s.name, s.typeParameters, s.type)];
         return [s];
-    }).map(s => print(s, sf)).join('\n').replace(/^declare (?=(?:abstract )?(?:class|function|const|let|var)\b)/gm, '') + '\n';
+    }).map(s => print(s, sf)).join('\n').replace(/^declare (?=(?:abstract )?(?:class|function|const|let|var)\b|global\b)/gm, '') + '\n';
 }
 function checkPaintDeclarations(index, scratch) {
     const declarations = path.join(scratch, 'compat-index.d.ts');

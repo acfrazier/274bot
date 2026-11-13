@@ -163,7 +163,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         .map(|card| card.name.clone())
         .collect::<Vec<_>>();
     bright_names.sort_unstable();
-    assert_eq!(bright_names.len(), 59, "frozen bright catalog card count");
+    assert_eq!(bright_names.len(), 60, "frozen bright catalog card count");
 
     let formerly_ungated = [
         "Duel Arena Combat Trainer",
@@ -304,7 +304,8 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
             max_bytes = allocation.bytes_total;
             max_name = name.clone();
         }
-        const PER_START_LIMIT: u64 = 2 * 1024 * 1024;
+        // AccountLeveler, the largest card (about 2.8 MB measured), joined the bright set; 3 MiB keeps about 10% headroom.
+        const PER_START_LIMIT: u64 = 3 * 1024 * 1024;
         if allocation.bytes_total > PER_START_LIMIT {
             failures.push(format!(
                 "{name}: per-start allocation {} exceeds {PER_START_LIMIT}",
@@ -324,7 +325,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         jive_dragons_measured,
         "pinned JiveDragons card was not measured"
     );
-    eprintln!("FROZEN_CATALOG maximum per_start_alloc={max_bytes} card={max_name} limit=2MiB");
+    eprintln!("FROZEN_CATALOG maximum per_start_alloc={max_bytes} card={max_name} limit=3MiB");
     eprintln!("FROZEN_CATALOG ungated cards: {ungated:?}");
     assert!(
         failures.is_empty(),
