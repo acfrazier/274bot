@@ -304,8 +304,10 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
             max_bytes = allocation.bytes_total;
             max_name = name.clone();
         }
-        // AccountLeveler, the largest card (about 2.8 MB measured), joined the bright set; 3 MiB keeps about 10% headroom.
-        const PER_START_LIMIT: u64 = 3 * 1024 * 1024;
+        // AccountLeveler is the largest card: measured 2,831,193 B per start. The ceiling is that plus
+        // the AGENTS.md default headroom above 1 MiB (1 %, 28,312 B, rounded up to 8 B), so it is a
+        // tripwire for real growth. It was 2 MiB before AccountLeveler joined the bright set.
+        const PER_START_LIMIT: u64 = 2_859_512;
         if allocation.bytes_total > PER_START_LIMIT {
             failures.push(format!(
                 "{name}: per-start allocation {} exceeds {PER_START_LIMIT}",
@@ -325,7 +327,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         jive_dragons_measured,
         "pinned JiveDragons card was not measured"
     );
-    eprintln!("FROZEN_CATALOG maximum per_start_alloc={max_bytes} card={max_name} limit=3MiB");
+    eprintln!("FROZEN_CATALOG maximum per_start_alloc={max_bytes} card={max_name} limit=2859512");
     eprintln!("FROZEN_CATALOG ungated cards: {ungated:?}");
     assert!(
         failures.is_empty(),

@@ -142,6 +142,7 @@ fn run_selected_facts<'s>(
             args.get(5),
             args.get(6),
         ),
+        "quest-statuses" => client_adapter_v8::posted_quest_rows(scope),
         "client-adapter-action" => {
             client_adapter_v8::action(scope, args.get(1), args.get(2), args.get(3))
         }

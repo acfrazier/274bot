@@ -1,13 +1,9 @@
-import { snap, proxy, notImpl, runMachine } from '../../../shim/_kernel.js';
+import { proxy, runMachine } from '../../../shim/_kernel.js';
 import { reader } from '../../../adapter/ClientAdapter.js';
 
-function rows() {
-    const rs = snap().quest_statuses;
-    if (!Array.isArray(rs)) {
-        throw notImpl('Quests');
-    }
-    return rs;
-}
+// The posted quest-tab rows. Native answers `[]` while the tab is not loaded, as rs2b0t's
+// `reader.questStatuses()` does (a fresh Tutorial Island account posts none).
+const rows = () => globalThis.__rs2b0t_selected_facts('quest-statuses');
 
 export const Quests = proxy('Quests', {
     all() {

@@ -49,11 +49,9 @@ const Q4_STOP_AFTER: Duration = Duration::from_secs(20);
 /// How long ten Load isolates may take to reap after Stop.
 const Q4_STOP_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 const Q4_WORKLOAD_NAME: &str = "AccountLeveler-listener probe";
-const Q4_CATALOG_DEFERRED_REASON: &str = "Catalog AccountLeveler imports wave-4 quest modules, including readDragonProgress from api/ai/quests/defs/dragonslayer/journal.js; the catalog A/B moves to wave 4.";
 
 fn q4_run_record_metadata(value: &mut serde_json::Value) {
     value["q4_workload"] = Q4_WORKLOAD_NAME.into();
-    value["q4_catalog_deferred_reason"] = Q4_CATALOG_DEFERRED_REASON.into();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -74,6 +74,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
     reading and writing one value work. Removing, listing, comparing and
     subscribing refuse, and one saved value is at most 64 KiB.
   - The script-stopped error class is provided.
+  - The quest list of rs2b0t scripts (`Quests.all()` and `Quests.status()`) no
+    longer fails with `not impl: Quests` while the quest tab has not posted its
+    quests. As in rs2b0t, the list is then empty and every status is `unknown`.
+    A new account on Tutorial Island is in that state, and AccountLeveler reads
+    the list when it paints and when it chooses what to train.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 

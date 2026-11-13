@@ -11260,22 +11260,26 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_quests_all_throws_without_posted_journal() {
+fn isolate_quests_all_is_empty_without_posted_journal() {
+    // rs2b0t's `reader.questStatuses()` is `[]` while the quest tab is not loaded
+    // (`ClientAdapter.ts:1615-1620`), so `Quests.all()` is `[]` and `Quests.status()` is 'unknown'.
     let src = r#"
 import { Quests } from '../../api/ui/questlog/Quests.js';
 export default class T extends LoopingBot {
-    loop() { Quests.all(); }
+    loop() {
+        globalThis.__probe = { all: Quests.all(), status: Quests.status('Lost City') };
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
-    let _ = iso.probe("__rs_bot");
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe, serde_json::json!({ "all": [], "status": "unknown" }));
     let logs = iso.drain_logs();
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("Quests")),
-        "Quests.all must not invent an empty journal: {logs:?}"
+        !logs.iter().any(|l| l.contains("not impl")),
+        "an implemented member must not report not impl: {logs:?}"
     );
     iso.join();
 }
