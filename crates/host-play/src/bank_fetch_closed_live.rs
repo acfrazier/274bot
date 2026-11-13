@@ -610,6 +610,8 @@ struct ScriptWalk {
     routed: bool,
     quest_evidence_truth: Option<String>,
     failed: bool,
+    no_path: bool,
+    failure_detail: Option<Arc<str>>,
 }
 
 #[cfg(feature = "js")]
@@ -646,6 +648,8 @@ fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWal
         routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         quest_evidence_truth,
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
+        no_path: bot.is_some_and(|bot| bot.walk_outcome_no_path),
+        failure_detail: bot.and_then(|bot| bot.walk_outcome_detail.clone()),
     }
 }
 
@@ -1331,7 +1335,8 @@ fn run_cell(variant: Variant) {
                         }
                     } else if walk.failed {
                         fail(format!(
-                            "{variant:?}: the script walk-near with fetch on must plan, not NoPath"
+                            "{variant:?}: the script walk-near with fetch on must plan; no_path={}, quest evidence={:?}, detail={:?}",
+                            walk.no_path, walk.quest_evidence_truth, walk.failure_detail,
                         ));
                     } else if since.elapsed() > Duration::from_secs(60) {
                         fail("the script walk-near planned nothing".into());
