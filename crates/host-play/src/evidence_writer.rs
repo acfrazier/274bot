@@ -28,31 +28,17 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
-/// Add the source commit and worktree state to a live-test receipt.
+/// Add the build's source commit and worktree state to a live-test receipt.
 #[cfg(any(test, feature = "test-support"))]
 pub fn record_source_identity(receipt: &mut serde_json::Value) {
-    fn git_identity(root: &std::path::Path) -> (Option<String>, Option<bool>) {
-        let git = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .output()
-                .ok()?;
-            output
-                .status
-                .success()
-                .then(|| String::from_utf8(output.stdout).ok())
-                .flatten()
-        };
-        let commit = git(&["rev-parse", "HEAD"]).map(|value| value.trim().to_owned());
-        let dirty = git(&["status", "--porcelain"]).map(|value| !value.is_empty());
-        (commit, dirty)
-    }
-
-    let host_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let (host_commit, host_dirty) = git_identity(&host_root);
-    let client_root = host_root.join("vendor/fr-client-rust");
-    let (client_commit, client_dirty) = git_identity(&client_root);
+    let build_stamp::SourceIdentity {
+        commit: host_commit,
+        worktree_dirty: host_dirty,
+    } = build_stamp::HOST;
+    let build_stamp::SourceIdentity {
+        commit: client_commit,
+        worktree_dirty: client_dirty,
+    } = build_stamp::CLIENT;
     if !receipt.is_object() {
         *receipt = serde_json::json!({});
     }
@@ -81,6 +67,31 @@ pub fn record_source_identity(receipt: &mut serde_json::Value) {
         "commit": client_commit,
         "worktree_dirty": client_dirty,
     });
+}
+
+/// Insert build identities once, when the host creates its scenario runner.
+#[cfg(any(
+    test,
+    feature = "live-harness",
+    feature = "test-support",
+    feature = "memory-profile"
+))]
+pub fn record_scenario_sources(runner: &mut scenario::ScenarioRunner, revision: Option<i32>) {
+    let Some(manifest) = runner.receipt_manifest_mut() else {
+        return;
+    };
+    for (name, identity) in [("host", build_stamp::HOST), ("client", build_stamp::CLIENT)] {
+        manifest.sources.insert(
+            name.into(),
+            serde_json::to_value(identity).expect("build identity serializes"),
+        );
+    }
+    if let Some(identity) = revision.and_then(api::build_info::game_data_pack) {
+        manifest.sources.insert(
+            "game_data".into(),
+            serde_json::to_value(identity).expect("pack identity serializes"),
+        );
+    }
 }
 
 /// How many captures may wait for the background thread.
@@ -178,6 +189,25 @@ impl Default for WriterConfig {
 struct JobSlot {
     outcome: parking_lot::Mutex<Option<EvidenceOutcome>>,
     ready: parking_lot::Condvar,
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
+    artifacts: parking_lot::Mutex<Vec<WrittenArtifact>>,
+}
+
+#[cfg(any(
+    test,
+    feature = "live-harness",
+    feature = "test-support",
+    feature = "memory-profile"
+))]
+struct WrittenArtifact {
+    path: PathBuf,
+    bytes: u64,
+    sha256: String,
 }
 
 /// Handle to one submitted capture. Poll it from the observe hook; the
@@ -195,6 +225,13 @@ impl EvidenceJob {
             slot: Arc::new(JobSlot {
                 outcome: parking_lot::Mutex::new(Some(outcome)),
                 ready: parking_lot::Condvar::new(),
+                #[cfg(any(
+                    test,
+                    feature = "live-harness",
+                    feature = "test-support",
+                    feature = "memory-profile"
+                ))]
+                artifacts: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
@@ -205,6 +242,13 @@ impl EvidenceJob {
             slot: Arc::new(JobSlot {
                 outcome: parking_lot::Mutex::new(None),
                 ready: parking_lot::Condvar::new(),
+                #[cfg(any(
+                    test,
+                    feature = "live-harness",
+                    feature = "test-support",
+                    feature = "memory-profile"
+                ))]
+                artifacts: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
@@ -375,6 +419,70 @@ impl EvidenceWriter {
         }
         state.queue.is_empty() && state.active == 0
     }
+
+    /// Flush this run's jobs and transfer durable file identities to its manifest.
+    /// Call only from the host driver, never from a client-cycle observer.
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
+    pub fn record_artifacts(
+        &self,
+        jobs: &[EvidenceJob],
+        directory: &std::path::Path,
+        manifest: &mut scenario::evidence::ReceiptManifest,
+    ) -> Result<(), String> {
+        let result = (|| {
+            if !self.flush(DEFAULT_FLUSH_WAIT) {
+                return Err("evidence writer flush timed out".into());
+            }
+            let mut capture_error = None;
+            for job in jobs {
+                let outcome = job.slot.outcome.lock();
+                let outcome = outcome.as_ref().ok_or("capture has not completed")?;
+                if capture_error.is_none() {
+                    capture_error = outcome.error.clone();
+                }
+                let artifacts = job.slot.artifacts.lock();
+                for artifact in artifacts.iter() {
+                    let relative = artifact.path.strip_prefix(directory).map_err(|_| {
+                        format!(
+                            "artifact {} is outside the evidence directory",
+                            artifact.path.display()
+                        )
+                    })?;
+                    if relative.as_os_str().is_empty()
+                        || relative
+                            .components()
+                            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+                        || relative.to_str().is_none()
+                    {
+                        return Err(format!("invalid artifact path {}", relative.display()));
+                    }
+                }
+            }
+            for job in jobs {
+                for artifact in job.slot.artifacts.lock().drain(..) {
+                    let relative = artifact
+                        .path
+                        .strip_prefix(directory)
+                        .expect("validated path");
+                    manifest.artifacts.push(serde_json::json!({
+                        "path": relative.to_str().expect("validated UTF-8 path"),
+                        "bytes": artifact.bytes,
+                        "sha256": artifact.sha256,
+                    }));
+                }
+            }
+            capture_error.map_or(Ok(()), Err)
+        })();
+        if result.is_err() {
+            manifest.complete = false;
+        }
+        result
+    }
     pub fn stats(&self) -> WriterStats {
         self.inner.state.lock().stats
     }
@@ -417,7 +525,7 @@ fn worker_loop(inner: Arc<WriterInner>) {
         if let Some(hook) = inner.config.before_write.clone() {
             hook(job.id);
         }
-        let outcome = write_capture(job.id, &request);
+        let outcome = write_capture(&job, &request);
         {
             let mut state = inner.state.lock();
             state.active -= 1;
@@ -456,7 +564,17 @@ fn worker_loop(inner: Arc<WriterInner>) {
     }
 }
 
-fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
+#[derive(Default)]
+struct CaptureTimings {
+    convert_ms: f64,
+    encode_ms: f64,
+    write_ms: f64,
+    sync_ms: f64,
+}
+
+fn write_capture(job: &EvidenceJob, request: &EvidenceRequest) -> EvidenceOutcome {
+    let id = job.id;
+    let mut timings = CaptureTimings::default();
     let pixel_count = (request.width as usize)
         .checked_mul(request.height as usize)
         .filter(|count| *count > 0)
@@ -468,7 +586,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
             request.height,
             request.pixels.len()
         );
-        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0, None);
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let convert_start = Instant::now();
     let bytes_per_pixel = match request.color {
@@ -485,7 +603,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
             PngColor::Rgb => raw.extend_from_slice(&[red, green, blue]),
         }
     }
-    let convert_ms = convert_start.elapsed().as_secs_f64() * 1000.0;
+    timings.convert_ms = convert_start.elapsed().as_secs_f64() * 1000.0;
     let encode_start = Instant::now();
     let mut encoded = Vec::new();
     let encode_error = {
@@ -503,54 +621,51 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
             Err(error) => Some(error.to_string()),
         }
     };
-    let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+    timings.encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = encode_error {
         let error = format!("id={id}: encode {}: {error}", request.png_path.display());
-        return finish_with_sidecar(request, error, 0, convert_ms, encode_ms, 0.0, 0.0, None);
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let write_start = Instant::now();
     let write_error = std::fs::write(&request.png_path, &encoded)
         .err()
         .map(|error| error.to_string());
-    let write_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+    timings.write_ms = write_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = write_error {
         let _ = std::fs::remove_file(&request.png_path);
         let error = format!("id={id}: write {}: {error}", request.png_path.display());
-        return finish_with_sidecar(
-            request, error, 0, convert_ms, encode_ms, write_ms, 0.0, None,
-        );
+        return finish_with_sidecar(request, error, 0, timings, None, job);
     }
     let sync_start = Instant::now();
     let sync_error = sync_file(&request.png_path)
         .err()
         .map(|error| error.to_string());
-    let sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
+    timings.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = sync_error {
         let error = format!("id={id}: fsync {}: {error}", request.png_path.display());
-        return finish_with_sidecar(
-            request,
-            error,
-            encoded.len() as u64,
-            convert_ms,
-            encode_ms,
-            write_ms,
-            sync_ms,
-            None,
-        );
+        return finish_with_sidecar(request, error, encoded.len() as u64, timings, None, job);
     }
-    finish_with_sidecar(
+    let sha256 = format!("{:x}", Sha256::digest(&encoded));
+    let outcome = finish_with_sidecar(
         request,
         String::new(),
         encoded.len() as u64,
-        convert_ms,
-        encode_ms,
-        write_ms,
-        sync_ms,
-        request
-            .sidecar
-            .as_ref()
-            .map(|_| format!("{:x}", Sha256::digest(&encoded))),
-    )
+        timings,
+        Some(&sha256),
+        job,
+    );
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
+    job.slot.artifacts.lock().push(WrittenArtifact {
+        path: request.png_path.clone(),
+        bytes: encoded.len() as u64,
+        sha256,
+    });
+    outcome
 }
 
 /// fsync a file just written. Opened for writing (never truncating): on
@@ -566,17 +681,20 @@ fn sync_file(path: &std::path::Path) -> std::io::Result<()> {
 /// Complete one capture: patch the receipt's error key on failure, write
 /// and fsync the sidecar when present, then report. An empty `error` means
 /// the PNG (and sidecar) are durable.
-#[allow(clippy::too_many_arguments)]
 fn finish_with_sidecar(
     request: &EvidenceRequest,
     error: String,
     png_bytes: u64,
-    convert_ms: f64,
-    encode_ms: f64,
-    write_ms: f64,
-    sync_ms: f64,
-    png_sha256: Option<String>,
+    timings: CaptureTimings,
+    png_sha256: Option<&str>,
+    _job: &EvidenceJob,
 ) -> EvidenceOutcome {
+    let CaptureTimings {
+        convert_ms,
+        encode_ms,
+        write_ms,
+        sync_ms,
+    } = timings;
     let failed = !error.is_empty();
     if let Some(sidecar) = request.sidecar.as_ref() {
         // Sites whose historic receipts record the PNG error (bank core,
@@ -601,7 +719,7 @@ fn finish_with_sidecar(
                 patch(&mut receipt, &error);
             }
         }
-        if let Some(sha256) = png_sha256.as_deref().filter(|_| !failed) {
+        if let Some(sha256) = png_sha256.filter(|_| !failed) {
             if !receipt.is_object() {
                 receipt = serde_json::json!({});
             }
@@ -632,14 +750,27 @@ fn finish_with_sidecar(
                 }));
         }
         let sidecar_error = match serde_json::to_vec_pretty(&receipt) {
-            Ok(bytes) => std::fs::write(&sidecar.path, &bytes)
-                .err()
-                .map(|error| error.to_string())
-                .or_else(|| {
-                    sync_file(&sidecar.path)
-                        .err()
-                        .map(|error| error.to_string())
-                }),
+            Ok(bytes) => {
+                let result =
+                    std::fs::write(&sidecar.path, &bytes).and_then(|()| sync_file(&sidecar.path));
+                match result {
+                    Ok(()) => {
+                        #[cfg(any(
+                            test,
+                            feature = "live-harness",
+                            feature = "test-support",
+                            feature = "memory-profile"
+                        ))]
+                        _job.slot.artifacts.lock().push(WrittenArtifact {
+                            path: sidecar.path.clone(),
+                            bytes: bytes.len() as u64,
+                            sha256: format!("{:x}", Sha256::digest(&bytes)),
+                        });
+                        None
+                    }
+                    Err(error) => Some(error.to_string()),
+                }
+            }
             Err(error) => Some(error.to_string()),
         };
         if let Some(sidecar_error) = sidecar_error {
@@ -708,6 +839,100 @@ pub fn write_failure_sidecar(sidecar: EvidenceSidecar, error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scenario_sources_include_the_selected_core_pack() {
+        let mut runner = scenario::ScenarioRunner::with_world(
+            scenario::get("cook_377").expect("registered Cook scenario"),
+            None,
+        );
+        record_scenario_sources(&mut runner, Some(377));
+        let manifest = runner.receipt_manifest_mut().unwrap();
+        for name in ["host", "client"] {
+            assert!(manifest.sources[name]["commit"].is_string());
+            assert!(manifest.sources[name]["worktree_dirty"].is_boolean());
+        }
+        if let Some(pack) = api::build_info::game_data_pack(377) {
+            assert_eq!(manifest.sources["game_data"]["revision"], 377);
+            assert_eq!(manifest.sources["game_data"]["sha256"], pack.sha256);
+            assert!(pack.bytes > 0);
+        } else {
+            assert!(!manifest.sources.contains_key("game_data"));
+        }
+    }
+
+    #[test]
+    fn scenario_manifest_records_all_durable_writer_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "274bot-scenario-writer-manifest-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let writer = EvidenceWriter::new(2);
+        let mut jobs = Vec::new();
+        for name in ["frame", "frame-with-sidecar"] {
+            jobs.push(writer.submit(EvidenceRequest {
+                png_path: directory.join(format!("{name}.png")),
+                width: 4,
+                height: 3,
+                pixels: test_pixels(4, 3),
+                color: PngColor::Rgba,
+                sidecar: (name == "frame-with-sidecar").then(|| EvidenceSidecar {
+                    path: directory.join("frame.json"),
+                    receipt: serde_json::json!({"scenario": "manifest"}),
+                    patch_error: None,
+                }),
+            }));
+        }
+        let mut receipt = scenario::evidence::RunReceipt::default();
+        writer
+            .record_artifacts(&jobs, &directory, &mut receipt.manifest)
+            .unwrap();
+        assert_eq!(receipt.manifest.artifacts.len(), 3);
+        for artifact in &receipt.manifest.artifacts {
+            let path = artifact["path"].as_str().unwrap();
+            assert!(!std::path::Path::new(path).is_absolute());
+            let bytes = std::fs::read(directory.join(path)).unwrap();
+            assert_eq!(artifact["bytes"], bytes.len());
+            assert_eq!(artifact["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+        }
+        writer
+            .record_artifacts(&jobs, &directory, &mut receipt.manifest)
+            .unwrap();
+        assert_eq!(receipt.manifest.artifacts.len(), 3, "transfer is one-shot");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scenario_manifest_rejects_failed_and_outside_captures() {
+        let directory = std::env::temp_dir().join(format!(
+            "274bot-scenario-writer-errors-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let writer = EvidenceWriter::new(1);
+        for name in ["frame.png", "missing/frame.png"] {
+            let job = writer.submit(EvidenceRequest {
+                png_path: directory.join(name),
+                width: 1,
+                height: 1,
+                pixels: test_pixels(1, 1),
+                color: PngColor::Rgba,
+                sidecar: None,
+            });
+            let mut receipt = scenario::evidence::RunReceipt::default();
+            assert!(writer
+                .record_artifacts(
+                    std::slice::from_ref(&job),
+                    &directory.join("different-root"),
+                    &mut receipt.manifest,
+                )
+                .is_err());
+            assert!(!receipt.manifest.complete);
+            assert!(receipt.manifest.artifacts.is_empty());
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     fn test_pixels(width: u32, height: u32) -> Vec<i32> {
         (0..width * height)

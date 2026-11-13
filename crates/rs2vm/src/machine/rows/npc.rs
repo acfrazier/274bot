@@ -390,7 +390,7 @@ impl Exec<'_, '_> {
             let offset = ins.int().unwrap_or(0);
             let target = |off: i32| usize::try_from(scan.pc as i64 + 1 + i64::from(off)).ok();
             let child = match name {
-                "RETURN" => None,
+                "RETURN" | "JUMP" | "JUMP_WITH_PARAMS" => None,
                 "BRANCH" => {
                     if scan.next == 0 {
                         target(offset)
@@ -455,20 +455,18 @@ impl Exec<'_, '_> {
                 return Err(unsupported(st.at, "NPC loop can change its population").into());
             }
             if scan.max.is_some()
-                && (matches!(
-                    name,
-                    "GOSUB" | "GOSUB_WITH_PARAMS" | "JUMP" | "JUMP_WITH_PARAMS"
-                ) || matches!(
-                    command,
-                    Some(
-                        "npc_findall"
-                            | "npc_findallany"
-                            | "npc_huntall"
-                            | "p_delay"
-                            | "p_arrivedelay"
-                            | "npc_findnext"
-                    )
-                ))
+                && (matches!(name, "GOSUB" | "GOSUB_WITH_PARAMS")
+                    || matches!(
+                        command,
+                        Some(
+                            "npc_findall"
+                                | "npc_findallany"
+                                | "npc_huntall"
+                                | "p_delay"
+                                | "p_arrivedelay"
+                                | "npc_findnext"
+                        )
+                    ))
             {
                 return Ok(None);
             }

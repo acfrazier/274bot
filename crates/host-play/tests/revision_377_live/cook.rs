@@ -1,5 +1,8 @@
 //! Runs the registered scenario through the host snapshot pump and 377 client.
 use super::*;
+use host_play::evidence_writer::{
+    record_scenario_sources, EvidenceRequest, EvidenceWriter, PngColor,
+};
 use scenario::{RunnerStatus, ScenarioRunner};
 use std::io::Write;
 
@@ -30,7 +33,8 @@ fn cook_377_route_a() -> Result<(), String> {
     let mut log =
         fs::File::create(directory.join(format!("{username}.jsonl"))).map_err(|e| e.to_string())?;
     let mut client = bound.template.prepare_client(fresh_uid(80), false)?;
-    client.draw = false;
+    let raster = std::env::var("ROUTE_A_RASTER").as_deref() == Ok("1");
+    client.draw = raster;
     client.maininit();
     assert_377_client(&client, false)?;
     if client.error_loading {
@@ -107,6 +111,7 @@ fn cook_377_route_a() -> Result<(), String> {
         writeln!(log, "{}", json!({"account":username, "fixture":"clean mainland relog; no additional seeds", "state":sample(&client, &snapshot)})).map_err(|e| e.to_string())?;
         let cell = scenario::get("cook_377").ok_or("Cook scenario not registered")?;
         let mut runner = ScenarioRunner::with_world(cell, None);
+        record_scenario_sources(&mut runner, Some(client.revision().as_i32()));
         runner.set_live_names(std::slice::from_ref(&username));
         let deadline = Instant::now() + Duration::from_secs(1000);
         let mut last_step = None;
@@ -146,6 +151,39 @@ fn cook_377_route_a() -> Result<(), String> {
                 _ => None,
             };
             if let Some(result) = outcome {
+                if raster {
+                    let mut renderer =
+                        client::render::Renderer::new_prefer(client.config.lowmem, false);
+                    let client::render::backend::FrameOutput::PixMap(pixels) =
+                        renderer.mainredraw(&mut client)
+                    else {
+                        return Err("Cook terminal frame was not a CPU PixMap".into());
+                    };
+                    let writer = EvidenceWriter::new(1);
+                    let job = writer.submit(EvidenceRequest {
+                        png_path: directory.join(format!("{username}-terminal.png")),
+                        width: pixels.width as u32,
+                        height: pixels.height as u32,
+                        pixels: pixels.pixels,
+                        color: PngColor::Rgba,
+                        sidecar: None,
+                    });
+                    let manifest = runner
+                        .receipt_manifest_mut()
+                        .ok_or("Cook terminal receipt is unavailable")?;
+                    writer.record_artifacts(std::slice::from_ref(&job), &directory, manifest)?;
+                    let receipt = runner
+                        .evidence()
+                        .ok_or("Cook terminal evidence is unavailable")?
+                        .to_json();
+                    let receipt_path = directory.join(format!("{username}-receipt.json"));
+                    let mut output = fs::File::create(&receipt_path).map_err(|e| e.to_string())?;
+                    output
+                        .write_all(receipt.as_bytes())
+                        .map_err(|e| e.to_string())?;
+                    output.sync_all().map_err(|e| e.to_string())?;
+                    println!("SCENARIO_RECEIPT {receipt}");
+                }
                 writeln!(log,"{}",json!({"outcome":if result.is_ok(){"PASS"}else{"FAIL"},"error":result.as_ref().err(),"account":username,"state":sample(&client, &snapshot)})).map_err(|e| e.to_string())?;
                 println!(
                     "{}",
