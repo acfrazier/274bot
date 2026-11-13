@@ -178,6 +178,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "smallvec",
  "thiserror 2.0.21",
 ]
@@ -465,6 +466,13 @@ checksum = "17d4f95e880cfd28c4ca5a006cf7f6af52b4bcb7b5866f573b2faa126fb7affb"
 dependencies = [
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "build-stamp"
+version = "0.2.9"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2064,6 +2072,7 @@ version = "0.2.9"
 dependencies = [
  "allocation-counter",
  "api",
+ "build-stamp",
  "bzip2",
  "client",
  "crossterm",
@@ -3432,6 +3441,7 @@ version = "0.2.9"
 dependencies = [
  "api",
  "arboard",
+ "build-stamp",
  "client",
  "dear-imgui-rs",
  "dear-imgui-wgpu",

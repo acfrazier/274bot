@@ -7,6 +7,7 @@ pub use snapshot::{LocalTile, WorldTile};
 pub const CHICKEN_BANK_MAX_RESTARTS: u8 = 3;
 
 pub mod bank_memory;
+pub mod build_info;
 pub mod cake_stall;
 pub mod clue_facts;
 pub mod clue_logic;

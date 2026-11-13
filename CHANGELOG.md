@@ -3,7 +3,6 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-
 ## [Unreleased]
 
 ### Breaking changes
@@ -82,6 +81,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   - AccountLeveler, unchanged, ran ten game ticks without a script error on a
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
+
+### Scenario receipts
+
+- Scenario receipts retain ordered step intentions, dispatch results, observed
+  predicates and fixture interventions. WHY preserves the existing step name.
+  Manifests bind run, actor and session identities; PNG sidecars include durable
+  artifact SHA-256 hashes. Disarmed recording adds no tick or paint allocations.
+- Live scenario manifests include the build's host and client source identities
+  and the selected core game-data hash. Cook's opt-in raster capture adds durable
+  EvidenceWriter files to the terminal manifest without tick-time inspection.
+  Source stamps rebuild on Git metadata changes, not unrelated tracked edits.
+  They no longer rebuild embedded game data. Builds without the scenario harness
+  do not retain unused artifact records.
 
 ## [0.2.9] — 2026-11-10 — Beta 2
 
