@@ -2460,7 +2460,7 @@ export function extractCookSurfaces(content: string, catalog: CookCatalog | unde
 
 
 /** Selected content supplies the access identity, footprint, and placement; collision resolves the stand at bind time. */
-export function extractBankPlacements(content: string, catalog: CatalogBank[], npcAccesses: readonly NpcBankAccess[] = extractNpcBankAccesses(content)) {
+export function extractBankPlacements(content: string, catalog: CatalogBank[], npcAccesses: readonly NpcBankAccess[] = extractNpcBankAccesses(content).rows) {
     const locFiles = contentTreeFiles(content, 'scripts', '.loc');
     const npcFiles = contentTreeFiles(content, 'scripts', '.npc');
     const files = [...locFiles, ...npcFiles];
@@ -2745,10 +2745,13 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const rs2b0tRoot = requireEnvPath('RS2B0T', 'the rs2b0t source root');
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
-    const bankNpcAccesses = extractNpcBankAccesses(spec.content);
+    const bankNpcEvidence = extractNpcBankAccesses(spec.content);
+    const bankNpcAccesses = bankNpcEvidence.rows;
     const bankPlacements = extractBankPlacements(spec.content, bankCatalog, bankNpcAccesses);
     const bankNpcFile = path.join(path.dirname(spec.output), String(spec.revision), 'bank_npcs.json');
+    const bankNpcRefusalsFile = path.join(path.dirname(spec.output), String(spec.revision), 'bank_npc_refusals.json');
     fs.writeFileSync(bankNpcFile, `${JSON.stringify({ schema: 1, revision: spec.revision, facts: { rows: bankNpcAccesses } }, null, 2)}\n`);
+    fs.writeFileSync(bankNpcRefusalsFile, `${JSON.stringify({ schema: 1, revision: spec.revision, facts: { refusals: bankNpcEvidence.refusals } }, null, 2)}\n`);
     if (spec.revision !== 377) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.json'), bankCatalogJson(bankCatalog));
     const cookFiles = {
         cookLocations: 'src/bot/data/cookLocations.ts',
@@ -2840,7 +2843,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
             'debug',
         ],
         gathering: gathering.summary,
-        bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing.length },
+        bank_npc_refusals: { output: path.relative(root, bankNpcRefusalsFile), rows: bankNpcEvidence.refusals },
         cook_surfaces: cookSurfaces.facts.rows.length,
     };
 }
