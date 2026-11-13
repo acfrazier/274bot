@@ -19,8 +19,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   its updated dialogue requires. On revision 274, the cart still accepts
   accounts that have not completed the quest.
 - Accounts that have completed Hero's Quest can enter the Heroes' Guild
-  again after logging in. Quest checks retain the completed quest's
-  requirements and account for later stage changes.
+  again after logging in. Only unchanged completion evidence from a fresh
+  login proves the final stage when ordinary quest colour is not enough.
+- Walks keep their quest evidence after an automatic bank trip and during
+  compat route checks. These paths could report no route through a quest
+  door even when the account met its requirements. Transport action checks
+  now keep the same evidence too.
 
 ### Login
 

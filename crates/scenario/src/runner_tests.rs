@@ -1471,6 +1471,156 @@ fn follow_step_fails_without_a_nav_world() {
     }
 }
 
+fn hero_stage_route_runner(fresh_login: bool) -> Option<ScenarioRunner> {
+    use api::game_data::GameDataError;
+    use api::selected::{ClientRevision, InclusiveRange, QuestGate, StageWindow};
+    use api::snapshot::QuestStatusView;
+
+    let selected = match api::game_data::for_revision(ClientRevision::R289) {
+        Ok(selected) => selected,
+        Err(GameDataError::LocalDataUnavailable) => {
+            eprintln!("SKIP: selected R289 quest data is not built");
+            return None;
+        }
+        Err(error) => panic!("selected R289 quest data: {error}"),
+    };
+    let catalog = Arc::new(
+        api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
+            .expect("selected quest identity"),
+    );
+    let hero = catalog.quest("hero").expect("Hero's Quest identity");
+    // heroes_entrance.rs2:5-7 accepts >=15. Ordinary completion is
+    // deliberately weaker because Grip's queued writer can regress it.
+    assert!(!hero.colour_authoritative);
+    let gate = QuestGate::Window(StageWindow {
+        quest: hero.id.clone(),
+        signal: hero.varp.clone(),
+        values: InclusiveRange {
+            min: Some(15),
+            max: Some(15),
+        },
+    });
+    let display = hero.display.to_string();
+    let mut world = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
+    for edge in &mut world.graph.edges {
+        edge.quest_gates = Some(
+            nav_planner::quest_gates::QuestGates::new([gate.clone()]).expect("valid stage gate"),
+        );
+    }
+    let destination = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    let mut runner =
+        ScenarioRunner::with_world(follow_scenario(destination, 120), Some(Arc::new(world)));
+    runner.set_quest_catalog(Some(catalog));
+    runner.snapshot.seed_ingame(2);
+    runner.snapshot.seed_tick(1);
+    runner.snapshot.seed_player_info_generation(1);
+    runner.snapshot.seed_tile(WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    runner.snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            component_id: 1,
+            name: display,
+            colour: 0x00F800,
+        }],
+        true,
+    );
+    if fresh_login {
+        runner.snapshot.begin_fresh_login_quest_colours();
+    }
+    Some(runner)
+}
+
+#[test]
+fn scenario_route_retains_selected_fresh_login_quest_evidence() {
+    let Some(mut runner) = hero_stage_route_runner(true) else {
+        return;
+    };
+    let destination = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    runner
+        .arm_route(destination, FindOptions::default())
+        .expect("qualified completion proves the door's stage window");
+    assert_eq!(runner.armed_route().unwrap().dest, destination);
+    let evidence = runner
+        .route_quest_evidence
+        .as_ref()
+        .expect("the traveller retains the route's owned evidence");
+    assert!(evidence.owned_provider_bytes() > 0);
+    let gate = runner.nav_world.as_ref().unwrap().graph.edges[0]
+        .quest_gates
+        .as_ref()
+        .unwrap()
+        .gates()[0]
+        .clone();
+    assert_eq!(evidence.test(&gate), api::selected::Truth::True);
+    runner.set_quest_catalog(None);
+    runner.snapshot.seed_quest_statuses(Vec::new(), false);
+    assert_eq!(
+        runner.route_quest_evidence.as_ref().unwrap().test(&gate),
+        api::selected::Truth::True,
+        "the admitted route owns its evidence independently of later frame storage"
+    );
+    runner.begin_step();
+    assert!(runner.route_quest_evidence.is_none());
+}
+
+#[test]
+fn scenario_route_does_not_promote_unqualified_green_or_missing_selected_data() {
+    for (fresh_login, selected_data) in [(false, true), (true, false)] {
+        let Some(mut runner) = hero_stage_route_runner(fresh_login) else {
+            return;
+        };
+        if !selected_data {
+            runner.set_quest_catalog(None);
+        }
+        let error = runner
+            .arm_route(
+                WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
+                FindOptions::default(),
+            )
+            .expect_err("unknown quest evidence must not authorize a stage window");
+        assert!(error.contains("NoPath"), "{error}");
+        assert!(runner.route_quest_evidence.is_none());
+    }
+}
+
+#[test]
+fn scenario_route_does_not_restore_fresh_login_proof_after_a_colour_change() {
+    let Some(mut runner) = hero_stage_route_runner(true) else {
+        return;
+    };
+    let mut row = runner.snapshot.quest_statuses()[0].clone();
+    row.colour = 0xF80000;
+    runner.snapshot.seed_quest_statuses(vec![row.clone()], true);
+    row.colour = 0x00F800;
+    runner.snapshot.seed_quest_statuses(vec![row], true);
+    let error = runner
+        .arm_route(
+            WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            FindOptions::default(),
+        )
+        .expect_err("a later green row cannot restore the cold-login proof");
+    assert!(error.contains("NoPath"), "{error}");
+}
+
 // --- Dialog-janitor steps (`DrainDialogs`) ---
 
 /// A `DrainDialogs` step whose arm never holds: the fixture has no

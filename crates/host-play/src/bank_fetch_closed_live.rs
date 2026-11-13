@@ -42,7 +42,7 @@
 //!    one Load-script `walk-near` with bank fetch enabled to the selected
 //!    Heroes' Guild interior. The fare bank session must finish, and the
 //!    resumed route must cross the selected real Hero's Quest Window[15,15]
-//!    edge with captured gate truth `True`; 90 coins remain banked.
+//!    edge with captured gate truth `True`; 60 coins remain banked.
 //!
 //! The two manual WalkTo cells also compile without JS. The solid-radius and
 //! Heroes' Guild Load cells require the `js` feature.
@@ -98,7 +98,7 @@ const HERO_GUILD_SEED: &[&str] = &[
 ];
 /// The bank's coins after the Session, stale-hint, solid-radius, and guild
 /// post-bank route cells.
-const BANKED_AFTER: [i32; 4] = [70, 40, 10, 90];
+const BANKED_AFTER: [i32; 4] = [70, 40, 10, 60];
 const CELL_BOUND: Duration = Duration::from_secs(600);
 const SAVE_GRACE: Duration = Duration::from_secs(15);
 const LOGOUT_DEADLINE: Duration = Duration::from_secs(120);
@@ -217,7 +217,6 @@ export function tick(api) {{
     )
 }
 
-
 #[cfg(feature = "js")]
 /// The solid-radius cell's walk-near radius.
 const SOLID_RADIUS: i32 = 1;
@@ -257,7 +256,8 @@ impl Variant {
                 .find(|route| route.npc_id() == 511)
                 .expect("the selected Shilo cart route")
                 .minimum_fare()
-                .1;
+                .1
+                + FARE;
         }
         FARE
     }
@@ -583,9 +583,7 @@ pub(crate) fn final_route_lines(
     )
 }
 #[cfg(feature = "js")]
-fn hero_guild_window_edge(
-    world: &NavWorld,
-) -> Option<&nav_planner::transport::TransportEdge> {
+fn hero_guild_window_edge(world: &NavWorld) -> Option<&nav_planner::transport::TransportEdge> {
     world.graph.edges.iter().find(|edge| {
         edge.quest_gates.as_ref().is_some_and(|gates| {
             gates.gates().iter().any(|gate| {
@@ -601,7 +599,6 @@ fn hero_guild_window_edge(
         })
     })
 }
-
 
 #[cfg(feature = "js")]
 /// The slot's script walk as the host's own pump holds it (the solid-radius
@@ -688,15 +685,15 @@ fn pump_frame(
     let mut guard = pump.lock();
     guard.state = Some(WorldState::from_snapshot(snapshot).with_map_members(map_members));
     guard.hero_quest_green = snapshot.quest_statuses().iter().any(|row| {
-        row.name == "Hero's Quest"
-            && row.status() == api::snapshot::QuestListStatus::Complete
+        row.name == "Hero's Quest" && row.status() == api::snapshot::QuestListStatus::Complete
     });
     #[cfg(feature = "js")]
-    guard.hero_seed_readback |= snapshot.chat_lines().iter().any(|line| {
-        line.text
-            .to_ascii_lowercase()
-            .contains("get heroquest: 15")
-    });
+    {
+        guard.hero_seed_readback |= snapshot
+            .chat_lines()
+            .iter()
+            .any(|line| line.text.to_ascii_lowercase().contains("get heroquest: 15"));
+    }
     guard.risk_input = Some(crate::admission::capture(
         snapshot,
         map_members,
@@ -760,9 +757,7 @@ fn run_cell(variant: Variant) {
     let account = match variant {
         Variant::Session => super::mint_live_names(1).pop().expect("one live account"),
         #[cfg(feature = "js")]
-        Variant::HeroGuildPostBank => {
-            super::mint_live_names(1).pop().expect("one live account")
-        }
+        Variant::HeroGuildPostBank => super::mint_live_names(1).pop().expect("one live account"),
         _ => std::env::var("S5_LIVE_ACCOUNT")
             .expect("S5_LIVE_ACCOUNT names the account the earlier cells left"),
     };
@@ -1120,8 +1115,7 @@ fn run_cell(variant: Variant) {
                 }
                 #[cfg(feature = "js")]
                 Stage::QuestLogin { since, settled } => {
-                    let ready = status_tile(&play, &account)
-                        .is_some_and(|(ready, _)| ready);
+                    let ready = status_tile(&play, &account).is_some_and(|(ready, _)| ready);
                     let green = pump.lock().hero_quest_green;
                     if ready && green {
                         let Some(settled_since) = settled else {
@@ -1405,12 +1399,8 @@ fn run_cell(variant: Variant) {
                         let hero_gate_in_route = if hero_guild {
                             let edge = hero_guild_window_edge(&world)
                                 .expect("selected pack's Heroes' Guild stage-window edge");
-                            let marker = format!(
-                                "loc={} at={:?} to={:?}",
-                                edge.loc_id(),
-                                edge.anchor(),
-                                edge.landing()
-                            );
+                            let marker =
+                                format!("loc={} at={:?} to={:?}", edge.loc_id, edge.at, edge.to);
                             guard.resumed_route_legs.as_ref().is_some_and(|legs| {
                                 legs.iter().any(|line| {
                                     line.contains(&marker) && line.contains("quest_gate=true")

@@ -488,6 +488,8 @@ impl Runner {
         if let Some(play) = session.play() {
             self.0.set_map_members(play.map_members());
             self.0.set_obj_names(play.obj_names());
+            self.0
+                .set_quest_catalog(play.game_data().and_then(|data| data.try_quests()));
         }
     }
 }

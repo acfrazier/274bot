@@ -324,9 +324,10 @@ export default class QuestEvidenceProbe extends LoopingBot {
 fn real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
-    if !api::test_support::game_data_available() {
-        return;
-    }
+    assert!(
+        api::test_support::game_data_available(),
+        "the live proof requires selected generated game data"
+    );
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("owned account prefix");
     assert!(!prefix.is_empty() && prefix.len() <= 4);
     let evidence_dir = required_path("LIVE_EVIDENCE_DIR");

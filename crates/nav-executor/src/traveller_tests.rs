@@ -1969,6 +1969,155 @@ fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
     assert_eq!(rec.loc_uses, 1, "oplocu the knife on the web");
 }
 
+fn web_stage_evidence(
+    snapshot: &mut GameSnapshot,
+) -> Option<(
+    nav_planner::quest_gates::QuestGates,
+    nav_planner::quest_gates::QuestEvidence,
+)> {
+    use api::game_data::GameDataError;
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{ClientRevision, InclusiveRange, QuestGate, RunKey, StageWindow};
+    use api::snapshot::{QuestStatusView, SnapshotView};
+
+    let selected = match api::game_data::for_revision(ClientRevision::R289) {
+        Ok(selected) => selected,
+        Err(GameDataError::LocalDataUnavailable) => {
+            eprintln!("SKIP: selected R289 quest data is not built");
+            return None;
+        }
+        Err(error) => panic!("selected R289 quest data: {error}"),
+    };
+    let catalog = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
+        .expect("selected quest identity");
+    let hero = catalog.quest("hero").expect("Hero's Quest identity");
+    let gates = nav_planner::quest_gates::QuestGates::new([QuestGate::Window(StageWindow {
+        quest: hero.id.clone(),
+        signal: hero.varp.clone(),
+        values: InclusiveRange {
+            min: Some(15),
+            max: Some(15),
+        },
+    })])
+    .expect("valid stage gate");
+    snapshot.seed_tick(1);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            component_id: 1,
+            name: hero.display.to_string(),
+            colour: 0x00F800,
+        }],
+        true,
+    );
+    snapshot.begin_fresh_login_quest_colours();
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: snapshot.gens().session,
+        },
+        tick: u64::from(snapshot.tick()),
+        sequence: snapshot.gens().player_info,
+    };
+    let provider = api::quest_progress::QuestListEvidenceProvider::from_snapshot(
+        &catalog,
+        SnapshotView::new(Some(snapshot), stamp),
+    );
+    Some((
+        gates,
+        nav_planner::quest_gates::QuestEvidence::new(Arc::new(provider), stamp),
+    ))
+}
+
+#[test]
+fn follow_gated_web_keeps_route_evidence_for_initial_send_and_cut_retry() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snapshot = snap_at(&mut c, 0, 0);
+    let Some((gates, evidence)) = web_stage_evidence(&mut snapshot) else {
+        return;
+    };
+    let mut edge = web_cut_edges()[0].clone();
+    edge.at.x = 3201;
+    edge.to.x = 3203;
+    edge.quest_gates = Some(gates);
+    let edges = [edge.clone()];
+    assert!(matches!(
+        super::current_web_action(&snapshot, &edge, Some(&edges), None),
+        Err(WebCutFailure::NoQualifyingSlashTool)
+    ));
+    let route = web_route(edge);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        quest_evidence: Some(&evidence),
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut rec, &snapshot, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 1,
+        "the initial web action keeps route evidence"
+    );
+    c.add_chat(0, "You fail to cut through it.", "");
+    bump_rebuild(&mut c, &mut snapshot);
+    assert!(traveller
+        .follow(&mut rec, &snapshot, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 2, "the retry keeps the same owned provider");
+}
+
+#[test]
+fn follow_gated_web_keeps_route_evidence_when_reselecting_after_approach() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    plant_equipment_item(&mut c, 1321);
+    let mut snapshot = snap_at(&mut c, 0, 0);
+    let Some((gates, evidence)) = web_stage_evidence(&mut snapshot) else {
+        return;
+    };
+    let mut edges = web_cut_edges();
+    for edge in &mut edges {
+        edge.quest_gates = Some(gates.clone());
+    }
+    let route = web_route(edges[1].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        quest_evidence: Some(&evidence),
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut rec, &snapshot, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1);
+    let stand = rec.walked[0];
+    clear_equipment_item(&mut c);
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snapshot);
+    assert!(traveller
+        .follow(&mut rec, &snapshot, route, &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 1,
+        "current knife and pinned stage evidence qualify"
+    );
+    assert_eq!(rec.loc_ops, 0, "the removed blade must not be used");
+}
+
 #[test]
 fn follow_web_reselects_knife_after_planned_slash_blade_is_unequipped() {
     let mut c = scene_client();

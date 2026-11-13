@@ -11929,23 +11929,25 @@ mod route_quest_provider_tests {
             return;
         };
         let quests = selected.try_quests().expect("prepared quest catalog");
-        let facts = quests.quest("druidspirit").expect("selected quest facts");
-        assert!(facts.colour_authoritative);
+        let facts = quests.quest("hero").expect("selected Hero's Quest facts");
+        assert!(!facts.colour_authoritative);
         let gate = QuestGate::Window(api::selected::StageWindow {
             quest: facts.id.clone(),
             signal: facts.varp.clone(),
-            values: api::selected::InclusiveRange {
-                min: None,
-                max: Some(9),
-            },
+            values: facts
+                .completion_range_after_login
+                .expect("qualified Hero completion range"),
         });
         let observed = stamp(run(), 18, 18);
         let context = context(Arc::clone(&selected), observed);
-        let snapshot = snapshot(
+        let mut snapshot = snapshot(
             &facts.display,
             nav_planner::world_state::QUEST_COMPLETE_COLOUR,
             true,
         );
+        snapshot.seed_tick(18);
+        snapshot.begin_fresh_login_quest_colours();
+        assert!(snapshot.quest_green_since_fresh_login(0));
         let evidence = captured_route_quests(Some(&context), &snapshot, None, observed)
             .expect("qualified selected quest-list evidence");
         assert_eq!(evidence.test(&gate), Truth::True);
@@ -11959,8 +11961,8 @@ mod route_quest_provider_tests {
         let height = 5;
         let mut plane = vec![0u32; width * height];
         for z in 0..height {
-            plane[z * width + 1] |= nav_planner::collision::CollisionFlag::W_E as u32;
-            plane[z * width + 2] |= nav_planner::collision::CollisionFlag::W_W as u32;
+            plane[z * width + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+            plane[z * width + 2] |= client::dash3d::CollisionFlag::W_W as u32;
         }
         let mut collision_flags = vec![0u32; 4 * plane.len()];
         collision_flags[..plane.len()].copy_from_slice(&plane);
@@ -12082,10 +12084,7 @@ mod route_quest_provider_tests {
             fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
                 None
             }
-            fn send_packet(
-                &mut self,
-                _: &api::prot::Send,
-            ) -> Result<(), api::prot::PacketError> {
+            fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
                 Ok(())
             }
             fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
@@ -12118,7 +12117,7 @@ mod route_quest_provider_tests {
 
         let mut admitted = make_bot(true);
         let mut admitted_driver = NoopDriver;
-        assert!(!super::script_walk::step_bank_fetch_on_bot(
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
             &mut admitted_driver,
             &snapshot,
             &mut admitted,
@@ -12147,7 +12146,7 @@ mod route_quest_provider_tests {
 
         let mut unproven = make_bot(false);
         let mut unproven_driver = NoopDriver;
-        assert!(!super::script_walk::step_bank_fetch_on_bot(
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
             &mut unproven_driver,
             &snapshot,
             &mut unproven,

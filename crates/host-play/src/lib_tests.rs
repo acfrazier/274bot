@@ -32722,11 +32722,8 @@ export default class T extends LoopingBot {
         selected: &api::game_data::SelectedGameData,
         fresh_login_green: bool,
     ) -> GameSnapshot {
-        let facts = selected
-            .try_quests()
-            .expect("selected quest catalog")
-            .quest("hero")
-            .expect("Hero's Quest facts");
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let facts = quests.quest("hero").expect("Hero's Quest facts");
         let mut snapshot = nav_frame_at(0, 0);
         snapshot.seed_quest_statuses(
             vec![QuestStatusView {
@@ -32775,7 +32772,7 @@ export default class T extends LoopingBot {
     }
 
     #[cfg(feature = "js")]
-    fn await_inspection(rig: &NavRig, request_id: u64) -> crate::route_inspect::InspectTerminal {
+    fn await_inspection(rig: &NavRig, request_id: u64) -> (bool, Option<WorldTile>, String) {
         let start = std::time::Instant::now();
         loop {
             crate::script_runtime::poll_inspection_for_test(&rig.navs, "alice");
@@ -32793,7 +32790,11 @@ export default class T extends LoopingBot {
                     .cloned()
             });
             if let Some(terminal) = terminal {
-                return terminal;
+                return (
+                    terminal.ok,
+                    terminal.terminal,
+                    terminal.reason.as_str().to_owned(),
+                );
             }
             assert!(
                 start.elapsed() < std::time::Duration::from_secs(2),
@@ -32810,11 +32811,8 @@ export default class T extends LoopingBot {
             return;
         }
         let selected = selected_r289();
-        let hero = selected
-            .try_quests()
-            .expect("selected quest catalog")
-            .quest("hero")
-            .expect("Hero's Quest facts");
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let hero = quests.quest("hero").expect("Hero's Quest facts");
         let ordinary = hero
             .completion_range
             .expect("ordinary Hero completion range");
@@ -32844,16 +32842,16 @@ export default class T extends LoopingBot {
             navs.get_mut("alice").expect("navigation bot").quest_context = None;
         }
         drop(qualified);
-        let opened = await_inspection(&rig, 901);
-        assert!(opened.ok, "fresh-login Hero completion must open the gate");
-        assert_eq!(opened.terminal, Some(tile(3, 0)));
+        let (opened_ok, opened_terminal, _) = await_inspection(&rig, 901);
+        assert!(opened_ok, "fresh-login Hero completion must open the gate");
+        assert_eq!(opened_terminal, Some(tile(3, 0)));
 
         let no_context_snapshot = hero_snapshot(&selected, true);
         dispatch_inspect_route(&rig, &no_context_snapshot, 902);
         drop(no_context_snapshot);
-        let no_context = await_inspection(&rig, 902);
-        assert!(!no_context.ok, "a missing quest context must fail closed");
-        assert_eq!(no_context.reason.as_str(), "NoPath");
+        let (no_context_ok, _, no_context_reason) = await_inspection(&rig, 902);
+        assert!(!no_context_ok, "a missing quest context must fail closed");
+        assert_eq!(no_context_reason, "NoPath");
 
         let unqualified = hero_snapshot(&selected, false);
         assert!(!unqualified.quest_green_since_fresh_login(0));
@@ -32868,9 +32866,9 @@ export default class T extends LoopingBot {
             navs.get_mut("alice").expect("navigation bot").quest_context = None;
         }
         drop(unqualified);
-        let weak = await_inspection(&rig, 903);
-        assert!(!weak.ok, "ordinary Hero completion must not prove stage 15");
-        assert_eq!(weak.reason.as_str(), "NoPath");
+        let (weak_ok, _, weak_reason) = await_inspection(&rig, 903);
+        assert!(!weak_ok, "ordinary Hero completion must not prove stage 15");
+        assert_eq!(weak_reason, "NoPath");
     }
 
     #[derive(Default)]
