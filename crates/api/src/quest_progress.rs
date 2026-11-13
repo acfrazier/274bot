@@ -301,7 +301,8 @@ mod tests {
     use super::*;
     #[test]
     fn captured_quest_rows_retain_only_one_stage_range() {
-        assert!(std::mem::size_of::<QuestListStatusEvidence>() <= 64);
+        // Measured 56 B plus the default 64 B headroom (AGENTS.md tripwire rule).
+        assert!(std::mem::size_of::<QuestListStatusEvidence>() <= 120);
     }
 
     #[test]

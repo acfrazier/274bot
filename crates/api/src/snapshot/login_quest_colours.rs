@@ -270,7 +270,8 @@ mod tests {
 
         assert!(proof.eligible(MAX_QUEST_ROWS - 1));
         assert!(!proof.eligible(MAX_QUEST_ROWS));
-        assert!(size_of::<LoginQuestColours>() <= 64);
+        // Measured 56 B plus the default 64 B headroom (AGENTS.md tripwire rule).
+        assert!(size_of::<LoginQuestColours>() <= 120);
     }
 
     #[test]
