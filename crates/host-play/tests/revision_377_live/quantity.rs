@@ -100,7 +100,8 @@ fn fletching_make_x_377() -> Result<(), String> {
             |state| state.ingame() && state.attached() && state.scene_state() == 2,
         )?;
 
-        let fixture: [(&str, &str, fn(&GameSnapshot) -> bool); 3] = [
+        type Fixture = (&'static str, &'static str, fn(&GameSnapshot) -> bool);
+        let fixture: [Fixture; 3] = [
             ("setstat fletching 5", "fletching-stat-seeded", |state| {
                 state
                     .stats()
@@ -225,9 +226,7 @@ fn fletching_make_x_377() -> Result<(), String> {
                 )
                 .map_err(|error| error.to_string())?;
                 log.flush().map_err(|error| error.to_string())?;
-                if let Err(error) = result {
-                    return Err(error);
-                }
+                result?;
                 if product_delta != 30 || material_delta != 2 || xp_delta != 100 {
                     return Err(format!(
                         "Make-X result delta mismatch: shafts={product_delta}, logs={material_delta}, xp={xp_delta}"
