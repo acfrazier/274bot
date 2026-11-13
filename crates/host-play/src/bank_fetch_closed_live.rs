@@ -36,6 +36,8 @@
 //! 4. `live_fetch_closed_hero_guild_post_bank`: an independent fresh account
 //!    with 100 bank coins and the selected prerequisites `zombiequeen=15`,
 //!    `zanaris=6`, `dragon=10`, `arthur=7`, `black=4`, and `heroquest=15`.
+//!    Attack, Strength, Defence, and Hitpoints start at 30 so ordinary road
+//!    NPC danger does not block this fare-and-quest proof.
 //!    After a real Draynor open/close, the cell reads back `heroquest`, logs
 //!    out and relogs, and requires Hero's Quest green on a stable fresh-login
 //!    snapshot. It then starts at the selected Shilo cart origin and sends
@@ -89,6 +91,10 @@ const SEED: &[&str] = &["givebank coins 100", "givebank bones 5"];
 #[cfg(feature = "js")]
 const HERO_GUILD_SEED: &[&str] = &[
     "givebank coins 100",
+    "setstat attack 30",
+    "setstat strength 30",
+    "setstat defence 30",
+    "setstat hitpoints 30",
     "setvar zombiequeen 15",
     "setvar zanaris 6",
     "setvar dragon 10",
@@ -116,9 +122,10 @@ const KARAMJA: WorldTile = WorldTile {
     z: 3147,
     level: 0,
 };
+/// West of the selected guild doors; incoming mainland travel must cross one.
 #[cfg(feature = "js")]
 const HEROES_GUILD_INSIDE: WorldTile = WorldTile {
-    x: 2905,
+    x: 2899,
     z: 3510,
     level: 0,
 };
@@ -292,6 +299,7 @@ struct FetchTrace {
     resumed_route_legs: Option<Vec<String>>,
     resume_gate_truth: Option<String>,
     hero_quest_green: Option<bool>,
+    route_combat_level: Option<i32>,
     /// The solid-radius cell's walk-near target and radius.
     solid_target: Option<[i32; 3]>,
     solid_radius: Option<i32>,
@@ -1148,6 +1156,18 @@ fn run_cell(variant: Variant) {
                             continue;
                         };
                         if settled_since.elapsed() >= Duration::from_secs(3) {
+                            let combat_level = pump
+                                .lock()
+                                .state
+                                .as_ref()
+                                .and_then(|state| state.combat_level);
+                            if !combat_level.is_some_and(|level| level >= 30) {
+                                fail(format!(
+                                    "the seeded road traveller needs combat at least 30: {combat_level:?}"
+                                ));
+                                continue;
+                            }
+                            trace.lock().route_combat_level = combat_level;
                             trace.lock().hero_quest_green = Some(true);
                             match play.cheat(&account, &tele_args(start_tile)) {
                                 Ok(()) => {
@@ -1436,7 +1456,9 @@ fn run_cell(variant: Variant) {
                         let hero_gate_in_route = if hero_guild {
                             guard.resumed_route_legs.as_ref().is_some_and(|legs| {
                                 hero_guild_window_edges(&world)
-                                    .filter(|edge| edge.to.x > edge.at.x)
+                                    .filter(|edge| {
+                                        edge.dir == Some(nav_planner::transport::DoorDir::W)
+                                    })
                                     .any(|edge| {
                                         let marker = format!(
                                             "loc={} at={:?} to={:?}",
