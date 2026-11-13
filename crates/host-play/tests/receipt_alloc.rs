@@ -77,9 +77,12 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
 }
 
 #[test]
-fn scenario_runner_quantity_baseline_storage_is_pinned() {
-    // The +8 bytes over the earlier 5,640 pin come from merged dev's
-    // FollowRun::walk_packet_budget in crates/nav-executor/src/traveller.rs,
-    // not this branch's quantity fields.
-    assert_eq!(std::mem::size_of::<ScenarioRunner>(), 5_648);
+fn scenario_runner_quantity_baseline_storage_stays_within_ceiling() {
+    // Measured 5,648 B + 64 B per the default-headroom rule.
+    // The +8 B over 5,640 comes from merged dev's FollowRun::walk_packet_budget
+    // in crates/nav-executor/src/traveller.rs, not this branch's quantity fields.
+    assert!(
+        std::mem::size_of::<ScenarioRunner>() <= 5_712,
+        "ScenarioRunner exceeded its 5,648 B measurement + 64 B default headroom"
+    );
 }
