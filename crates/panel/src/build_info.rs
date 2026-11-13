@@ -9,11 +9,11 @@ pub const RELEASE: &str = "beta 2";
 /// Crate version (`Cargo.toml`), shown on hover.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Full 40-char SHA when known, else `"unknown"`.
-pub const COMMIT: &str = env!("GIT_COMMIT");
+pub const COMMIT: &str = api::build_info::COMMIT;
 /// First 7 chars of the SHA (or `"unknown"`).
-pub const SHORT: &str = env!("GIT_COMMIT_SHORT");
+pub const SHORT: &str = api::build_info::SHORT;
 /// Tree was dirty at `cargo build`.
-pub const DIRTY: bool = matches!(env!("GIT_DIRTY").as_bytes(), b"1");
+pub const DIRTY: bool = api::build_info::DIRTY;
 /// ISO-8601 UTC timestamp of the build, possibly empty.
 pub const BUILT_AT: &str = env!("BUILD_TIME");
 

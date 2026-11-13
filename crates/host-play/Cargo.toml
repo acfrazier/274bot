@@ -133,7 +133,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "nav-planner/test-support"]
+test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "nav-planner/test-support", "dep:scenario"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

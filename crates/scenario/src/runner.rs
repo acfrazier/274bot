@@ -660,11 +660,12 @@ impl ScenarioRunner {
         }
     }
 
-    /// Supply identities/hashes that only the host knows. No source inspection
-    /// or filesystem hashing occurs inside the client-cycle observer.
+    /// Supply identities/hashes that only the host knows, including after the
+    /// terminal receipt moves into evidence. No inspection occurs in the observer.
     pub fn receipt_manifest_mut(&mut self) -> Option<&mut ReceiptManifest> {
         self.run_receipt
             .as_mut()
+            .or_else(|| self.evidence.as_mut()?.run_receipt.as_mut())
             .map(|receipt| &mut receipt.manifest)
     }
 

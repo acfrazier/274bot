@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::{self, File};
-use std::io;
-use std::path::PathBuf;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 #[path = "build_support/catalog_codegen.rs"]
 mod catalog_codegen;
@@ -9,9 +9,12 @@ mod catalog_codegen;
 mod local_asset_path;
 #[path = "src/test_support/local_asset_path_377.rs"]
 mod local_asset_path_377;
+#[path = "build_support/source_identity.rs"]
+mod source_identity;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use sha2::{Digest, Sha256};
 
 const GENERATE_GAME_DATA: &str = "python tools/local-data/build.py";
 const BANK_CATALOG_JSON: &str = "data/game-data/bank-catalog.json";
@@ -38,19 +41,65 @@ const LOCAL_377_ASSETS: &[&str] = &[
     "data/game-data/377/gathering.json",
 ];
 
+struct HashingReader<R> {
+    inner: R,
+    hasher: Sha256,
+    bytes: u64,
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.inner.read(buffer)?;
+        self.hasher.update(&buffer[..count]);
+        self.bytes += count as u64;
+        Ok(count)
+    }
+}
+
+fn sha256_hex(digest: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut result = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    result
+}
+
+fn write_game_data_pack_identities(
+    out: &Path,
+    packs: &[(i32, String, String, u64)],
+) -> io::Result<()> {
+    let mut generated = String::from("&[\n");
+    for (revision, path, sha256, bytes) in packs {
+        generated.push_str(&format!(
+            "    GameDataPackIdentity {{ revision: {revision}, path: {path:?}, sha256: {sha256:?}, bytes: {bytes} }},\n"
+        ));
+    }
+    generated.push_str("]\n");
+    fs::write(out.join("game_data_pack_identities.rs"), generated)
+}
+
 fn main() -> io::Result<()> {
     println!("cargo:rustc-check-cfg=cfg(no_local_game_data)");
     println!("cargo:rustc-check-cfg=cfg(no_local_game_data_377)");
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_support/catalog_codegen.rs");
+    println!("cargo:rerun-if-changed=build_support/source_identity.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path_377.rs");
-    println!("cargo:rerun-if-changed=build_support/catalog_codegen.rs");
+
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    source_identity::bake(&manifest_dir)?;
+    fs::write(out.join("game_data_pack_identities.rs"), "&[]\n")?;
     if env::var_os("CARGO_FEATURE_EMBEDDED_GAME_DATA").is_none() {
         return Ok(());
     }
-    let manifest_dir =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
+
     let mut paths = Vec::with_capacity(LOCAL_ASSETS.len());
     let mut missing = false;
     for relative in LOCAL_ASSETS {
@@ -98,7 +147,6 @@ fn main() -> io::Result<()> {
     let gather_catalog_rust = catalog_codegen::gather_catalog_rust(&gather_catalog_json)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-    let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     fs::write(out.join("bank_catalog.rs"), bank_catalog_rust)?;
     fs::write(out.join("cook_catalog.rs"), cook_catalog_rust)?;
     fs::write(out.join("gather_camps.rs"), gather_catalog_rust.camps)?;
@@ -108,16 +156,29 @@ fn main() -> io::Result<()> {
         gather_catalog_rust.cook,
     )?;
     fs::write(out.join("quest_junk.rs"), gather_catalog_rust.quest_junk)?;
+
     let source_377 = (!missing_377).then(|| (377, &paths_377[0]));
+    let mut pack_identities = Vec::with_capacity(3);
     for (revision, source) in [(274, &paths[0]), (289, &paths[1])]
         .into_iter()
         .chain(source_377)
     {
-        let mut input = File::open(source)?;
+        let mut input = HashingReader {
+            inner: File::open(source)?,
+            hasher: Sha256::new(),
+            bytes: 0,
+        };
         let output = File::create(out.join(format!("game-data-{revision}.json.gz")))?;
         let mut encoder = GzEncoder::new(output, Compression::best());
         io::copy(&mut input, &mut encoder)?;
         encoder.finish()?;
+        pack_identities.push((
+            revision,
+            format!("data/game-data/{revision}.json"),
+            sha256_hex(input.hasher.finalize()),
+            input.bytes,
+        ));
     }
+    write_game_data_pack_identities(&out, &pack_identities)?;
     Ok(())
 }

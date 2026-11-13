@@ -489,6 +489,11 @@ impl Runner {
             self.0.set_map_members(play.map_members());
             self.0.set_obj_names(play.obj_names());
         }
+        let revision = session
+            .play()
+            .and_then(|play| play.game_data())
+            .map(|data| data.revision());
+        host_play::evidence_writer::record_scenario_sources(&mut self.0, revision);
     }
 }
 
@@ -2477,3 +2482,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod manifest_tests;
