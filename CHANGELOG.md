@@ -19,6 +19,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   starts over once after a missed update, so it can last up to 63 game ticks.
   If the poison state still cannot be confirmed, the walk stops and shows
   the reason, as before.
+- Vigroy's cart now requires Shilo Village completion on revision 289, as
+  its updated dialogue requires. On revision 274, the cart still accepts
+  accounts that have not completed the quest.
+- Accounts that have completed Hero's Quest can enter the Heroes' Guild
+  again after logging in. Only unchanged completion evidence from a fresh
+  login proves the final stage when ordinary quest colour is not enough.
+- Walks keep their quest evidence after an automatic bank trip and during
+  compat route checks. These paths could report no route through a quest
+  door even when the account met its requirements. Transport action checks
+  now keep the same evidence too.
 
 ### Login
 

@@ -1603,7 +1603,7 @@ globs = ["crates/scenario/src/quest_watch.rs"]
 cells = [
   "host.quest-watch-seed-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUEST_WATCH_ACCOUNT=${BOT_LIVE_NAME_PREFIX:?}qw QUEST_WATCH_PASSWORD=test QUEST_WATCH_SCENARIO=quest_watch_seed QUEST_WATCH_SEED=${PWD}/crates/host-play/tests/fixtures/quest-watch/priest.json ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed",
   "scenario.quest-watch-builder-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib quest_watch::tests:: -- --nocapture --test-threads=1|--locked -p scenario --lib quest_watch::tests:: --",
-  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --features api/test-support --lib world_speed --",
 ]
 
 # A live world-speed mutation is forbidden on Engine Q. Controlled runner tests prove exactly one initial command, zero restoration after pass/failure, original terminal result, and unchanged default behavior.
@@ -1612,7 +1612,7 @@ cells = [
 [[cover]]
 globs = ["crates/scenario/src/runner.rs"]
 cells = [
-  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib world_speed --",
+  "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib world_speed -- --nocapture --test-threads=1|--locked -p scenario --features api/test-support --lib world_speed --",
 ]
 
 # Exact shortage and once-only status text require controlled inventory/bank evidence; real provisioning cells do not deterministically force both shortages.
@@ -2056,3 +2056,40 @@ cells = [
   "panel.memory-completion-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib memory_run_",
 ]
 
+
+# The executor rechecks packed web actions at send and retry time.
+# Real content proves knife and worn-blade actions; controlled gated-web
+# tests separately prove that the same route evidence survives rechecks.
+[[cover]]
+globs = [
+  "crates/nav-executor/src/traveller.rs",
+  "crates/nav-executor/src/traveller/transport_hop.rs",
+  "crates/host-play/tests/web_cut_live.rs",
+]
+cells = [
+  "host.nav-web-actions|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test web_cut_live -- --ignored --exact live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions --nocapture --test-threads=1",
+]
+
+# Compat route inspection must retain the same qualified quest evidence
+# as the subsequent walk across the content's stage-window entrance.
+[[cover]]
+globs = [
+  "crates/host-play/src/script_interact.rs",
+  "crates/host-play/src/route_inspect.rs",
+  "crates/host-play/tests/nav_quest_evidence_live.rs",
+]
+cells = [
+  "host.nav-compat-quest-stage|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js,live-harness,test-support,live-probe --test nav_quest_evidence_live -- --ignored --exact real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild --nocapture --test-threads=1",
+]
+
+# A fare withdrawal must not remove a later quest-stage crossing when
+# the script walker replans from the bank.
+[[cover]]
+globs = [
+  "crates/host-play/src/script_walk.rs",
+  "crates/host-play/src/script_nav.rs",
+  "crates/host-play/src/bank_fetch_closed_live.rs",
+]
+cells = [
+  "host.nav-post-bank-quest-stage|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js,live-harness,test-support,live-probe --lib -- --ignored --exact bank_fetch_closed_live::live_fetch_closed_hero_guild_post_bank --nocapture --test-threads=1",
+]

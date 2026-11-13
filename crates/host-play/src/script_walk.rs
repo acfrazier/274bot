@@ -1977,7 +1977,12 @@ fn resume_final_route(
     if start == Some(from) {
         return;
     }
-    let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    // Replan with the exact quest evidence pinned by the admitted route.
+    state.quest_evidence = bot
+        .route_basis
+        .as_ref()
+        .and_then(|basis| basis.quest_evidence.clone());
     let opts = FindOptions {
         allow_bank_fetch: false,
         ..pending.opts

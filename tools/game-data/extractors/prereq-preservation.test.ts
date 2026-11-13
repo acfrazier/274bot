@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPrereqPreservation } from './prereq-preservation.ts';
+import { assertPrereqPreservation, postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
 import type { PrereqJournalWire, PrereqRowWire } from './prereq-steps.ts';
+import { parseRs2Blocks } from './gathering-content.ts';
 
 function row(proves: [number, number], after: [number, number]): PrereqRowWire {
     return {
@@ -264,3 +265,239 @@ withContent({
     );
 });
 
+withContent({
+    [constants]: '^left_complete = 12\n^right_complete = 34\n',
+    'scripts/quests/quest_fixture/scripts/requirements.rs2': `[proc,has_fixture_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`,
+    'scripts/guards.rs2': `[oploc1,blocked]
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    switch_int(~p_choice1("Proceed?", 1)) {
+        case 1:
+            %progress = 1;
+    }
+}
+[oploc1,reachable]
+if (%rightgang < ^right_complete) {
+    %progress = 2;
+}
+[oploc1,unknown]
+if (npc_find(coord, goblin, 10, 0) = true) {
+    %progress = 3;
+}
+`,
+}, (content) => {
+    const requirementFile = 'scripts/quests/quest_fixture/scripts/requirements.rs2';
+    const writerFile = 'scripts/guards.rs2';
+    const blocks = [
+        ...parseRs2Blocks(requirementFile, fs.readFileSync(path.join(content, requirementFile), 'utf8')),
+        ...parseRs2Blocks(writerFile, fs.readFileSync(path.join(content, writerFile), 'utf8')),
+    ];
+    const constants = new Map([['left_complete', 12], ['right_complete', 34]]);
+    const prerequisite = questCompletionPrerequisites(blocks, 'fixture', constants);
+    assert.notEqual(prerequisite, null);
+    const writerBlocks = blocks.filter((block) => block.span.file === writerFile);
+    const candidates = writerBlocks.map((block) => {
+        const assignment = block.body.find(({ text }) => /%progress\s*=/.test(text));
+        assert.ok(assignment, `${block.name} has a progress writer`);
+        return {
+            block,
+            line: assignment.line,
+            right: assignment.text.trim().replace(/^%progress\s*=\s*(.+?)\s*;?$/, '$1').trim(),
+        };
+    });
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        constants,
+        candidates,
+        prerequisite,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['2', '3']);
+});
+
+withContent({
+    [constants]: '^left_complete = 12\n',
+    'scripts/quests/quest_fixture/scripts/requirements.rs2': `[proc,has_fixture_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & inv_total(inv, coin) > 0) {
+    return(false);
+}
+return(true);
+`,
+}, (content) => {
+    const file = 'scripts/quests/quest_fixture/scripts/requirements.rs2';
+    const blocks = parseRs2Blocks(file, fs.readFileSync(path.join(content, file), 'utf8'));
+    assert.equal(questCompletionPrerequisites(blocks, 'fixture', new Map([['left_complete', 12]])), null);
+});
+
+for (const fixture of [
+    { call: 'queue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'queue*(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'weakqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'strongqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'longqueue(delayed, 30, 0);', extra: '', expected: ['2'], freshExpected: [] },
+    { call: 'queue(delayed, 30, 0);', extra: 'queue($unknown_target, 30, 0);', expected: ['2'], freshExpected: ['2'] },
+    { call: 'queue(delayed, 30, 0);', extra: 'queue(unbound_target, 30, 0);', expected: ['2'], freshExpected: ['2'] },
+    { call: '', extra: '', expected: ['2'], freshExpected: ['2'] },
+]) {
+    const blocks = parseRs2Blocks('scripts/queued-progress.rs2', `[opnpc1,root]
+if (%progress < 5) {
+    ${fixture.call}
+}
+${fixture.extra}
+[queue,delayed]
+%progress = 2;
+`);
+    const queued = blocks.find((block) => block.kind === 'queue')!;
+    const assignment = queued.body.find(({ text }) => text.includes('%progress ='))!;
+    const candidates = [{ block: queued, line: assignment.line, right: '2' }];
+    const possible = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), fixture.expected);
+    const afterLogin = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates, undefined, undefined, true,
+    );
+    assert.deepEqual(afterLogin.map(({ right }) => right), fixture.freshExpected);
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/post-login-queue.rs2', `[opnpc1,root]
+if (%progress >= 5) {
+    queue(delayed, 30, 0);
+}
+[queue,delayed]
+%progress = 2;
+`);
+    const queued = blocks.find((block) => block.kind === 'queue')!;
+    const assignment = queued.body.find(({ text }) => text.includes('%progress ='))!;
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        new Map(),
+        [{ block: queued, line: assignment.line, right: '2' }],
+        undefined,
+        undefined,
+        true,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['2'], 'a queue scheduled after completion remains possible');
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/direct-progress.rs2', `[opnpc1,root]
+if (%progress >= 5) {
+    %progress = 2;
+}
+`);
+    const entry = blocks.find((block) => block.kind === 'opnpc1')!;
+    const assignment = entry.body.find(({ text }) => text.includes('%progress ='))!;
+    const possible = postCompletionProgressWriters(
+        blocks,
+        'progress',
+        { min: 5, max: 5 },
+        new Map(),
+        [{ block: entry, line: assignment.line, right: '2' }],
+        '%progress < 5',
+        undefined,
+        true,
+    );
+    assert.deepEqual(possible, [], 'completion prerequisites exclude a direct contradictory writer');
+}
+
+{
+    const blocks = parseRs2Blocks('scripts/menu-progress.rs2', `[opnpc1,local_menu]
+def_int $option;
+if (%progress = 1) {
+    $option = ~three_options("First", 1, "Second", 2, "Special", 3);
+} else {
+    $option = ~two_options("First, please", 1, "Second", 2);
+}
+switch_int($option) {
+    case 3:
+        %progress = 2;
+}
+[opnpc1,procedure_menu]
+switch_int(~which_option) {
+    case 4:
+        %progress = 3;
+}
+[proc,which_option]()(int)
+if (%progress >= 4) {
+    return(~two_options("First", 1, "Second", 2));
+}
+return(~three_options("First", 1, "Second", 2, "Special", 4));
+[opnpc1,label_menu]
+if (%progress = 1) {
+    @write_option(8);
+} else {
+    @write_option(1);
+}
+[label,write_option](int $option)
+switch_int($option) {
+    case 8:
+        %progress = 4;
+}
+[opnpc1,unknown_menu]
+switch_int(~unknown_option) {
+    case 7:
+        %progress = 1;
+}
+[proc,unknown_option]()(int)
+return(stat(attack));
+[opnpc1,partial_assignment]
+def_int $option;
+if (%progress = 1) {
+    $option = 1;
+}
+switch_int($option) {
+    case 8:
+        %progress = 0;
+}
+[proc,two_options](string $first, int $one, string $second, int $two)(int)
+switch_component(last_com) {
+    case menu:first: return($one);
+    case default: return($two);
+}
+[proc,three_options](string $first, int $one, string $second, int $two, string $third, int $three)(int)
+switch_component(last_com) {
+    case menu:first: return($one);
+    case menu:second: return($two);
+    case default: return($three);
+}
+`);
+    const candidates = blocks.flatMap((block) => block.body.flatMap(({ line, text }) => {
+        const assignment = /^\s*%progress\s*=\s*(.+?)\s*;?$/.exec(text);
+        return assignment ? [{ block, line, right: assignment[1] }] : [];
+    }));
+    const possible = postCompletionProgressWriters(
+        blocks, 'progress', { min: 5, max: 5 }, new Map(), candidates,
+    );
+    assert.deepEqual(possible.map(({ right }) => right), ['1', '0']);
+}
+
+withContent({
+    'scripts/journal.rs2': `[opnpc1,menu]
+def_int $option;
+if (%progress = 1) {
+    $option = 3;
+} else {
+    $option = ~choose_two(1, 2);
+}
+switch_int($option) {
+    case 3:
+        %progress = 2;
+}
+[proc,choose_two](int $first, int $second)(int)
+switch_component(last_com) {
+    case panel:first: return($first);
+    case default: return($second);
+}
+`,
+}, (content) => assertPrereqPreservation(
+    content, [row([3, 5], [3, 5])], undefined, [journal([3, 5], [3, 5])],
+));

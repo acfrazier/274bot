@@ -107,6 +107,8 @@ fn facts_from_row(row: &QuestIdentityRow) -> QuestFacts {
         varp_id: row.varp_id,
         complete: row.complete,
         colour_authoritative: row.colour_authoritative,
+        completion_range: row.completion_range,
+        completion_range_after_login: row.completion_range_after_login,
         stage_domain: row.stage_domain,
         transmission: row.transmission,
         display: Arc::from(row.display.as_str()),
@@ -173,6 +175,11 @@ pub struct QuestFacts {
     pub varp_id: i32,
     pub complete: i32,
     pub colour_authoritative: bool,
+    /// Stage values reachable while the quest's completed list colour remains displayed.
+    pub completion_range: Option<crate::selected::InclusiveRange>,
+    /// Stage values retained from a fresh-login green quest-list observation.
+    #[serde(default)]
+    pub completion_range_after_login: Option<crate::selected::InclusiveRange>,
     pub stage_domain: Option<crate::selected::InclusiveRange>,
     pub transmission: Transmission,
     pub display: Arc<str>,

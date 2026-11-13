@@ -510,22 +510,80 @@ pub(super) fn boat_edges(
 // Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
 // ---------------------------------------------------------------------------
 
-/// Hajedy (`pack/npc.pack` id 510). His cart requires Shilo Village complete.
-/// Vigroy (511) has no journal gate. Identify the gated row by NPC id, not
-/// table position.
-const HAJEDY_NPC_ID: i32 = 510;
+/// Read the selected content, rather than assigning a gate by client revision:
+/// 274 Vigroy starts with the fare (`vigroy.rs2:15-30`); 289 first refuses an
+/// incomplete Shilo Village account (`vigroy.rs2:16-20`). Hajedy's dialogue has
+/// that refusal in both content trees (`hajedy.rs2:25-29`).
+fn cart_completion_gate(content_root: &Path, npc: i32) -> Option<bool> {
+    let (file, label) = match npc {
+        510 => (
+            "scripts/areas/area_brimhaven/scripts/hajedy.rs2",
+            "brimhavencartdriver_dialogue",
+        ),
+        511 => (
+            "scripts/areas/area_shilo/scripts/vigroy.rs2",
+            "shilocartdriver_dialogue",
+        ),
+        _ => return None,
+    };
+    let source = std::fs::read_to_string(content_root.join(file)).ok()?;
+    let mut blocks = script_blocks(&source)
+        .into_iter()
+        .filter(|(kind, name, _)| kind == "label" && name == label);
+    let body = blocks.next()?.2;
+    if blocks.next().is_some() {
+        return None;
+    }
+    let statements = top_level_statements(&body);
+    let mut path = statements.iter();
+    let first = path.next()?;
+    let compact_eq = |text: &str, expected: &str| {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .eq(expected.chars())
+    };
+    let gated = if let Some((head, arm)) = if_head_and_arm(first) {
+        if !compact_eq(&head, "%zombiequeen<^zombiequeen_complete") {
+            return None;
+        }
+        let inner = arm.trim().strip_prefix('{')?.strip_suffix('}')?;
+        let mut refusal = top_level_statements(inner);
+        if !compact_eq(&refusal.pop()?, "return;")
+            || refusal.is_empty()
+            || refusal.iter().any(|statement| {
+                !statement.starts_with("~chatnpc(\"") || !statement.ends_with("\");")
+            })
+        {
+            return None;
+        }
+        true
+    } else {
+        false
+    };
+    let fare = if gated { path.next()? } else { first };
+    if !compact_eq(fare, "def_int$amount=~calc_shilocart_cost();")
+        || path.any(|statement| statement.contains('%'))
+    {
+        return None;
+    }
+    Some(gated)
+}
 
-/// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
-/// keyed from the cart driver NPC's tile.
+/// Keep each cart's content gate and resolve its completed journal name.
 pub(super) fn cart_edges(
+    content_root: &Path,
     graph: &mut TransportGraph,
-    zombie_queen_name: Option<&str>,
+    shilo_village_name: Option<&str>,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
     for r in SHILO_CART_ROUTES {
-        let quest_req = if r.npc_id() == HAJEDY_NPC_ID {
-            let Some(name) = zombie_queen_name else {
-                bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
+        let Some(gated) = cart_completion_gate(content_root, r.npc_id()) else {
+            bump(skipped, SKIP_SHILO_CART_HANDLER, 1);
+            continue;
+        };
+        let quest_req = if gated {
+            let Some(name) = shilo_village_name else {
+                bump(skipped, SKIP_SHILO_CART_JOURNAL_NAME, 1);
                 continue;
             };
             vec![name.to_string()]

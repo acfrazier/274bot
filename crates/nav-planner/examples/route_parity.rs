@@ -102,6 +102,7 @@ fn quest_state(
     };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
+    snapshot.seed_tick(1);
     snapshot.seed_quest_statuses(
         catalog
             .iter()
@@ -126,6 +127,8 @@ fn quest_state(
             .collect(),
         true,
     );
+    // Each canonical account starts with its first post-login quest list.
+    snapshot.begin_fresh_login_quest_colours();
     let provider = CorpusEvidence {
         completion: QuestListEvidenceProvider::from_snapshot(
             &catalog,
@@ -1064,6 +1067,77 @@ fn main() -> Result<(), String> {
             "ready",
             legacy,
         );
+    }
+    for (account, complete) in [("incomplete", false), ("complete", true)] {
+        let mut state = rich_state();
+        if !complete {
+            state.quests.remove("Shilo Village");
+        }
+        for cart in nav_planner::transport::SHILO_CART_ROUTES {
+            cases.push(many(
+                &world,
+                Case {
+                    name: &format!("cart_{}_{account}", cart.npc_id()),
+                    from: cart.origin(),
+                    goals: &[cart.destination()],
+                    options: legacy,
+                    state: &state,
+                    account,
+                },
+            ));
+        }
+    }
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let quests = QuestCatalog::from_identity(data.quest_identity())
+        .map_err(|error| format!("catalog: {error:?}"))?;
+    for (account, colour) in [
+        ("not_started", 0xF80000),
+        ("in_progress", 0xF8F800),
+        ("complete", nav_planner::world_state::QUEST_COMPLETE_COLOUR),
+    ] {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_tick(1);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: "Hero's Quest".into(),
+                colour,
+            }],
+            true,
+        );
+        snapshot.begin_fresh_login_quest_colours();
+        let provider = QuestListEvidenceProvider::from_snapshot(
+            &quests,
+            SnapshotView::new(Some(&snapshot), stamp),
+        );
+        let state = WorldState::from_snapshot(&snapshot)
+            .with_map_members(true)
+            .with_quest_evidence(QuestEvidence::new(Arc::new(provider), stamp));
+        for (direction, from, to) in [
+            ("enter", tile(2899, 3510, 0), tile(2905, 3510, 0)),
+            ("leave", tile(2905, 3510, 0), tile(2899, 3510, 0)),
+        ] {
+            cases.push(many(
+                &world,
+                Case {
+                    name: &format!("heroes_guild_{direction}_{account}"),
+                    from,
+                    goals: &[to],
+                    options: legacy,
+                    state: &state,
+                    account,
+                },
+            ));
+        }
     }
     let mut transports: Vec<_> = world
         .graph

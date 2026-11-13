@@ -32617,7 +32617,7 @@ mod quest_route_evidence_tests {
         api::snapshot::WorldTile { x, z, level: 0 }
     }
 
-    fn gate_world(quest: api::selected::FactKey) -> Arc<NavWorld> {
+    fn gate_world(gate: QuestGate) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
         use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -32650,8 +32650,7 @@ mod quest_route_evidence_tests {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
-                    .expect("typed Complete gate"),
+                nav_planner::quest_gates::QuestGates::new([gate]).expect("typed quest gate"),
             ),
         };
         let mut graph = TransportGraph::default();
@@ -32837,7 +32836,10 @@ export default class T extends LoopingBot {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
 
-        let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
+        let rig = start_compat_route(
+            gate_world(QuestGate::Complete(quest.clone())),
+            Arc::clone(&selected),
+        );
         let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
         let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
         let mut driver = NavRec::default();
@@ -32901,7 +32903,10 @@ export default class T extends LoopingBot {
             ("unavailable list", QuestListFrame::Unavailable),
             ("unsupported status colour", QuestListFrame::Unsupported),
         ] {
-            let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
+            let rig = start_compat_route(
+                gate_world(QuestGate::Complete(quest.clone())),
+                Arc::clone(&selected),
+            );
             let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
             start_walk(&slot);
             let snapshot = quest_snapshot(&selected, frame);
@@ -32913,6 +32918,160 @@ export default class T extends LoopingBot {
             assert!(!bot.has_route(), "{label} must not open the typed gate");
             assert!(bot.walk_outcome_failed, "{label} must report no route");
         }
+    }
+
+    #[cfg(feature = "js")]
+    fn hero_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        fresh_login_green: bool,
+    ) -> GameSnapshot {
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let facts = quests.quest("hero").expect("Hero's Quest facts");
+        let mut snapshot = nav_frame_at(0, 0);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: facts.display.to_string(),
+                colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            }],
+            true,
+        );
+        if fresh_login_green {
+            snapshot.begin_fresh_login_quest_colours();
+        }
+        snapshot
+    }
+
+    #[cfg(feature = "js")]
+    fn dispatch_inspect_route(rig: &NavRig, snapshot: &GameSnapshot, request_id: u64) {
+        let from = tile(0, 0);
+        let to = tile(3, 0);
+        let request: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
+            "op": "inspect-route",
+            "x": to.x,
+            "z": to.z,
+            "level": to.level,
+            "from_x": from.x,
+            "from_z": from.z,
+            "from_level": from.level,
+            "allow_wilderness": true,
+            "request_id": request_id,
+        }))
+        .expect("InspectRoute request");
+        let bytes = script_js::wire::encode_interact_batch(&[request]);
+        let requests = script_js::wire::decode_interact_batch(&bytes).expect("InspectRoute batch");
+        let mut client = bank_client();
+        assert!(dispatch_script_interact(
+            &mut client,
+            snapshot,
+            None,
+            Some((from.x, from.z, from.level)),
+            &rig.navs,
+            &rig.world,
+            None,
+            "alice",
+            requests,
+        ));
+    }
+
+    #[cfg(feature = "js")]
+    fn await_inspection(rig: &NavRig, request_id: u64) -> (bool, Option<WorldTile>, String) {
+        let start = std::time::Instant::now();
+        loop {
+            crate::script_runtime::poll_inspection_for_test(&rig.navs, "alice");
+            let terminal = rig.navs.lock().unwrap().get("alice").and_then(|bot| {
+                bot.inspect
+                    .latest
+                    .as_ref()
+                    .filter(|terminal| terminal.request_id == request_id)
+                    .or_else(|| {
+                        bot.inspect
+                            .prev
+                            .as_ref()
+                            .filter(|terminal| terminal.request_id == request_id)
+                    })
+                    .cloned()
+            });
+            if let Some(terminal) = terminal {
+                return (
+                    terminal.ok,
+                    terminal.terminal,
+                    terminal.reason.as_str().to_owned(),
+                );
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(2),
+                "InspectRoute {request_id} did not publish"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn compatibility_inspect_route_captures_fresh_hero_evidence_and_owns_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = selected_r289();
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let hero = quests.quest("hero").expect("Hero's Quest facts");
+        let ordinary = hero
+            .completion_range
+            .expect("ordinary Hero completion range");
+        let after_login = hero
+            .completion_range_after_login
+            .expect("qualified Hero completion range");
+        assert_eq!((ordinary.min, ordinary.max), (Some(1), Some(15)));
+        assert_eq!((after_login.min, after_login.max), (Some(15), Some(15)));
+
+        let gate = QuestGate::Window(api::selected::StageWindow {
+            quest: hero.id.clone(),
+            signal: hero.varp.clone(),
+            values: after_login,
+        });
+        let rig = start_compat_route(gate_world(gate), Arc::clone(&selected));
+        let mut driver = NavRec::default();
+        let qualified = hero_snapshot(&selected, true);
+        assert!(qualified.quest_green_since_fresh_login(0));
+        observe(&rig, &mut driver, &qualified, 1, None);
+        assert!(
+            rig.navs.lock().unwrap()["alice"].quest_context.is_some(),
+            "the observed compatibility slot must own selected quest context"
+        );
+        dispatch_inspect_route(&rig, &qualified, 901);
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
+        }
+        drop(qualified);
+        let (opened_ok, opened_terminal, _) = await_inspection(&rig, 901);
+        assert!(opened_ok, "fresh-login Hero completion must open the gate");
+        assert_eq!(opened_terminal, Some(tile(3, 0)));
+
+        let no_context_snapshot = hero_snapshot(&selected, true);
+        dispatch_inspect_route(&rig, &no_context_snapshot, 902);
+        drop(no_context_snapshot);
+        let (no_context_ok, _, no_context_reason) = await_inspection(&rig, 902);
+        assert!(!no_context_ok, "a missing quest context must fail closed");
+        assert_eq!(no_context_reason, "NoPath");
+
+        let unqualified = hero_snapshot(&selected, false);
+        assert!(!unqualified.quest_green_since_fresh_login(0));
+        observe(&rig, &mut driver, &unqualified, 2, None);
+        assert!(
+            rig.navs.lock().unwrap()["alice"].quest_context.is_some(),
+            "the unqualified request must still have its catalog context"
+        );
+        dispatch_inspect_route(&rig, &unqualified, 903);
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
+        }
+        drop(unqualified);
+        let (weak_ok, _, weak_reason) = await_inspection(&rig, 903);
+        assert!(!weak_ok, "ordinary Hero completion must not prove stage 15");
+        assert_eq!(weak_reason, "NoPath");
     }
 
     #[derive(Default)]
@@ -32966,7 +33125,7 @@ export default class T extends LoopingBot {
         }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let world = gate_world(quest);
+        let world = gate_world(QuestGate::Complete(quest));
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("test slot");
         let shared = Arc::new(Mutex::new(Advice::default()));

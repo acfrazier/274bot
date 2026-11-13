@@ -4,9 +4,30 @@ import { walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 import type { PrereqJournalWire, PrereqRowWire, RangeWire } from './prereq-steps.ts';
+import { createProgressValueResolver, type Guard, type ProgressValueResolver } from './progress-values.ts';
 
-type Guard = { expression: string; polarity: boolean };
 type Statement = { text: string; line: number; guards: Guard[] };
+const selectorResolvers = new WeakMap<readonly Rs2Block[], WeakMap<ReadonlyMap<string, number>, ProgressValueResolver>>();
+function selectorResolver(blocks: readonly Rs2Block[], constants: ReadonlyMap<string, number>): ProgressValueResolver {
+    let byConstants = selectorResolvers.get(blocks);
+    if (!byConstants) {
+        byConstants = new WeakMap();
+        selectorResolvers.set(blocks, byConstants);
+    }
+    let resolver = byConstants.get(constants);
+    if (resolver) return resolver;
+    const statements = new Map<Rs2Block, Statement[]>();
+    resolver = createProgressValueResolver(blocks, constants, (block) => {
+        let cached = statements.get(block);
+        if (!cached) {
+            cached = parseProgressStatements(block, '', constants);
+            statements.set(block, cached);
+        }
+        return cached;
+    }, argumentsOf, stripStrings);
+    byConstants.set(constants, resolver);
+    return resolver;
+}
 type BlockRef = { id: string; block: Rs2Block; statements: Statement[]; entry: boolean };
 type CallEdge = { caller: string; guards: Guard[] };
 type WriterRhs = { kind: 'constant'; value: number } | { kind: 'increment' };
@@ -244,6 +265,142 @@ function dnf(expression: BoolExpr): Literal[][] {
     if (expression.kind === 'or') return [...left, ...right];
     return left.flatMap((a) => right.map((b) => [...a, ...b]));
 }
+type VariableComparison = { variable: string; operator: string; value: number };
+
+function comparisonForAnyVariable(text: string, constants: ReadonlyMap<string, number>): VariableComparison | null {
+    const value = outerParens(text);
+    const match = /^(.+?)\s*(>=|<=|!=|==|=|>|<)\s*(.+)$/.exec(value);
+    if (!match) return null;
+    const left = outerParens(match[1]);
+    const right = outerParens(match[3]);
+    const leftVariable = /^%([A-Za-z0-9_]+)$/.exec(left);
+    const rightVariable = /^%([A-Za-z0-9_]+)$/.exec(right);
+    if (leftVariable) {
+        const operand = constantValue(right, constants);
+        return operand !== undefined && Number.isSafeInteger(operand)
+            ? { variable: leftVariable[1], operator: match[2], value: operand }
+            : null;
+    }
+    if (rightVariable) {
+        const operand = constantValue(left, constants);
+        return operand !== undefined && Number.isSafeInteger(operand)
+            ? { variable: rightVariable[1], operator: reversedOperator(match[2]), value: operand }
+            : null;
+    }
+    return null;
+}
+
+function supportedBooleanExpression(expression: BoolExpr, constants: ReadonlyMap<string, number>): boolean {
+    if (expression.kind === 'atom') return comparisonForAnyVariable(expression.text, constants) !== null;
+    if (expression.kind === 'not') return supportedBooleanExpression(expression.child, constants);
+    return supportedBooleanExpression(expression.left, constants)
+        && supportedBooleanExpression(expression.right, constants);
+}
+
+function constrainedClauseCanHold(
+    clause: readonly Literal[],
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    domainForVariable?: (name: string) => RangeWire | null,
+) {
+    if (!Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max) || range.min > range.max) return true;
+    type IntegerDomain = { min: bigint | null; max: bigint | null; excluded: Set<bigint> };
+    const domains = new Map<string, IntegerDomain>();
+    const domainFor = (name: string) => {
+        let domain = domains.get(name);
+        if (!domain) {
+            const bounds = name === variable ? range : domainForVariable?.(name) ?? null;
+            if (bounds === null || !Number.isSafeInteger(bounds.min) || !Number.isSafeInteger(bounds.max) || bounds.min > bounds.max) {
+                domain = { min: null, max: null, excluded: new Set() };
+            } else {
+                domain = { min: BigInt(bounds.min), max: BigInt(bounds.max), excluded: new Set() };
+            }
+            domains.set(name, domain);
+        }
+        return domain;
+    };
+    for (const literal of clause) {
+        const comparison = comparisonForAnyVariable(literal.text, constants);
+        // Unknown guards stay possible unless supported constraints contradict the path.
+        if (!comparison) continue;
+        const operator = literal.negated ? negatedOperator(comparison.operator) : comparison.operator;
+        const domain = domainFor(comparison.variable);
+        const value = BigInt(comparison.value);
+        if (operator === '=' || operator === '==') {
+            domain.min = domain.min === null || value > domain.min ? value : domain.min;
+            domain.max = domain.max === null || value < domain.max ? value : domain.max;
+        } else if (operator === '!=') {
+            domain.excluded.add(value);
+        } else if (operator === '>') {
+            const min = value + 1n;
+            domain.min = domain.min === null || min > domain.min ? min : domain.min;
+        } else if (operator === '>=') {
+            domain.min = domain.min === null || value > domain.min ? value : domain.min;
+        } else if (operator === '<') {
+            const max = value - 1n;
+            domain.max = domain.max === null || max < domain.max ? max : domain.max;
+        } else if (operator === '<=') {
+            domain.max = domain.max === null || value < domain.max ? value : domain.max;
+        } else {
+            return true;
+        }
+        if (domain.min !== null && domain.max !== null && domain.min > domain.max) return false;
+    }
+    for (const domain of domains.values()) {
+        if (domain.min === null || domain.max === null) continue;
+        const size = domain.max - domain.min + 1n;
+        const excluded = [...domain.excluded].filter((value) => value >= domain.min! && value <= domain.max!).length;
+        if (size <= BigInt(excluded)) return false;
+    }
+    return true;
+}
+
+function guardsCanHoldWithPrerequisite(
+    guards: readonly Guard[],
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    prerequisite: BoolExpr,
+    domainForVariable?: (name: string) => RangeWire | null,
+) {
+    const expressions = guards.map(({ expression, polarity }) => {
+        const parsed = parseBool(expression);
+        return polarity ? parsed : negate(parsed);
+    });
+    expressions.push(prerequisite);
+    if (!supportedBooleanExpression(prerequisite, constants)) return true;
+    const combined = expressions.slice(1).reduce<BoolExpr>((left, right) => ({ kind: 'and', left, right }), expressions[0]);
+    return dnf(combined).some((clause) => constrainedClauseCanHold(clause, variable, range, constants, domainForVariable));
+}
+
+/** Read a quest's exact boolean requirement proc as a content-derived completion constraint. */
+export function questCompletionPrerequisites(
+    blocks: readonly Rs2Block[],
+    quest: string,
+    constants: ReadonlyMap<string, number>,
+): string | null {
+    const directory = `scripts/quests/quest_${quest}/`;
+    const procedures = blocks.filter((block) =>
+        block.kind === 'proc'
+        && block.name === `has_${quest}_quest_requirements`
+        && block.span.file.replace(/\\/g, '/').startsWith(directory));
+    if (procedures.length !== 1) return null;
+    let nodes: Node[];
+    try {
+        nodes = parseBody(procedures[0].body);
+    } catch {
+        return null;
+    }
+    if (nodes.length !== 2 || nodes[0].kind !== 'if' || nodes[0].els.length !== 0 || nodes[0].then.length !== 1) return null;
+    const failed = nodes[0].then[0];
+    const success = nodes[1];
+    if (failed.kind !== 'stmt' || !/^return\s*(?:\(\s*false\s*\)|false)\s*;?$/.test(failed.text)
+        || success.kind !== 'stmt' || !/^return\s*(?:\(\s*true\s*\)|true)\s*;?$/.test(success.text)) return null;
+    const condition = parseBool(nodes[0].cond);
+    if (!supportedBooleanExpression(condition, constants)) return null;
+    return `!(${nodes[0].cond})`;
+}
 
 function literalComparison(literal: Literal, variable: string, constants: ReadonlyMap<string, number>) {
     let comparison = comparisonAt(literal.text, variable, constants);
@@ -312,11 +469,15 @@ function argumentsOf(text: string, open: number) {
     const close = matchingParen(text, open);
     if (close < 0) return [];
     const inner = text.slice(open + 1, close);
+    if (inner.trim().length === 0) return [];
     const args: string[] = [];
     let depth = 0;
     let start = 0;
+    let inString = false;
     for (let index = 0; index < inner.length; index += 1) {
         const char = inner[index];
+        if (char === '"') { inString = !inString; continue; }
+        if (inString) continue;
         if (char === '(') depth += 1;
         else if (char === ')') depth -= 1;
         else if (char === ',' && depth === 0) { args.push(inner.slice(start, index).trim()); start = index + 1; }
@@ -343,7 +504,7 @@ function callTargets(text: string, labels: ReadonlyMap<string, BlockRef[]>, proc
     }
     for (const match of clean.matchAll(/~([A-Za-z0-9_]+)/g)) add(procs.get(match[1]));
     for (const name of ['gosub', 'queue', 'weakqueue', 'strongqueue', 'longqueue', 'settimer', 'softtimer']) {
-        const expression = new RegExp(`\\b${name}\\s*\\(`, 'g');
+        const expression = new RegExp(`\\b${name}\\s*\\*?\\s*\\(`, 'g');
         for (const match of clean.matchAll(expression)) {
             const open = clean.indexOf('(', match.index!);
             const first = argumentsOf(clean, open)[0];
@@ -390,13 +551,20 @@ function resolveCaseValue(text: string, constants: ReadonlyMap<string, number>) 
     return constantValue(text.trim(), constants);
 }
 
-type SwitchRange = { variable: string; start: number; end: number };
+type SwitchRange = { variable: string | null; selector: string; start: number; end: number };
 function switchRanges(block: Rs2Block): SwitchRange[] {
     const ranges: SwitchRange[] = [];
     for (let index = 0; index < block.body.length; index += 1) {
         const code = stripComment(block.body[index].text).trim();
-        const start = /\bswitch_int\s*\(\s*%([A-Za-z0-9_]+)\s*\)\s*\{/.exec(code);
+        const start = /\bswitch_(?:int|component)\s*\(/.exec(code);
         if (!start) continue;
+        const open = code.indexOf('(', start.index);
+        const close = matchingParen(code, open);
+        if (close < 0 || !/^\s*\{/.test(code.slice(close + 1))) continue;
+        const operand = code.slice(open + 1, close).trim();
+        const variableMatch = /^%([A-Za-z0-9_]+)$/.exec(operand);
+        // Computed selectors stay unconstrained, but their calls and every arm are scanned.
+        const variable = variableMatch?.[1] ?? null;
         let depth = 0;
         let end = index;
         for (let current = index; current < block.body.length; current += 1) {
@@ -404,15 +572,28 @@ function switchRanges(block: Rs2Block): SwitchRange[] {
             end = current;
             if (depth === 0) break;
         }
-        if (depth !== 0) throw new Error(`${block.span.file}:${block.body[index].line}: unclosed switch_int`);
-        ranges.push({ variable: start[1], start: index, end });
+        if (depth !== 0) throw new Error(`${block.span.file}:${block.body[index].line}: unclosed switch`);
+        ranges.push({ variable, selector: operand, start: index, end });
     }
     return ranges;
 }
 
-function switchStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>, ranges: readonly SwitchRange[]): Statement[] {
+function switchStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>, ranges: readonly SwitchRange[], parentNodes: Node[], resolveSelector?: ProgressValueResolver): Statement[] {
     const out: Statement[] = [];
     for (const range of ranges) {
+        const switchLine = block.body[range.start].line;
+        const outerGuards: Guard[] = [];
+        walkStatements(parentNodes, (statement, path) => {
+            if (statement.line === switchLine) {
+                outerGuards.push(...path.map((part) => ({ expression: part.cond, polarity: part.polarity })));
+            }
+        });
+        for (const previous of priorReturns(parentNodes)) {
+            if (previous.through < switchLine && switchLine <= previous.within) {
+                outerGuards.push({ expression: previous.condition, polarity: previous.polarity });
+            }
+        }
+        out.push({ text: range.selector, line: switchLine, guards: outerGuards });
         const nestedSwitchLines = new Set(ranges
             .filter((nested) => nested.start > range.start && nested.end < range.end)
             .flatMap((nested) => block.body.slice(nested.start, nested.end + 1).map((line) => line.line)));
@@ -428,7 +609,7 @@ function switchStatements(block: Rs2Block, variable: string, constants: Readonly
             }
             const nextDepth = depth + braceDelta(code);
             if (depth === 1) {
-                const header = /^\s*(case\s+(.+?)\s*:|default\s*:)(.*)$/.exec(code);
+                const header = /^\s*(case\s+((?:[A-Za-z_][A-Za-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*|[^:])+?)\s*:|default\s*:)(.*)$/.exec(code);
                 if (header) {
                     if (active) cases.push(active);
                     active = { header: header[1], body: [] };
@@ -450,20 +631,34 @@ function switchStatements(block: Rs2Block, variable: string, constants: Readonly
         for (const entry of cases) {
             const match = /^case\s+(.+?)\s*:$/.exec(entry.header);
             let guard: Guard | null = null;
-            if (range.variable === variable && match) {
+            if (range.variable !== null && match) {
                 const values = match[1].split(',').map((part) => resolveCaseValue(part, constants));
                 if (values.length > 0 && values.every((value): value is number => value !== undefined)) {
-                    guard = { expression: values.map((value) => `%${variable} = ${value}`).join(' | '), polarity: true };
+                    guard = { expression: values.map((value) => `%${range.variable} = ${value}`).join(' | '), polarity: true };
                 }
-            } else if (range.variable === variable && caseValues.length > 0) {
-                guard = { expression: caseValues.map((value) => `%${variable} != ${value}`).join(' & '), polarity: true };
+            } else if (range.variable !== null && caseValues.length > 0) {
+                guard = { expression: caseValues.map((value) => `%${range.variable} != ${value}`).join(' & '), polarity: true };
+            } else if (resolveSelector) {
+                const values = match ? match[1].split(',').map((part) => resolveCaseValue(part, constants)) : caseValues;
+                if (values.every((value): value is number => value !== undefined)) {
+                    const branches = resolveSelector(block, switchLine, range.selector, values, !match);
+                    if (branches !== null && !branches.some((branch) => branch.length === 0)) {
+                        const terms = branches.map((branch) => branch.map(({ expression, polarity }) =>
+                            polarity ? `(${expression})` : `!(${expression})`).join(' & '));
+                        guard = {
+                            expression: terms.length > 0 ? terms.map((term) => `(${term})`).join(' | ')
+                                : `%${variable} < 0 & %${variable} >= 0`,
+                            polarity: true,
+                        };
+                    }
+                }
             }
             if (entry.body.length === 0) continue;
             const nodes = parseBody(entry.body);
             const prior = priorReturns(nodes);
             walkStatements(nodes, (statement, path) => {
                 if (nestedSwitchLines.has(statement.line)) return;
-                const guards = [...(guard ? [guard] : []), ...path.map((part: PathCond) => ({ expression: part.cond, polarity: part.polarity }))];
+                const guards = [...outerGuards, ...(guard ? [guard] : []), ...path.map((part: PathCond) => ({ expression: part.cond, polarity: part.polarity }))];
                 for (const previous of prior) if (previous.through < statement.line && statement.line <= previous.within) guards.push({ expression: previous.condition, polarity: previous.polarity });
                 out.push({ text: statement.text, line: statement.line, guards });
             });
@@ -472,11 +667,17 @@ function switchStatements(block: Rs2Block, variable: string, constants: Readonly
     return out;
 }
 
-function parseStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>) {
-    const nodes = parseBody(block.body);
+/** Share the switch-aware statement walk with the exhaustive progress-writer census. */
+export function parseProgressStatements(
+    block: Rs2Block,
+    variable: string,
+    constants: ReadonlyMap<string, number>,
+    nodes: Node[] = parseBody(block.body),
+    resolveSelector?: ProgressValueResolver,
+) {
     const ranges = switchRanges(block);
     const switchLines = new Set(ranges.flatMap((range) => block.body.slice(range.start, range.end + 1).map((line) => line.line)));
-    const switches = switchStatements(block, variable, constants, ranges);
+    const switches = switchStatements(block, variable, constants, ranges, nodes, resolveSelector);
     const prior = priorReturns(nodes);
     const statements: Statement[] = [];
     walkStatements(nodes, (statement: Stmt, path: PathCond[]) => {
@@ -514,11 +715,11 @@ function parseWriter(file: string, line: number, rhs: string, variable: string, 
     return { kind: 'constant' as const, value: literal };
 }
 
-function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, constants: ReadonlyMap<string, number>) {
+function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, constants: ReadonlyMap<string, number>, resolveSelector?: ProgressValueResolver) {
     const blocks = sourceBlocks.map((block, index): BlockRef => ({
         id: `${block.span.file}#${index}`,
         block,
-        statements: parseStatements(block, variable, constants),
+        statements: parseProgressStatements(block, variable, constants, undefined, resolveSelector),
         entry: block.kind !== 'label' && block.kind !== 'proc',
     }));
     const labels = new Map<string, BlockRef[]>();
@@ -532,12 +733,19 @@ function controlGraph(sourceBlocks: readonly Rs2Block[], variable: string, const
         if (block.block.kind.startsWith('ai_queue')) (kinds.get('all_ai_queues\u0000') ?? kinds.set('all_ai_queues\u0000', []).get('all_ai_queues\u0000')!).push(block);
     }
     const reverse = new Map<string, CallEdge[]>();
+    let queueTargetsComplete = true;
     for (const block of blocks) for (const statement of block.statements) {
+        const clean = stripStrings(statement.text);
+        for (const call of clean.matchAll(/\b(?:queue|weakqueue|strongqueue|longqueue)\s*\*?\s*\(/g)) {
+            const open = clean.indexOf('(', call.index!);
+            const target = argumentsOf(clean, open)[0];
+            if (!target || !kinds.has(`queue\u0000${target}`)) queueTargetsComplete = false;
+        }
         for (const target of callTargets(statement.text, labels, procs, kinds)) {
             (reverse.get(target.id) ?? reverse.set(target.id, []).get(target.id)!).push({ caller: block.id, guards: statement.guards });
         }
     }
-    return { byId: new Map(blocks.map((block) => [block.id, block])), reverse };
+    return { byId: new Map(blocks.map((block) => [block.id, block])), reverse, queueTargetsComplete };
 }
 
 function buildGraph(content: string, variable: string, constants: ReadonlyMap<string, number>): ScriptGraph {
@@ -546,7 +754,7 @@ function buildGraph(content: string, variable: string, constants: ReadonlyMap<st
         const relative = path.relative(content, file).split(path.sep).join('/');
         blocks.push(...parseRs2Blocks(relative, fs.readFileSync(file, 'utf8')));
     }
-    const { byId, reverse } = controlGraph(blocks, variable, constants);
+    const { byId, reverse } = controlGraph(blocks, variable, constants, selectorResolver(blocks, constants));
     const writers: Writer[] = [];
     for (const block of byId.values()) for (const statement of block.statements) {
         const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`).exec(statement.text);
@@ -569,41 +777,65 @@ function hasEntryPath(writer: Pick<Writer, 'block'>, graph: ScriptGraph) {
     return visit(writer.block.id, new Set());
 }
 
-function feasiblePaths(writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
+function feasiblePaths(
+    writer: Pick<Writer, 'block' | 'guards' | 'reviewed'>,
+    graph: ScriptGraph,
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+    prerequisite: BoolExpr | null = null,
+    domainForVariable?: (name: string) => RangeWire | null,
+) {
     const out: Guard[][] = [];
     const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
+    const canHold = (guards: readonly Guard[]) => prerequisite
+        ? guardsCanHoldWithPrerequisite(guards, variable, range, constants, prerequisite, domainForVariable)
+        : guardsCanHold(guards, variable, range, constants);
     const hasPath = hasEntryPath(writer, graph);
     const visit = (blockId: string, guards: Guard[], seen: Set<string>) => {
         const block = graph.byId.get(blockId)!;
         if (block.entry) {
-            if (guardsCanHold([...guards, ...reviewedGuard], variable, range, constants)) out.push([...guards, ...reviewedGuard]);
+            if (canHold([...guards, ...reviewedGuard])) out.push([...guards, ...reviewedGuard]);
             return;
         }
         if (seen.has(blockId)) return;
         const nextSeen = new Set(seen).add(blockId);
         for (const edge of graph.reverse.get(blockId) ?? []) {
             const next = [...guards, ...edge.guards];
-            if (!guardsCanHold([...next, ...reviewedGuard], variable, range, constants)) continue;
+            if (!canHold([...next, ...reviewedGuard])) continue;
             visit(edge.caller, next, nextSeen);
         }
     };
     visit(writer.block.id, writer.guards, new Set());
     if (!hasPath && reviewedGuard.length) {
         const guards = [...writer.guards, ...reviewedGuard];
-        if (guardsCanHold(guards, variable, range, constants)) out.push(guards);
+        if (canHold(guards)) out.push(guards);
     }
     return out;
 }
 
-/** Possible non-idempotent writes from completion; unresolved callers stay possible. */
+/** Fresh-login mode gates only statically bound future queues by their scheduling paths. */
 export function postCompletionProgressWriters(
     blocks: readonly Rs2Block[],
     variable: string,
     completed: RangeWire,
     constants: ReadonlyMap<string, number>,
     candidates: readonly { block: Rs2Block; line: number; right: string }[],
+    completionPrerequisite?: string | null,
+    domainForVariable?: (name: string) => RangeWire | null,
+    afterFreshLogin = false,
 ) {
-    const graph: ScriptGraph = { ...controlGraph(blocks, variable, constants), writers: [] };
+    const parsedPrerequisite = completionPrerequisite ? parseBool(completionPrerequisite) : null;
+    const prerequisite = parsedPrerequisite && supportedBooleanExpression(parsedPrerequisite, constants)
+        ? parsedPrerequisite : null;
+    const graph = { ...controlGraph(blocks, variable, constants, selectorResolver(blocks, constants)), writers: [] as Writer[] };
+    if (afterFreshLogin && graph.queueTargetsComplete) {
+        for (const block of graph.byId.values()) {
+            if (block.block.kind === 'queue') block.entry = false;
+        }
+    }
+    // Default keeps queues as possible pending writes because they may predate completion.
+    // Fresh-login mode constrains them only when every queue target is bound.
     const byBlock = new Map([...graph.byId.values()].map((block) => [block.block, block]));
     const assignment = new RegExp(`^%${variable}\\s*=\\s*(.+?)\\s*;?$`);
     const possible: { file: string; line: number; right: string }[] = [];
@@ -623,7 +855,7 @@ export function postCompletionProgressWriters(
         // Expression calls may not have an edge. Missing callers cannot prove
         // that a writer is dead, just as for journal preservation.
         if (!hasEntryPath(writer, graph)) block.entry = true;
-        if (feasiblePaths(writer, graph, variable, completed, constants).length > 0) {
+        if (feasiblePaths(writer, graph, variable, completed, constants, prerequisite, domainForVariable).length > 0) {
             possible.push(site);
         }
     }

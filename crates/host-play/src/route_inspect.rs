@@ -2417,6 +2417,7 @@ pub(super) struct InspectRequest {
     pub avoid: Vec<AvoidRect>,
     pub request_id: u64,
     pub invalid_args: bool,
+    pub state_capture_failed: bool,
 }
 
 pub(super) fn validate_request(
@@ -2496,7 +2497,9 @@ fn queue_inspect_captured(
             bot.inspect.refuse_unreserved(req.request_id);
             return;
         }
-        if req.invalid_args
+        if req.state_capture_failed {
+            refuse_locked(bot, req.request_id, "spawn-failed");
+        } else if req.invalid_args
             || req.max_expansions.is_some_and(|limit| limit == 0)
             || validate_request(req.from, req.to, &req.avoid).is_err()
         {
@@ -2518,6 +2521,10 @@ fn queue_inspect_captured(
         }
         if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
             bot.inspect.refuse_unreserved(req.request_id);
+            return;
+        }
+        if req.state_capture_failed {
+            refuse_locked(bot, req.request_id, "spawn-failed");
             return;
         }
         if req.invalid_args

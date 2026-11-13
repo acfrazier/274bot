@@ -283,6 +283,32 @@ The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
 
+## Quest evidence at route boundaries
+
+The route request owns its selected quest evidence. The same evidence must
+reach route inspection, a route resumed after an automatic bank trip, and
+transport action checks. A green quest row alone does not prove an exact
+quest stage. The provider uses the selected content's completion ranges and,
+where proved by that content, unchanged green from the first stable cold
+login. A later colour change invalidates that login proof.
+
+These Engine A cells cover the three product paths:
+
+| Cell | Required result |
+|---|---|
+| `host.nav-post-bank-quest-stage` | A real walk fetches its missing travel fare from a bank, resumes the requested route, and crosses the Heroes' Guild entrance. The account's completed quests and bank stock are pre-Start fixtures; neither the bank trip nor the crossing is injected. |
+| `host.nav-compat-quest-stage` | A real compat `Traversal.walkTo` call inspects the route and crosses the Heroes' Guild entrance with qualified completion evidence. |
+| `host.nav-web-actions` | Fresh accounts cross both Mage Arena webs using a knife and a worn slash weapon. Each attempt must record the content action, the changed web location, arrival, and clean logout. |
+
+The web receipt counts all packed web actions and those with quest gates.
+If the latter count is zero, the live cell proves real web action selection
+and retry behavior, not a quest-gated web that the content does not contain.
+The executor's controlled gated-web tests separately require the same owned
+quest evidence at the initial action, cut retry, and recheck after approach.
+The Heroes' Guild cells use the real content stage window in both route
+planning and execution. They do not replace that window with a completion
+predicate or read the server's quest variable as product evidence.
+
 ## Death recovery
 
 `host.gatherer-death-return` runs the `gatherer_death_return` test in

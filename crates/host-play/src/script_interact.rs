@@ -930,8 +930,33 @@ where
                     level: from_level,
                 };
                 let to = WorldTile { x, z, level };
-                let empty_state = WorldState::empty();
-                let route_state = state.map(Arc::as_ref).unwrap_or(&empty_state);
+                let quest_context = navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .and_then(|bot| bot.quest_context.clone());
+                let route_state = super::script_nav::route_world_state(snapshot, state.cloned());
+                let route_state = match super::script_nav::patch_route_quest_evidence(
+                    route_state,
+                    super::script_nav::captured_service_quests(
+                        quest_context.as_ref(),
+                        snapshot,
+                        None,
+                    ),
+                ) {
+                    Ok(state) => Some(state),
+                    Err(_) => {
+                        host_log!(
+                            Category::NavTrace,
+                            Level::Warn,
+                            slot = name,
+                            "inspect route refused quest evidence allocation"
+                        );
+                        None
+                    }
+                };
+                let state_capture_failed = route_state.is_none();
+                let route_state_ref = route_state.as_deref();
                 let opts = super::walk_permissions::compiled_options(
                     navs,
                     name,
@@ -942,8 +967,8 @@ where
                         ..FindOptions::default()
                     },
                 );
-                let (zones, rects, invalid_args) = match world.as_ref() {
-                    Some(world) => {
+                let (zones, rects, invalid_args) = match (world.as_ref(), route_state_ref) {
+                    (Some(world), Some(route_state)) => {
                         match super::script_nav::resolve_route_exclusions(
                             opts,
                             world,
@@ -964,13 +989,14 @@ where
                             }
                         }
                     }
-                    None => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
+                    (Some(_), None) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), false),
+                    (None, _) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
                 route_inspect::queue_inspect_shared(
                     navs,
                     name,
                     world,
-                    state,
+                    route_state.as_ref(),
                     super::slot_bank_memory::planner_rows(bank),
                     cache.clone(),
                     obj_names_arc.clone(),
@@ -985,6 +1011,7 @@ where
                         request_id,
                         max_expansions,
                         invalid_args,
+                        state_capture_failed,
                     },
                 );
                 wrote = true;

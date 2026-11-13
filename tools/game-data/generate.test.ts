@@ -49,6 +49,7 @@ import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './gather-catalog.test.ts';
+import './extractors/progress-values.test.ts';
 import './quest-junk.test.ts';
 import './extractors/prereq-preservation.test.ts';
 import './extractors/prereq-journal-proof.test.ts';
@@ -1739,6 +1740,20 @@ function questFixture(mutate?: (files: Record<string, string>) => void) {
     writeQuestFixture(rootDir, mutate);
     return rootDir;
 }
+
+function addCookColourMetadata(files: Record<string, string>) {
+    files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
+if ($progress = 0) {
+    if_setcolour($component, ^red_rgb);
+} else if ($progress >= $complete_progress) {
+    if_setcolour($component, ^green_rgb);
+} else {
+    if_setcolour($component, ^yellow_rgb);
+}
+`;
+    files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+    files['scripts/quests/quest_cook/scripts/complete.rs2'] = '[oploc3,cook_finish]\nif (%cookquest = 1) { %cookquest = ^cook_complete; }\n';
+}
 function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
     const byId = Object.fromEntries(facts.rows.map((row) => [row.id, row]));
     assert.deepEqual(['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris'].map((id) => byId[id]?.id), ['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris']);
@@ -1782,6 +1797,23 @@ assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverag
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
+
+if (process.env.GAME_DATA_289_CONTENT) {
+    const real289 = extractQuestIdentityFacts(process.env.GAME_DATA_289_CONTENT, 289);
+    const hero = real289.rows.find((row) => row.id === 'hero');
+    assert.ok(hero, 'the real 289 quest rows include Hero');
+    assert.equal(hero.colour_authoritative, false, 'Hero keeps weak raw colour authority for the queued Grip reset');
+    assert.ok(hero.completion_range, 'Hero has a full post-completion range');
+    assert.ok(
+        hero.completion_range.min <= 5 && hero.completion_range.max >= 5,
+        'Hero ordinary range retains the queued Grip reset to 5',
+    );
+    assert.deepEqual(
+        hero.completion_range_after_login,
+        { min: 15, max: 15 },
+        'Hero fresh-login range excludes the pre-completion Grip reset',
+    );
+}
 
 for (const [writer, expected] of [
     ['^cook_complete', { min: 0, max: 2 }],
@@ -1830,16 +1862,7 @@ for (const [entry, writer, maximum, authoritative] of [
     ['if (%cookquest = 5) { @cook_revisit; }', '1', 5, false],
 ] as const) {
     const root = questFixture((files) => {
-        files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
-if ($progress = 0) {
-    if_setcolour($component, ^red_rgb);
-} else if ($progress >= $complete_progress) {
-    if_setcolour($component, ^green_rgb);
-} else {
-    if_setcolour($component, ^yellow_rgb);
-}
-`;
-        files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+        addCookColourMetadata(files);
         files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[oploc1,cook_start]
 ${entry}
 [label,cook_revisit]
@@ -1864,6 +1887,191 @@ if (%cookquest = 0) { %cookquest = ${maximum}; }
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+for (const [guard, authoritative, completionRange, afterLoginRange] of [
+    [
+        '%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete',
+        true,
+        { min: 2, max: 2 },
+        { min: 2, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete',
+        false,
+        { min: 1, max: 2 },
+        { min: 1, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete & npc_find(coord, cook, 10, 0) = true',
+        false,
+        { min: 1, max: 2 },
+        { min: 1, max: 2 },
+    ],
+] as const) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^blackarmgang_complete = 12\n^phoenixgang_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/areas/area_test/scripts/prerequisite-writer.rs2'] = `[opnpc1,prerequisite_writer]
+if (${guard}) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, authoritative, `post-completion writer uses its full content prerequisite: ${guard}`);
+        assert.deepEqual(row?.completion_range, completionRange, `post-completion range includes reachable writes: ${guard}`);
+        assert.deepEqual(row?.completion_range_after_login, afterLoginRange, `fresh-login range preserves prerequisite reachability: ${guard}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const fixture of [
+    {
+        name: 'pre-completion queue',
+        schedule: 'if (%cookquest < ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 2, max: 2 },
+    },
+    {
+        name: 'post-completion queue',
+        schedule: 'if (%cookquest >= ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 1, max: 2 },
+    },
+    {
+        name: 'dynamic queue target',
+        schedule: 'queue($dynamic_target, 30, 0);',
+        afterLogin: { min: 1, max: 2 },
+    },
+]) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/queued-reset.rs2'] = `[opnpc1,schedule_reset]
+${fixture.schedule}
+[queue,reset_cook]
+%cookquest = 1;
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, `${fixture.name}: ordinary authority retains queued writes`);
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 }, `${fixture.name}: ordinary range includes pending queued resets`);
+        assert.deepEqual(row?.completion_range_after_login, fixture.afterLogin, `${fixture.name}: fresh-login range uses empty-queue reachability`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-bounds.rs2'] = `[proc,left_progress]()
+def_int $option = ~p_choice2("Choose", 1, "Other", 2);
+switch_int($option) {
+    case 1:
+        if (%leftgang < ^left_complete) %leftgang = ^left_complete;
+    case 2:
+        %leftgang = 1;
+}
+[proc,right_progress]()
+%rightgang = ^right_complete;
+[opnpc1,old_stage_writer]
+if (%cookquest < 2) {
+    switch_int(~old_stage_choice) {
+        case 1:
+            if (%cookquest < 2) %cookquest = 1;
+    }
+}
+[proc,old_stage_choice]()(int)
+%cookquest = 1;
+return(1);
+`;
+        files['scripts/areas/area_test/scripts/bounded-writer.rs2'] = `[opnpc1,bounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, true, 'content-derived prerequisite varp domains exclude the apparent reset');
+        assert.deepEqual(row?.completion_range, { min: 2, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const progressWriter of [
+    `if (%leftgang >= ^left_complete) {
+    return;
+}
+while (true) {
+    %leftgang = add(%leftgang, 1);
+}`,
+    'if (true) { %leftgang = ^left_complete; } %leftgang += 1;',
+]) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-unbounded.rs2'] = `[proc,left_progress]()
+${progressWriter}
+[proc,right_progress]()
+%rightgang = ^right_complete;
+`;
+        files['scripts/areas/area_test/scripts/unbounded-writer.rs2'] = `[opnpc1,unbounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'an unbounded or unaccounted prerequisite writer keeps the later reset possible');
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/transitive-reset.rs2'] = `[opnpc1,transitive_reset]
+if (%cookquest = ^cook_complete) {
+    %cookquest = 1;
+}
+if (%cookquest = 1) {
+    %cookquest = 0;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'a reset reachable after the first post-completion reset keeps authority weak');
+        assert.deepEqual(row?.completion_range, { min: 0, max: 2 }, 'completion range closes over transitive resets');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
 const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289);
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);
@@ -2115,7 +2323,7 @@ assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'trol
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
     const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
     assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
-    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'completion_range', 'completion_range_after_login', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
     for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
     const first = familyBytes(draft, 'quests');
     const envelope = JSON.parse(first);
