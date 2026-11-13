@@ -118,8 +118,8 @@ const KARAMJA: WorldTile = WorldTile {
 };
 #[cfg(feature = "js")]
 const HEROES_GUILD_INSIDE: WorldTile = WorldTile {
-    x: 2824,
-    z: 3438,
+    x: 2905,
+    z: 3510,
     level: 0,
 };
 
@@ -583,8 +583,10 @@ pub(crate) fn final_route_lines(
     )
 }
 #[cfg(feature = "js")]
-fn hero_guild_window_edge(world: &NavWorld) -> Option<&nav_planner::transport::TransportEdge> {
-    world.graph.edges.iter().find(|edge| {
+fn hero_guild_window_edges(
+    world: &NavWorld,
+) -> impl Iterator<Item = &nav_planner::transport::TransportEdge> {
+    world.graph.edges.iter().filter(|edge| {
         edge.quest_gates.as_ref().is_some_and(|gates| {
             gates.gates().iter().any(|gate| {
                 matches!(
@@ -626,7 +628,7 @@ fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWal
                 .map(|route| final_route_lines(&route, world))
         });
     let quest_evidence_truth = bot.and_then(|bot| {
-        let edge = hero_guild_window_edge(world)?;
+        let edge = hero_guild_window_edges(world).next()?;
         let gates = edge.quest_gates.as_ref()?;
         let gate = gates.gates().iter().find(|gate| {
             matches!(
@@ -849,8 +851,9 @@ fn run_cell(variant: Variant) {
             world.collision.standable(HEROES_GUILD_INSIDE),
             "the destination is inside the selected Heroes' Guild"
         );
-        let edge =
-            hero_guild_window_edge(&world).expect("selected pack's Heroes' Guild Window[15,15]");
+        let edge = hero_guild_window_edges(&world)
+            .next()
+            .expect("selected pack's Heroes' Guild Window[15,15]");
         trace.lock().content_gate = Some(format!("{edge:?}"));
     }
     let start_tile = match variant {
@@ -1368,8 +1371,12 @@ fn run_cell(variant: Variant) {
                         }
                         if hero_guild && walk.steps.is_none() {
                             let mut guard = trace.lock();
-                            guard.resumed_route_legs = walk.final_route.clone();
-                            guard.resume_gate_truth = walk.quest_evidence_truth.clone();
+                            if let Some(route) = walk.final_route {
+                                guard.resumed_route_legs = Some(route);
+                            }
+                            if let Some(truth) = walk.quest_evidence_truth {
+                                guard.resume_gate_truth = Some(truth);
+                            }
                         }
                         script_session = walk.steps.is_some();
                         if walk.failed {
@@ -1403,14 +1410,19 @@ fn run_cell(variant: Variant) {
                         let expected_withdraw = variant.expected_withdraw();
                         #[cfg(feature = "js")]
                         let hero_gate_in_route = if hero_guild {
-                            let edge = hero_guild_window_edge(&world)
-                                .expect("selected pack's Heroes' Guild stage-window edge");
-                            let marker =
-                                format!("loc={} at={:?} to={:?}", edge.loc_id, edge.at, edge.to);
                             guard.resumed_route_legs.as_ref().is_some_and(|legs| {
-                                legs.iter().any(|line| {
-                                    line.contains(&marker) && line.contains("quest_gate=true")
-                                })
+                                hero_guild_window_edges(&world)
+                                    .filter(|edge| edge.to.x > edge.at.x)
+                                    .any(|edge| {
+                                        let marker = format!(
+                                            "loc={} at={:?} to={:?}",
+                                            edge.loc_id, edge.at, edge.to
+                                        );
+                                        legs.iter().any(|line| {
+                                            line.contains(&marker)
+                                                && line.contains("quest_gate=true")
+                                        })
+                                    })
                             })
                         } else {
                             true
