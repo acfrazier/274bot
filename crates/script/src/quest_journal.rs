@@ -1,5 +1,7 @@
 //! Owned native journal reads.
 
+#[path = "quest_journal/dragon_stage.rs"]
+pub mod dragon_stage;
 #[path = "quest_journal/native.rs"]
 mod native;
 pub use native::ROOT_289;

@@ -169,7 +169,7 @@ pub(super) fn bundled_index_for(revision: ClientRevision) -> &'static ReleaseInd
     }
 }
 
-fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]> {
+pub(super) fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]> {
     if revision != ClientRevision::R377 {
         return bundled_path(id);
     }

@@ -33,6 +33,7 @@ pub(crate) mod paint_jive;
 pub(crate) mod partner_trade_v8;
 pub(crate) mod progress_methods_v8;
 pub(crate) mod quest_facts_v8;
+pub(crate) mod quest_records_v8;
 pub(crate) mod reach_query;
 pub(crate) mod run_policy_v8;
 pub(crate) mod rune_routes_v8;

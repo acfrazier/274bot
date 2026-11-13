@@ -70,6 +70,8 @@ const ADDITIONAL_FAMILY_POLICIES = [
 const MODULE_RULES = [
     ['@rs2b0t/api', { id: 'compat-runtime', nav: false }],
     ['api/ai/clues/', { id: 'clues', nav: true }],
+    // Reads the quest journal through the questlog's native read; it does not walk.
+    ['api/ai/quests/defs/dragonslayer/journal.js', { id: 'questlog', nav: false }],
     ['api/ai/quests/', { id: 'quests', nav: true }],
     ['api/combat/hunting/', { id: 'hunt', nav: true }],
     ['api/combat/', { id: 'combat', nav: false }],

@@ -57,6 +57,38 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 
+### Scripts
+
+- The catalog script AccountLeveler now loads. It imports four rs2b0t modules
+  that 274bot did not provide, so its card showed **failed import**.
+  - The Dragon Slayer journal reader returns the quest stage, which the host
+    reads from the Dragon Slayer quest journal the same way it reads other quest
+    journals. Stages are the game's own: not started 0, spoke to the
+    Guildmaster 1, spoke to Oziach 2, bought the ship 3, repaired the ship 7,
+    Ned has the map 8, sailed to Crandor 9, complete 10. It does not return the
+    journal flags that rs2b0t's reader returns, because no catalog script reads
+    them. If the ship is bought before Oziach has given all three hints, the
+    journal shows the same line as stage 2, so the reader returns 2 instead of 3.
+  - The quest records are built from the game's quests: name, quest points, and
+    the quest's start requirements (quest points, skill levels, earlier quests)
+    from the quest guides. Only quests that have a guide list requirements. The
+    records have no item lists, because no catalog script reads them. The Knight's
+    Sword lists Cooking 10 but not Mining 10, because its guide marks Mining 10
+    as a materials requirement, not a start requirement.
+  - The desktop storage that AccountLeveler saves its progress in is kept in the
+    script settings store, so AccountLeveler's progress survives a restart. Only
+    reading and writing one value work. Removing, listing, comparing and
+    subscribing refuse, and one saved value is at most 64 KiB.
+  - The script-stopped error class is provided.
+  - The quest list of rs2b0t scripts (`Quests.all()` and `Quests.status()`) no
+    longer fails with `not impl: Quests` while the quest tab has not posted its
+    quests. As in rs2b0t, the list is then empty and every status is `unknown`.
+    A new account on Tutorial Island is in that state, and AccountLeveler reads
+    the list when it paints and when it chooses what to train.
+  - AccountLeveler, unchanged, ran ten game ticks without a script error on a
+    test server, once on a new Tutorial Island account and once on a mainland
+    account. That was a start-and-run check, not a full training session.
+
 ### Scenario receipts
 
 - Scenario receipts retain ordered step intentions, dispatch results, observed

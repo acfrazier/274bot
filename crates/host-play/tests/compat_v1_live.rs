@@ -1609,7 +1609,7 @@ fn compat_v1_runtime_frame_live() {
 fn run_runtime_account_leveler_frame_probe_cell(receipt: &mut Receipt) -> Result<(), String> {
     receipt.probe_source = Some(RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned());
     receipt.coverage_notes.push(
-        "The listener body copies pinned AccountLeveler.ts:96-103. This normal-Load probe is not AccountLeveler Catalog-card coverage. The catalog card is wave-4-blocked by its private journal.js import at line 17.".into(),
+        "The listener body copies pinned AccountLeveler.ts:96-103. This normal-Load probe is not AccountLeveler Catalog-card coverage. The Catalog card runs in compat_v1_account_leveler_dragon_live.".into(),
     );
     let mut session = session("compat-v1-runtime-accountleveler-frame", receipt)?;
     start_script(&session, RUNTIME_ACCOUNT_LEVELER_FRAME_SOURCE.to_owned())?;
@@ -1659,6 +1659,223 @@ fn compat_v1_runtime_account_leveler_frame_live() {
         "compat_v1_runtime_account_leveler_frame",
         run_runtime_account_leveler_frame_probe_cell,
     )
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+fn instrument_account_leveler_dragon_probe(js: &mut String) -> Result<(), String> {
+    replace_once(
+        js,
+        "export default class AccountLeveler extends LoopingBot {",
+        "class AccountLeveler extends LoopingBot {",
+    )?;
+    js.insert_str(0, "import { runMachine } from '../../shim/_kernel.js';\n");
+    js.push_str(
+        r#"
+export default class CompatAccountLevelerDragonProbe extends AccountLeveler {
+    onStart() {
+        this.log('DRAGON:LOAD_OK');
+    }
+    // Replaces the card's paint: this probe reads journal stages only. The unmodified card, paint included, runs in the unmodified cells.
+    onPaint() {}
+    async loop() {
+        const raw = await runMachine('quest-progress', { quest: 'Dragon Slayer', journal_only: true });
+        this.log('DRAGON:RAW:' + JSON.stringify(raw).slice(0, 1800));
+        const progress = await readDragonProgress();
+        this.log('DRAGON:STAGE:' + (progress?.stage ?? '<none>'));
+        await Execution.delayTicks(3);
+    }
+    onStop() {
+        this.log('DRAGON:STOP');
+    }
+}
+"#,
+    );
+    Ok(())
+}
+
+/// The Dragon Slayer stage (`%dragonquest`) each seeded journal must read as.
+/// The hints varps make stages 2 and 3 show the journal lines they show once
+/// Oziach has told the player everything (`dragon_journal.rs2:26-34`).
+const DRAGON_CASES: &[(&[&str], &str)] = &[
+    (
+        &[
+            "setvar dragon_oracle 1",
+            "setvar dragon_shield 1",
+            "setvar dragon_goblin 1",
+            "setvar dragonquestvar 0",
+            "setvar dragonquest 3",
+        ],
+        "3",
+    ),
+    (&["setvar dragonquestvar 3", "setvar dragonquest 7"], "7"),
+    (&["setvar dragonquestvar 0", "setvar dragonquest 2"], "2"),
+    (&["setvar dragonquest 8"], "8"),
+    (&["setvar dragonquest 9"], "9"),
+    (&["setvar dragonquest 1"], "1"),
+    (&["setvar dragonquest 10"], "10"),
+    (&["setvar dragonquest 0"], "0"),
+];
+
+fn run_account_leveler_dragon_cell(receipt: &mut Receipt) -> Result<(), String> {
+    receipt.coverage_notes.push(
+        "The real AccountLeveler Catalog card loads and starts. A subclass REPLACES onStart, loop AND onPaint: onStart and loop become one readDragonProgress call per loop that logs the stage, and onPaint is empty. This cell therefore proves the journal-stage reads only, not normal AccountLeveler operation; the unmodified card runs in compat_v1_account_leveler_unmodified_fresh_live and compat_v1_account_leveler_unmodified_mainland_live. The account's own Dragon Slayer varps are set with cheats.".into(),
+    );
+    let mut session = session("compat-v1-account-leveler-dragon", receipt)?;
+    // The quest tab's rows are posted at login once the tutorial is done, as in the events cell.
+    request_mainland_hop(&session.state)?;
+    request_command(&session, "getvar tutorial")?;
+    wait_command(&mut session, "getvar tutorial")?;
+    wait_for_chat_line(&session.state, "get tutorial: 1000")?;
+    request_logout(&session.state)?;
+    wait_for_logged_out(&session.state)?;
+    request_login(&session)?;
+    wait_ready(&session.state)?;
+    let catalog_root = required_path("RS2B0T")?;
+    let temp = session
+        ._isolated
+        .home
+        .join("compat-v1-live")
+        .join(&session.account);
+    let mut task = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "AccountLeveler",
+        "src/bot/scripts/AccountLeveler/AccountLeveler.ts",
+    )?;
+    instrument_account_leveler_dragon_probe(&mut task.js)?;
+    start_prepared_task(&session, task)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter().any(|line| line == "DRAGON:LOAD_OK")
+    })?;
+    for (commands, expected) in DRAGON_CASES {
+        for command in *commands {
+            request_command(&session, command)?;
+            wait_command(&mut session, command)?;
+        }
+        let from = session.receipt.logs.len();
+        let want = format!("DRAGON:STAGE:{expected}");
+        wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+            let reads: Vec<_> = logs[from..]
+                .iter()
+                .filter(|line| line.starts_with("DRAGON:STAGE:"))
+                .collect();
+            reads.len() >= 2 && reads.iter().rev().take(2).all(|line| **line == want)
+        })?;
+    }
+    stop_script(&mut session, "DRAGON:STOP", false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned source, and real 289 Engine L"]
+fn compat_v1_account_leveler_dragon_live() {
+    run_and_record(
+        "compat_v1_account_leveler_dragon",
+        run_account_leveler_dragon_cell,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The ticks the unmodified AccountLeveler card must run after its start log.
+const UNMODIFIED_TICKS: u32 = 10;
+
+/// Runs the pinned AccountLeveler card with its source, `onStart`, `loop` and `onPaint` unchanged,
+/// and requires ten game ticks with no script error. `mainland` hops the account off Tutorial
+/// Island and logs in again, so the quest tab posts its rows; otherwise the account is the fresh
+/// Tutorial Island account, whose quest tab posts none.
+fn run_account_leveler_unmodified_cell(
+    receipt: &mut Receipt,
+    mainland: bool,
+) -> Result<(), String> {
+    receipt.coverage_notes.push(format!(
+        "The pinned AccountLeveler Catalog card runs unmodified (no subclass, no replaced method): mainland={mainland}. Ten game ticks after its start log, no script error, no 'not impl' log line, state Running."
+    ));
+    let mut session = session("compat-v1-account-leveler-unmodified", receipt)?;
+    if mainland {
+        request_mainland_hop(&session.state)?;
+        request_command(&session, "getvar tutorial")?;
+        wait_command(&mut session, "getvar tutorial")?;
+        wait_for_chat_line(&session.state, "get tutorial: 1000")?;
+        request_logout(&session.state)?;
+        wait_for_logged_out(&session.state)?;
+        request_login(&session)?;
+        wait_ready(&session.state)?;
+    }
+    let quest_rows_posted = lock_state(&session.state)
+        .snapshot
+        .quest_statuses_available();
+    session
+        .receipt
+        .logs
+        .push(format!("UNMODIFIED:QUEST_ROWS_POSTED:{quest_rows_posted}"));
+    if quest_rows_posted != mainland {
+        return Err(format!(
+            "the account does not exercise the intended state: mainland={mainland} but quest rows posted={quest_rows_posted}"
+        ));
+    }
+    let catalog_root = required_path("RS2B0T")?;
+    let temp = session
+        ._isolated
+        .home
+        .join("compat-v1-live")
+        .join(&session.account);
+    let task = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "AccountLeveler",
+        "src/bot/scripts/AccountLeveler/AccountLeveler.ts",
+    )?;
+    start_prepared_task(&session, task)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter().any(|line| line.starts_with("training "))
+    })?;
+    let start_tick = lock_state(&session.state).tick;
+    wait_for_game_tick(&mut session, start_tick.saturating_add(UNMODIFIED_TICKS))?;
+    drain_logs(&mut session);
+    let end_tick = lock_state(&session.state).tick;
+    session.receipt.logs.push(format!(
+        "UNMODIFIED:TICKS:start={start_tick}:end={end_tick}"
+    ));
+    if let Some(error) = session.play.script_last_error(&session.account) {
+        return Err(format!("the unmodified AccountLeveler failed: {error}"));
+    }
+    if let Some(line) = session
+        .receipt
+        .logs
+        .iter()
+        .find(|line| line.contains("not impl"))
+    {
+        return Err(format!("the unmodified AccountLeveler logged: {line}"));
+    }
+    let state = session.play.script_state(&session.account);
+    session
+        .receipt
+        .logs
+        .push(format!("UNMODIFIED:STATE:{state:?}"));
+    if state != script::RunState::Running {
+        return Err(format!(
+            "the unmodified AccountLeveler is not Running: {state:?}"
+        ));
+    }
+    session.play.script_stop(&session.account);
+    wait_idle(&mut session)
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned source, and real 289 Engine L"]
+fn compat_v1_account_leveler_unmodified_fresh_live() {
+    run_and_record("compat_v1_account_leveler_unmodified_fresh", |receipt| {
+        run_account_leveler_unmodified_cell(receipt, false)
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned source, and real 289 Engine L"]
+fn compat_v1_account_leveler_unmodified_mainland_live() {
+    run_and_record("compat_v1_account_leveler_unmodified_mainland", |receipt| {
+        run_account_leveler_unmodified_cell(receipt, true)
+    })
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
@@ -1713,7 +1930,7 @@ fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
         "The real Alcher Catalog card writes one isolated setting. It verifies one synchronous listener event and saved-value read-back. The WalkTo File card separately checks the map-pick consumer.".into(),
     );
     receipt.coverage_notes.push(
-        "AccountLeveler Catalog-card coverage is blocked by AccountLeveler.ts:17 importing private api/ai/quests/defs/dragonslayer/journal.js. Its lines 96-103 run in the separate normal-Load frame probe.".into(),
+        "AccountLeveler Catalog-card coverage for the Dragon Slayer read is in compat_v1_account_leveler_dragon_live. Its lines 96-103 also run in the separate normal-Load frame probe.".into(),
     );
     let mut session = session("compat-v1-runtime-catalog", receipt)?;
     let catalog_root = required_path("RS2B0T")?;

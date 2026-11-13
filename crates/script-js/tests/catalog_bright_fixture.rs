@@ -293,7 +293,6 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
 
     let mut bright_names = Vec::new();
     let mut dim = 0usize;
-    let mut preexisting_unresolved = 0usize;
     let mut failures = BTreeSet::new();
     for card in lib.cards() {
         if card.source != ScriptSource::Catalog {
@@ -312,19 +311,10 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             }
             dim += 1;
         } else if let Some(reason) = &card.unloadable {
-            // The frozen baseline also rejects this exact import: there is no
-            // served journal.js shim, while the pinned source contains journal.ts.
-            if card.name == "AccountLeveler"
-                && reason.is_import()
-                && reason.text() == "../../api/ai/quests/defs/dragonslayer/journal.js"
-            {
-                preexisting_unresolved += 1;
-            } else {
-                failures.insert(format!(
-                    "{}: unexpected unloadable reason {reason}",
-                    card.name
-                ));
-            }
+            failures.insert(format!(
+                "{}: unexpected unloadable reason {reason}",
+                card.name
+            ));
         } else {
             bright_names.push(card.name.clone());
         }
@@ -332,6 +322,14 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     assert!(
         !bright_names.is_empty(),
         "frozen catalog has no bright cards"
+    );
+    assert!(
+        bright_names.iter().any(|name| name == "AccountLeveler"),
+        "AccountLeveler must load as a bright catalog card; its card says {:?}",
+        lib.cards()
+            .iter()
+            .find(|card| card.source == ScriptSource::Catalog && card.name == "AccountLeveler")
+            .map(|card| card.unloadable.as_ref().map(ToString::to_string))
     );
 
     let cache = JsCache::new(dir.join("siblings"));
@@ -425,9 +423,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.join();
         started += 1;
     }
-    eprintln!(
-        "Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped; {preexisting_unresolved} pre-existing unresolved imports skipped"
-    );
+    eprintln!("Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped");
     assert!(
         failures.is_empty(),
         "frozen catalog first-tick failures:\n{}",
