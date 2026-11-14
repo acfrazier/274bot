@@ -1641,8 +1641,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   stands for them on the far side of the wall (552 on revision 289).
 - A pack bake with overflow checks on no longer stops at a movement label of
   zero, and a bad packed coordinate in a source table is a typed bake error.
-- Frontend map-catalogue retries now recognize replacement publications even
-  when the catalogue identity is unchanged.
 
 #### Gatherer
 
