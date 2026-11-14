@@ -40,6 +40,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   correct welcome and mute text. Menu and minimap clicks follow the game's input
   order, and inactive clients follow the game's idle schedule.
 
+- On revisions 289 and 377, Report abuse asks you to close an open interface first. On revision 274, the welcome screen now appears after login.
+
 ### Gatherer
 
 - The Iron option now covers two methods: regular iron rocks keep their fast
