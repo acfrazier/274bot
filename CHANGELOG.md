@@ -45,7 +45,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   longer appear. A bot you log out yourself stays logged out until you log it
   in.
 
-### Bug fixes
+### Scripts
 
 - Catalog scripts that read game data or bank locations as they load now load
   after an import or refresh. They use the selected profile's game data and
