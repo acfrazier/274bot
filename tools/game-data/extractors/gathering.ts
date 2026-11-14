@@ -367,6 +367,17 @@ function miningLabel(ctx: Ctx, name: string): MiningLabel | Gap {
     if (!block || !MINING_LABELS.has(name)) return gap('mining-label-missing');
     const { flat, nodes } = flatten(block);
     const conds = conditions(nodes);
+    if (name === 'get_ore_fast') {
+        let sawGrant = false;
+        for (const { stmt } of flat) {
+            const grant = /^inv_add\s*\((.*)\)$/.exec(stmt.text);
+            if (!grant) continue;
+            const quantity = /,\s*(-?\d+)\s*$/.exec(grant[1]);
+            if (!quantity || Number(quantity[1]) !== 1) return gap('mining-label-shape', blockSpan(block));
+            sawGrant = true;
+        }
+        if (!sawGrant) return gap('mining-label-shape', blockSpan(block));
+    }
     const depletes = hasStmt(flat, /^loc_change\(/);
     const delayDrop = hasStmt(flat, 'p_delay(0)');
     const crest = conds.find((cond) => /^inzone\(\^crest_perfect_mine_lower_bound, \^crest_perfect_mine_upper_bound, coord\) = true$/.test(cond));

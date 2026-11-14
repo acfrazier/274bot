@@ -117,6 +117,11 @@ does not require frozen corpus row counts, item IDs, prayer button ranges or
 display names. Missing definitions, duplicate joins and malformed source
 shapes still fail.
 
+Fast mining methods retain their unit-yield contract. The extractor reads the
+quantity from the selected handler's parsed inventory-grant statement and
+rejects unsupported quantities; timing still comes from that handler's
+statements, not frozen bodies or provenance.
+
 Regression fixtures must supply the selected facts their consumers require.
 Legacy navigation controls retain the selected revision's Entrana inventory
 and equipment guards; a graph derived without item data lacks those guards.

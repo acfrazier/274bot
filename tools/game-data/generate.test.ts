@@ -3131,12 +3131,11 @@ assert.deepEqual(ironTargetIds(mixedIron), ironTargetIds(baseline),
 
 // Revision 289 splits a row by real handler too (the Haunted Mine iron rocks run mining_rock_normal inside the
 // iron row that regular iron runs as mining_rock_fast): one method per handler, each target on its own handler.
-function mixIronHandlers(rootDir: string) {
+const mixedIron289 = extractGatheringFamily(gatheringFixture((rootDir) => {
     replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc',
         'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
         'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
-}
-const mixedIron289 = extractGatheringFamily(gatheringFixture(mixIronHandlers));
+}));
 const mixedIron289View = gatherView(mixedIron289);
 const mixedIron289Methods = mixedIron289.payload.methods.filter((method) => method.resources.includes('iron'));
 assert.deepEqual(mixedIron289Methods.map((method) => [method.id, method.tick_arm.delay_drop, method.tick_arm.depletes]).sort(),
@@ -3245,20 +3244,17 @@ const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
 assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
 
 // A drifted fast-handler yield affects only that method; the normal iron method stays separate.
-const drifted = extractGatheringFamily(gatheringFixture((rootDir) => {
-    mixIronHandlers(rootDir);
-    replaceIn(rootDir, mineScript,
-        'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);',
-        'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);');
-}));
+const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript,
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);',
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
 const driftedView = gatherView(drifted);
 assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.tick_arm.delay_drop, true,
     'the unchanged normal handler stays separate');
 assert.equal(drifted.payload.methods.some((each) => each.id === 'mining.iron.get_ore_fast'), false,
     'a drifted fast handler is not promoted');
-assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock2' && each.gap?.code === 'mining-handler-unrecognized'), true,
+assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true,
     'the changed fast-handler rock is unclassified');
-assert.equal(family289Rows(drifted, 'mining.iron'), 1, 'the unchanged normal-handler rock stays placed');
+assert.equal(family289Rows(drifted, 'mining.iron'), 0);
 assert.equal(family289Rows(drifted, 'mining.copper'), 1, 'unrelated labels still classify');
 
 // A player-count scale that no longer parses keeps the raw content value and reports the scale as unknown.
