@@ -912,7 +912,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
-    const helperIsExact = colourHelperExists(quests);
+    const helperIsExact = exactColourHelper(quests);
     const journals = journalIndex(content);
     if (revision === 377) {
         const questConstants = questConstantsFor377(content, constants);
