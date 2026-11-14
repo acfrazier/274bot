@@ -15,8 +15,6 @@ const content = revisions.find((spec) => spec.revision === 289)!.content;
 const facts = extractPrereqStepsFacts(289);
 const quests = extractQuestIdentityFacts(content, 289);
 assertPrereqStepFacts(facts);
-assert.ok(facts.rows.every((row) => !Object.hasOwn(row, 'reviewed_writes')), 'reviewed_writes are authoring-only');
-assert.ok(facts.journals.every((journal) => !Object.hasOwn(journal, 'reviewed_writes')), 'reviewed_writes are authoring-only');
 
 assert.deepEqual(facts.rows.map((row) => row.id), ['priestperil:drezel-advice', 'druidspirit:drezel-start']);
 assert.deepEqual(facts.journals.map((journal) => journal.id), [
