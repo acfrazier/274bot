@@ -27,10 +27,10 @@ mod script_nav;
 pub(crate) use script_nav::pump_route_work;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_nav::CarriedWalk;
-#[cfg(all(test, feature = "js"))]
-pub(super) use script_nav::RouteDemand;
 #[cfg(feature = "js")]
 pub(super) use script_nav::PostedWalkOutcome;
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_nav::RouteDemand;
 #[cfg(test)]
 pub(super) use script_nav::{
     approach_tiles, drain_route_work_for_test, publish_route_owner_refusal,
