@@ -9,9 +9,10 @@
 //! path in a private home.
 //! Numeric NPC selection and reacquisition require a wall-valid adjacent
 //! approach in the observed collision scene.
-//! Pre-Start mainland fixtures request a fresh login after observing logout:
-//! idle slots park on a server logout, so the fixture posts Login through its
-//! SlotArm once available rather than relying on automatic reconnect policy.
+//! Pre-Start mainland fixtures request a fresh login after observing logout.
+//! A server logout does not latch the slot, so an unlatched slot with
+//! auto-login reconnects by itself; the fixture still posts a real one-shot
+//! Login through its SlotArm once available, for its own relog.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
