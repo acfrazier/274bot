@@ -665,8 +665,8 @@ function stageDomain(
     let safe = Number.isInteger(complete) && complete >= 0;
     for (const writer of writersByVariable.get(variable) ?? []) {
         sawWriter = true;
-        const literal = /^(-?\\d+)$/.exec(writer.right);
-        const constant = /^\\^([A-Za-z0-9_]+)$/.exec(writer.right);
+        const literal = /^(-?\d+)$/.exec(writer.right);
+        const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
         if (literal || constant) {
             const value = literal
                 ? integer(literal[1], `${writer.block.span.file}:${writer.line}`)
