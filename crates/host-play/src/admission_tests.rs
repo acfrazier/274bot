@@ -9,6 +9,8 @@ use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{Leg, RouteError};
 use nav_planner::transport::TransportGraph;
+#[cfg(feature = "test-support")]
+use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
 use nav_planner::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
@@ -18,6 +20,35 @@ use std::sync::{Arc, LazyLock};
 
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
+}
+
+#[cfg(feature = "test-support")]
+fn transport_edge(kind: TransportKind, from: WorldTile, to: WorldTile) -> TransportEdge {
+    TransportEdge {
+        kind,
+        at: from,
+        to,
+        takeoff: None,
+        player_delta: None,
+        loc_id: -1,
+        option: 0,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: Vec::new(),
+        item_req: Vec::new(),
+        consumed_req: Vec::new(),
+        item_returns: Vec::new(),
+        quest_req: Vec::new(),
+        varp_req: Vec::new(),
+        worn_req: Vec::new(),
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn selected_combat() -> Arc<CombatTables> {
@@ -459,7 +490,7 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
         essence: None,
         zones: ZoneExempt::NONE,
     };
-    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let admission = make_admission(RiskPolicy::Avoid, input(99));
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
         let result = route(
