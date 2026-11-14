@@ -6897,7 +6897,15 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         match terminal_app(&d, request) {
             Some(Settlement::Failed(CommandFailure::Rejected(
                 crate::command::Rejection::WriteRefused,
-            ))) => refused.push(request),
+            ))) => {
+                refused.push(request);
+                assert!(
+                    d.session()
+                        .setting_failure(setting)
+                        .is_some_and(|text| text.starts_with("Not saved: ")),
+                    "the setting shows the reason"
+                );
+            }
             None => accepted.push(request),
             other => panic!("neither accepted nor refused by the queue: {other:?}"),
         }
@@ -6922,12 +6930,6 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         .filter(|row| row.message().contains("WriteRefused"))
         .count();
     assert_eq!(lines, refused.len(), "one info line per refused command");
-    assert!(
-        d.session()
-            .setting_failure(setting)
-            .is_some_and(|text| text.starts_with("Not saved: ")),
-        "the setting shows the reason"
-    );
     // The accepted writes settle on their own: no further refusal line.
     drop(disk);
     for request in accepted {
