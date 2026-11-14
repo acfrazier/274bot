@@ -1570,7 +1570,7 @@ fn scenario_route_retains_selected_fresh_login_quest_evidence() {
         api::selected::Truth::True,
         "the admitted route owns its evidence independently of later frame storage"
     );
-    runner.begin_step();
+    runner.begin_step(runner.snapshot.gens().session);
     assert!(runner.route_quest_evidence.is_none());
 }
 
