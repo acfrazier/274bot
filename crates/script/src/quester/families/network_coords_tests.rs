@@ -190,6 +190,9 @@ fn approach_target(ledger: &Option<Box<ledger::Ledger>>) -> WorldTile {
 
 #[test]
 fn network_coords_recorded_tick66_approaches_drezel_before_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = actors(
         tile(3440, 9890),
         tile(3440, 9893),
@@ -217,6 +220,9 @@ fn network_coords_recorded_tick66_approaches_drezel_before_talk() {
 
 #[test]
 fn network_coords_recorded_near_server_tuple_still_permits_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = actors(
         tile(3439, 9894),
         tile(3437, 9896),
@@ -250,6 +256,9 @@ fn network_coords_recorded_near_server_tuple_still_permits_talk() {
 
 #[test]
 fn network_coords_dialogue_range_uses_the_nearest_footprint_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (player, expected) in [
         (tile(9, 5), false),
         (tile(5, 9), false),
@@ -286,6 +295,9 @@ fn network_coords_dialogue_range_uses_the_nearest_footprint_tile() {
 
 #[test]
 fn network_coords_dialogue_replans_when_only_the_network_target_moves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = actors(
         tile(100, 100),
         tile(100, 100),
@@ -317,6 +329,9 @@ fn network_coords_dialogue_replans_when_only_the_network_target_moves() {
 
 #[test]
 fn network_coords_stale_origin_flood_cannot_authorize_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let old = actors(
         tile(99, 100),
         tile(99, 100),
@@ -351,6 +366,9 @@ fn network_coords_stale_origin_flood_cannot_authorize_talk() {
 
 #[test]
 fn network_coords_chooser_route_depth_and_arrival_share_the_network_footprint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = actors(
         tile(5, 5),
         tile(8, 5),
@@ -402,6 +420,9 @@ fn npc_reach_args() -> reach::ReachArgs {
 
 #[test]
 fn network_coords_generic_npc_reach_approaches_the_network_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = actors(
         tile(100, 100),
         tile(100, 100),
@@ -421,6 +442,9 @@ fn network_coords_generic_npc_reach_approaches_the_network_target() {
 
 #[test]
 fn network_coords_generic_npc_reach_retry_resolves_the_network_target_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = actors(
         tile(100, 100),
         tile(100, 100),

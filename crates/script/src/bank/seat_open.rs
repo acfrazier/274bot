@@ -2938,6 +2938,9 @@ mod tests {
 
     #[test]
     fn bank_seat_network_coords_open_npc_selects_by_path_head() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let origin = tile(3200, 3200);
         let rendered_player = tile(3100, 3200);
         let mut player = local_player(rendered_player);

@@ -5160,6 +5160,9 @@ fn in_place_load_rig() -> Rig {
 #[cfg(feature = "js")]
 #[test]
 fn bank_trip_options_capture_the_existing_script_bank_preferences() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (mage, zanaris) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut rig = open_rig(false);
         rig.slot().lock().unwrap().stop();

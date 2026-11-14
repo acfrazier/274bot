@@ -2405,6 +2405,9 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-import");
     let root = fake_rs2b0t_tree(iso.dir(), false);
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
@@ -2443,6 +2446,9 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_import_retains_runtime_failure_for_new_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-import-load-failure");
     let root = fake_rs2b0t_tree(iso.dir(), false);
     std::fs::write(
@@ -2517,6 +2523,9 @@ fn catalog_import_requires_selected_game_data() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_import_reports_unprepared_map_data() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-catalog-import-missing-banks");
     let root = fake_rs2b0t_tree(iso.dir(), false);
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
@@ -7351,6 +7360,9 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
 #[cfg(feature = "js")]
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-bulk-scripts");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));

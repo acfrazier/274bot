@@ -267,16 +267,25 @@ fn assert_trade_network_coords(
 
 #[test]
 fn network_coords_trade_uses_local_network_origin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_trade_network_coords(110, 100, 101, 101, true);
 }
 
 #[test]
 fn network_coords_trade_rejects_a_partner_only_rendered_nearby() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_trade_network_coords(100, 100, 101, 110, false);
 }
 
 #[test]
 fn network_coords_trade_accepts_a_network_partner_while_rendering_trails() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_trade_network_coords(100, 100, 110, 101, true);
 }
 
