@@ -521,7 +521,8 @@ fn u6_permitted_search_keeps_teleport_wilderness_avoid_and_quest_authority() {
     });
 
     assert_eq!(searches.len(), 1);
-    assert_eq!(kernels, 1);
+    // router.rs:8802-8842, 8853-8862: strict, then granted after NoPath.
+    assert_eq!(kernels, 2);
     assert_eq!(searches[0].zones, ZoneExempt::all());
     let route = routed(&result);
     assert!(route.legs.iter().all(|leg| matches!(leg, Leg::Walk { .. })));
