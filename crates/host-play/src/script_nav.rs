@@ -2431,7 +2431,8 @@ impl RouteJob {
                 self.plan_item_limit(),
                 self.request.world.banks().len(),
             )
-            .ok_or(RouteJobError::Budget)?,
+            .ok_or(RouteJobError::Budget)?
+            .with_preferences(self.request.opts.bank_preferences),
         );
         self.bank_plan_capture_step = 0;
         self.bank_undo_reserved = false;
@@ -5129,6 +5130,7 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
+    pub(crate) bank_preferences: api::named_banks::BankPreferences,
     pub(crate) compat_v1: bool,
     pub(crate) admission: Option<Box<crate::admission::Admission>>,
     /// Shared Path food reservations retained through publication and reroutes.
@@ -5385,11 +5387,15 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
-fn format_zone_witness(table: &nav_planner::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+/// One `label [name]` item per zone key, in key order: the text a refusal
+/// names each blocking zone by.
+pub(crate) fn zone_witness_items(
+    table: &nav_planner::zones::ZoneTable,
+    keys: &[ZoneKey],
+) -> Vec<String> {
     keys.iter()
         .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect()
 }
 
 pub(crate) fn blocked_zone_detail(
@@ -5398,7 +5404,7 @@ pub(crate) fn blocked_zone_detail(
 ) -> String {
     format!(
         "blocked by danger zones: {}",
-        format_zone_witness(table, keys)
+        zone_witness_items(table, keys).join(", ")
     )
 }
 
@@ -5625,6 +5631,12 @@ impl ScriptWalkArm {
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
+        options.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let empty = WorldState::empty();
         let state = self.state.as_deref().unwrap_or(&empty);
         let exclusions =
@@ -6318,7 +6330,7 @@ impl ScriptWalkArm {
         x: i32,
         z: i32,
         level: i32,
-        opts: FindOptions,
+        mut opts: FindOptions,
         radius: i32,
         retarget: bool,
         request_id: u64,
@@ -6336,6 +6348,12 @@ impl ScriptWalkArm {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
         }
+        opts.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
             log_walk_arm(&self.name, || {
@@ -11964,6 +11982,244 @@ mod route_quest_provider_tests {
             .expect("evidence route budget");
         assert_eq!(charged.input_bytes - baseline.input_bytes, owned_bytes);
         assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
+    }
+
+    #[test]
+    fn post_bank_replan_reuses_admitted_route_quest_evidence() {
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let quests = selected.try_quests().expect("prepared quest catalog");
+        let facts = quests.quest("hero").expect("selected Hero's Quest facts");
+        assert!(!facts.colour_authoritative);
+        let gate = QuestGate::Window(api::selected::StageWindow {
+            quest: facts.id.clone(),
+            signal: facts.varp.clone(),
+            values: facts
+                .completion_range_after_login
+                .expect("qualified Hero completion range"),
+        });
+        let observed = stamp(run(), 18, 18);
+        let context = context(Arc::clone(&selected), observed);
+        let mut snapshot = snapshot(
+            &facts.display,
+            nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            true,
+        );
+        snapshot.seed_tick(18);
+        snapshot.begin_fresh_login_quest_colours();
+        assert!(snapshot.quest_green_since_fresh_login(0));
+        let evidence = captured_route_quests(Some(&context), &snapshot, None, observed)
+            .expect("qualified selected quest-list evidence");
+        assert_eq!(evidence.test(&gate), Truth::True);
+
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let width = 5;
+        let height = 5;
+        let mut plane = vec![0u32; width * height];
+        for z in 0..height {
+            plane[z * width + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+            plane[z * width + 2] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let mut collision_flags = vec![0u32; 4 * plane.len()];
+        collision_flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&collision_flags);
+        let collision = nav_planner::collision::WorldCollision {
+            origin,
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let door_at = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let mut graph = nav_planner::transport::TransportGraph::default();
+        graph.at.entry(door_at).or_default().push(0);
+        graph.edges.push(nav_planner::transport::TransportEdge {
+            kind: nav_planner::transport::TransportKind::Door,
+            at: door_at,
+            to: door_at,
+            takeoff: None,
+            player_delta: None,
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            dir: Some(nav_planner::transport::DoorDir::E),
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav_planner::quest_gates::QuestGates::new([gate.clone()])
+                    .expect("valid selected stage gate"),
+            ),
+        });
+        let world = NavWorld::from_parts(collision, graph, Vec::new());
+        let initial_from = WorldTile {
+            x: 0,
+            z: 1,
+            level: 0,
+        };
+        let here = WorldTile {
+            x: 0,
+            z: 3,
+            level: 0,
+        };
+        let destination = WorldTile {
+            x: 4,
+            z: 2,
+            level: 0,
+        };
+        let options = FindOptions::default();
+        let initial_state =
+            WorldState::from_snapshot(&snapshot).with_quest_evidence(evidence.clone());
+        let initial_route = Arc::new(
+            nav_planner::router::find_with(
+                &world.collision,
+                &world.graph,
+                initial_from,
+                destination,
+                options,
+                &initial_state,
+            )
+            .expect("admitted route crosses the stage-window door"),
+        );
+        assert!(
+            nav_planner::router::find_with(
+                &world.collision,
+                &world.graph,
+                here,
+                destination,
+                options,
+                &WorldState::empty(),
+            )
+            .is_err(),
+            "the wall leaves the gated door as the only crossing"
+        );
+
+        struct NoopDriver;
+        impl api::interact::Driver for NoopDriver {
+            fn set_menu(&mut self, _: i32, _: i32, _: i32, _: i32, _: i32) {}
+            fn do_action(&mut self, _: i32) -> bool {
+                false
+            }
+            fn try_move(
+                &mut self,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: bool,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+            ) -> bool {
+                false
+            }
+            fn local_route(&self) -> Option<(i32, i32)> {
+                None
+            }
+            fn build_base(&self) -> (i32, i32) {
+                (0, 0)
+            }
+            fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
+                None
+            }
+            fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+                Ok(())
+            }
+            fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
+                false
+            }
+        }
+
+        let make_bot = |retain_evidence: bool| {
+            let route_evidence = retain_evidence.then(|| evidence.clone());
+            NavBot {
+                route_basis: Some(Arc::new(crate::admission::RouteBasis {
+                    _route: RoutePath::legacy(Arc::clone(&initial_route)),
+                    options,
+                    avoid: Arc::from([]),
+                    quest_evidence: route_evidence.clone(),
+                })),
+                route_quest_evidence: route_evidence,
+                bank_fetch: Some(PendingBankFetch::for_test_with_route(
+                    VecDeque::from([BankStep::Walk {
+                        x: here.x,
+                        z: here.z,
+                        level: here.level,
+                    }]),
+                    destination,
+                    options,
+                    Arc::clone(&initial_route),
+                )),
+                ..NavBot::default()
+            }
+        };
+
+        let mut admitted = make_bot(true);
+        let mut admitted_driver = NoopDriver;
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
+            &mut admitted_driver,
+            &snapshot,
+            &mut admitted,
+            Some(&world),
+            Some((here.x, here.z, here.level)),
+            false,
+        ));
+        assert!(admitted.bank_fetch.is_none());
+        let resumed = admitted
+            .route_path_for_follow()
+            .expect("post-bank route re-found");
+        assert_eq!(resumed.first_tile(), Some(here));
+        assert!(
+            resumed
+                .legacy_route()
+                .expect("legacy test route")
+                .legs
+                .iter()
+                .any(|leg| matches!(
+                    leg,
+                    nav_planner::router::Leg::Transport { edge }
+                        if edge.loc_id == 1530 && edge.quest_gates.is_some()
+                )),
+            "the resumed path must include the real stage-window door"
+        );
+
+        let mut unproven = make_bot(false);
+        let mut unproven_driver = NoopDriver;
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
+            &mut unproven_driver,
+            &snapshot,
+            &mut unproven,
+            Some(&world),
+            Some((here.x, here.z, here.level)),
+            false,
+        ));
+        assert!(
+            unproven.route_path_for_follow().is_none(),
+            "the same post-bank replan must fail closed without pinned evidence"
+        );
     }
 
     fn compat_bot(selected: Arc<api::game_data::SelectedGameData>, request_id: u64) -> NavBot {

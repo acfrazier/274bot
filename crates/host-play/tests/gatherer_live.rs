@@ -2213,9 +2213,9 @@ struct GatherSlot {
     relog_pause_requested: bool,
     /// `BankTripRelog`: the preparation sent the mainland hop itself.
     relog_prep_hop_sent: bool,
-    /// The slot's arm. The preparation relogs a bot that has no script yet,
-    /// so the approved scriptless policy parks it after its own logout; the
-    /// fixture posts the operator's Login, as a user would.
+    /// The slot's arm. The preparation relogs the bot; the fixture posts a
+    /// real one-shot Login, as a user would, where its own relog consumed the
+    /// login.
     login_arm: Option<Arc<SlotArm>>,
 }
 /// How far the character walks toward the bank before an `Access` cut. The
@@ -2853,7 +2853,7 @@ impl GatherSlot {
                 .and_then(|npc| {
                     npc.r#type.map(|type_id| FishTarget {
                         type_id,
-                        tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                        tile: (npc.network.x, npc.network.z, npc.network.level),
                     })
                 })
         } else {
@@ -2868,7 +2868,7 @@ impl GatherSlot {
                         npc.index,
                         FishTarget {
                             type_id: 320,
-                            tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                            tile: (npc.network.x, npc.network.z, npc.network.level),
                         },
                     ))
                 })

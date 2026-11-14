@@ -386,6 +386,7 @@ pub struct ScenarioRunner {
     scenario: Scenario,
     snapshot: GameSnapshot,
     obj_names: Option<Arc<ObjNames>>,
+    quest_catalog: Option<Arc<api::quest_facts::QuestCatalog>>,
     /// The whole-world router surface (collision + transport graph),
     /// loaded from the baked nav pack; both `Walk` and `Follow` steps
     /// route on it.
@@ -396,6 +397,8 @@ pub struct ScenarioRunner {
     /// The armed nav route (re-passed each client cycle; the traveller
     /// consumes it when a run starts).
     route: Option<Route>,
+    /// The same owned quest facts used to admit the armed route.
+    route_quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     /// Whole-window shot label fired at the terminal state (PASS and
     /// FAIL); `None` for scenarios that only fire `Shot` steps.
     terminal_shot: Option<&'static str>,
@@ -450,9 +453,9 @@ pub struct ScenarioRunner {
     relog_session: Option<u64>,
     relog_left_session: bool,
     /// The Relog step sent its logout and the host has not yet posted the
-    /// slot's explicit Login: a bot with no script stays logged out after
-    /// its exit, so the step's own logout cannot rely on a reconnect. The
-    /// driver that ticks this runner consumes the request with
+    /// slot's explicit Login, a real one-shot command that covers the step's
+    /// own relog (an unlatched slot with auto-login would also reconnect by
+    /// itself). The driver that ticks this runner consumes the request with
     /// [`ScenarioRunner::take_relog_login`] and posts the operator Login
     /// intent (host-play's `SlotArm::arm_explicit_login`).
     relog_login_wanted: bool,
@@ -567,6 +570,11 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Bind the selected quest catalog prepared by the live host off-pump.
+    pub fn set_quest_catalog(&mut self, catalog: Option<Arc<api::quest_facts::QuestCatalog>>) {
+        self.quest_catalog = catalog;
+    }
+
     /// Control terminal restoration to the teardown world speed.
     ///
     /// Defaults to `true`; setting `false` leaves the initial requested
@@ -594,10 +602,12 @@ impl ScenarioRunner {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
+            quest_catalog: None,
             nav_world,
             traveller: Traveller::new(),
             map_members: false,
             route: None,
+            route_quest_evidence: None,
             terminal_shot,
             phase: Phase::Seeding,
             step: 0,
@@ -930,8 +940,8 @@ impl ScenarioRunner {
     /// Run companion `index`'s hook once per client cycle on `client`. The
     /// caller delivers one frame per call, exactly like [`tick`]. `true`
     /// means the hook pressed this slot's logout and needs the host's
-    /// explicit Login (the operator Login intent) posted for it, because a
-    /// bot with no script stays parked after its exit.
+    /// explicit Login (the operator Login intent, a real one-shot command)
+    /// posted for it.
     pub fn companion_tick(&mut self, index: usize, client: &mut Client) -> bool {
         (self.scenario.companions[index].per_frame)(client)
     }
@@ -939,8 +949,8 @@ impl ScenarioRunner {
     /// Whether the current Relog step sent its logout and still needs the
     /// host's explicit Login. The driver that ticks this runner consumes the
     /// request with [`Self::take_relog_login`] and posts the operator Login
-    /// intent for the driven slot; a bot with no script does not reconnect by
-    /// itself, so the relog would otherwise wait out its budget.
+    /// intent for the driven slot. The Login is a real one-shot command; an
+    /// unlatched slot with auto-login would also reconnect by itself.
     pub fn relog_login_wanted(&self) -> bool {
         self.relog_login_wanted
     }
@@ -1520,6 +1530,7 @@ impl ScenarioRunner {
         self.game_ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
+        self.route_quest_evidence = None;
         self.fresh_xp_baseline = None;
         self.fresh_chat_baseline = None;
         if matches!(
@@ -2375,11 +2386,9 @@ impl ScenarioRunner {
                         );
                     }
                     self.relog_logout_sent = true;
-                    // The bot has no script at a pre-Start relog, so the
-                    // approved scriptless policy parks it after this exit;
-                    // the driver posts the operator Login (a no-op wait here
-                    // would time out). A scripted bot ignores the request:
-                    // its own demand already relogs it.
+                    // The driver posts the operator Login, a real one-shot
+                    // command that covers this relog; an unlatched slot with
+                    // auto-login would also reconnect by itself.
                     self.relog_login_wanted = true;
                     return Ok("accepted");
                 }
@@ -2408,6 +2417,39 @@ impl ScenarioRunner {
         }
     }
 
+    fn capture_quest_evidence(&self) -> Option<nav_planner::quest_gates::QuestEvidence> {
+        let catalog = self.quest_catalog.as_ref()?;
+        let gens = self.snapshot.gens();
+        // This provider belongs only to this runner. Its freshness floor
+        // follows the runner's observed session and PlayerInfo generation.
+        let stamp = api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 0,
+                run: 0,
+                session: gens.session,
+            },
+            tick: u64::from(self.snapshot.tick()),
+            sequence: gens.player_info,
+        };
+        let provider = api::quest_progress::QuestListEvidenceProvider::from_snapshot(
+            catalog,
+            api::snapshot::SnapshotView::new(Some(&self.snapshot), stamp),
+        );
+        let bytes = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+            .extend(std::alloc::Layout::new::<
+                api::quest_progress::QuestListEvidenceProvider,
+            >())
+            .ok()?
+            .0
+            .pad_to_align()
+            .size()
+            .checked_add(provider.retained_status_bytes())?;
+        Some(
+            nav_planner::quest_gates::QuestEvidence::new(Arc::new(provider), stamp)
+                .with_owned_provider_bytes(bytes),
+        )
+    }
+
     /// Arm a whole-world route: `nav_planner::router::find` over the packed
     /// collision + transport graph loaded into [`NavWorld`] (the same
     /// surface the route is then walked on — the pack is baked from the
@@ -2430,8 +2472,9 @@ impl ScenarioRunner {
         // cannot pay / has not earned is not relaxed. The traveller's
         // latched essence-mine session lets a route from inside the mine
         // use the exit portal's return hop to the entry wizard.
-        let state = nav_planner::WorldState::from_snapshot(&self.snapshot)
+        let mut state = nav_planner::WorldState::from_snapshot(&self.snapshot)
             .with_map_members(self.map_members);
+        state.quest_evidence = self.capture_quest_evidence();
         let opts = FindOptions {
             essence: self.traveller.essence(),
             ..opts
@@ -2446,6 +2489,7 @@ impl ScenarioRunner {
         ) {
             Ok(route) => {
                 self.route = Some(route);
+                self.route_quest_evidence = state.quest_evidence;
                 Ok(())
             }
             Err(e) => Err(format!(
@@ -2499,6 +2543,7 @@ impl ScenarioRunner {
                     .as_ref()
                     .map(|w| w.graph.teleports.as_slice()),
                 edges: self.nav_world.as_ref().map(|w| w.graph.edges.as_slice()),
+                quest_evidence: self.route_quest_evidence.as_ref(),
                 ..TravelOptions::default()
             };
             self.traveller
@@ -2513,6 +2558,7 @@ impl ScenarioRunner {
         if let TravelOutcome::Arrived { .. } = outcome {
             // Don't re-arm the original outside→door→dest legs next client cycle.
             self.route = None;
+            self.route_quest_evidence = None;
             return;
         }
         self.finish_fail(&format!(

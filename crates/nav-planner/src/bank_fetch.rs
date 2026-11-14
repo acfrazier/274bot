@@ -109,6 +109,35 @@ pub use planning::PlanningRowsCursor;
 /// any of their booths or tellers.
 pub const SAME_BANK: i32 = 12;
 
+fn bank_enabled_by_preferences(
+    stand: &BankStand,
+    preferences: api::named_banks::BankPreferences,
+) -> bool {
+    let crate::pack::BankAccess::Npc { name, .. } = &stand.access else {
+        return true;
+    };
+    let Ok(catalog) = api::named_banks::bank_catalog() else {
+        // A real world's bank facts cannot bind without its local catalog.
+        return true;
+    };
+    catalog
+        .iter()
+        .filter(|definition| {
+            definition.setting.is_some()
+                && definition.tile.level == stand.tile.level
+                && definition
+                    .tile
+                    .x
+                    .abs_diff(stand.tile.x)
+                    .max(definition.tile.z.abs_diff(stand.tile.z))
+                    <= SAME_BANK as u32
+                && definition
+                    .npc
+                    .is_some_and(|npc| npc.name.eq_ignore_ascii_case(name))
+        })
+        .all(|definition| definition.enabled_by_preferences(preferences))
+}
+
 /// An account's bank rows as the host hands them to a planner: the memory's
 /// `(obj id, count)` rows with the origin they came from
 /// (design-bank-snapshot §1.2, §2.4). `Unknown` with no rows is the
@@ -329,7 +358,7 @@ fn plan_bank_fetch_with_budgets<M: MissingRequirementsView + ?Sized>(
     avoid: &[AvoidRect],
     goal_budgets: (usize, usize),
 ) -> Result<BankFetch, BankFetchError> {
-    let mut cursor = BankFetchCursor::new();
+    let mut cursor = BankFetchCursor::new().with_preferences(options.bank_preferences);
     while !cursor.advance(missing, state, bank, stands, from, collision) {}
     let strict = FindOptions {
         allow_bank_fetch: false,

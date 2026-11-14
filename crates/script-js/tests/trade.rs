@@ -52,9 +52,9 @@ fn player<'a>(name: &'a str, distance: i32, actions: &'a [String]) -> SceneEntit
         combat_level: 1,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
         shape: 0,
         angle: 0,
     }
@@ -298,6 +298,85 @@ fn request_without_a_player_or_trade_op_is_false_without_a_packet() {
     iso.join();
 }
 
+#[test]
+fn network_coords_request_ranks_from_the_local_server_origin() {
+    let iso = spawn(REQUEST);
+    let rendered_action = [
+        "Attack".to_string(),
+        "Follow".to_string(),
+        "Report".to_string(),
+        "Trade with rendered-near".to_string(),
+    ];
+    let network_action = [
+        "Attack".to_string(),
+        "Follow".to_string(),
+        "Report".to_string(),
+        "Trade with network-near".to_string(),
+    ];
+    let mut rendered_near = player("bob", 0, &rendered_action);
+    rendered_near.x = 10;
+    rendered_near.z = 10;
+    rendered_near.nx = 50;
+    rendered_near.nz = 50;
+    let mut network_near = player("bob", 100, &network_action);
+    network_near.x = 80;
+    network_near.z = 80;
+    network_near.nx = 12;
+    network_near.nz = 10;
+    let players = [rendered_near, network_near];
+    let mut snap = base();
+    snap.here = Some(TileInput {
+        x: 10,
+        z: 10,
+        level: 0,
+    });
+    snap.players = &players;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade with network-near".into(),
+        }],
+        "the cached mixed distance and rendered player tile do not rank the target"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    iso.join();
+}
+
+#[test]
+fn network_coords_request_refuses_missing_local_or_remote_facts() {
+    let iso = spawn(REQUEST);
+    let actions = trade_ops();
+    let players = [player("bob", 0, &actions)];
+    let mut snap = base();
+    snap.here = None;
+    snap.players = &players;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a missing local path head is not a target"
+    );
+    iso.join();
+
+    let iso = spawn(REQUEST);
+    let mut unknown_size = player("bob", 0, &actions);
+    unknown_size.size = 0;
+    let players = [unknown_size];
+    let mut snap = base();
+    snap.players = &players;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a size-zero player has no network tile"
+    );
+    iso.join();
+}
 #[test]
 fn offer_all_sends_the_unnoted_id_and_slot_not_the_noted_stack() {
     let iso = spawn(OFFER_ALL);

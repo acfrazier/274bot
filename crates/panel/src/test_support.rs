@@ -9,8 +9,12 @@ use host_play::local_state::{
     transient_wait, wait_outcome, LocalStateService, StateRoot, WaitOutcome,
 };
 
+#[path = "../../host-play/tests/support/map_catalogue_fixture.rs"]
+pub(crate) mod map_catalogue_fixture;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 pub(crate) mod map_fixture;
+#[path = "../../host-play/tests/support/map_play_fixture.rs"]
+pub(crate) mod map_play_fixture;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 

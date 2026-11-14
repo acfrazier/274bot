@@ -2491,9 +2491,10 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Post the operator Login for slots whose live fixture relogged itself.
-    /// A bot with no script stays parked after its exit, so the scenario's
-    /// Relog step and a companion's prep relog ask the front end for this
-    /// intent; a scripted bot ignores it (its own demand already relogs it).
+    /// The scenario's Relog step and a companion's prep relog ask the front
+    /// end for this intent. It is a real one-shot Login command for any bot,
+    /// scripted or not; an unlatched slot with auto-login would also
+    /// reconnect by itself.
     #[cfg(feature = "live-harness")]
     fn service_live_relog_logins(&mut self) {
         let Some(play) = self.play.as_ref() else {

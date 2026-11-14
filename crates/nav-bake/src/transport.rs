@@ -111,8 +111,7 @@ use gates::*;
 use gliders::*;
 use index::*;
 pub(crate) use index::{
-    loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
-    visit_npc_configs, Placement,
+    loc_ids_by_name, loc_positions, npc_positions, visit_loc_configs, Placement,
 };
 use legends::*;
 use levers::*;
@@ -290,6 +289,7 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     cart_edges(
+        content_root,
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
         &mut skipped,
@@ -482,7 +482,8 @@ const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destina
 const SKIP_ESSENCE_JOURNAL_NAME: &str =
     "Rune Mysteries journal name unresolved for essence-mine hops";
 const SKIP_ELKOY_JOURNAL_NAME: &str = "Tree Gnome Village journal name unresolved for Elkoy hops";
-const SKIP_HAJEDY_JOURNAL_NAME: &str = "Shilo Village journal name unresolved for Hajedy cart hop";
+const SKIP_SHILO_CART_JOURNAL_NAME: &str = "Shilo Village journal name unresolved for cart routes";
+const SKIP_SHILO_CART_HANDLER: &str = "cart dialogue has no recognized completion-gate shape";
 const SKIP_WEB_NO_FAR: &str = "slashable web has no standable far side";
 const SKIP_FREE_ARM_GATE_CONFLICT: &str =
     "door reads as both a varp-gated door and a directional free arm (gate kept)";

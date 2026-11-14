@@ -190,9 +190,13 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
         }
     }
 
-    let Some(wait) = bot.poison_hold.as_ref().and_then(|hold| hold.wait) else {
+    let Some(wait) = bot.poison_hold.as_mut().and_then(|hold| hold.wait.as_mut()) else {
         return false;
     };
+    if let Some(window) = window {
+        wait.recover_frame_gap(now, window);
+    }
+    let wait = *wait;
     if wait.ended(now) {
         let cause = window.map_or(WindowReset::IncompleteFact, |window| window.last_reset);
         let destination = bot.route_destination().or(retreat).or(here);
@@ -1980,7 +1984,12 @@ fn resume_final_route(
     if start == Some(from) {
         return;
     }
-    let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    // Replan with the exact quest evidence pinned by the admitted route.
+    state.quest_evidence = bot
+        .route_basis
+        .as_ref()
+        .and_then(|basis| basis.quest_evidence.clone());
     let opts = FindOptions {
         allow_bank_fetch: false,
         ..pending.opts

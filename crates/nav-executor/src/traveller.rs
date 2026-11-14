@@ -1480,7 +1480,12 @@ impl FollowRun {
                         Some(target) => {
                             let to = edge.to;
                             let action = if is_slashable_web(edge) {
-                                match current_web_action(snapshot, edge, options.edges) {
+                                match current_web_action(
+                                    snapshot,
+                                    edge,
+                                    options.edges,
+                                    options.quest_evidence,
+                                ) {
                                     Ok(action) => action,
                                     Err(reason) => {
                                         fire_leg(options, &leg, LegPhase::Failed);

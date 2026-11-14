@@ -327,76 +327,6 @@ fn repeat_logout_guard_reason_is_visible_in_slot_status() {
     );
 }
 
-/// A bot logged out after an exit nobody asked for says why, the same text in
-/// every frontend (the panel and the TUI both show `detail.state`).
-#[test]
-fn idle_park_reason_is_visible_in_slot_status() {
-    let row = FleetRow::fixture("alice", Phase::LoggedOut, None, None);
-    for (reason, expected) in [
-        (
-            host_play::LoginLatchReason::IdleDisconnect,
-            "logged out: disconnected while idle (Log in to connect)",
-        ),
-        (
-            host_play::LoginLatchReason::IdleLogout,
-            "logged out: idle logout by the server (Log in to connect)",
-        ),
-        (
-            host_play::LoginLatchReason::ServerLogout,
-            "logged out by the server (Log in to connect)",
-        ),
-    ] {
-        let status = SlotStatus {
-            username: "alice".into(),
-            login_latched: true,
-            login_latch_reason: Some(reason),
-            ..SlotStatus::default()
-        };
-        let mut text = String::new();
-        write_state(&mut text, &row, Some(&status), false);
-        assert_eq!(text, expected);
-    }
-}
-
-/// The park of a bot without a script travels from the arm to the row and
-/// the detail text, and an explicit Log in clears it.
-#[test]
-fn an_idle_park_reaches_the_row_and_the_detail_text_until_log_in() {
-    let mut s = fleet("idle-park", &["ip-dee"], true);
-    s.select("ip-dee");
-    let arm = s.play().unwrap().arm("ip-dee").expect("arm");
-    arm.complete_login_for_test();
-    arm.exit_while_idle_for_test();
-    assert_eq!(
-        arm.login_latch_reason(),
-        Some(host_play::LoginLatchReason::IdleDisconnect)
-    );
-    publish(&s, "ip-dee", |r| {
-        r.connected = false;
-        r.ingame = false;
-        r.login_latched = true;
-        r.login_latch_reason = arm.login_latch_reason();
-        phase_to(r, StartupPhase::Queueing);
-    });
-    s.poll();
-    let parked = row(&s, "ip-dee");
-    assert_eq!(parked.phase, Phase::LoggedOut);
-    assert!(!parked.guard_parked());
-    assert!(!parked.logout_eligibility().eligible());
-    assert_eq!(
-        detail(&s).state,
-        "logged out: disconnected while idle (Log in to connect)"
-    );
-
-    arm.arm_explicit_login();
-    publish(&s, "ip-dee", |r| {
-        r.login_latched = false;
-        r.login_latch_reason = None;
-    });
-    s.poll();
-    assert_eq!(row(&s, "ip-dee").phase, Phase::Waiting);
-}
-
 #[test]
 fn manual_walk_cancellation_status_replaces_the_scene_detail() {
     let row = FleetRow::fixture("alice", Phase::Ready, None, None);
@@ -941,7 +871,7 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
         "waiting"
     );
     assert_eq!(
-        script_status_reason(StatusView::new(&status)),
+        script_status_reason(StatusView::new(&status)).map(|line| line.full()),
         Some("quest list from login")
     );
     status.phase = NativePhase::Blocked;
@@ -955,6 +885,7 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     );
     assert!(script_status_reason(StatusView::new(&status))
         .unwrap()
+        .full()
         .contains("Stop/Start"));
     assert_eq!(
         script_status_label(RunState::Idle, Some(StatusView::new(&status))),
@@ -962,6 +893,7 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
     );
     assert!(script_status_reason(StatusView::new(&status))
         .unwrap()
+        .full()
         .contains("Stop/Start"));
     assert_eq!(
         script_status_label(RunState::Paused, Some(StatusView::new(&status))),
@@ -1017,7 +949,10 @@ fn status_card_shows_the_script_phase_and_park_reason() {
         .expect("a parked script shows its phase");
     assert_eq!(phase.label(), "blocked");
     assert_eq!(phase.phase(), Some("blocked"));
-    assert_eq!(phase.reason(), Some("no step for stage"));
+    assert_eq!(
+        phase.reason().map(|line| line.full()),
+        Some("no step for stage")
+    );
 
     let block_reason = "no Fly Fishing Feathers in the pack, worn, or in the bank";
     let mut gatherer = SlotDetail::default();
@@ -1036,9 +971,10 @@ fn status_card_shows_the_script_phase_and_park_reason() {
         .expect("a Running blocked Gatherer shows its reason");
     assert_eq!(phase.label(), "blocked");
     assert_eq!(phase.phase(), Some("blocked"));
-    assert_eq!(phase.reason(), Some(block_reason));
+    assert_eq!(phase.reason().map(|line| line.full()), Some(block_reason));
     assert_eq!(
-        script_status_reason(gatherer.native_status().expect("status is retained")),
+        script_status_reason(gatherer.native_status().expect("status is retained"))
+            .map(|line| line.full()),
         Some(block_reason)
     );
 
@@ -1057,7 +993,7 @@ fn status_card_shows_the_script_phase_and_park_reason() {
         .expect("a terminal refusal stays visible after the run stops");
     assert_eq!(phase.label(), "stopped (blocked)");
     assert_eq!(
-        phase.reason(),
+        phase.reason().map(|line| line.full()),
         Some("no quests selected; review Script prefs, then Start")
     );
 
@@ -1107,9 +1043,13 @@ fn status_card_shows_the_current_park_reason_not_an_earlier_quests() {
         .script_phase()
         .expect("a parked script shows its phase");
     assert_eq!(phase.label(), "blocked");
-    assert_eq!(phase.reason(), Some(SECOND_QUEST_PARK));
     assert_eq!(
-        script_status_reason(detail.native_status().expect("status is retained")),
+        phase.reason().map(|line| line.full()),
+        Some(SECOND_QUEST_PARK)
+    );
+    assert_eq!(
+        script_status_reason(detail.native_status().expect("status is retained"))
+            .map(|line| line.full()),
         Some(SECOND_QUEST_PARK),
         "the Script section reads the same park reason"
     );
@@ -1913,4 +1853,29 @@ fn logout_retry_a_reaped_guard_parked_worker_is_not_eligible() {
     assert_eq!(jon.phase, Phase::Offline);
     assert!(!jon.guard_parked());
     assert!(!jon.logout_eligibility().eligible());
+}
+
+#[test]
+fn reason_line_cuts_first_line_by_characters_and_borrows_when_short() {
+    let short = ReasonLine::new("no step for stage");
+    assert!(matches!(short.as_str(), std::borrow::Cow::Borrowed(_)));
+    assert!(!short.is_cut());
+    assert_eq!(short.full(), "no step for stage");
+
+    // 150 multibyte characters: at most 100 characters, a code point never
+    // split, the whole text kept.
+    let long = format!("{}😀tail", "日".repeat(149));
+    let line = ReasonLine::new(&long);
+    let shown = line.as_str();
+    assert_eq!(shown.chars().count(), crate::SUMMARY_MAX, "{shown}");
+    assert!(shown.ends_with('…') && !shown.contains('\u{FFFD}'));
+    assert!(line.is_cut());
+    assert_eq!(line.full(), long);
+
+    // A second line is left out and marked; the first line alone is not cut.
+    let two = ReasonLine::new("blocked by danger zones: a\nblocked by danger zones: b");
+    assert_eq!(two.as_str(), "blocked by danger zones: a…");
+    assert!(two.is_cut());
+    // A trailing line break is not text left out.
+    assert!(!ReasonLine::new("waiting\n").is_cut());
 }

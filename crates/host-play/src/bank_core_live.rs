@@ -754,11 +754,10 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     shared.lock().snapshot = Some(snapshot);
 }
 
-/// Post the operator Login for the shared fixture's own Relog step. The bot
-/// has no script during preparation, so the idle-park policy keeps it logged
-/// out after the fixture's logout until an explicit Login. The slot's arm is
-/// owned by `play`; the request is one-shot, so a poll with no arm yet leaves
-/// it pending.
+/// Post a real one-shot Login for the shared fixture's own Relog step, which
+/// consumes the login; an unlatched slot with auto-login would also reconnect
+/// by itself. The slot's arm is owned by `play`; the request is one-shot, so a
+/// poll with no arm yet leaves it pending.
 pub(super) fn post_relog_login(play: &super::Play, account: &str, cell: &Mutex<Cell>) {
     if let Some(arm) = play.arm(account) {
         if cell.lock().session_runner.take_relog_login() {

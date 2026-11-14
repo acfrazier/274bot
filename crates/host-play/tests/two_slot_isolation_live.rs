@@ -634,8 +634,8 @@ fn run_cell() -> Result<(), String> {
     let mut resume_a = None;
     let mut stop_a = None;
     let mut stop_b = None;
-    // Each slot's fixture logs its scriptless bot out itself; the idle-park
-    // policy keeps it logged out until the operator Login is posted.
+    // Each slot's fixture logs its bot out itself; post a real one-shot Login
+    // for it. An unlatched slot with auto-login would also reconnect by itself.
     let mut relog_login_posted = [false; 2];
     let outcome = loop {
         if let Some(error) = play.script_last_error(&names[0]) {

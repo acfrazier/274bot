@@ -13,10 +13,30 @@ const QUEUE_CAP: usize = 16;
 const SOURCE_CAP: usize = 4 * 1024 * 1024;
 const SIBLING_CAP: usize = 32;
 const INPUT_CAP: usize = 8 * 1024 * 1024;
-const BATCH_CAP: usize = 256;
+/// Maximum number of cards in one validation batch.
+pub const MAX_VALIDATION_BATCH_CARDS: usize = 256;
 const BATCH_BYTES_CAP: usize = 16 * 1024 * 1024;
 
-pub(super) type Batch = Vec<(PreparedCard, Result<(), String>)>;
+pub(super) type Batch = Vec<(PreparedCard, CardValidation)>;
+
+/// One card's result in a bounded validation batch.
+///
+/// The coordinator reports [`Validated`](Self::Validated) or
+/// [`Failed`](Self::Failed). A caller supplies
+/// [`NotChecked`](Self::NotChecked) for a card that cannot fit one batch
+/// at all and that the release it follows loaded without validation.
+#[derive(Debug)]
+pub enum CardValidation {
+    /// The card's isolate setup settled Ready.
+    Validated,
+    /// The card is larger than the per-card caps of one validation batch.
+    /// The release/0.2.9 catalog import applied cards without this check,
+    /// so the caller loads it unchecked.
+    NotChecked,
+    /// The card failed validation and does not load.
+    Failed(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
     #[error(transparent)]
@@ -29,6 +49,55 @@ pub enum ValidationError {
     Coordinator(String),
     #[error("validation coordinator unavailable")]
     Unavailable,
+}
+/// Return the largest prefix that fits one bounded validation batch.
+pub fn validation_batch_prefix_len(cards: &[PreparedCard]) -> Result<usize, ValidationError> {
+    let mut bytes = 0usize;
+    for (index, card) in cards.iter().take(MAX_VALIDATION_BATCH_CARDS).enumerate() {
+        let Some(card_bytes) = validation_card_bytes(card) else {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        };
+        let Some(batch_bytes) = bytes.checked_add(card_bytes) else {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        };
+        if batch_bytes > BATCH_BYTES_CAP {
+            return if index == 0 {
+                Err(ValidationError::ByteLimit)
+            } else {
+                Ok(index)
+            };
+        }
+        bytes = batch_bytes;
+    }
+    Ok(cards.len().min(MAX_VALIDATION_BATCH_CARDS))
+}
+
+fn validation_card_bytes(card: &PreparedCard) -> Option<usize> {
+    if card.card.js.len() > SOURCE_CAP || card.siblings.len() > SIBLING_CAP {
+        return None;
+    }
+    let bytes = card
+        .siblings
+        .iter()
+        .try_fold(card.card.js.len(), |sum, (name, js)| {
+            sum.checked_add(name.len())?.checked_add(js.len())
+        })?;
+    (bytes <= INPUT_CAP).then_some(bytes)
+}
+
+/// Whether one card fits the per-card validation caps on its own. A card
+/// that does not cannot be validated in any batch, so its caller decides
+/// whether to load it unchecked.
+pub fn validation_card_fits(card: &PreparedCard) -> bool {
+    validation_card_bytes(card).is_some()
 }
 
 /// Owning reload receipt. A full bounded queue leaves this one transaction
@@ -77,12 +146,11 @@ impl Drop for ValidationBatch {
 
 struct Job {
     cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
     reply: mpsc::Sender<Batch>,
     cancelled: Arc<AtomicBool>,
 }
-
-static EMPTY_BANKS: LazyLock<std::sync::Arc<api::named_banks::NamedBankFacts>> =
-    LazyLock::new(|| std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()));
 
 static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
     let (tx, rx) = mpsc::sync_channel(QUEUE_CAP);
@@ -96,25 +164,21 @@ static SEAT: LazyLock<Result<SyncSender<Job>, String>> = LazyLock::new(|| {
 /// Submit one complete reload validation transaction without a per-reload
 /// thread. A full worker queue leaves the batch on its receipt for a later
 /// non-blocking poll; results return in input order.
-pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch, ValidationError> {
+pub(super) fn validate_batch(
+    cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+) -> Result<ValidationBatch, ValidationError> {
     super::super::platform::require_v8_platform()?;
-    if cards.len() > BATCH_CAP {
+    if cards.len() > MAX_VALIDATION_BATCH_CARDS {
         return Err(ValidationError::CardLimit);
     }
     let bytes = cards.iter().try_fold(0usize, |sum, card| {
-        let total = card
-            .siblings
-            .iter()
-            .try_fold(card.card.js.len(), |n, (name, js)| {
-                n.checked_add(name.len())?.checked_add(js.len())
-            })?;
-        if card.card.js.len() > SOURCE_CAP || card.siblings.len() > SIBLING_CAP || total > INPUT_CAP
-        {
-            return None;
-        }
-        sum.checked_add(total)
+        let card_bytes = validation_card_bytes(card)?;
+        let batch_bytes = sum.checked_add(card_bytes)?;
+        (batch_bytes <= BATCH_BYTES_CAP).then_some(batch_bytes)
     });
-    if bytes.is_none_or(|bytes| bytes > BATCH_BYTES_CAP) {
+    if bytes.is_none() {
         return Err(ValidationError::ByteLimit);
     }
     let seat = SEAT
@@ -124,6 +188,8 @@ pub(super) fn validate_batch(cards: Vec<PreparedCard>) -> Result<ValidationBatch
     let cancelled = Arc::new(AtomicBool::new(false));
     let pending = match seat.try_send(Job {
         cards,
+        game_data,
+        named_banks,
         reply,
         cancelled: Arc::clone(&cancelled),
     }) {
@@ -151,6 +217,8 @@ fn run(rx: Receiver<Job>) {
         }
         let Job {
             cards,
+            game_data,
+            named_banks,
             reply,
             cancelled,
         } = job;
@@ -167,11 +235,19 @@ fn run(rx: Receiver<Job>) {
                     std::sync::Arc::from(card.card.name.as_str()),
                     card.card.shape,
                     card.siblings.clone(),
+                    Arc::clone(&game_data),
+                    Arc::clone(&named_banks),
                     &mut retiring,
                 )
             }
             .map_err(|error| format!("prepare {}: {error}", card.card.name));
-            results.push((card, outcome));
+            results.push((
+                card,
+                match outcome {
+                    Ok(()) => CardValidation::Validated,
+                    Err(error) => CardValidation::Failed(error),
+                },
+            ));
         }
         let _ = reply.send(results);
     }
@@ -196,7 +272,7 @@ fn refuse(job: Job, reason: &str) {
         .into_iter()
         .map(|card| {
             let error = format!("prepare {}: {reason}", card.card.name);
-            (card, Err(error))
+            (card, CardValidation::Failed(error))
         })
         .collect();
     let _ = job.reply.send(rows);
@@ -207,6 +283,8 @@ fn validate_one(
     card_name: std::sync::Arc<str>,
     shape: LoadShape,
     siblings: Vec<(String, String)>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
     retiring: &mut Option<Receiver<Vec<String>>>,
 ) -> Result<(), String> {
     let isolate = LoadIsolate::spawn_inner(
@@ -214,8 +292,8 @@ fn validate_one(
         card_name,
         shape,
         siblings,
-        None,
-        std::sync::Arc::clone(&EMPTY_BANKS),
+        Some(game_data),
+        named_banks,
         script::surface::no_wilderness(),
         None,
         None,
@@ -244,21 +322,64 @@ fn validate_one(
 mod tests {
     use super::*;
 
-    fn batch_job() -> Job {
-        let (reply, _) = mpsc::channel();
+    fn test_context() -> Option<(
+        Arc<api::game_data::SelectedGameData>,
+        Arc<api::named_banks::NamedBankFacts>,
+    )> {
+        if !api::test_support::game_data_available() {
+            return None;
+        }
+        let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("local R289 test data");
+        let banks = api::named_banks::bank_catalog()
+            .expect("local bank catalog")
+            .iter()
+            .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+            .collect();
+        Some((
+            game_data,
+            Arc::new(api::named_banks::NamedBankFacts::from_banks(banks)),
+        ))
+    }
+
+    fn batch_job(
+        game_data: Arc<api::game_data::SelectedGameData>,
+        named_banks: Arc<api::named_banks::NamedBankFacts>,
+        reply: mpsc::Sender<Batch>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Job {
         Job {
             cards: Vec::new(),
+            game_data,
+            named_banks,
             reply,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancelled,
         }
     }
 
     #[test]
     fn pending_batch_admission_retries_without_growing_the_queue() {
+        let Some((game_data, named_banks)) = test_context() else {
+            return;
+        };
         let (seat, rx) = mpsc::sync_channel(1);
-        assert!(matches!(seat.try_send(batch_job()), Ok(())));
+        let (queued_reply, _) = mpsc::channel();
+        assert!(seat
+            .try_send(batch_job(
+                Arc::clone(&game_data),
+                Arc::clone(&named_banks),
+                queued_reply,
+                Arc::new(AtomicBool::new(false)),
+            ))
+            .is_ok());
 
-        let pending = RefCell::new(Some(batch_job()));
+        let (pending_reply, _) = mpsc::channel();
+        let pending = RefCell::new(Some(batch_job(
+            game_data,
+            named_banks,
+            pending_reply,
+            Arc::new(AtomicBool::new(false)),
+        )));
         assert_eq!(try_admit_pending(&seat, &pending), Err(TryRecvError::Empty));
 
         drop(rx.try_recv().unwrap());
@@ -269,22 +390,34 @@ mod tests {
 
     #[test]
     fn batch_receipt_holds_pending_until_seat_admits_and_cancels_on_drop() {
+        let Some((game_data, named_banks)) = test_context() else {
+            return;
+        };
         // A local 1-slot seat stands in for the process seat: no JS engine
         // and no global-seat races. The receipt under test owns its pending
         // batch and polls it through the public `try_recv` path.
         let (seat, rx) = mpsc::sync_channel(1);
-        assert!(seat.try_send(batch_job()).is_ok());
+        let (queued_reply, _) = mpsc::channel();
+        assert!(seat
+            .try_send(batch_job(
+                Arc::clone(&game_data),
+                Arc::clone(&named_banks),
+                queued_reply,
+                Arc::new(AtomicBool::new(false)),
+            ))
+            .is_ok());
 
         let (reply, receiver) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let batch = ValidationBatch {
             receiver,
             cancelled: Arc::clone(&cancelled),
-            pending: RefCell::new(Some(Job {
-                cards: Vec::new(),
+            pending: RefCell::new(Some(batch_job(
+                game_data,
+                named_banks,
                 reply,
-                cancelled: Arc::clone(&cancelled),
-            })),
+                Arc::clone(&cancelled),
+            ))),
         };
 
         // Full seat: the poll reports Empty and the owner keeps the batch.

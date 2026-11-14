@@ -25,6 +25,15 @@
         { "proves": { "min": 60, "max": 60 }, "after": { "min": 60, "max": 61 } },
         { "proves": { "min": 0, "max": 59 }, "after": { "min": 0, "max": 61 } }
       ],
+      "reviewed_writes": [
+        {
+          "write": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:12",
+          "sets": 3,
+          "guard": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:14-22",
+          "guard_text": "%priestperil > ^priestperil_killed_dog",
+          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,228"
+        }
+      ],
       "probe": {
         "refuse": [
           {
@@ -295,6 +304,15 @@
         { "proves": { "min": 7, "max": 7 }, "after": { "min": 7, "max": 61 } },
         { "proves": { "min": 8, "max": 8 }, "after": { "min": 8, "max": 61 } },
         { "proves": { "min": 10, "max": 59 }, "after": { "min": 10, "max": 61 } }
+      ],
+      "reviewed_writes": [
+        {
+          "write": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:12",
+          "sets": 3,
+          "guard": "scripts/areas/area_mausoleum/scripts/temple_guardian.rs2:14-22",
+          "guard_text": "%priestperil > ^priestperil_killed_dog",
+          "called_from": "scripts/skill_combat/scripts/npc/npc_combat.rs2:144,228"
+        }
       ],
       "rules": [
         {

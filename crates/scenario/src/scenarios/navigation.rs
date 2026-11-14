@@ -282,9 +282,14 @@ pub(crate) fn nav_quest_door_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "set Hero's Quest complete",
+                name: "complete Hero's Quest and its required quests",
                 kind: StepKind::Perform {
                     send: Box::new(|c, _| {
+                        // quest_hero.rs2:1-7 requires these quests and either Shield of Arrav gang.
+                        cheat(c, "setvar zanaris 6");
+                        cheat(c, "setvar dragonquest 10");
+                        cheat(c, "setvar arthur 7");
+                        cheat(c, "setvar blackarmgang 4");
                         cheat(c, "setvar heroquest 15");
                         true
                     }),
@@ -520,16 +525,14 @@ const BRIM_CART: WorldTile = WorldTile {
     level: 0,
 };
 
-/// The `nav_cart` scenario: the first OP_NPC execute follow. Log in
-/// `test`/`test`, mainland-hop into the Lumbridge courtyard, cheat-give
-/// the fare (the packed Shilo→Brimhaven Npc edge carries a 200-coin
-/// `item_req`), cheat-tele to the Shilo Village cart driver, then
-/// `Follow` a whole-world route to the Brimhaven cart landing — a
-/// destination that **requires** the cart hop (the only way across the
-/// sea to the Brimhaven side). The traveller interacts the driver
-/// (`OpTarget::Npc` + option 1), answers the driver's fare dialog (the
-/// "Yes please…" choice), and PASSes on `TravelOutcome::Arrived` at the
-/// landing.
+/// The `nav_cart` scenario: set `%zombiequeen` to 15 on the `test` account,
+/// then relog so the completed Shilo Village journal row reaches the client.
+/// Content defines `^zombiequeen_complete = 15`
+/// (`content/scripts/general/configs/quest.constant:62`). Give the fare,
+/// teleport to Vigroy and follow the cart hop to Brimhaven. Both drivers
+/// refuse the journey below the completion value
+/// (`area_shilo/scripts/vigroy.rs2:17-20`,
+/// `area_brimhaven/scripts/hajedy.rs2:17-20,26-29`).
 pub(crate) fn nav_cart_scenario() -> Scenario {
     let driver = SHILO_DRIVER;
     let dest = BRIM_CART;
@@ -540,6 +543,43 @@ pub(crate) fn nav_cart_scenario() -> Scenario {
             mainland: true,
         },
         steps: vec![
+            Step {
+                name: "set Shilo Village complete on the test account",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar zombiequeen 15");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: 3220,
+                        z: 3220,
+                        level: 0,
+                    },
+                    budget_ticks: 30,
+                },
+            },
+            Step {
+                name: "relog so the Shilo Village journal refreshes",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "verify Shilo Village completion in the journal",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::QuestDone {
+                        name: "Shilo Village",
+                    },
+                    budget_ticks: 200,
+                },
+            },
             Step {
                 name: "give the fare and tele to the Shilo cart driver",
                 kind: StepKind::Perform {

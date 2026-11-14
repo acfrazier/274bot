@@ -140,7 +140,7 @@ pub fn player_candidate(
     let label = attack_label(&row.actor.actions).ok_or(PvpRefusal::NoAttackOp)?;
     zone_gate(
         frame.here,
-        row.actor.tile,
+        row.network,
         frame.local.player.combat_level,
         row.combat_level,
         tables,
@@ -498,7 +498,7 @@ fn npc_route_steps(view: &api::query::ReachQueryView, npc: &NpcView) -> Option<u
     crate::reach_route::route_steps(
         view,
         crate::reach_route::Footprint {
-            tile: npc.tile,
+            tile: npc.network,
             width: npc.size.max(1),
             length: npc.size.max(1),
         },
@@ -558,7 +558,7 @@ pub fn pick_target(
             .iter()
             .find(|player| {
                 player.actor.name.as_deref() == Some(name.as_ref())
-                    && within_search_bounds(player.actor.tile, request.search_bounds.as_deref())
+                    && within_search_bounds(player.network, request.search_bounds.as_deref())
                     && player_actor(player).is_some_and(|actor| actor_attackable(frame, actor))
             })
             .and_then(player_actor),
@@ -634,8 +634,8 @@ fn pick_npc(
                     .iter()
                     .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
             })
-            || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
-            || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
+            || !within_search_bounds(npc.network, request.search_bounds.as_deref())
+            || tile_distance(npc.network, origin) > u32::from(request.engage_radius)
         {
             return None;
         }
@@ -660,10 +660,10 @@ fn pick_npc(
         let distance = if attackers_only {
             // The NPC that is in combat with the bot comes first, then the
             // nearest to the bot.
-            (u64::from(!npc.in_combat) << 32) | u64::from(tile_distance(npc.tile, frame.here))
+            (u64::from(!npc.in_combat) << 32) | u64::from(tile_distance(npc.network, frame.here))
         } else {
-            let near =
-                route_steps.map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
+            let near = route_steps
+                .map_or_else(|| u64::from(tile_distance(npc.network, origin)), u64::from);
             if attacker_first {
                 (u64::from(!(npc.in_combat && targets_player(npc, frame.me()))) << 32) | near
             } else {
@@ -761,12 +761,12 @@ fn actor_in_search_bounds(
             .npcs
             .iter()
             .find(|row| row.index == usize::from(actor.index))
-            .is_some_and(|row| within_search_bounds(row.tile, bounds)),
+            .is_some_and(|row| within_search_bounds(row.network, bounds)),
         ActorKind::Player => frame
             .players
             .iter()
             .find(|row| row.index == usize::from(actor.index))
-            .is_some_and(|row| within_search_bounds(row.actor.tile, bounds)),
+            .is_some_and(|row| within_search_bounds(row.network, bounds)),
     }
 }
 #[inline]

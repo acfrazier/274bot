@@ -1499,8 +1499,7 @@ fn out_of_range_dialog_walks_to_npc_before_talk_to() {
     plant_player(&mut c, "Test", 0, 0);
     plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
     // Move the genie to tile (3, 0): out of Talk-to range.
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -1543,19 +1542,29 @@ fn guardian_tick_with_data(
         None,
     )
 }
-fn set_flee_player(c: &mut Client, x: i32, z: i32, moving: bool) {
+fn set_player_tiles(c: &mut Client, network: (i32, i32), rendered: (i32, i32)) {
     let player = c.local_player.as_mut().expect("player");
-    player.entity.x = x * 128 + 64;
-    player.entity.z = z * 128 + 64;
-    player.route_x[0] = x;
-    player.route_z[0] = z;
-    player.entity.route_length = if moving { 1 } else { 0 };
+    player.entity.x = rendered.0 * 128 + 64;
+    player.entity.z = rendered.1 * 128 + 64;
+    player.route_x[0] = network.0;
+    player.route_z[0] = network.1;
+}
+
+fn set_npc_tiles(c: &mut Client, slot: usize, network: (i32, i32), rendered: (i32, i32)) {
+    let npc = c.npc[slot].as_mut().expect("npc");
+    npc.entity.x = rendered.0 * 128 + 64;
+    npc.entity.z = rendered.1 * 128 + 64;
+    npc.route_x[0] = network.0;
+    npc.route_z[0] = network.1;
+}
+
+fn set_flee_player(c: &mut Client, x: i32, z: i32, moving: bool) {
+    set_player_tiles(c, (x, z), (x, z));
+    c.local_player.as_mut().expect("player").entity.route_length = if moving { 1 } else { 0 };
 }
 
 fn set_flee_npc(c: &mut Client, x: i32, z: i32) {
-    let npc = c.npc[0].as_mut().expect("npc");
-    npc.entity.x = x * 128 + 64;
-    npc.entity.z = z * 128 + 64;
+    set_npc_tiles(c, 0, (x, z), (x, z));
 }
 
 fn direct_route_tiles(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
@@ -1708,8 +1717,7 @@ fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let data = event_game_data();
     let swarm = data.npc_name(411).expect("289 Swarm content row");
     assert_eq!(swarm.attackrate, Some(7));
@@ -1887,9 +1895,7 @@ fn evade_still_targeting_outside_estimated_range_re_flees_without_release() {
     let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(status.kind, Some(RandomKind::Evade));
     assert_eq!(drv.walks, vec![(0, -7)]);
-    let npc = c.npc[0].as_mut().expect("river troll");
-    npc.entity.x = 2 * 128 + 64;
-    npc.entity.z = 64;
+    set_npc_tiles(&mut c, 0, (2, 0), (2, 0));
 
     // The player is seven from the latched NPC start tile while the chasing
     // troll has moved to tile two (only five from the player). Engine
@@ -2884,8 +2890,7 @@ fn unknown_strange_plant_is_not_picked_held_or_chased() {
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
     // Out of reach, so a chase would be visible.
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -3227,8 +3232,7 @@ fn aggressive_strange_plant_is_not_picked_or_chased() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Attack");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -3307,7 +3311,7 @@ fn authenticated_plant_drops_reused_id_op_and_angry_replacements() {
         drv.menus.clear();
         drv.actions.clear();
         c.npc[0].as_mut().expect("plant").r#type = replacement_type;
-        c.npc[0].as_mut().expect("plant").entity.x = 3 * 128 + 64;
+        set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 20_000, None);
         assert!(
@@ -3345,8 +3349,7 @@ fn plant_ownership_is_revalidated_when_the_slot_changes() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();

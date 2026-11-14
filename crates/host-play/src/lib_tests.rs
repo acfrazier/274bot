@@ -1243,8 +1243,6 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
-    // The reconnect under test is a script's.
-    start_idle_script(&play, "alice");
     let first = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert!(wait_settled(|| play
         .statuses()
@@ -2492,8 +2490,6 @@ fn client_after_connection_loss() -> Client {
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
-    // Release evidence serves a login the slot still wants: a script's.
-    arm.set_script_active(true);
     let mut client = client_after_server_logout();
     let before = Instant::now();
     tick_flags(&mut client, &[], &arm);
@@ -2613,7 +2609,6 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     client.lost_con();
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
-    arm.set_script_active(true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, client.ingame));
@@ -2713,7 +2708,6 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
-    arm.set_script_active(true);
 
     client.ptype = 74;
     client.psize = 0;
@@ -2747,7 +2741,6 @@ fn protocol_error_t2_logs_in_fresh() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
-    arm.set_script_active(true);
 
     // A one-byte frame for a zero-length opcode fails the fixed-length check.
     client.ptype = 74;
@@ -2864,309 +2857,6 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     assert_eq!(arm.login_latch_reason(), None);
 }
 
-/// Every way a session ends unexpectedly, as the client reports it, with the
-/// reason the park gives: only a server logout after the client's own idle
-/// request is an idle logout.
-fn unexpected_exits() -> Vec<(&'static str, LoginLatchReason, Client)> {
-    let dead_server = {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = hosted_client_on_a_built_scene(listener.local_addr().unwrap());
-        client.last_response = Some(Instant::now() - Duration::from_secs(16));
-        client.game_loop();
-        assert!(!client.ingame);
-        client
-    };
-    let protocol_error = {
-        let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
-        client.ptype = 74;
-        client.psize = 0;
-        client.handle_packet(74, &mut Packet::new(vec![]));
-        client
-    };
-    vec![
-        (
-            "connection lost",
-            LoginLatchReason::IdleDisconnect,
-            client_after_connection_loss(),
-        ),
-        (
-            "dead server deadline",
-            LoginLatchReason::IdleDisconnect,
-            dead_server,
-        ),
-        (
-            "protocol error",
-            LoginLatchReason::IdleDisconnect,
-            protocol_error,
-        ),
-        (
-            "server logout",
-            LoginLatchReason::ServerLogout,
-            client_after_server_logout(),
-        ),
-        (
-            "idle logout",
-            LoginLatchReason::IdleLogout,
-            client_after_observed_idle_logout(),
-        ),
-    ]
-}
-
-/// A native script that does nothing: the slot counts as scripted.
-struct IdleTestScript;
-
-impl script::native::Script for IdleTestScript {
-    fn tick(
-        &mut self,
-        _tick: &mut script::native::NativeTick<'_>,
-    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        Ok(script::native::ScriptFlow::Continue)
-    }
-}
-
-/// Run `IdleTestScript` on `name`, as an operator Start would, so the slot
-/// keeps its reconnect policy.
-fn start_idle_script(play: &Play, name: &str) {
-    play.script_start_handle()
-        .start_test_script(name, Box::new(IdleTestScript), None)
-        .expect("start the idle script");
-}
-
-/// A bot with no script behaves like a human client: after any unexpected
-/// disconnect, and after the server's idle logout, it stays logged out until
-/// the operator logs it in. It never relogs by itself, however long the
-/// auto-login preference has asked for it.
-#[test]
-fn scriptless_unexpected_disconnect_stays_parked() {
-    for (label, reason, mut client) in unexpected_exits() {
-        let arm = SlotArm::new(7, true);
-        on_login_success(&arm, arm.login_command(false).unwrap());
-
-        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
-        assert!(
-            !should_handshake(&arm, client.ingame),
-            "{label}: a bot with no script must not reconnect"
-        );
-        assert!(!arm.relogs_after_drop(), "{label}");
-        assert_eq!(
-            arm.login_latch_reason(),
-            Some(reason),
-            "{label}: the park says why the bot is logged out"
-        );
-        assert!(
-            !arm.login_latched(),
-            "{label}: a park is not an operator latch"
-        );
-        assert!(arm.auto_login(), "{label}: the saved preference is kept");
-    }
-}
-
-#[test]
-fn a_bot_with_a_running_script_still_relogs_after_an_unexpected_exit() {
-    for (label, _, mut client) in unexpected_exits() {
-        let arm = SlotArm::new(7, true);
-        on_login_success(&arm, arm.login_command(false).unwrap());
-        arm.set_script_active(true);
-
-        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
-        assert!(
-            should_handshake(&arm, client.ingame),
-            "{label}: a script's reconnect is unchanged"
-        );
-        assert_eq!(arm.login_latch_reason(), None, "{label}");
-    }
-}
-
-/// The script flag is decided from the slot's own state at the exit: the
-/// boundary sync that follows corrects a flag that was stale when the client
-/// reported the exit.
-#[test]
-fn the_script_state_at_the_boundary_decides_a_stale_exit() {
-    // A script started online: the exit parked first, the sync restores it.
-    let mut client = client_after_connection_loss();
-    let arm = SlotArm::new(7, true);
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    tick_flags(&mut client, &[], &arm);
-    assert!(!should_handshake(&arm, false));
-    arm.set_script_active(true);
-    assert!(should_handshake(&arm, false));
-    assert_eq!(arm.login_latch_reason(), None);
-
-    // A script stopped online: the exit owed the relog, the sync parks it.
-    let mut client = client_after_connection_loss();
-    let arm = SlotArm::new(7, true);
-    arm.set_script_active(true);
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    tick_flags(&mut client, &[], &arm);
-    assert!(should_handshake(&arm, false));
-    arm.set_script_active(false);
-    assert!(!should_handshake(&arm, false));
-    assert_eq!(
-        arm.login_latch_reason(),
-        Some(LoginLatchReason::IdleDisconnect)
-    );
-}
-
-/// The mailbox row that the end of a script's need posts: a relog that is in
-/// progress is no longer current and the bot parks; the operator's own Login
-/// still connects. The public Stop that posts it, with an open handshake, is
-/// `a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through`.
-#[test]
-fn stopping_the_script_cancels_a_relog_in_progress_and_login_connects_again() {
-    let mut client = client_after_connection_loss();
-    let arm = SlotArm::new(7, true);
-    arm.set_script_active(true);
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    tick_flags(&mut client, &[], &arm);
-    let command = arm.login_command(false).expect("the script's relog");
-    let world = 0;
-    assert!(arm.login_attempt_is_current(command, world));
-
-    arm.set_script_active(false);
-    assert!(!arm.login_attempt_is_current(command, world));
-    assert!(!should_handshake(&arm, false));
-    assert_eq!(
-        arm.relog_park_reason().to_string(),
-        "idle_disconnect",
-        "the one park line names the reason"
-    );
-
-    arm.arm_explicit_login();
-    assert!(should_handshake(&arm, false));
-    assert_eq!(arm.login_latch_reason(), None);
-}
-
-/// A `Play` with no slot thread, for the control-thread paths of a script's
-/// Start and Stop. The test plays the slot thread's part by hand.
-fn play_for_script_control() -> Play {
-    run_with_io(
-        &PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )
-}
-
-/// The race: a script's connection drops, the slot starts the script's
-/// replacement handshake, and the operator stops the script while that
-/// handshake is open. The Stop itself, not a later slot step, cancels the
-/// attempt: a handshake that finishes afterwards is not accepted, so the bot
-/// never comes back without its script. Every public Stop does it.
-#[test]
-fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    type Stop = fn(&Play, &str, api::selected::RunKey);
-    let stops: [(&str, Stop); 2] = [
-        ("script_stop", |play, name, _| play.script_stop(name)),
-        ("script_native_stop", |play, name, key| {
-            assert!(play.script_native_stop(name, key));
-        }),
-    ];
-    for (label, stop) in stops {
-        let mut play = play_for_script_control();
-        let arm = SlotArm::new(7, true);
-        play.attach_arm("alice", Arc::clone(&arm));
-        let key = play
-            .script_start_handle()
-            .start_test_script("alice", Box::new(IdleTestScript), None)
-            .expect("start the idle script");
-        // The slot thread's own step, before it connects.
-        crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
-        on_login_success(&arm, arm.login_command(false).unwrap());
-        let mut client = client_after_connection_loss();
-        tick_flags(&mut client, &[], &arm);
-        assert!(should_handshake(&arm, false), "{label}: the script's relog");
-
-        let (command, world) = capture_login_authorization(&arm, false).expect(label);
-        let cancel = client::io::client_stream::LoginCancel::new();
-        assert!(arm.begin_attempt(command, world, cancel.clone()), "{label}");
-        assert!(!cancel.is_cancelled(), "{label}");
-
-        // The slot thread is inside the handshake and syncs nothing.
-        stop(&play, "alice", key);
-
-        assert!(cancel.is_cancelled(), "{label}: Stop cancels the handshake");
-        assert!(
-            !arm.finish_attempt(
-                command,
-                world,
-                Instant::now() + Duration::from_secs(30),
-                &cancel,
-                &Ok(()),
-            ),
-            "{label}: a handshake that completes after Stop is not accepted"
-        );
-        assert!(!should_handshake(&arm, false), "{label}");
-        assert_eq!(
-            arm.login_latch_reason(),
-            Some(LoginLatchReason::IdleDisconnect),
-            "{label}"
-        );
-        arm.arm_explicit_login();
-        assert!(should_handshake(&arm, false), "{label}: Log in connects");
-    }
-}
-
-/// A script started on a parked bot and stopped before the bot is back leaves
-/// it parked; the saved auto-login preference does not log it in.
-#[test]
-fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
-    let mut play = play_for_script_control();
-    let arm = SlotArm::new(7, true);
-    play.attach_arm("alice", Arc::clone(&arm));
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    let mut client = client_after_connection_loss();
-    tick_flags(&mut client, &[], &arm);
-    assert!(!should_handshake(&arm, false), "parked");
-    if !api::test_support::game_data_available() {
-        return;
-    }
-
-    start_idle_script(&play, "alice");
-    crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
-    assert!(should_handshake(&arm, false), "the script logs the bot in");
-
-    play.script_stop("alice");
-
-    assert!(!should_handshake(&arm, false), "no scriptless auto-login");
-    assert_eq!(
-        arm.login_latch_reason(),
-        Some(LoginLatchReason::IdleDisconnect)
-    );
-    arm.arm_explicit_login();
-    assert!(should_handshake(&arm, false), "the operator's Log in works");
-}
-
-/// A script that starts while the bot is parked logs it in; an operator
-/// latch is not undone by a script.
-#[test]
-fn a_script_started_during_a_park_logs_in_but_not_through_an_operator_latch() {
-    let mut client = client_after_connection_loss();
-    let arm = SlotArm::new(7, true);
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    tick_flags(&mut client, &[], &arm);
-    assert!(!should_handshake(&arm, false));
-    arm.set_script_active(true);
-    assert!(should_handshake(&arm, false));
-
-    let mut client = client_after_server_logout();
-    let arm = SlotArm::new(7, true);
-    on_login_success(&arm, arm.login_command(false).unwrap());
-    arm.request_logout();
-    tick_flags(&mut client, &[], &arm);
-    arm.set_script_active(true);
-    assert!(!should_handshake(&arm, false), "the operator's logout wins");
-}
-
 #[test]
 fn session_exit_snapshot_is_consistent_with_logout_order() {
     for logout_before_exit in [false, true] {
@@ -3197,11 +2887,7 @@ fn clean_server_logout_does_not_count_toward_repeat_guard() {
     let mut client = client_after_server_logout();
     observe_client_session_exit(&mut client, &arm);
     assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
-    assert_eq!(
-        arm.login_latch_reason(),
-        Some(LoginLatchReason::ServerLogout),
-        "a bot without a script parks; the guard counts nothing"
-    );
+    assert_eq!(arm.login_latch_reason(), None);
 }
 
 #[test]
@@ -9467,126 +9153,6 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
     );
 }
 
-/// A cheat the operator typed is input to the game: once the client accepts
-/// it, the idle counter restarts, as a typed chat line would restart it in the
-/// Java client. A host bookkeeping cheat is not input, and neither is a cheat
-/// the client refuses.
-#[test]
-fn an_accepted_operator_cheat_resets_the_idle_counter_and_bookkeeping_does_not() {
-    // (queue the command, the client accepts cheats, idle count afterwards)
-    type Queue = fn(&Play);
-    let cases: [(&str, Queue, bool, u32); 4] = [
-        (
-            "operator cheat",
-            |play| play.cheat("alice", "getcoord").unwrap(),
-            true,
-            0,
-        ),
-        (
-            "host bookkeeping cheat",
-            |play| play.cheat_internal("alice", "getvar tutorial").unwrap(),
-            true,
-            4000,
-        ),
-        (
-            "operator cheat the client refuses",
-            |play| play.cheat("alice", "getcoord").unwrap(),
-            false,
-            4000,
-        ),
-        ("no command", |_| {}, true, 4000),
-    ];
-    for (label, queue, admitted, idle_after) in cases {
-        let play = run_with_io(
-            &PlayOptions {
-                host: "127.0.0.1".into(),
-                transport: client::Transport::Tcp,
-                port: 43594,
-                cache_dir: "/tmp".into(),
-                lowmem: true,
-                mainland: false,
-            },
-            vec![],
-            |_| (None, None),
-            |_, _, _| {},
-        );
-        play.statuses.lock().unwrap().push(SlotStatus {
-            username: "alice".into(),
-            ingame: true,
-            scene_state: 2,
-            ..SlotStatus::default()
-        });
-        play.cheats
-            .lock()
-            .unwrap()
-            .insert("alice".into(), VecDeque::new());
-        queue(&play);
-
-        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-        let (navs, world) = empty_nav();
-        let mut client = prepare_client(
-            ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 1,
-                cache_dir: String::new(),
-                members: true,
-                lowmem: true,
-            },
-            1,
-            Arc::new(Cache::default()),
-            Arc::new(vec![]),
-            Vec::new(),
-        );
-        client.ingame = true;
-        client.scene_state = 2;
-        if admitted {
-            client.set_cheat_admission(client::CheatAdmission::Granted);
-        }
-        client.shell.idle_cycles = 4000;
-        let mut snapshot = GameSnapshot::new();
-        snapshot.rebuild(&client);
-
-        super::script_observe_cached_with_channels(
-            &mut client,
-            "alice",
-            true,
-            false,
-            false,
-            1,
-            None,
-            None,
-            None,
-            Some(&snapshot),
-            None,
-            #[cfg(feature = "js")]
-            None,
-            None,
-            &scripts,
-            &play.cheats,
-            &navs,
-            &world,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            #[cfg(feature = "js")]
-            None,
-            #[cfg(feature = "js")]
-            super::script_channels::BrokerWorld::Unavailable,
-            None,
-            None,
-            None,
-            None,
-        );
-
-        assert_eq!(client.shell.idle_cycles, idle_after, "{label}");
-    }
-}
-
 #[test]
 fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
     for (host, transport, admitted) in [
@@ -11174,6 +10740,95 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
     assert!(
         c.out.pos > before,
         "the exact named operation is dispatched"
+    );
+}
+
+#[test]
+fn dispatch_open_stand_npc_uses_network_coords() {
+    use client::config::NpcType;
+    use client::dash3d::ClientNpc;
+
+    let mut c = bank_client();
+    let type_id = 501usize;
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.npcs.len() <= type_id {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[type_id] = NpcType {
+            id: type_id as i32,
+            name: "Network banker".into(),
+            op: vec![Some("Bank".into())],
+            ..Default::default()
+        };
+    }
+    let mut npc = ClientNpc::at(6, 6);
+    npc.r#type = Some(type_id);
+    while c.npc.len() <= 7 {
+        c.npc.push(None);
+    }
+    c.npc[7] = Some(Box::new(npc));
+    c.npc_ids = vec![7];
+    c.npc_count = 1;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.npcs().len(), 1);
+    let rendered = snap.npcs()[0].tile;
+    let target = api::snapshot::WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    assert_ne!(
+        rendered, target,
+        "fixture must diverge rendered and network"
+    );
+    let mut network_row = snap.npcs()[0].clone();
+    network_row.network = target;
+    snap.seed_npcs(vec![network_row]);
+
+    let (navs, world) = empty_nav();
+    let request = |tile: api::snapshot::WorldTile| script::interact::InteractReq::OpenStand {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        kind: "npc".into(),
+        name: Some("Network banker".into()),
+        stand_op: Some(1),
+        choose: None,
+    };
+    let before = c.out.pos;
+    assert!(!dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![request(rendered)],
+    ));
+    assert_eq!(
+        c.out.pos, before,
+        "the rendered tile is not the exact BankStand target"
+    );
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![request(target)],
+    ));
+    assert!(
+        c.out.pos > before,
+        "the network target dispatches the NPC op"
     );
 }
 
@@ -20650,10 +20305,11 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
     assert_eq!(aggressive.component_id(), 2011);
 }
 
-/// Hop 2 — an npc behind a wall posts `reachable: false` from SceneQuery.
+/// NPC reach bits must follow the path-head tile while the public rendered
+/// actor coordinates remain unchanged.
 #[cfg(feature = "js")]
 #[test]
-fn script_snapshot_npc_behind_wall_posts_reachable_false() {
+fn script_snapshot_npc_reach_uses_network_coords() {
     use client::dash3d::{ClientNpc, ClientPlayer, CollisionFlag};
 
     let mut c = nav_client();
@@ -20677,6 +20333,8 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         };
     }
     let mut npc = ClientNpc::at(5, 6);
+    npc.entity.x = 5 * 128 + 64;
+    npc.entity.z = 6 * 128 + 64;
     npc.r#type = Some(type_id);
     while c.npc.len() <= slot {
         c.npc.push(None);
@@ -20708,7 +20366,7 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
     assert_eq!(npcs.len(), 1);
     assert!(
         !npcs.get(0).reachable(),
-        "npc behind SQ_BLOCKED tile is not reachable"
+        "the original network tile is behind SQ_BLOCKED"
     );
     let reach = view.reach().expect("native reach metadata");
     let exact_rank = reach.exact_rank().expect("exact ranks");
@@ -20726,6 +20384,117 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         0,
         "blocked npc tile is adjacent from the origin before expansion"
     );
+
+    let mut divergent = snap.npcs()[0].clone();
+    divergent.network = api::snapshot::WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    divergent.size = 0;
+    snap.seed_npcs(vec![divergent]);
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
+    let npc = view.npcs().expect("npc rows").get(0);
+    assert_eq!(npc.x(), 3205);
+    assert_eq!(npc.z(), 3206);
+    assert!(
+        npc.reachable(),
+        "network path-head on the origin is reachable despite the rendered wall tile"
+    );
+}
+
+/// Remote-player reach bits and native network metadata use the path-head
+/// tile without changing the rendered compatibility position or distance.
+#[cfg(feature = "js")]
+#[test]
+fn script_snapshot_player_reach_uses_network_coords() {
+    use client::dash3d::{ClientPlayer, CollisionFlag};
+
+    let mut c = nav_client();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.collision[0].flags[5][6] |= CollisionFlag::SQ_BLOCKED;
+
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    snap.seed_players(vec![api::snapshot::PlayerView {
+        index: 7,
+        network: api::snapshot::WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        actor: api::snapshot::ActorView {
+            name: Some("Remote".into()),
+            actions: vec![Some("Trade".into())],
+            tile: api::snapshot::WorldTile {
+                x: 3205,
+                z: 3206,
+                level: 0,
+            },
+            distance: 17,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 10,
+            total_health: 10,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        },
+        combat_level: 3,
+        skill_level: 1,
+        headicons: 0,
+        weapon: None,
+    }]);
+
+    let (bytes, _) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
+    let players = view.players().expect("player rows");
+    assert_eq!(players.len(), 1);
+    let player = players.get(0);
+    assert!(player.reachable(), "network path-head is the local origin");
+    assert_eq!(player.x(), 3205);
+    assert_eq!(player.z(), 3206);
+    assert_eq!(player.distance(), 17);
+    assert_eq!(player.size(), 1);
+    assert_eq!(player.nx(), 3205);
+    assert_eq!(player.nz(), 3205);
 }
 
 /// A loc on a blocked tile uses the same SceneQuery reach as npcs —
@@ -26074,8 +25843,6 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         None,
         Some(Arc::clone(&arm)),
     );
-    // The relog under test is a script's reconnect.
-    start_idle_script(&play, "clean-release-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16), "initial login is fresh");
@@ -26193,8 +25960,6 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
-    // The relog under test is a script's reconnect.
-    start_idle_script(&play, "dirty-exit-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
@@ -26218,36 +25983,49 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
     server.join().unwrap();
 }
 
-/// The spawned worker of a bot with no script does not reconnect by itself
-/// after the server drops its connection: it parks, publishes why, and only
-/// the operator's Log in starts the next handshake.
+/// A spawned worker with no script reconnects by itself after the server
+/// resets its connection, as it did before 0.2.9 (0.2.8 `play_login.rs`,
+/// release commit 65f526a09). A script is not needed for the reconnect.
 #[test]
-fn spawned_scriptless_worker_stays_parked_after_a_drop_until_login() {
+fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = listener.local_addr().unwrap();
     let (attempt_tx, attempt_rx) = mpsc::channel();
-    let (disconnect_tx, disconnect_rx) = mpsc::channel();
+    let (reset_tx, reset_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
     let server = thread::spawn(move || {
         let (mut first, _) = listener.accept().unwrap();
         let (opcode, arrived) = read_worker_login_attempt(&mut first);
         attempt_tx.send((1, opcode, arrived)).unwrap();
         answer_worker_login(&mut first, 2);
-        disconnect_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+        reset_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+        // Close the socket with the worker's bytes still unread: the close
+        // then ends the connection with a reset, not an orderly shutdown.
+        let mut probe = [0u8; 1];
+        let until = Instant::now() + Duration::from_secs(30);
+        while !matches!(first.peek(&mut probe), Ok(read) if read > 0) {
+            assert!(Instant::now() < until, "the worker sends nothing to reset");
+            thread::sleep(Duration::from_millis(20));
+        }
         drop(first);
 
         let (mut second, _) = listener.accept().unwrap();
         let (opcode, arrived) = read_worker_login_attempt(&mut second);
         attempt_tx.send((2, opcode, arrived)).unwrap();
-        answer_worker_login(&mut second, 5);
+        answer_worker_login(&mut second, 2);
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
     });
 
     let mut play = run_worker_play(endpoint, |_, _, _| {});
     let arm = SlotArm::new(42, true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(
-        profile("scriptless-worker", 42),
+        profile("scriptless-reset-worker", 42),
         None,
         None,
         Some(Arc::clone(&arm)),
@@ -26255,39 +26033,42 @@ fn spawned_scriptless_worker_stays_parked_after_a_drop_until_login() {
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
-    assert!(wait_settled(|| play.slot_connected("scriptless-worker")));
-    disconnect_tx.send(()).unwrap();
-    assert!(
-        wait_settled(|| arm.login_latch_reason() == Some(LoginLatchReason::IdleDisconnect)),
-        "the dropped bot parks with its reason"
-    );
-    assert!(
-        attempt_rx.recv_timeout(Duration::from_secs(4)).is_err(),
-        "no reconnect starts: login spacing is 1.2 s"
-    );
-    assert!(wait_settled(|| play.statuses().iter().any(|row| row
-        .username
-        == "scriptless-worker"
-        && row.login_latch_reason
-            == Some(LoginLatchReason::IdleDisconnect))));
-
-    arm.arm_explicit_login();
-    play.wake("scriptless-worker");
-    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert!(wait_settled(
+        || play.slot_connected("scriptless-reset-worker")
+    ));
+    reset_tx.send(()).unwrap();
+    let reconnect = attempt_rx.recv_timeout(Duration::from_secs(30));
+    // Stop the worker before judging, and free the fake server if the
+    // reconnect never came, so a failure ends at once and leaves no thread.
+    arm.stop.store(true, Ordering::Relaxed);
+    if reconnect.is_err() {
+        drop(std::net::TcpStream::connect(endpoint));
+    }
+    let _ = release_tx.send(());
+    play.stop_slot("scriptless-reset-worker");
+    let server_result = server.join();
+    let (number, opcode, _) = reconnect.expect("a bot with no script reconnects after a reset");
     assert_eq!(
         (number, opcode),
         (2, 18),
-        "the operator's Log in reconnects into the dirty session"
+        "the reconnect resumes the dirty in-world session"
     );
-
-    arm.stop.store(true, Ordering::Relaxed);
-    play.stop_slot("scriptless-worker");
-    server.join().unwrap();
+    server_result.unwrap();
+    assert_eq!(
+        arm.login_latch_reason(),
+        None,
+        "no park or latch holds the bot logged out"
+    );
 }
 
-/// Whether the client of a spawned, logged-in worker ran the Java idle timer
-/// at any frame in a few seconds, with or without a running script.
-fn worker_runs_idle_timer(scripted: bool) -> bool {
+/// A spawned worker with no script never sends the Java idle logout: after
+/// its idle counter passes 4500 client cycles without input, the client still
+/// counts no idle cycles, queues no idle request and starts no logout timer. A bot with no script
+/// behaved this way before 0.2.9 (0.2.8 `play_slots.rs`: the host-owned
+/// client keeps the Java idle timer suppressed).
+#[test]
+fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
+    use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -26299,51 +26080,52 @@ fn worker_runs_idle_timer(scripted: bool) -> bool {
         answer_worker_login(&mut socket, 2);
         let _ = release_rx.recv_timeout(Duration::from_secs(60));
     });
-    let ran = Arc::new(AtomicBool::new(false));
-    let seen = Arc::clone(&ran);
+    let frames = Arc::new(AtomicUsize::new(0));
+    let idle_logout_started = Arc::new(AtomicBool::new(false));
+    let frame_count = Arc::clone(&frames);
+    let started = Arc::clone(&idle_logout_started);
     let mut play = run_worker_play(endpoint, move |client, _, _| {
-        if client.ingame && client.host_idle_timer() {
-            seen.store(true, Ordering::Relaxed);
+        if !client.ingame {
+            return;
+        }
+        // The first in-game frame leaves the idle counter two cycles short
+        // of the Java threshold, as if the bot had sat idle for 90 s. Every
+        // frame after it is a client cycle past that threshold.
+        if frame_count.fetch_add(1, Ordering::Relaxed) == 0 {
+            client.shell.idle_cycles = 4498;
+        } else if client.shell.idle_cycles != 0 || client.logout_timer != 0 {
+            // A client that runs the Java timer keeps its idle count and
+            // starts the logout countdown when the request goes out; a
+            // host-owned client resets the count at every cycle.
+            started.store(true, Ordering::Relaxed);
         }
     });
     let arm = SlotArm::new(42, true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(
-        profile("idle-timer-worker", 42),
+        profile("scriptless-idle-worker", 42),
         None,
         None,
         Some(Arc::clone(&arm)),
     );
-    if scripted {
-        start_idle_script(&play, "idle-timer-worker");
-    }
-    assert!(wait_settled(|| play.slot_connected("idle-timer-worker")));
-    thread::sleep(Duration::from_secs(3));
-    let result = ran.load(Ordering::Relaxed);
+    assert!(wait_settled(
+        || play.slot_connected("scriptless-idle-worker")
+    ));
+    assert!(
+        wait_settled(|| frames.load(Ordering::Relaxed) >= 20),
+        "the worker runs well past the 4500-cycle threshold"
+    );
+    let started_idle_logout = idle_logout_started.load(Ordering::Relaxed);
 
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
-    play.stop_slot("idle-timer-worker");
+    play.stop_slot("scriptless-idle-worker");
     server.join().unwrap();
-    result
-}
-
-/// A bot with no script runs the Java idle timer; a running script holds it
-/// off. (The host owns reconnect, so before the host asked for the timer no
-/// bot ever sent the idle request.)
-#[test]
-fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
     assert!(
-        worker_runs_idle_timer(false),
-        "a bot with no script runs the idle timer"
+        !started_idle_logout,
+        "a bot with no script sends no idle logout request"
     );
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    assert!(
-        !worker_runs_idle_timer(true),
-        "a running script suppresses the idle timer"
-    );
+    assert_eq!(arm.login_latch_reason(), None);
 }
 
 #[test]
@@ -26386,8 +26168,6 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
-    // The relog under test is a script's reconnect.
-    start_idle_script(&play, "release-budget-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
@@ -32908,7 +32688,7 @@ mod quest_route_evidence_tests {
         api::snapshot::WorldTile { x, z, level: 0 }
     }
 
-    fn gate_world(quest: api::selected::FactKey) -> Arc<NavWorld> {
+    fn gate_world(gate: QuestGate) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
         use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -32941,8 +32721,7 @@ mod quest_route_evidence_tests {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
-                    .expect("typed Complete gate"),
+                nav_planner::quest_gates::QuestGates::new([gate]).expect("typed quest gate"),
             ),
         };
         let mut graph = TransportGraph::default();
@@ -33128,7 +32907,10 @@ export default class T extends LoopingBot {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
 
-        let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
+        let rig = start_compat_route(
+            gate_world(QuestGate::Complete(quest.clone())),
+            Arc::clone(&selected),
+        );
         let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
         let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
         let mut driver = NavRec::default();
@@ -33192,7 +32974,10 @@ export default class T extends LoopingBot {
             ("unavailable list", QuestListFrame::Unavailable),
             ("unsupported status colour", QuestListFrame::Unsupported),
         ] {
-            let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
+            let rig = start_compat_route(
+                gate_world(QuestGate::Complete(quest.clone())),
+                Arc::clone(&selected),
+            );
             let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
             start_walk(&slot);
             let snapshot = quest_snapshot(&selected, frame);
@@ -33204,6 +32989,160 @@ export default class T extends LoopingBot {
             assert!(!bot.has_route(), "{label} must not open the typed gate");
             assert!(bot.walk_outcome_failed, "{label} must report no route");
         }
+    }
+
+    #[cfg(feature = "js")]
+    fn hero_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        fresh_login_green: bool,
+    ) -> GameSnapshot {
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let facts = quests.quest("hero").expect("Hero's Quest facts");
+        let mut snapshot = nav_frame_at(0, 0);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: facts.display.to_string(),
+                colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            }],
+            true,
+        );
+        if fresh_login_green {
+            snapshot.begin_fresh_login_quest_colours();
+        }
+        snapshot
+    }
+
+    #[cfg(feature = "js")]
+    fn dispatch_inspect_route(rig: &NavRig, snapshot: &GameSnapshot, request_id: u64) {
+        let from = tile(0, 0);
+        let to = tile(3, 0);
+        let request: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
+            "op": "inspect-route",
+            "x": to.x,
+            "z": to.z,
+            "level": to.level,
+            "from_x": from.x,
+            "from_z": from.z,
+            "from_level": from.level,
+            "allow_wilderness": true,
+            "request_id": request_id,
+        }))
+        .expect("InspectRoute request");
+        let bytes = script_js::wire::encode_interact_batch(&[request]);
+        let requests = script_js::wire::decode_interact_batch(&bytes).expect("InspectRoute batch");
+        let mut client = bank_client();
+        assert!(dispatch_script_interact(
+            &mut client,
+            snapshot,
+            None,
+            Some((from.x, from.z, from.level)),
+            &rig.navs,
+            &rig.world,
+            None,
+            "alice",
+            requests,
+        ));
+    }
+
+    #[cfg(feature = "js")]
+    fn await_inspection(rig: &NavRig, request_id: u64) -> (bool, Option<WorldTile>, String) {
+        let start = std::time::Instant::now();
+        loop {
+            crate::script_runtime::poll_inspection_for_test(&rig.navs, "alice");
+            let terminal = rig.navs.lock().unwrap().get("alice").and_then(|bot| {
+                bot.inspect
+                    .latest
+                    .as_ref()
+                    .filter(|terminal| terminal.request_id == request_id)
+                    .or_else(|| {
+                        bot.inspect
+                            .prev
+                            .as_ref()
+                            .filter(|terminal| terminal.request_id == request_id)
+                    })
+                    .cloned()
+            });
+            if let Some(terminal) = terminal {
+                return (
+                    terminal.ok,
+                    terminal.terminal,
+                    terminal.reason.as_str().to_owned(),
+                );
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(2),
+                "InspectRoute {request_id} did not publish"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn compatibility_inspect_route_captures_fresh_hero_evidence_and_owns_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = selected_r289();
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let hero = quests.quest("hero").expect("Hero's Quest facts");
+        let ordinary = hero
+            .completion_range
+            .expect("ordinary Hero completion range");
+        let after_login = hero
+            .completion_range_after_login
+            .expect("qualified Hero completion range");
+        assert_eq!((ordinary.min, ordinary.max), (Some(1), Some(15)));
+        assert_eq!((after_login.min, after_login.max), (Some(15), Some(15)));
+
+        let gate = QuestGate::Window(api::selected::StageWindow {
+            quest: hero.id.clone(),
+            signal: hero.varp.clone(),
+            values: after_login,
+        });
+        let rig = start_compat_route(gate_world(gate), Arc::clone(&selected));
+        let mut driver = NavRec::default();
+        let qualified = hero_snapshot(&selected, true);
+        assert!(qualified.quest_green_since_fresh_login(0));
+        observe(&rig, &mut driver, &qualified, 1, None);
+        assert!(
+            rig.navs.lock().unwrap()["alice"].quest_context.is_some(),
+            "the observed compatibility slot must own selected quest context"
+        );
+        dispatch_inspect_route(&rig, &qualified, 901);
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
+        }
+        drop(qualified);
+        let (opened_ok, opened_terminal, _) = await_inspection(&rig, 901);
+        assert!(opened_ok, "fresh-login Hero completion must open the gate");
+        assert_eq!(opened_terminal, Some(tile(3, 0)));
+
+        let no_context_snapshot = hero_snapshot(&selected, true);
+        dispatch_inspect_route(&rig, &no_context_snapshot, 902);
+        drop(no_context_snapshot);
+        let (no_context_ok, _, no_context_reason) = await_inspection(&rig, 902);
+        assert!(!no_context_ok, "a missing quest context must fail closed");
+        assert_eq!(no_context_reason, "NoPath");
+
+        let unqualified = hero_snapshot(&selected, false);
+        assert!(!unqualified.quest_green_since_fresh_login(0));
+        observe(&rig, &mut driver, &unqualified, 2, None);
+        assert!(
+            rig.navs.lock().unwrap()["alice"].quest_context.is_some(),
+            "the unqualified request must still have its catalog context"
+        );
+        dispatch_inspect_route(&rig, &unqualified, 903);
+        {
+            let mut navs = rig.navs.lock().unwrap();
+            navs.get_mut("alice").expect("navigation bot").quest_context = None;
+        }
+        drop(unqualified);
+        let (weak_ok, _, weak_reason) = await_inspection(&rig, 903);
+        assert!(!weak_ok, "ordinary Hero completion must not prove stage 15");
+        assert_eq!(weak_reason, "NoPath");
     }
 
     #[derive(Default)]
@@ -33257,7 +33196,7 @@ export default class T extends LoopingBot {
         }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let world = gate_world(quest);
+        let world = gate_world(QuestGate::Complete(quest));
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("test slot");
         let shared = Arc::new(Mutex::new(Advice::default()));

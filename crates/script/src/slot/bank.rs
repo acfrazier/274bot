@@ -1206,6 +1206,24 @@ impl SlotScript {
             })
     }
 
+    /// The existing per-script opt-ins shared by bank selection and bank trips.
+    pub fn bank_preferences(&self) -> BankPreferences {
+        let bag = self
+            .surface_start
+            .as_ref()
+            .and_then(|start| start.settings_bag.as_deref());
+        BankPreferences {
+            use_mage_bank: bag
+                .and_then(|bag| bag.get("useMageBank"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            use_zanaris_bank: bag
+                .and_then(|bag| bag.get("useZanarisBank"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+
     pub(super) fn start_bank(&mut self, id: RequestId, request: BankSeatArgs) {
         let started = self.bank.get_or_insert_with(Default::default).start(
             id,
@@ -1273,17 +1291,7 @@ impl SlotScript {
             return;
         };
         let facts = Arc::clone(&identity.named_banks);
-        let bag = identity.settings_bag.as_deref();
-        let preferences = BankPreferences {
-            use_mage_bank: bag
-                .and_then(|bag| bag.get("useMageBank"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            use_zanaris_bank: bag
-                .and_then(|bag| bag.get("useZanarisBank"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        };
+        let preferences = self.bank_preferences();
         let casket = api::content::random_event_casket_id(identity.game_data.as_deref());
         let retained = Arc::clone(
             self.retained

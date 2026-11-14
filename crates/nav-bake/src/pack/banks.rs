@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -62,13 +62,15 @@ pub(super) fn write_name(out: &mut Vec<u8>, s: &str) -> Result<(), PackError> {
 /// `[bankbooth]` block of `scripts/interface_bank/configs/bank_booth.loc`
 /// and accessed with the Use-quickly op (2, `[oploc2,bankbooth]`). The
 /// closed-booth (`bankboothclosed`) and tutorial (`newbiebankbooth`) loc
-/// ids are never looked up, so they cannot enter the table. NPC teller
-/// stands (`category=bank_teller` in `*.npc` configs) join from the jm2
-/// `==== NPC ====` placements: the packed op is the config's `Bank` slot
-/// when present, else 3 (`[opnpc3,_bank_teller]`). Stands sort by tile
-/// for a deterministic wire. A tree with tellers and no booths still
-/// emits the NPC stands.
-pub fn derive_banks(content_root: &Path) -> Vec<BankStand> {
+/// ids are never looked up, so they cannot enter the table. NPC access
+/// identities come from the shared game-data content rule in `bank_npcs.json`.
+/// Stands sort by tile for a deterministic wire.
+pub fn derive_banks(
+    content_root: &Path,
+    game_data_dir: &Path,
+    revision: u16,
+) -> Result<Vec<BankStand>, crate::GenerationError> {
+    let npc_accesses = read_npc_bank_accesses(game_data_dir, revision)?;
     let mut banks = Vec::new();
     let loc_ids = crate::transport::loc_ids_by_name(content_root);
     if let Some(&booth_id) = loc_ids.get("bankbooth") {
@@ -87,7 +89,7 @@ pub fn derive_banks(content_root: &Path) -> Vec<BankStand> {
         }
     }
     let npc_hits = crate::transport::npc_positions(content_root);
-    for teller in bank_tellers(content_root) {
+    for teller in npc_accesses {
         let Some(hits) = npc_hits.get(&teller.id) else {
             continue;
         };
@@ -101,118 +103,72 @@ pub fn derive_banks(content_root: &Path) -> Vec<BankStand> {
             access: BankAccess::Npc {
                 name: teller.name.clone(),
                 op: teller.op,
-                choose: None,
+                choose: teller.choose.clone(),
             },
         }));
     }
     banks.sort_by_key(|b| (b.tile.level, b.tile.x, b.tile.z));
-    banks
+    Ok(banks)
 }
 
-struct BankTeller {
+#[derive(serde::Deserialize)]
+struct NpcBankAccess {
     id: i32,
     name: String,
     op: i32,
+    choose: Option<String>,
 }
 
-/// NPC configs whose `category=bank_teller`, keyed by pack id. First
-/// definition for an id wins.
-fn bank_tellers(content_root: &Path) -> Vec<BankTeller> {
-    let ids = crate::transport::npc_ids_by_name(content_root);
-    if ids.is_empty() {
-        return Vec::new();
-    }
-    let mut by_id: HashMap<i32, BankTeller> = HashMap::new();
-    crate::transport::visit_npc_configs(&content_root.join("scripts"), &mut |text| {
-        ingest_teller_blocks(text, &ids, &mut by_id);
-    });
-    let mut out: Vec<BankTeller> = by_id.into_values().collect();
-    out.sort_by_key(|t| t.id);
-    out
+#[derive(serde::Deserialize)]
+struct NpcBankRows {
+    rows: Vec<NpcBankAccess>,
 }
 
-fn ingest_teller_blocks(
-    text: &str,
-    ids: &HashMap<String, i32>,
-    out: &mut HashMap<i32, BankTeller>,
-) {
-    let mut header = None;
-    let mut display = None;
-    let mut ops: [Option<String>; 5] = Default::default();
-    let mut teller = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
-            continue;
-        }
-        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            flush_teller(header.take(), display.take(), &ops, teller, ids, out);
-            ops = Default::default();
-            teller = false;
-            header = Some(name.to_string());
-            continue;
-        }
-        if header.is_none() {
-            continue;
-        }
-        if let Some(v) = line.strip_prefix("name=") {
-            let v = v.trim();
-            if !v.is_empty() {
-                display = Some(v.to_string());
-            }
-        } else if let Some(v) = line.strip_prefix("category=") {
-            teller = v.trim() == "bank_teller";
-        } else if let Some(rest) = line.strip_prefix("op") {
-            if let Some((slot, value)) = rest.split_once('=') {
-                if let Ok(n) = slot.parse::<usize>() {
-                    if (1..=5).contains(&n) {
-                        let value = value.trim();
-                        ops[n - 1] = (!value.is_empty()).then(|| value.to_string());
-                    }
-                }
-            }
-        }
-    }
-    flush_teller(header, display, &ops, teller, ids, out);
+#[derive(serde::Deserialize)]
+struct NpcBankFacts {
+    schema: u16,
+    revision: u16,
+    facts: NpcBankRows,
 }
 
-fn flush_teller(
-    header: Option<String>,
-    display: Option<String>,
-    ops: &[Option<String>; 5],
-    teller: bool,
-    ids: &HashMap<String, i32>,
-    out: &mut HashMap<i32, BankTeller>,
-) {
-    if !teller {
-        return;
-    }
-    let Some(name) = header else {
-        return;
+fn read_npc_bank_accesses(
+    game_data_dir: &Path,
+    revision: u16,
+) -> Result<Vec<NpcBankAccess>, crate::GenerationError> {
+    let path = game_data_dir
+        .join(revision.to_string())
+        .join("bank_npcs.json");
+    let bytes = fs::read(&path).map_err(|source| {
+        crate::GenerationError::SourceInput(crate::SourceInputError::Io {
+            context: crate::SourceInputContext::GameData,
+            path: path.clone(),
+            source,
+        })
+    })?;
+    let invalid = |detail| crate::GenerationError::SelectedGameDataUnavailable {
+        revision,
+        detail: format!("NPC bank facts {}: {detail}", path.display()),
     };
-    let Some(&id) = ids.get(&name) else {
-        return;
-    };
-    out.entry(id).or_insert_with(|| {
-        let op = ops
-            .iter()
-            .enumerate()
-            .find_map(|(i, label)| {
-                label
-                    .as_deref()
-                    .filter(|s| s.eq_ignore_ascii_case("bank"))
-                    .map(|_| i as i32 + 1)
-            })
-            .unwrap_or(3);
-        let shown = display
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| name.clone());
-        BankTeller {
-            id,
-            name: shown,
-            op,
+    let facts: NpcBankFacts =
+        serde_json::from_slice(&bytes).map_err(|error| invalid(format!("{error}")))?;
+    if facts.schema != 1 || facts.revision != revision {
+        return Err(invalid("schema or revision mismatch".into()));
+    }
+    let mut ids = HashSet::new();
+    for access in &facts.facts.rows {
+        if access.id < 0
+            || !(1..=5).contains(&access.op)
+            || access.name.trim().is_empty()
+            || access
+                .choose
+                .as_ref()
+                .is_some_and(|choice| choice.trim().is_empty())
+            || !ids.insert(access.id)
+        {
+            return Err(invalid("invalid or duplicate access".into()));
         }
-    });
+    }
+    Ok(facts.facts.rows)
 }
 
 /// The `name=` of the `[bankbooth]` block (the booth loc config's display

@@ -265,10 +265,9 @@ fn live_frame(
                 let ifaces = Arc::clone(&client.ifaces);
                 if api::interact::logout(client, &ifaces) {
                     state.phase = SeedPhase::WaitRelog;
-                    // The fixture has no script yet, so the approved
-                    // scriptless policy parks this bot after the logout;
-                    // post the operator's explicit Login before waiting for
-                    // the new session.
+                    // The fixture's own logout consumed the login. Post a real
+                    // one-shot Login before waiting for the new session; an unlatched
+                    // slot with auto-login would also reconnect by itself.
                     arm.arm_explicit_login();
                     Ok(())
                 } else {

@@ -13,8 +13,8 @@ fn fixture() -> (Gatherer, GameSnapshot, TargetPlan) {
     fixture_with(&[])
 }
 
-fn fixture_with(extra: &[(&str, serde_json::Value)]) -> (Gatherer, GameSnapshot, TargetPlan) {
-    let extra: Vec<(String, serde_json::Value)> = extra
+fn fixture_with(overrides: &[(&str, serde_json::Value)]) -> (Gatherer, GameSnapshot, TargetPlan) {
+    let overrides: Vec<(String, serde_json::Value)> = overrides
         .iter()
         .map(|(key, value)| ((*key).to_owned(), value.clone()))
         .collect();
@@ -29,8 +29,8 @@ fn fixture_with(extra: &[(&str, serde_json::Value)]) -> (Gatherer, GameSnapshot,
         ] {
             settings.insert(key.into(), value);
         }
-        for (key, value) in extra {
-            settings.insert(key, value);
+        for (key, value) in &overrides {
+            settings.insert(key.clone(), value.clone());
         }
         crate::slot::prepare_config(
             families,

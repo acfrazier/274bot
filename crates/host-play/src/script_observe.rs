@@ -1361,6 +1361,7 @@ where
             };
             bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
+            bot.bank_preferences = slot.bank_preferences();
             bot.compat_v1 = slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
             bot.cure_poison = cure_poison;
         }
@@ -1669,6 +1670,7 @@ where
                         bot.work_scope = slot.work_scope();
                         bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
                         bot.native_permissions = slot.native_walk_permissions();
+                        bot.bank_preferences = slot.bank_preferences();
                         bot.compat_v1 =
                             slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
                     }
@@ -2393,15 +2395,7 @@ where
             Some(cmd) => (cmd.to_string(), false),
             None => (queued, true),
         };
-        // An operator's command is input to the game: it resets the idle
-        // counter once the client accepts it. A host bookkeeping command
-        // (`INTERNAL_CHEAT_PREFIX`) is not.
-        let sent = if observe_replies {
-            api::interact::operator_cheat(driver, &cmd)
-        } else {
-            api::interact::cheat(driver, &cmd)
-        };
-        if sent == client::CheatSend::Sent {
+        if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
             #[cfg(test)]
             if let Some(snapshot) = snapshot.read() {
                 crate::combat_proof::record_other_request(

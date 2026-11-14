@@ -127,16 +127,93 @@ fn payload(op: &str, token: Option<u64>, held: Value, extra: Value) -> Value {
     }
     call
 }
+fn fixture_i32(row: &Value, key: &str) -> i32 {
+    row.get(key)
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or_default()
+}
+
+/// Feed the native scene reader the same wire path-head facts as the input
+/// page, while leaving the compatibility JSON projection independently
+/// controllable by each test.
+fn clue_network_rows(extra: &Value) -> Vec<crate::scene::observed::EntityRow> {
+    extra
+        .get("npcs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let index = row
+                .get("index")?
+                .as_i64()
+                .and_then(|index| i32::try_from(index).ok())?;
+            Some(crate::scene::observed::EntityRow {
+                index,
+                level: fixture_i32(row, "level"),
+                size: fixture_i32(row, "size"),
+                nx: fixture_i32(row, "nx"),
+                nz: fixture_i32(row, "nz"),
+                ..crate::scene::observed::EntityRow::default()
+            })
+        })
+        .collect()
+}
+
+fn post_clue_npcs(extra: &Value) {
+    let rows = clue_network_rows(extra);
+    crate::scene::observed::post(1, |post| {
+        post.npcs(rows);
+    });
+}
 
 fn begin(data: &SelectedGameData, held: Value) -> Value {
     dispatch(Some(data), &payload("begin", None, held, json!({})))
 }
 
 fn call(data: &SelectedGameData, token: u64, held: Value, extra: Value) -> Value {
+    post_clue_npcs(&extra);
     dispatch(Some(data), &payload("next", Some(token), held, extra))
 }
 
 fn call_native(data: &SelectedGameData, token: u64, tick: u64, held: Value, extra: Value) -> Value {
+    post_clue_npcs(&extra);
+    next_native(
+        Some(data),
+        &payload("next", Some(token), held, extra),
+        false,
+        tick,
+    )
+}
+/// Run a native step with the local tile and npc path heads posted in the
+/// observer, leaving the wire input without a `here` echo so the native
+/// fallback must read the server scene path head.
+fn call_native_server_heads(
+    data: &SelectedGameData,
+    token: u64,
+    tick: u64,
+    held: Value,
+    mut extra: Value,
+) -> Value {
+    let here = extra
+        .get("here")
+        .map(|tile| Tile {
+            x: fixture_i32(tile, "x"),
+            z: fixture_i32(tile, "z"),
+            level: fixture_i32(tile, "level"),
+        })
+        .expect("server local tile");
+    let rows = clue_network_rows(&extra);
+    crate::scene::observed::replace(1, true, |post| {
+        post.session(true)
+            .here(crate::scene::observed::Tile {
+                x: here.x,
+                z: here.z,
+                level: here.level,
+            })
+            .npcs(rows);
+    });
+    extra.as_object_mut().expect("extra").remove("here");
     next_native(
         Some(data),
         &payload("next", Some(token), held, extra),
@@ -397,10 +474,10 @@ fn option(text: &str, slot: i32) -> Value {
 }
 
 /// One wrapper-marshalled posted npc row on the decoded `here` tile: the
-/// posted index the Attack carries, the posted id, tile and `in_combat`
-/// flag the marshalled page always carries, the posted name the family
-/// filter matches, the posted health pair and target pair the kill is read
-/// through, and the posted distance the frozen radius prefers.
+/// posted index the Attack carries, the posted id, and the combat fields the
+/// kill is read through. The typed scene seam separately posts its network
+/// footprint; the `distance` remains the intentionally mixed compatibility
+/// value.
 fn npc(index: i32, name: &str, distance: i32, health: i32, max_health: i32) -> Value {
     json!({
         "index": index,
@@ -416,18 +493,22 @@ fn npc(index: i32, name: &str, distance: i32, health: i32, max_health: i32) -> V
         "actions": [ATTACK],
         "target_kind": 0,
         "target_index": -1,
+        "size": 1,
+        "nx": 3058 + distance,
+        "nz": 3884,
     })
 }
 
-/// The same posted row without a posted distance: the Chebyshev read the
-/// spawn filter makes from the row's own posted tile and this call's
-/// `here`.
+/// The same posted row without a posted distance. Its network path head is
+/// the tile the native spawn filter measures from `here`.
 fn tiled(index: i32, name: &str, x: i32, z: i32, level: i32) -> Value {
     let mut row = npc(index, name, 3, 10, 10);
     row.as_object_mut().expect("object").remove("distance");
     row["x"] = json!(x);
     row["z"] = json!(z);
     row["level"] = json!(level);
+    row["nx"] = json!(x);
+    row["nz"] = json!(z);
     row
 }
 
@@ -3511,11 +3592,9 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
     assert_eq!(gone["kind"], "wait", "{gone}");
 }
 
-/// The spawn filter reads the posted tile: the posted row must be on this
-/// call's posted `here` level, and a row that posted no distance is
-/// measured from its own posted tile with the landed Chebyshev read — the
-/// nearer of two such rows wins before posted order, and a tile outside
-/// the frozen radius is refused exactly like a posted distance outside it.
+/// The native spawn filter reads the posted level and network path head.
+/// Missing rendered coordinates or cached distance do not remove a valid
+/// network measurement; missing network facts cannot supply one.
 #[test]
 fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
     if !api::test_support::game_data_available() {
@@ -3533,16 +3612,16 @@ fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
             json!({}),
         ),
         fight_scene(json!([tiled(7, WIZARD, 3058, 3884, 1)]), json!({})),
-        // No posted level at all is not the `here` level either, and a
-        // row with no posted tile and no posted distance has no measure.
+        // No posted level is not the `here` level. Without a network
+        // path head there is no native measurement either.
         fight_scene(
             json!([unfield(npc(7, WIZARD, 3, 10, 10), "level")]),
             json!({}),
         ),
         fight_scene(
             json!([unfield(
-                unfield(unfield(npc(7, WIZARD, 3, 10, 10), "distance"), "x"),
-                "z"
+                unfield(unfield(npc(7, WIZARD, 3, 10, 10), "distance"), "nx"),
+                "nz"
             )]),
             json!({}),
         ),
@@ -5419,8 +5498,8 @@ const CHALLENGE_IDENTITY: i32 = 2846;
 
 /// One wrapper-marshalled posted npc row as the talk arm reads it: the
 /// posted index the Talk-to carries, the packed id and posted display name
-/// the identity join compares, the posted tile and distance the arrival is
-/// measured by, and the posted action list the talk action is read from.
+/// the identity join compares, and the posted action list the talk action is
+/// read from. Network coordinates come from the separate typed scene row.
 fn talk_npc(index: i32, id: i32, name: &str, tile: Tile, distance: i32, actions: &[&str]) -> Value {
     json!({
         "index": index,
@@ -5436,6 +5515,9 @@ fn talk_npc(index: i32, id: i32, name: &str, tile: Tile, distance: i32, actions:
         "actions": actions,
         "target_kind": 0,
         "target_index": -1,
+        "size": 1,
+        "nx": tile.x,
+        "nz": tile.z,
     })
 }
 
@@ -5901,8 +5983,8 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
     );
     assert_eq!(tie["index"], 26, "{tie}");
 
-    // The posted `distance` is what the pick ranks by when the page
-    // carries one: a row that reads near is the one that is Talk-to'd.
+    // Native rank ignores the legacy mixed scalar: the network neighbour
+    // is Talk-to'd even when the distant row advertises distance one.
     let posted_near = call(
         &data,
         token,
@@ -5938,7 +6020,7 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
             json!({}),
         ),
     );
-    assert_eq!(posted_near["index"], 28, "{posted_near}");
+    assert_eq!(posted_near["index"], 29, "{posted_near}");
 
     // Another step's identity is not this one's, and neither is a row that
     // carries only this step's script alias — the join is the packed id
@@ -5981,7 +6063,7 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
     assert_eq!(wrong["kind"], "wait", "{wrong}");
 
     // A matching row with no talk action is not a match, and a matching
-    // row the page posted no tile or distance for is unmeasured.
+    // row the page posted no network tile or distance for is unmeasured.
     let silent = call(
         &data,
         token,
@@ -6016,8 +6098,9 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
         2,
         &["Talk-to"],
     );
-    unmeasured.as_object_mut().expect("row").remove("x");
-    unmeasured.as_object_mut().expect("row").remove("z");
+    unmeasured.as_object_mut().expect("row").remove("nx");
+    unmeasured.as_object_mut().expect("row").remove("nz");
+    unmeasured.as_object_mut().expect("row").remove("size");
     unmeasured.as_object_mut().expect("row").remove("distance");
     let blind = call(
         &data,
@@ -6601,8 +6684,7 @@ fn key_scene(here_tile: Value, extra: Value) -> Value {
 
 /// One wrapper-marshalled posted npc row as the keeper hunt reads it: the
 /// posted index the Attack carries, the packed id and posted display name
-/// the identity join compares, the posted tile and distance the published
-/// spawn's radius is measured by, the posted health pair the kill is read
+/// the identity join compares, the posted health pair the kill is read
 /// through, and the posted action list the `Attack` is read from.
 fn keeper_npc(
     index: i32,
@@ -6626,6 +6708,9 @@ fn keeper_npc(
         "actions": actions,
         "target_kind": 0,
         "target_index": -1,
+        "size": 1,
+        "nx": tile.x,
+        "nz": tile.z,
     })
 }
 
@@ -7459,7 +7544,7 @@ fn shantay_short(data: &SelectedGameData) -> Value {
 }
 
 /// A posted Shantay row at the selected spawn, with the action the toll trip
-/// is allowed to dispatch.
+/// is allowed to dispatch and its packet-time network footprint.
 fn shantay_keeper() -> Value {
     json!({
         "index": 12,
@@ -7470,6 +7555,9 @@ fn shantay_keeper() -> Value {
         "level": SHANTAY_LEVEL,
         "distance": 1,
         "actions": [TRADE],
+        "size": 1,
+        "nx": SHANTAY_X,
+        "nz": SHANTAY_Z,
     })
 }
 
@@ -8949,4 +9037,351 @@ fn clue_3554_requires_duel_crossing_then_digs_at_its_packed_tile() {
     assert_eq!(dig["kind"], "held", "{dig}");
     assert_eq!(dig["name"], SPADE_NAME, "{dig}");
     assert_eq!(dig["action"], "Dig", "{dig}");
+}
+#[test]
+fn guardian_network_coords_use_local_and_target_path_heads() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = json!([[GUARDED, 1]]);
+    let token = spawned(&data);
+    let stand = guarded_tile_of(&data);
+
+    let mut unknown_size = npc(7, WIZARD, 0, 10, 10);
+    unknown_size["nx"] = json!(stand.x);
+    unknown_size["nz"] = json!(stand.z);
+    unknown_size["size"] = json!(0);
+    let unknown = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page.clone(),
+        fight_scene(json!([unknown_size]), json!({})),
+    );
+    assert_eq!(unknown["kind"], "wait", "{unknown}");
+
+    let mut rendered_near = npc(8, WIZARD, 0, 10, 10);
+    rendered_near["x"] = json!(stand.x);
+    rendered_near["z"] = json!(stand.z);
+    rendered_near["nx"] = json!(stand.x + GUARDIAN_RADIUS + 1);
+    rendered_near["nz"] = json!(stand.z);
+    let outside = call_native_server_heads(
+        &data,
+        token,
+        2,
+        page.clone(),
+        fight_scene(json!([rendered_near]), json!({})),
+    );
+    assert_eq!(outside["kind"], "wait", "{outside}");
+
+    let mut network_near = npc(9, WIZARD, 40, 10, 10);
+    network_near["x"] = json!(stand.x + 80);
+    network_near["z"] = json!(stand.z + 80);
+    network_near["distance"] = json!(40);
+    network_near["nx"] = json!(stand.x + GUARDIAN_RADIUS);
+    network_near["nz"] = json!(stand.z);
+    let combat = call_native_server_heads(
+        &data,
+        token,
+        3,
+        page,
+        fight_scene(json!([network_near]), json!({})),
+    );
+    assert_eq!(combat["kind"], "combat", "{combat}");
+    assert_eq!(combat["encounter"], "guardian", "{combat}");
+}
+
+#[test]
+fn identity_talk_network_coords_rank_and_walk_from_local_path_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = talk_page(TALK_IDENTITY);
+    let token = steady(&data, TALK_IDENTITY);
+    let mut near_network = talk_npc(
+        22,
+        804,
+        "Tanner",
+        Tile {
+            x: 3300,
+            z: 3300,
+            level: 0,
+        },
+        50,
+        &["Talk-to"],
+    );
+    near_network["nx"] = json!(3205);
+    near_network["nz"] = json!(3200);
+    let mut far_network = talk_npc(
+        23,
+        804,
+        "Tanner",
+        Tile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+        1,
+        &["Talk-to"],
+    );
+    far_network["nx"] = json!(3210);
+    far_network["nz"] = json!(3200);
+    let npcs = json!([near_network, far_network]);
+
+    let walk = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page.clone(),
+        talk_scene(here(3200, 3200, 0), npcs.clone(), json!({})),
+    );
+    assert_eq!(walk["kind"], "walk-near", "{walk}");
+    assert_eq!((&walk["x"], &walk["z"]), (&json!(3205), &json!(3200)));
+
+    let talked = call_native_server_heads(
+        &data,
+        token,
+        2,
+        page,
+        talk_scene(here(3205, 3200, 0), npcs, json!({})),
+    );
+    assert_eq!(talked["kind"], "npc", "{talked}");
+    assert_eq!(talked["index"], 22, "{talked}");
+}
+
+#[test]
+fn unique_talk_network_coords_accept_the_server_path_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = talk_page(TALK);
+    let token = steady(&data, TALK);
+    let spawn = talk_tile(&data, TALK);
+    let mut posted = talk_npc(
+        31,
+        0,
+        "Hans",
+        Tile {
+            x: spawn.x + 40,
+            z: spawn.z + 40,
+            level: spawn.level,
+        },
+        30,
+        &["Talk-to"],
+    );
+    posted["nx"] = json!(spawn.x + 1);
+    posted["nz"] = json!(spawn.z);
+
+    let talked = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page,
+        talk_scene(
+            here(spawn.x, spawn.z, spawn.level),
+            json!([posted]),
+            json!({}),
+        ),
+    );
+    assert_eq!(talked["kind"], "npc", "{talked}");
+    assert_eq!(talked["index"], 31, "{talked}");
+}
+
+#[test]
+fn keeper_network_coords_gate_on_server_path_heads() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = json!([[RIDDLE, 1]]);
+    let token = steady(&data, RIDDLE);
+    let spawn = spawn_of(key_of(&data, RIDDLE));
+    let mut rendered_near = keeper_npc(31, KEEPER_ID, KEEPER_NAME, spawn, 0, &[ATTACK]);
+    rendered_near["nx"] = json!(spawn.x + ARRIVE_RADIUS + 1);
+    rendered_near["nz"] = json!(spawn.z);
+    let outside = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page.clone(),
+        key_scene(
+            here(spawn.x, spawn.z, spawn.level),
+            json!({ "npcs": [rendered_near] }),
+        ),
+    );
+    assert_eq!(outside["kind"], "wait", "{outside}");
+
+    let mut network_near = keeper_npc(32, KEEPER_ID, KEEPER_NAME, spawn, 30, &[ATTACK]);
+    network_near["x"] = json!(spawn.x + 80);
+    network_near["z"] = json!(spawn.z + 80);
+    network_near["distance"] = json!(30);
+    network_near["nx"] = json!(spawn.x + 1);
+    network_near["nz"] = json!(spawn.z);
+    let combat = call_native_server_heads(
+        &data,
+        token,
+        2,
+        page,
+        key_scene(
+            here(spawn.x, spawn.z, spawn.level),
+            json!({ "npcs": [network_near] }),
+        ),
+    );
+    assert_eq!(combat["kind"], "combat", "{combat}");
+    assert_eq!(combat["encounter"], "keeper", "{combat}");
+}
+
+#[test]
+fn keeper_network_coords_reject_size_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = json!([[RIDDLE, 1]]);
+    let token = steady(&data, RIDDLE);
+    let spawn = spawn_of(key_of(&data, RIDDLE));
+    let mut unknown_size = keeper_npc(33, KEEPER_ID, KEEPER_NAME, spawn, 0, &[ATTACK]);
+    unknown_size["size"] = json!(0);
+
+    let result = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page,
+        key_scene(
+            here(spawn.x, spawn.z, spawn.level),
+            json!({ "npcs": [unknown_size] }),
+        ),
+    );
+    assert_eq!(result["kind"], "wait", "{result}");
+}
+#[test]
+fn trio_acquire_network_coords_use_the_server_path_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = json!([[UNGUARDED, 1]]);
+    let token = steady(&data, UNGUARDED);
+    let professor = professor_tile(&data);
+    let (id, name) = giver_identity(&data, OBSERVATORY_PROFESSOR);
+    let mut posted = talk_npc(
+        41,
+        id,
+        name,
+        Tile {
+            x: professor.x + 80,
+            z: professor.z + 80,
+            level: professor.level,
+        },
+        30,
+        &["Talk-to"],
+    );
+    posted["nx"] = json!(professor.x + 1);
+    posted["nz"] = json!(professor.z);
+
+    let talked = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page,
+        json!({
+            "here": here(professor.x, professor.z, professor.level),
+            "npcs": [posted],
+        }),
+    );
+    assert_eq!(talked["kind"], "npc", "{talked}");
+    assert_eq!(talked["index"], 41, "{talked}");
+}
+
+#[test]
+fn shantay_network_coords_gate_the_native_trade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    on_reset();
+    let data = selected();
+    let page = json!([[SEARCH, 1]]);
+    let short = shantay_short(&data);
+    let away = here(3200, 3218, 1);
+    let spawn = here(SHANTAY_X, SHANTAY_Z, SHANTAY_LEVEL);
+    let token = steady(&data, SEARCH);
+
+    let original = call_native_server_heads(
+        &data,
+        token,
+        1,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short.clone() }),
+    );
+    assert_eq!(original["kind"], "walk-near", "{original}");
+    let to_shop = call_native_server_heads(
+        &data,
+        token,
+        2,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short.clone() }),
+    );
+    assert_eq!(to_shop["kind"], "walk-near", "{to_shop}");
+
+    let mut rendered_near = shantay_keeper();
+    rendered_near["nx"] = json!(SHANTAY_X + ARRIVE_RADIUS + 1);
+    rendered_near["nz"] = json!(SHANTAY_Z);
+    let outside = call_native_server_heads(
+        &data,
+        token,
+        3,
+        page.clone(),
+        json!({
+            "here": spawn,
+            "npcs": [rendered_near],
+            "walk_missing_carry": short.clone(),
+        }),
+    );
+    assert_eq!(outside["kind"], "wait", "{outside}");
+
+    let mut unknown_size = shantay_keeper();
+    unknown_size["size"] = json!(0);
+    let unknown = call_native_server_heads(
+        &data,
+        token,
+        4,
+        page.clone(),
+        json!({
+            "here": spawn,
+            "npcs": [unknown_size],
+            "walk_missing_carry": short.clone(),
+        }),
+    );
+    assert_eq!(unknown["kind"], "wait", "{unknown}");
+
+    let mut network_near = shantay_keeper();
+    network_near["x"] = json!(SHANTAY_X + 80);
+    network_near["z"] = json!(SHANTAY_Z + 80);
+    network_near["distance"] = json!(30);
+    network_near["nx"] = json!(SHANTAY_X + 1);
+    network_near["nz"] = json!(SHANTAY_Z);
+    let trade = call_native_server_heads(
+        &data,
+        token,
+        5,
+        page,
+        json!({
+            "here": spawn,
+            "npcs": [network_near],
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(trade["kind"], "npc", "{trade}");
+    assert_eq!(trade["action"], TRADE, "{trade}");
+    assert_eq!(trade["index"], 12, "{trade}");
 }

@@ -29,14 +29,16 @@ pub(crate) use script_nav::pump_route_work;
 pub(super) use script_nav::CarriedWalk;
 #[cfg(feature = "js")]
 pub(super) use script_nav::PostedWalkOutcome;
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_nav::RouteDemand;
 #[cfg(test)]
 pub(super) use script_nav::{
     approach_tiles, drain_route_work_for_test, publish_route_owner_refusal,
     resolve_route_exclusions, route_world_state, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
-    blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
-    ScriptWalkArm,
+    blocked_zone_detail, hold_script_nav, reset_script_nav, zone_witness_items, NavBot,
+    ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};
@@ -421,17 +423,14 @@ pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {
 /// `AutoRelogin.ts:138-141`): started and not stopping. An offline slot's
 /// started script reads Paused.
 pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
-    script_state_is_active(
-        script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state())),
-    )
-}
-
-/// [`script_active`] for a run state already read.
-pub(super) fn script_state_is_active(state: Option<script::RunState>) -> bool {
-    matches!(
-        state,
-        Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
-    )
+    script_slot(scripts, name)
+        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+        .is_some_and(|state| {
+            matches!(
+                state,
+                script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+            )
+        })
 }
 
 /// Puzzle-board post tests: the production observe path

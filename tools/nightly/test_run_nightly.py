@@ -27,6 +27,7 @@ import io
 import hashlib
 import gc
 import os
+import re
 import shutil
 import socket
 import stat
@@ -1104,11 +1105,22 @@ class SeedLaneHomeTests(unittest.TestCase):
 
 class CellCapTests(unittest.TestCase):
     def test_long_cells_keep_a_cap_above_their_proven_walls(self):
-        # 2026-10-21 summary.json walls: jive_kbd 2543.0 s (Linux verdict),
-        # quester_queue 1987.9 s (Linux pass).
+        # 2026-10-21 summary.json wall: jive_kbd 2543.0 s (Linux verdict).
         self.assertGreater(rn.cell_cap_s("jive_kbd"), 2543)
-        self.assertGreater(rn.cell_cap_s("quester_queue"), 1988)
         self.assertEqual(rn.cell_cap_s("walk"), rn.CELL_CAP_S)
+
+    def test_queue_cap_outlasts_its_scenario_deadline(self):
+        # A cap at or below the scenario deadline turns every failing queue run
+        # into an outer-cap TIMEOUT with no verdict (Windows 2026-11-12).
+        self.assertGreater(rn.cell_cap_s("quester_queue"), rn.QUESTER_QUEUE_DEADLINE_S + 15)
+
+    def test_queue_deadline_matches_the_scenario_source(self):
+        source = Path(__file__).resolve().parents[2] / "crates/scenario/src/scenarios/quester.rs"
+        if not source.is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        match = re.search(r"QUEUE_DEADLINE: Duration = Duration::from_secs\((\d+)\)", source.read_text())
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), rn.QUESTER_QUEUE_DEADLINE_S)
 
     def test_parse_cell_caps_overrides_and_refuses_bad_entries(self):
         caps = rn.parse_cell_caps("jive_kbd=4000, other=900", {"jive_kbd": 3600})
@@ -1441,6 +1453,29 @@ class CellsFileTests(unittest.TestCase):
 
 
 class LocalDataRunnerTests(unittest.TestCase):
+    def test_bank_access_facts_are_required_before_caching_local_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = root / "tree"
+            for relative in rn.LOCAL_DATA_REQUIRED_OUTPUTS:
+                output = tree / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("generated\n", encoding="utf-8")
+            bank_files = [
+                Path(f"crates/api/data/game-data/{revision}/bank_npcs.json")
+                for revision in ("274", "289")
+            ]
+            for relative in bank_files:
+                self.assertIn(relative, rn.LOCAL_DATA_REQUIRED_OUTPUTS)
+                output = tree / relative
+                output.unlink()
+                with self.assertRaisesRegex(RuntimeError, "omitted required output: .*bank_npcs.json"):
+                    rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+                output.write_text("generated\n", encoding="utf-8")
+            rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+            for relative in bank_files:
+                self.assertTrue((root / "cache" / "entry" / "outputs" / relative).is_file())
+
     def make_inputs(self, root: Path):
         tree = root / "tree"
         for relative, contents in (

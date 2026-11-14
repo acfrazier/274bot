@@ -66,6 +66,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::test_support::map_fixture::MapFixture;
+use crate::test_support::{
+    map_catalogue_fixture, map_fixture as host_map_fixture, map_play_fixture,
+};
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 use upgrade_home::UpgradeHome;
@@ -980,6 +983,154 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
 }
 
 #[test]
+fn published_catalogue_probe_stamps_before_reading_ready_data() {
+    let now = Instant::now();
+    let mut probe = None;
+    let mut reads = 0;
+    let first = super::probe_published_catalogue(&mut probe, now, || {
+        reads += 1;
+        Some("ready")
+    });
+    assert_eq!(first, Some(Some("ready")));
+    assert_eq!(probe, Some(now));
+
+    let skipped =
+        super::probe_published_catalogue(&mut probe, now + Duration::from_millis(500), || {
+            reads += 1;
+            Some("ready")
+        });
+    assert_eq!(skipped, None);
+    assert_eq!(reads, 1);
+
+    let next = super::probe_published_catalogue(&mut probe, now + Duration::from_secs(1), || {
+        reads += 1;
+        Some("ready")
+    });
+    assert_eq!(next, Some(Some("ready")));
+    assert_eq!(reads, 2);
+}
+
+#[test]
+fn panel_failed_map_catalogue_retries_only_after_inputs_change() {
+    let small_world = NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = host_map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.install_prepared_template(ProfileTemplate::from_host(Arc::clone(
+        &profile_fixture.template,
+    )));
+    crate::session::reset_map_catalogue_build_count();
+
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        session.map_bind_status().as_deref(),
+        Some("map catalogue unavailable")
+    );
+    assert_eq!(crate::session::map_catalogue_build_count(), 1);
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt on the next frame"
+    );
+
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt"
+    );
+
+    let navpois = profile_fixture
+        .template
+        .profile()
+        .nav_pack()
+        .with_extension("navpois");
+    std::fs::write(&navpois, b"changed navpois input").unwrap();
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        1,
+        "navpois changes wait for the coarse metadata probe"
+    );
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        2,
+        "changed navpois metadata permits one retry"
+    );
+
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        3,
+        "changed pack identity permits one retry"
+    );
+
+    let mut alternate_grid = nav_planner::grid::StepGrid::fixture_open_3x3();
+    alternate_grid.set_walkable(
+        nav_planner::tile::Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        false,
+    );
+    let alternate_world = NavWorld::from_grid(&alternate_grid);
+    let other_profile_fixture = host_map_fixture::MapFixture::new(&alternate_world, "local-289");
+    let other_ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(other_profile_fixture.template.profile());
+    let other_ready = other_ready_fixture.ready();
+    let mut other_session = Session::new();
+    other_session.install_prepared_template(ProfileTemplate::from_host(Arc::clone(
+        &other_profile_fixture.template,
+    )));
+    let other_profile = other_session.server_profile().expect("bound profile");
+    let original_profile = session.server_profile().expect("bound profile");
+    let original_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        original_profile,
+        &changed_world,
+        &ready,
+    );
+    let changed_ready_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        original_profile,
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_ready_inputs);
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&other_ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        4,
+        "changed ready catalogue identity permits an immediate retry"
+    );
+    let changed_profile_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        other_profile,
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_profile_inputs);
+
+    session
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(
+            &other_profile_fixture.template,
+        )));
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), Arc::clone(&other_ready));
+    assert_eq!(
+        crate::session::map_catalogue_build_count(),
+        5,
+        "changed profile identity permits an immediate retry"
+    );
+}
+#[test]
 fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
     let mut session = Session::new();
@@ -1133,7 +1284,9 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
 #[cfg(feature = "js")]
 fn settle_catalog_work(session: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
-    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+    while (session.scripts.catalog_work_pending() || session.reload_validation_pending())
+        && Instant::now() < deadline
+    {
         session.core.poll();
         session.poll_scripts();
         thread::sleep(Duration::from_millis(5));
@@ -1141,8 +1294,8 @@ fn settle_catalog_work(session: &mut Session) {
     session.core.poll();
     session.poll_scripts();
     assert!(
-        !session.scripts.catalog_work_pending(),
-        "catalog preparation did not settle"
+        !session.scripts.catalog_work_pending() && !session.reload_validation_pending(),
+        "catalog preparation or validation did not settle"
     );
 }
 
@@ -1163,6 +1316,9 @@ fn settle_transpile_queue(session: &mut Session) {
 #[cfg(feature = "js")]
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("prebind-catalog");
     let explicit = write_looping_catalog(&iso.dir().join("explicit"), &[("Chosen", "Chosen")]);
@@ -1186,6 +1342,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
             }),
         )
         .unwrap();
+    bind_catalog_validation_context(&mut session);
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
     settle_catalog_work(&mut session);
@@ -1208,17 +1365,31 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     session.import_rs2b0t_catalog(&ambient).unwrap();
     settle_catalog_work(&mut session);
     assert!(session.scripts.card(CardSource::File, "custom").is_some());
-    assert!(session
-        .scripts
-        .card(CardSource::Catalog, "Ambient")
-        .is_some());
+    assert!(
+        session
+            .scripts
+            .card(CardSource::Catalog, "Ambient")
+            .is_some(),
+        "manual catalog import failed: {:?}",
+        session.error
+    );
 }
 
 #[cfg(feature = "js")]
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
+    let world_json = root.join("engine/data/config/world.json");
+    std::fs::create_dir_all(world_json.parent().unwrap()).unwrap();
+    std::fs::write(
+        &world_json,
+        r#"{"engine":{"revision":274},"node":{"members":false}}"#,
+    )
+    .unwrap();
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1244,6 +1415,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
             ProfileEnv::from_host(env.clone()),
         )
         .unwrap();
+    bind_catalog_validation_context(&mut session);
     session.fill_rs2b0t_cards_once();
     settle_catalog_work(&mut session);
     session
@@ -1261,14 +1433,30 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .card(CardSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
+    session.core.set_play(None);
     session.bind_profile().unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
     settle_catalog_work(&mut session);
+    assert!(
+        session
+            .scripts
+            .card(CardSource::Catalog, "Chosen")
+            .is_some(),
+        "the loaded catalog card survives profile binding"
+    );
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("map data for this profile is not prepared")),
+        "profile binding has no selected navigation facts: {:?}",
+        session.error
+    );
     assert!(session
         .scripts
         .card(CardSource::Catalog, "Another")
-        .is_some());
+        .is_none());
 }
 
 #[test]
@@ -1752,6 +1940,16 @@ fn empty_play() -> host_play::Play {
         lowmem: true,
         mainland: false,
     })
+}
+#[cfg(feature = "js")]
+fn bind_catalog_validation_context(session: &mut Session) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("selected game data");
+    let mut play = empty_play();
+    play.bind_script_test_data(data);
+    let world = NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    play.bind_script_test_world(Arc::new(world));
+    session.core.set_play(Some(play));
 }
 
 /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -3669,11 +3867,14 @@ fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         )
     });
     let fixture = MapFixture::new(&world, "public-289");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 2778,
-        z: 3401,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 2778,
+            z: 3401,
+            level: 0,
+        },
+    )));
     let deadline = Instant::now() + Duration::from_secs(60);
     while !session.quester_paths.is_running() {
         assert!(
@@ -4138,7 +4339,7 @@ fn bind_picker_session(
     origin: Tile,
 ) -> (MapFixture, Arc<NavWorld>) {
     let fixture = MapFixture::new(world, "local-289");
-    let play = fixture.play(origin);
+    let play = map_play_fixture::play(&fixture.template, origin);
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
@@ -4828,11 +5029,14 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     }
     let world = open_world(3, 3);
     let fixture = MapFixture::new(&world, "public-289");
-    let play = fixture.play(Tile {
-        x: 0,
-        z: 1,
-        level: 0,
-    });
+    let play = map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
     let mut s = Session::new();
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
@@ -4873,7 +5077,7 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
         level: 0,
     };
     let fixture = MapFixture::new(&world, "local-289");
-    let play = fixture.play(origin);
+    let play = map_play_fixture::play(&fixture.template, origin);
     s.launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
@@ -4920,7 +5124,7 @@ fn picker_teleport_follows_profile_class() {
 
     let mut local = Session::new();
     let local_fixture = MapFixture::new(&world, "local-289");
-    let play = local_fixture.play(origin);
+    let play = map_play_fixture::play(&local_fixture.template, origin);
     local
         .launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(
@@ -9756,10 +9960,14 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("import");
     let root = fake_rs2b0t_tree(iso.dir());
     let mut s = Session::new();
+    bind_catalog_validation_context(&mut s);
     s.import_rs2b0t_catalog(&root).expect("import");
     assert!(
         s.scripts.catalog_work_pending(),
@@ -9770,7 +9978,11 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         "root is persisted only after preparation settles"
     );
     settle_catalog_work(&mut s);
-    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
+    assert!(
+        iso.home().join(".274bot/rs2b0t-path").is_file(),
+        "catalog import did not persist its root: {:?}",
+        s.error
+    );
     let card = s
         .scripts
         .card(CardSource::Catalog, "BoneBurier")
@@ -9778,6 +9990,87 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(card.category(), "Prayer");
     assert_eq!(card.description(), "Buries bones");
     assert_eq!(card.tags(), vec!["bones"]);
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_validates_257_cards_in_bounded_batches() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("import-257-cards");
+    let cards: Vec<(String, String)> = (0..257)
+        .map(|index| {
+            let name = format!("Card{index:03}");
+            (name.clone(), name)
+        })
+        .collect();
+    let references: Vec<(&str, &str)> = cards
+        .iter()
+        .map(|(register, folder)| (register.as_str(), folder.as_str()))
+        .collect();
+    let root = write_looping_catalog(&iso.dir().join("many-cards"), &references);
+    let mut session = Session::new();
+    bind_catalog_validation_context(&mut session);
+
+    session
+        .import_rs2b0t_catalog(&root)
+        .expect("import 257 cards");
+    settle_catalog_work(&mut session);
+
+    let imported_count = session
+        .scripts
+        .cards()
+        .filter(|card| card.source() == CardSource::Catalog)
+        .count();
+    assert_eq!(imported_count, 257, "all catalog cards must be imported");
+    let last = session
+        .scripts
+        .card(CardSource::Catalog, "Card256")
+        .expect("the final card after the 256-card batch");
+    assert!(last.is_transpiled(), "the final card must be validated");
+    assert_eq!(session.scripts.load_failure_count(), 0);
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_runtime_failure_uses_the_shared_notice() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("import-load-failure-notice");
+    let root = write_looping_catalog(&iso.dir().join("catalog"), &[("Broken", "Broken")]);
+    std::fs::write(
+        root.join("src/bot/scripts/Broken/Broken.ts"),
+        "export default class Broken extends LoopingBot { constructor() { super(); throw new Error('intentional test setup failure'); } override loop() {} }",
+    )
+    .unwrap();
+    let mut session = Session::new();
+    bind_catalog_validation_context(&mut session);
+
+    session
+        .import_rs2b0t_catalog(&root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session);
+
+    let card = session
+        .scripts
+        .card(CardSource::Catalog, "Broken")
+        .expect("failed card remains imported");
+    assert!(session.scripts.load_failure(&card.identity_key()).is_some());
+    let named_failures = session.scripts.named_failure_output();
+    assert!(
+        named_failures.contains("Broken")
+            && named_failures.contains("intentional test setup failure"),
+        "catalog import must retain the runtime load failure: {named_failures}"
+    );
+    assert_eq!(
+        session.error.as_deref(),
+        session.scripts.load_failure_line().as_deref(),
+        "the panel must show the shared core failure notice"
+    );
 }
 
 #[cfg(feature = "js")]
@@ -12006,4 +12299,97 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
         None,
         "Alice's memory failure is not Bob's"
     );
+}
+
+/// The process-log `command refused: WalkTo` lines that end with `reason`.
+/// The fixture's bots have no vault profile, so a line names its bot by
+/// identity.
+fn walk_refusal_lines(reason: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text("command refused: WalkTo"));
+    global().refresh(&mut process);
+    process
+        .rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|message| message.ends_with(&format!("NotApplicable: {reason}")))
+        .collect()
+}
+
+/// A WalkTo for a focused bot that is attached with `connected`, `ingame`
+/// and the observed `tile`, refused by the host. Returns the banner the
+/// panel shows and the refusal lines the command boundary logged for it.
+fn refused_walk_for_slot(
+    name: &str,
+    tile: Tile,
+    connected: bool,
+    ingame: bool,
+    reason: &str,
+) -> (Option<String>, usize) {
+    frontend_core::log::global();
+    let mut s = Session::new();
+    let world = open_world(20, 20);
+    let origin = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 17,
+        z: 18,
+        level: 0,
+    };
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(&mut s, name, tile, None, connected, ingame);
+    s.statuses.refresh_from_play(&s.core);
+    s.core.play_mut_for_test().unwrap().focus(name);
+    s.set_focus_for_test(name);
+    s.select_picker_tile(&world, destination);
+    let before = walk_refusal_lines(reason).len();
+    assert!(!s.confirm_picker_walk(&world));
+    let logged = walk_refusal_lines(reason).len() - before;
+    (s.error.clone(), logged)
+}
+
+/// With the focused bot logged out, WalkTo says why (`not logged in`), not
+/// the generic `map: WalkTo was not applied`, and the command boundary logs
+/// the one refusal line for it.
+#[test]
+fn a_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    // Attached, but not connected and not in the game.
+    let origin = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let (error, logged) = refused_walk_for_slot(
+        "panel-walk-logged-out",
+        origin,
+        false,
+        false,
+        "not logged in",
+    );
+    assert_eq!(error.as_deref(), Some("not logged in"), "{error:?}");
+    assert_eq!(logged, 1);
+}
+
+/// A bot that is in the game without an observed tile shows the host's own
+/// reason, `no position yet`, not `not logged in`, and logs the one refusal.
+#[test]
+fn a_walk_for_a_bot_with_no_position_shows_no_position_yet_and_logs_one_refusal() {
+    let none = Tile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let (error, logged) = refused_walk_for_slot(
+        "panel-walk-no-position",
+        none,
+        true,
+        true,
+        "no position yet",
+    );
+    assert_eq!(error.as_deref(), Some("no position yet"), "{error:?}");
+    assert_eq!(logged, 1);
 }

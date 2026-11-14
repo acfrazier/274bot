@@ -609,16 +609,6 @@ pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> client::CheatSend
     driver.send_cheat(cmd)
 }
 
-/// Send a cheat the operator typed. A command the client accepted counts as
-/// input, as a typed chat line does in the Java client (its key events reset
-/// the idle counter), so the bot does not idle out under an operator who is
-/// working it. Host bookkeeping cheats use [`cheat`]: they are not input.
-pub fn operator_cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> client::CheatSend {
-    let sent = driver.send_cheat(cmd);
-    mark_input_activity(driver, sent.is_sent());
-    sent
-}
-
 /// Whether this driver has profile admission. Connection state remains a
 /// separate send-time check in the real client.
 pub fn cheat_allowed(admission: client::CheatAdmission) -> bool {

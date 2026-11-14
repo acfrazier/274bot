@@ -20,6 +20,7 @@ import { gatherCatalogFiles } from './extractors/gather-catalog.ts';
 import { requireEnvPath } from './extractors/rs2b0t-literals.ts';
 import { extractNpcTransformClosure, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 import { parseRs2Blocks, stripComments, walkContent } from './extractors/gathering-content.ts';
+import { extractNpcBankAccesses, type NpcBankAccess } from './extractors/banks.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null; respawnrate?: number };
@@ -2389,7 +2390,7 @@ export function extractCookSurfaces(content: string, catalog: CookCatalog | unde
 
 
 /** Selected content supplies the access identity, footprint, and placement; collision resolves the stand at bind time. */
-export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
+export function extractBankPlacements(content: string, catalog: CatalogBank[], npcAccesses: readonly NpcBankAccess[] = extractNpcBankAccesses(content).rows) {
     const locFiles = contentTreeFiles(content, 'scripts', '.loc');
     const npcFiles = contentTreeFiles(content, 'scripts', '.npc');
     const files = [...locFiles, ...npcFiles];
@@ -2405,6 +2406,7 @@ export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
             configs.set(key, config);
         }
     }
+    const bankNpcs = new Map(npcAccesses.map(access => [access.id, access]));
     const rows: { name: string; kind: string; id: number; x: number; z: number; level: number; width: number; length: number }[] = [];
     const ids = new Set(packedLocs.keys());
     const near = (bank: CatalogBank, tile: { x: number; z: number; plane: number }) =>
@@ -2430,8 +2432,9 @@ export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
         for (const placement of parseJm2NpcPlacements(text)) {
             const tile = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
             const config = configs.get(`.npc:${packedNpcs.get(placement.npc_id)}`);
+            const access = bankNpcs.get(placement.npc_id);
             for (const bank of catalog) {
-                if (bank.npcAccess && near(bank, tile) && matches(config, bank.npcAccess)) {
+                if (access && bank.npcAccess && near(bank, tile) && access.name === bank.npcAccess.name && access.action === bank.npcAccess.op) {
                     const size = Number(config?.size ?? 1);
                     if (!Number.isInteger(size) || size < 1) throw new Error(`bank placements: invalid NPC size ${bank.name}`);
                     rows.push({ name: bank.name, kind: 'npc', id: placement.npc_id, x: tile.x, z: tile.z, level: tile.plane, width: size, length: size });
@@ -2660,7 +2663,13 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const rs2b0tRoot = requireEnvPath('RS2B0T', 'the rs2b0t source root');
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
-    const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
+    const bankNpcEvidence = extractNpcBankAccesses(spec.content);
+    const bankNpcAccesses = bankNpcEvidence.rows;
+    const bankPlacements = extractBankPlacements(spec.content, bankCatalog, bankNpcAccesses);
+    const bankNpcFile = path.join(path.dirname(spec.output), String(spec.revision), 'bank_npcs.json');
+    const bankNpcRefusalsFile = path.join(path.dirname(spec.output), String(spec.revision), 'bank_npc_refusals.json');
+    fs.writeFileSync(bankNpcFile, `${JSON.stringify({ schema: 1, revision: spec.revision, facts: { rows: bankNpcAccesses } }, null, 2)}\n`);
+    fs.writeFileSync(bankNpcRefusalsFile, `${JSON.stringify({ schema: 1, revision: spec.revision, facts: { refusals: bankNpcEvidence.refusals } }, null, 2)}\n`);
     if (spec.revision !== 377) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.json'), bankCatalogJson(bankCatalog));
     const cookFiles = {
         cookLocations: 'src/bot/data/cookLocations.ts',
@@ -2748,10 +2757,11 @@ async function generate(spec: Revision, stage: GenerationStage) {
             'gathering',
             'quests',
             ...(prereqStepsFile ? ['prereq_steps'] : []),
+            'bank_npcs',
             'debug',
         ],
         gathering: gathering.summary,
-        bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing.length },
+        bank_npc_refusals: { output: path.relative(root, bankNpcRefusalsFile), rows: bankNpcEvidence.refusals },
         cook_surfaces: cookSurfaces.facts.rows.length,
     };
 }

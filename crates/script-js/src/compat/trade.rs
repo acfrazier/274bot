@@ -85,6 +85,7 @@ impl NativeObservation {
     /// A logout forgets the session: only pages posted since login count.
     fn from_scene(scene: &Scene) -> Self {
         let session = scene.since_login();
+        let here = session.here();
         Self {
             ingame: session.ingame().unwrap_or(false),
             offer_open: session.trade_offer_open().unwrap_or(false),
@@ -109,10 +110,14 @@ impl NativeObservation {
                 .players()
                 .map(|rows| {
                     rows.iter()
-                        .map(|player| PlayerRef {
-                            name: player.name.clone().unwrap_or_default(),
-                            distance: player.distance,
-                            actions: player.actions.clone(),
+                        .filter_map(|player| {
+                            let here = here?;
+                            let network = player.network_tile()?;
+                            Some(PlayerRef {
+                                name: player.name.clone().unwrap_or_default(),
+                                distance: observed::network_distance(here, network),
+                                actions: player.actions.clone(),
+                            })
                         })
                         .collect()
                 })

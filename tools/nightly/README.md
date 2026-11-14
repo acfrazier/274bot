@@ -95,10 +95,11 @@ Jobs run sequentially and share the runner's lock and build tree:
 Each cell gets an isolated `HOME` and evidence directory, `BOT_CPU=1` unless
 its name matches `NIGHTLY_GPU_CELLS`, and its job's distinct name prefix.
 The outer cap (`NIGHTLY_CELL_CAP_S`, default 3600 s) stops a process if it does
-not reach a terminal state. Two cells keep a 3600 s cap on each host:
-`jive_kbd` and `quester_queue`. Their proven walls pass the Windows host's
-1200 s cap (2026-10-21: `jive_kbd` 2543.0 s on Linux, `quester_queue`
-1987.9 s on Linux). `NIGHTLY_CELL_CAPS_S` (`cell=seconds,...`) overrides
+not reach a terminal state. Two cells have their own cap on each host,
+because their runs pass the Windows host's 1200 s cap: `jive_kbd` (3600 s;
+wall 2543.0 s on Linux, 2026-10-21) and `quester_queue` (7500 s, above its
+7200 s scenario deadline plus the live test's 15 s margin, so a stuck queue
+still ends with its own verdict). `NIGHTLY_CELL_CAPS_S` (`cell=seconds,...`) overrides
 one cell's cap. The summary records each cap in `cell_caps_s`. A paired
 proof refuses to start without the pair witness. The runner retries it
 with `--pair-core` and records the gate.
@@ -730,12 +731,13 @@ administrator, once.
 2. `C:\274bot-nightly\` with `runs\`, `logs\`, `state\`; the venv:
    `& 'C:\Program Files\Python314\python.exe' -m venv C:\274bot-nightly\venv`, then
    `C:\274bot-nightly\venv\Scripts\python.exe -m pip install --require-hashes --only-binary :all: --no-deps -r <runner>\tools\nightly\windows\requirements.txt`.
-3. Read-only inputs (copied in once; refresh them when they change):
-   `engine-pristine\{engine,content}` (the 289 engine and content, without
-   `node_modules`, account database or player saves: the clients read its pack, config
-   and content; it is never started), `inputs\274\{engine,content}` (the exact
-   revision-274 local-data inputs, also without `node_modules`, database or player
-   saves), `rs2b0t\` (the catalog, as on the Linux VM),
+3. Read-only inputs (copy in once and refresh them when they change):
+   `engine-pristine\{engine,content}` contains the 289 engine and content.
+   Copy it without `node_modules`, account database or player saves. The clients
+   read its pack, config and content. The runner never starts this engine.
+   Also copy `inputs\274\{engine,content}`, the exact revision-274 local-data
+   inputs, without `node_modules`, database or player saves, and
+   `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
    when it is missing or stale), `fixtures\274bot-289-v19.navpack` with its
    `.navflags` sidecar for pre-ADR test lanes. Post-ADR lanes use the tested
@@ -743,13 +745,22 @@ administrator, once.
    `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
-4. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
+4. Install the engine's JavaScript dependencies for local-data generation. The
+   `tools/game-data/generate.ts` script imports TypeScript from this tree. After
+   you copy the engine, run this once before the nightly starts:
+   ```powershell
+   Set-Location C:\274bot-nightly\engine-pristine\engine
+   & 'C:\Users\BotTest\.cargo\bin\bun.exe' install --frozen-lockfile --ignore-scripts --no-save
+   ```
+   Bun reads `package-lock.json` and creates `node_modules\`. Repeat when the
+   lockfile changes.
+5. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
    carries `tools/nightly/` (`git -C C:\274bot-nightly\runner pull --ff-only` to update).
-5. Settings: copy [`windows/nightly.env`](windows/nightly.env) to `C:\274bot-nightly\nightly.env`.
-6. Tasks: `powershell -ExecutionPolicy Bypass -File C:\274bot-nightly\runner\tools\nightly\windows\install-tasks.ps1`
+6. Settings: copy [`windows/nightly.env`](windows/nightly.env) to `C:\274bot-nightly\nightly.env`.
+7. Tasks: `powershell -ExecutionPolicy Bypass -File C:\274bot-nightly\runner\tools\nightly\windows\install-tasks.ps1`
    (`-At 23:00` by default).
-7. Engine B: the review machine's `274bot-nightly-win-engine` service (above).
-8. Pull account, **by an administrator** (elevated PowerShell), with the archive host's
+8. Engine B: the review machine's `274bot-nightly-win-engine` service (above).
+9. Pull account, **by an administrator** (elevated PowerShell), with the archive host's
    public key: `C:\274bot-nightly\runner\tools\nightly\windows\pull-access.ps1 -PublicKey '<win_pull_ed25519.pub>'`
    (`-From` defaults to the archive host's 10.0.0.72). It creates `274bot-pull` (no
    groups, random unknown password), makes `C:\274bot-nightly` private to BotTest,

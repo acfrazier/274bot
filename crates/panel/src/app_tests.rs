@@ -7736,9 +7736,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
                     Some(serde_json::Value::Bool(false)),
                 );
             },
-            draw: |ui, s| {
-                crate::fleet_toolbar::header(ui, s, "fleet");
-            },
+            draw: super::fleet_section,
         },
         Surface {
             name: "rail preview fold",
@@ -9286,75 +9284,278 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
     println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
 }
 
-/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
-/// out, and the banner and the status rows say why (the same words as the
-/// terminal app, which reads the same `frontend-core` state line).
+/// The panel driver for a dim catalog card: the Browse card draws the typed
+/// reason in the operator's terms. A retired card reads `unavailable: …`; an
+/// unresolved import reads `failed import: …`. The two cards make the kinds
+/// observable in one frame.
+#[cfg(feature = "js")]
 #[test]
-fn the_panel_says_why_a_bot_with_no_script_is_logged_out() {
-    panel_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "ogged out: disconnected while idle (Log in to connect)",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server.
-#[test]
-fn the_panel_calls_only_a_requested_logout_an_idle_logout() {
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "ogged out: idle logout by the server (Log in to connect)",
-    );
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "ogged out by the server (Log in to connect)",
-    );
-}
-
-fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
-    use crate::session::{Session, SlotIo};
-    use frontend_core::surface::{FrameBuf, SlotInput};
-    use host_play::{SlotArm, StartupPhase};
+fn browse_card_draws_policy_holds_and_import_failures_apart() {
+    use crate::session::Session;
 
     let _guard = crate::test_support::imgui_context_guard();
-    let mut s = Session::new();
-    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
-        host: "127.0.0.1".into(),
-        transport: client::Transport::Tcp,
-        port: 1,
-        cache_dir: "/tmp".into(),
-        lowmem: true,
-        mainland: false,
-    });
-    let arm = SlotArm::new(2, true);
-    play.attach_arm("bob", Arc::clone(&arm));
-    s.core.fleet_mut().add("bob");
-    s.core.insert_slot_io(
-        "bob",
-        SlotIo {
-            input: SlotInput::new(),
-            pixels: FrameBuf::new(),
-        },
-    );
-    s.set_focus_for_test("bob");
-    s.core.set_play(Some(play));
-    arm.complete_login_for_test();
-    exit(&arm);
-    {
-        let play = s.core.play_for_test().unwrap();
-        play.statuses.lock().unwrap().push(host_play::SlotStatus {
-            username: "bob".into(),
-            login_latched: true,
-            login_latch_reason: arm.login_latch_reason(),
-            startup_phase: StartupPhase::Queueing,
-            startup_phase_started: Instant::now(),
-            ..host_play::SlotStatus::default()
-        });
+    let dir = TestDir::new("browse-dim-reasons");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
+    std::fs::create_dir_all(scripts.join("AccountLeveler")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Woodcutter from './Woodcutter/Woodcutter.js';\n\
+         import AccountLeveler from './AccountLeveler/AccountLeveler.js';\n\
+         ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });\n\
+         ScriptRegistry.register({ name: 'AccountLeveler', create: () => new AccountLeveler() });\n",
+    )
+    .unwrap();
+    let body = "import { Game } from '../../api/game/Game.js';\n\
+                export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
+    std::fs::write(
+        scripts.join("AccountLeveler/AccountLeveler.ts"),
+        "import x from '../../event/webwalk/Something.js';\n\
+         export default class T extends LoopingBot { loop() {} }",
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    session
+        .scripts
+        .register_catalog(&root, &dir.join("rs2b0t-path"))
+        .expect("fixture catalog registers");
+
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("browse")
+                .size([520.0, 600.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    for card in session.scripts.browse_cards() {
+                        if matches!(card.name(), "Woodcutter" | "AccountLeveler") {
+                            super::browse_script_card(ui, &session, card, 480.0);
+                        }
+                    }
+                });
+            ui.log_finish();
+        }
+        ctx.render();
     }
-    s.core.poll_at(Instant::now());
-    let (banner, status) = draw_banner_and_status(&s);
-    assert!(banner.contains(state), "{banner}");
-    assert!(status.contains(state), "{status}");
+    let text = drawn.0.take();
+    assert!(
+        text.contains("unavailable: replaced by the native Gatherer"),
+        "a retired card reads as unavailable:\n{text}"
+    );
+    assert!(
+        text.contains("failed import: ../../event/webwalk/Something.js"),
+        "an unsupported import names its specifier:\n{text}"
+    );
+    assert!(
+        !text.contains("failed import: replaced by the native Gatherer"),
+        "a policy hold is never a failed import:\n{text}"
+    );
+    assert!(
+        !text.contains("unavailable: ../../event/webwalk/Something.js"),
+        "an import failure is never a policy hold:\n{text}"
+    );
+}
+
+/// A walk refusal that names 99 danger zones, as a script's park reason.
+fn zone_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+fn parked_detail(reason: &str) -> frontend_core::SlotDetail {
+    let status = frontend_core::test_support::scripts::NativeStatus::working(
+        frontend_core::scripts::CompiledCardId::lookup("Quester").unwrap(),
+    )
+    .with_text_field("action_state", "Action", "blocked")
+    .with_text_field("block_reason", "Blocked", reason);
+    let mut parked = frontend_core::SlotDetail::default();
+    parked.row_mut().set_phase(frontend_core::Phase::Ready);
+    parked.row_mut().set_script(ScriptRunState::Running);
+    parked.set_state("ingame scene 2");
+    status.attach_to(parked)
+}
+
+/// The Status card shows a parked script's reason as one short line with no
+/// later zone, and offers the whole text under a collapsed "Full reason"
+/// header with a Copy button; opened, the header holds the whole text. A
+/// reason that is already one short line gets no header.
+#[test]
+fn the_status_and_script_panes_show_the_short_reason() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let reason = zone_reason();
+    let parked = parked_detail(&reason);
+    let shown = draw_status_detail(&parked, "—", "lowmem");
+    assert!(
+        shown.contains("reason") && shown.contains("blocked by danger zones"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("2567,3050"),
+        "only the first 100 characters: {shown}"
+    );
+    assert!(shown.contains("Full reason"), "{shown}");
+    assert!(
+        !shown.contains("Copy"),
+        "the header starts collapsed: {shown}"
+    );
+
+    // Open the header: it holds the whole reason (the child window wraps it).
+    let line = parked.script_phase().unwrap().reason().unwrap();
+    assert!(line.is_cut());
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("reason").build(|| {
+            ui.set_next_item_open(true);
+            super::full_reason(ui, line, "test-reason");
+        });
+        ui.log_finish();
+    }
+    ctx.render();
+    let open = drawn.0.take();
+    drop(ctx);
+    assert!(open.contains("Copy"), "{open}");
+    assert!(open.contains("blocked by danger zones"), "{open}");
+
+    let whole = draw_status_detail(&parked_detail("no step for stage"), "—", "lowmem");
+    assert!(
+        whole.contains("no step for stage") && !whole.contains("Full reason"),
+        "{whole}"
+    );
+}
+
+/// A 6,360-character refusal on the panel's top line is one line of at most
+/// `LINE_MAX` characters with no zone item after the first 112 characters.
+#[test]
+fn the_banner_for_a_99_zone_refusal_is_short() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    session.error = Some(zone_reason());
+    let (banner, _) = draw_banner_and_status(&session);
+    // The first line is the test window's title.
+    let lines: Vec<&str> = banner
+        .lines()
+        .filter(|line| !line.trim().is_empty() && *line != "banner")
+        .collect();
+    assert_eq!(lines.len(), 1, "{banner:?}");
+    assert!(
+        lines[0].chars().count() <= frontend_core::LINE_MAX,
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].ends_with('…'), "{}", lines[0]);
+    assert!(!banner.contains("2567,3050"), "{banner}");
+}
+
+/// Draw the real strip headings with a physical pointer and button state.
+fn heading_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    down: bool,
+) -> ([f32; 2], [f32; 2], bool) {
+    ctx.io_mut().add_mouse_pos_event(point);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, down);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    crate::fleet::take_layout();
+    let mut target = [0.0; 2];
+    let active = {
+        let ui = ctx.frame();
+        ui.window("heading driver")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([600.0, 700.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::section_open(ui, session, "status");
+                target = rect_centre([
+                    ui.item_rect_min()[0],
+                    ui.item_rect_min()[1],
+                    ui.item_rect_max()[0],
+                    ui.item_rect_max()[1],
+                ]);
+                super::fleet_section(ui, session);
+            });
+        ui.drag_drop_payload().is_some()
+    };
+    ctx.render();
+    let source = rect_centre(crate::fleet::take_layout().fold_header);
+    (source, target, active)
+}
+
+#[test]
+fn fleet_heading_click_and_drag_keep_the_header_while_its_fold_saves() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("heading-dnd");
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let (release, failing) = hold_writes(&session);
+    failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    session.ui.fleet_toolbar_open = false;
+    session.ui.section_order = vec!["status".into(), "fleet".into()];
+    let mut ctx = dock_host_context();
+    let away = [1200.0, 700.0];
+    let mut source = [0.0; 2];
+    for _ in 0..3 {
+        (source, _, _) = heading_frame(&mut ctx, &mut session, away, false);
+    }
+    for down in [false, true, false] {
+        let (_, _, active) = heading_frame(&mut ctx, &mut session, source, down);
+        assert!(!active, "a plain click must not start a heading drag");
+    }
+    assert!(session.ui.fleet_toolbar_open, "the click opens the toolbar");
+    assert!(session.panel_member_pending(&["fleet_toolbar_open"]));
+
+    heading_frame(&mut ctx, &mut session, source, false);
+    heading_frame(&mut ctx, &mut session, source, true);
+    let dragged = [source[0] + 40.0, source[1]];
+    let (_, target, active) = heading_frame(&mut ctx, &mut session, dragged, true);
+    assert!(
+        active,
+        "dragging the header starts its payload while Saving… is drawn"
+    );
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, false);
+    let order = super::resolve_heading_order(&session.ui.section_order);
+    assert!(
+        order.iter().position(|id| id == "fleet") < order.iter().position(|id| id == "status"),
+        "the Fleet payload reorders the actual headings: {order:?}"
+    );
+    let saved_open = serde_json::json!(session.ui.fleet_toolbar_open);
+    drop(release);
+    await_preference(&mut session, "fleet_toolbar_open", saved_open);
+    let saved_order = serde_json::to_value(&session.ui.section_order).unwrap();
+    await_preference(&mut session, "section_order", saved_order);
 }
 
 /// The panel driver for a dim catalog card: the Browse card draws the typed

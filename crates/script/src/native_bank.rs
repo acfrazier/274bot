@@ -1948,8 +1948,10 @@ impl npc::Context for NativeNpcContext<'_, '_> {
     }
 
     fn banker(&self, name: &str, op: npc::NpcOp<'_>) -> Option<npc::Banker> {
-        let npcs = self.cx.snapshot().npcs()?;
-        let (banker, action) = npc::banker_scan(npcs.value, name, op)?;
+        let snapshot = self.cx.snapshot();
+        let here = snapshot.local_player()?.value.player.network;
+        let npcs = snapshot.npcs()?;
+        let (banker, action) = npc::banker_scan(npcs.value, here, name, op)?;
         Some(npc::Banker {
             name: banker.name.as_ref()?.clone(),
             action: action.to_owned(),
@@ -4662,6 +4664,63 @@ mod tests {
         }
     }
 
+    fn seed_teller_player(snapshot: &mut GameSnapshot) {
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        }));
+    }
+
+    #[test]
+    fn native_teller_network_coords_selects_nearest_path_head_through_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut near = npc_row(7, "Banker", &["Talk-to"]);
+        near.tile = WorldTile { x: 3210, ..origin };
+        near.network = WorldTile { x: 3201, ..origin };
+        near.distance = 10;
+        let mut far = npc_row(8, "Banker", &["Talk-to"]);
+        far.tile = WorldTile { x: 3201, ..origin };
+        far.network = WorldTile { x: 3205, ..origin };
+        far.distance = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut player = local_player(WorldTile { x: 3100, ..origin });
+        player.player.network = origin;
+        snapshot.seed_local_player(player);
+        snapshot.seed_npcs(vec![near, far]);
+        let access = teller_access(
+            NamedBank::new("Network teller", origin),
+            Some("Banker"),
+            1,
+            None,
+        );
+        let mut ledger = None;
+        let _handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Open>(OpenArgs { access }, &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Interaction(InteractReq::Npc {
+                name,
+                action,
+                index: Some(7),
+            }) if name == "Banker" && action == "Talk-to"
+        ));
+    }
+
     #[test]
     fn teller_access_drives_multiple_dialogue_pages_from_declared_metadata() {
         if !api::test_support::game_data_available() {
@@ -4669,6 +4728,7 @@ mod tests {
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        seed_teller_player(&mut snapshot);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
         let access = teller_access(
             catalog_bank("Mage Arena"),
@@ -4781,6 +4841,7 @@ mod tests {
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        seed_teller_player(&mut snapshot);
         snapshot.seed_npcs(vec![npc_row(12, "Packed Teller", &["Talk-to", "Bank"])]);
         let bank = NamedBank::new(
             "Packed teller bank",
@@ -4824,6 +4885,7 @@ mod tests {
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        seed_teller_player(&mut snapshot);
         snapshot.seed_npcs(Vec::new());
         let access = teller_access(catalog_bank("Mage Arena"), Some("Gundai"), 1, None);
         let mut ledger = None;
@@ -6791,6 +6853,7 @@ mod tests {
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        seed_teller_player(&mut snapshot);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
         assert_bank_emit_deferred(
             &snapshot,
@@ -6823,6 +6886,7 @@ mod tests {
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        seed_teller_player(&mut snapshot);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
         let mut ledger = None;
         let handle = start_bank(
@@ -6866,6 +6930,7 @@ mod tests {
     ) {
         let mut initial = GameSnapshot::new();
         initial.seed_ingame(2);
+        seed_teller_player(&mut initial);
         initial.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
         let mut ledger = None;
         let handle = with_tick_snapshots(&initial, page, &mut ledger, 1, |tick, next| {

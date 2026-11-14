@@ -17,6 +17,8 @@ use nav_planner::transport::{TransportEdge, TransportKind};
 use nav_planner::world::NavWorld;
 
 pub const BANK_API_NOTE: &str = "Map-discovered bank. Frozen bank API roster is separate: nearestBank may omit map discoveries, including Canifis. Walking here does not change that roster or prove banking eligibility.";
+// The shipped 0.2.9 world measured 3,406 entries and 358,291 index bytes.
+// These limits leave 12,978 entries and 690,285 index bytes of headroom.
 const MAX_ENTRIES: usize = 16384;
 const INDEX_BUDGET: usize = 1024 * 1024;
 
@@ -128,8 +130,11 @@ impl Catalogue {
             .len()
             .checked_add(world.graph.teleports.len())
             .ok_or(MapError::Limit("nav overlay count"))?;
-        if count > MAX_ENTRIES {
-            return Err(MapError::Limit("nav overlay count"));
+        if count
+            .checked_mul(size_of::<u32>())
+            .is_none_or(|bytes| bytes > INDEX_BUDGET)
+        {
+            return Err(MapError::Limit("map search/index bytes"));
         }
         let nav = nav_planner::producer::identity(&world)
             .map_err(|_| MapError::Invalid("navigation world ownership"))?

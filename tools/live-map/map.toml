@@ -137,6 +137,8 @@ globs = [
   # Deleted locations of the same compile-time identity producer.
   "crates/build-stamp/source_identity.rs",
   "crates/panel/build.rs",
+  # Release-time check program, not a live path. It reads staged package data.
+  "crates/host-play/examples/release_map_catalogue.rs",
   # Offline audit, toolchain and vendor dependency metadata. Full CI still
   # checks these inputs; they do not select a gameplay route.
   ".cargo/audit.toml",
@@ -157,6 +159,9 @@ globs = [
   # Exact offline producer/template paths. README's final-head pack, corpus
   # and affected-cell rule applies; no generated-route proof is waived.
   "crates/nav-bake/src/bin/nav-pack.rs",
+  # Offline bank-stand producer, not a live action path. Fresh packs and the
+  # route corpus prove its output; the required bank cells exercise new stands.
+  "crates/nav-bake/src/pack/banks.rs",
   "crates/nav-bake/src/transport/engine_obstacle_procs.rs2",
   "crates/nav-bake/src/transport/legends.rs",
   "crates/nav-bake/src/transport/legends_axe_template.rs2",
@@ -373,7 +378,7 @@ cells = [
 # session/fleet.rs routes the fleet-row commands (marks, filter, sort, the
 # saved-order reorder and fleet plans); the driver cell drives them all.
 [[cover]]
-globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs", "crates/frontend-core/src/session/world_switch.rs"]
+globs = ["crates/frontend-core/src/brief.rs", "crates/frontend-core/src/bulk.rs", "crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/marked.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs", "crates/frontend-core/src/session/world_switch.rs"]
 cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
   "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",
@@ -444,10 +449,11 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/frontend-core/src/scripts/**"]
+globs = ["crates/frontend-core/src/scripts/**", "crates/tui/src/bin.rs", "crates/tui/src/bin_tests.rs"]
 cells = [
   "frontend-core.script-selection|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib scripts::tests::",
   "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
+  "tui.compat-catalog-selected-facts|BOT_NAV_BUILD=skip COMPAT_CATALOG_ROOT=${COMPAT_CATALOG_ROOT:?} ENGINE_A_DIR=${ENGINE_A_DIR:?} NAV_PACK_289=${NAV_PACK_289:?} NAV_FLAGS_289=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib -- --ignored --exact bin::tests::compat_catalog_selected_facts_load --nocapture --test-threads=1",
 ]
 
 [[cover]]
@@ -586,7 +592,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/tui/src/app.rs", "crates/tui/src/script_shape.rs"]
+globs = ["crates/tui/src/app.rs", "crates/tui/src/layout.rs", "crates/tui/src/script_failures.rs", "crates/tui/src/script_shape.rs", "crates/tui/src/text.rs"]
 cells = [
   "tui.app-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib app::tests::",
 ]
@@ -1203,7 +1209,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/paths/289/arthur.json", "crates/script/src/quester/families/dialogue.rs", "crates/script/src/quester/families/combat.rs"]
+globs = ["crates/script/paths/289/arthur.json", "crates/script/src/quester/families/dialogue.rs", "crates/script/src/quester/families/combat.rs", "crates/api/src/query.rs"]
 cells = [
   "host.quester-mordred-continuation-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=arthur QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/arthur-mordred.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
 ]
@@ -1327,10 +1333,7 @@ globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "crates
 cells = [
   "host.transport-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_protocol_error_relogs_fresh_into_a_world --nocapture --test-threads=1",
   "host.transport-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_dead_server_deadline_reconnects_into_a_world --nocapture --test-threads=1",
-  "host.transport-idle-held|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scripted_bot_never_sends_the_idle_request --nocapture --test-threads=1",
-  "host.scriptless-park-protocol-error|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_protocol_error_stays_parked_until_login --nocapture --test-threads=1",
-  "host.scriptless-park-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_dead_server_stays_parked_until_login --nocapture --test-threads=1",
-  "host.scriptless-idle-logout|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_idle_logout_stays_parked_until_login --nocapture --test-threads=1",
+  "host.scriptless-idle-held|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_bot_stays_logged_in_idle_for_two_minutes --nocapture --test-threads=1",
 ]
 
 [[cover]]
@@ -2188,3 +2191,47 @@ cells = [
   "panel.memory-completion-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib memory_run_",
 ]
 
+
+# The executor rechecks packed web actions at send and retry time.
+# Real content proves knife and worn-blade actions; controlled gated-web
+# tests separately prove that the same route evidence survives rechecks.
+[[cover]]
+globs = [
+  "crates/nav-executor/src/traveller.rs",
+  "crates/nav-executor/src/traveller/transport_hop.rs",
+  "crates/host-play/tests/web_cut_live.rs",
+]
+cells = [
+  "host.nav-web-actions|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test web_cut_live -- --ignored --exact live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions --nocapture --test-threads=1",
+]
+
+# Compat route inspection must retain the same qualified quest evidence
+# as the subsequent walk across the content's stage-window entrance.
+[[cover]]
+globs = [
+  "crates/host-play/src/script_interact.rs",
+  "crates/host-play/src/route_inspect.rs",
+  "crates/host-play/tests/nav_quest_evidence_live.rs",
+]
+cells = [
+  "host.nav-compat-quest-stage|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js,live-harness,test-support,live-probe --test nav_quest_evidence_live -- --ignored --exact real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild --nocapture --test-threads=1",
+]
+
+# A fare withdrawal must not remove a later quest-stage crossing when
+# the script walker replans from the bank.
+[[cover]]
+globs = [
+  "crates/host-play/src/script_walk.rs",
+  "crates/host-play/src/script_nav.rs",
+  "crates/host-play/src/bank_fetch_closed_live.rs",
+]
+cells = [
+  "host.nav-post-bank-quest-stage|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js,live-harness,test-support,live-probe --lib -- --ignored --exact bank_fetch_closed_live::live_fetch_closed_hero_guild_post_bank --nocapture --test-threads=1",
+]
+
+# Hans selection uses the network-coordinate filter before its real Talk-to.
+[[cover]]
+globs = ["crates/scenario/src/scenarios/client_377.rs"]
+cells = [
+  "host.receipt-377-client-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p tui --bin tui-play -- --revision 377 --engine ${ENGINE_377_DIR:?} --cache ${CLIENT_377_CACHE_DIR:?} --unpack ${CLIENT_377_UNPACK_DIR:?} --nav-pack ${NAV_PACK_377:?} --nav-flags ${NAV_FLAGS_377:?} --live script_client_377|--locked -p scenario --features api/test-support --lib receipt_",
+]

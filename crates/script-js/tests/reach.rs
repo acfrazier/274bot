@@ -42,9 +42,9 @@ fn npc<'a>(
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: x,
+        nz: z,
         shape: 0,
         angle: 0,
     }
@@ -419,6 +419,119 @@ fn nearest_same_name_talk_uses_posted_index() {
             action: "Talk-to".into(),
             index: Some(11),
         }]
+    );
+    iso.join();
+}
+
+#[test]
+fn network_coords_npc_dialog_ranks_from_local_server_path_heads_and_footprint() {
+    let iso = spawn(NPC_DIALOG);
+    let actions = ["Talk-to".to_string()];
+    let mut rendered_near = npc("Traiborn", &actions, 2, 5, 5, 0, true);
+    rendered_near.nx = 50;
+    rendered_near.nz = 50;
+    let mut network_near = npc("Traiborn", &actions, 11, 30, 30, 100, true);
+    network_near.size = 2;
+    network_near.nx = 6;
+    network_near.nz = 5;
+    let npcs = [rendered_near, network_near];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(11),
+        }],
+        "rank the local path head to the remote NPC path head, not rendered tiles or cached distance"
+    );
+    iso.join();
+}
+
+#[test]
+fn network_coords_moved_npc_reselects_on_the_existing_retry_ticks() {
+    let iso = spawn(NPC_DIALOG);
+    iso.probe("globalThis.__openMs = 0").unwrap();
+    let actions = ["Talk-to".to_string()];
+    let mut rendered_near = npc("Traiborn", &actions, 2, 5, 5, 0, true);
+    rendered_near.nx = 50;
+    rendered_near.nz = 50;
+    let mut network_near = npc("Traiborn", &actions, 11, 30, 30, 100, true);
+    network_near.nx = 6;
+    network_near.nz = 5;
+    let npcs = [rendered_near, network_near];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(11),
+        }]
+    );
+
+    let mut rendered_near = npc("Traiborn", &actions, 3, 5, 5, 0, true);
+    rendered_near.nx = 60;
+    rendered_near.nz = 60;
+    let mut network_near = npc("Traiborn", &actions, 12, 30, 30, 100, true);
+    network_near.nx = 9;
+    network_near.nz = 5;
+    let moved_npcs = [rendered_near, network_near];
+    snap.tick = 2;
+    snap.npcs = &moved_npcs;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(12),
+        }],
+        "the next normal retry reads the moved network target without extending its wait"
+    );
+    iso.join();
+}
+
+#[test]
+fn network_coords_missing_origin_or_npc_size_does_not_click() {
+    let iso = spawn(NPC_DIALOG);
+    let actions = ["Talk-to".to_string()];
+    let mut row = npc("Traiborn", &actions, 4, 5, 5, 0, true);
+    row.nx = 5;
+    row.nz = 5;
+    let npcs = [row];
+    let mut snap = base(stand());
+    snap.here = None;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no local path head, no actor"
+    );
+    iso.join();
+
+    let iso = spawn(NPC_DIALOG);
+    let mut row = npc("Traiborn", &actions, 4, 5, 5, 0, true);
+    row.size = 0;
+    let npcs = [row];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "unknown NPC footprint is not selectable"
     );
     iso.join();
 }

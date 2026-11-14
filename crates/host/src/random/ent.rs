@@ -95,7 +95,7 @@ impl EntGuard {
                         if fresh {
                             self.active_ticks = self.active_ticks.saturating_add(1);
                         }
-                        let tile = (npc.tile.x, npc.tile.z);
+                        let tile = (npc.network.x, npc.network.z);
                         self.active = Some(EntSight {
                             index: latch.index,
                             npc_type: latch.npc_type,
@@ -161,7 +161,12 @@ fn is_ent_slot(type_id: Option<usize>, game_data: Option<&SelectedGameData>) -> 
 /// while the local target is unknown and no remote player visibly targets the
 /// candidate Ent; such a fallback is still only a bounded guess.
 fn detect_ent(snap: &GameSnapshot, game_data: Option<&SelectedGameData>) -> Option<EntSight> {
-    let (px, pz, _) = snap.tile()?;
+    let (px, pz, level) = snap.tile()?;
+    let player = api::snapshot::WorldTile {
+        x: px,
+        z: pz,
+        level,
+    };
     let player_target = snap.local_player().and_then(|lp| lp.player.actor.target);
     if let Some(target) = player_target {
         if target.kind != ActorKind::Npc {
@@ -174,7 +179,7 @@ fn detect_ent(snap: &GameSnapshot, game_data: Option<&SelectedGameData>) -> Opti
         return Some(EntSight {
             index: npc.index,
             npc_type: npc.r#type?,
-            tile: (npc.tile.x, npc.tile.z),
+            tile: (npc.network.x, npc.network.z),
         });
     }
 
@@ -187,7 +192,7 @@ fn detect_ent(snap: &GameSnapshot, game_data: Option<&SelectedGameData>) -> Opti
         if !is_ent_slot(Some(type_id), game_data) || another_player_targets_ent(snap, npc.index) {
             continue;
         }
-        let dist = (npc.tile.x - px).abs().max((npc.tile.z - pz).abs());
+        let dist = api::query::chebyshev_to(player, npc.network);
         if dist > ENT_OWNERSHIP_RADIUS {
             continue;
         }
@@ -196,7 +201,7 @@ fn detect_ent(snap: &GameSnapshot, game_data: Option<&SelectedGameData>) -> Opti
             best = Some(EntSight {
                 index: npc.index,
                 npc_type: type_id,
-                tile: (npc.tile.x, npc.tile.z),
+                tile: (npc.network.x, npc.network.z),
             });
         }
     }

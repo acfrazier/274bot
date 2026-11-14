@@ -75,8 +75,9 @@ cargo run --locked -p nav-bake --bin nav-pack -- \
 
 `--cache` supplies the local client-cache directory. Revisions 289 and 377 read
 its `config`. Revision 274 reads the server `config` beside that directory.
-Nav-pack also reads the generated `<revision>.json` and
-`<revision>/quests.json` files. It writes all five payloads beside `--out`.
+Nav-pack also reads the generated `<revision>.json`,
+`<revision>/quests.json`, and `<revision>/bank_npcs.json` files.
+It writes all five payloads beside `--out`.
 Use `--flags-out`, `--reach-out`, `--canlight-out`, and `--pois-out` only to
 select different sidecar paths.
 
@@ -1058,6 +1059,9 @@ slot observer publishes `PoisonWindow` only while poison is Unknown, with the
 remaining clean ticks, whether a click was accepted, and the last reset cause.
 It needs 31 clean observed game ticks after an accepted walk click or
 interaction to prove Clear. Interactions restart this window; movement counts.
+A skipped or duplicated observation restarts the clean count, but retains a
+previously dispatched click. Without a dispatched click, clean observations
+alone cannot prove Clear.
 A hitmark kind above two invalidates the session until reconnect.
 
 For Unknown poison, admission first charges the selected content's worst pulse
@@ -1065,11 +1069,19 @@ at tick zero and every 30 ticks throughout the route, including safe gaps.
 If that bound fails, it tests the same route without poison. A passing clear
 bound admits with `WaitForClear` at the last safe retreat index. The follower
 sends no hop past that index while the fact is Unknown. At the retreat tile it
-waits only the published remainder, not a new full window. A new fact is
-reassessed before the deadline; an unresolved deadline reports
-`PoisonUnsettled { waited, cause }`. If there is no safe retreat index, the
-clear bound admits without a hold. Poison alone never refuses a route without
-entering crossings.
+waits for the published remainder, not a new full window. One skipped or
+duplicated observation can extend that deadline to cover the restarted clean
+window, but only while dispatch acceptance remains valid. The hold permits
+one such extension. It covers the next update after one missed deadline update,
+then a fresh 31-tick window. Thus, the total wait is at most the initial
+remainder plus 32, never more than 63 observed game ticks.
+Further gaps cannot extend the deadline again. Clear, poison, or cure evidence
+still takes precedence on the final tick. An unresolved deadline reports
+`PoisonUnsettled { waited, cause }` with the last reset cause. A modal, guardian
+hold, incomplete fact, incomplete dispatch trace, or relog still clears
+acceptance. A position change alone does not reset it.
+If there is no safe retreat index, the clear bound admits without a hold.
+Poison alone never refuses a route without entering crossings.
 
 The `poison_long_approach` live test proves Clear before retreat through the
 captured route identity, a unique owned WalkAttempt aim before the retreat

@@ -121,6 +121,7 @@ impl ScriptSettingsLog {
 #[cfg(feature = "js")]
 pub use reload::{
     CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
+    CATALOG_IMPORT_CANCELLED_NOTICE, RELOAD_CONTEXT_CHANGED_NOTICE,
 };
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
@@ -888,6 +889,11 @@ pub struct Scripts {
     /// Start only replaces the banner when it still shows the load-failure
     /// list it changes.
     shown: Option<String>,
+    /// `(identity key, fingerprint)` of every load failure already written
+    /// to the log, so one failure is logged once however often a banner
+    /// shows the list again.
+    #[cfg(feature = "js")]
+    logged_load_failures: std::collections::HashSet<(String, String)>,
     start_failures: Vec<(String, String)>,
     #[cfg(feature = "js")]
     /// Test-only: fail the replacement Start for this profile after it
@@ -983,6 +989,8 @@ impl Scripts {
             sync: sync::SyncState::default(),
             notice: None,
             shown: None,
+            #[cfg(feature = "js")]
+            logged_load_failures: std::collections::HashSet::new(),
             start_failures: Vec::new(),
             #[cfg(feature = "js")]
             #[cfg(any(test, feature = "test-support"))]
@@ -1617,7 +1625,7 @@ impl Scripts {
     #[cfg(feature = "js")]
     /// How many load failures are recorded.
     pub fn load_failure_count(&self) -> usize {
-        self.js.load_failures().len()
+        self.js.load_failure_count()
     }
 
     #[cfg(feature = "js")]
@@ -1911,10 +1919,16 @@ impl Scripts {
         Ok((run_identity, generation))
     }
 
+    /// Show `text` on the banner. A text longer than one line (or with a line
+    /// break) is the last guard of the brief-notice rule: the banner gets its
+    /// first line, cut, and the whole text goes to the log once
+    /// ([`crate::Brief::from_text`]). The retained notice and `shown` hold the
+    /// same short line, so a later retract still finds it.
     pub(crate) fn show(&mut self, text: impl Into<String>) {
         let text = text.into();
-        self.shown = Some(text.clone());
-        self.notice = Some(Notice::show(text));
+        let line = crate::Brief::from_text(&text).publish(&crate::LogTarget::script_notice());
+        self.shown = Some(line.clone());
+        self.notice = Some(Notice::show(line));
     }
 
     fn clear_notice(&mut self) {
@@ -1926,11 +1940,82 @@ impl Scripts {
     /// Show the library's load-failure list (or clear the banner when there
     /// is none): what an operator Start reports once it is accepted.
     pub fn show_load_failures(&mut self) {
-        if self.js.load_failures().is_empty() {
-            self.clear_notice();
-        } else {
-            self.show(self.js.named_failure_output());
+        match self.publish_load_failures() {
+            Some(line) => self.show(line),
+            None => self.clear_notice(),
         }
+    }
+
+    #[cfg(feature = "js")]
+    /// The load failures as one short banner line, `None` when there are
+    /// none: `7 scripts failed to load: Jive, Green +5 more`, then the log
+    /// pointer once the failures are in the log. Pure: it logs nothing. The
+    /// list itself is [`Self::load_failures`].
+    pub fn load_failure_line(&self) -> Option<String> {
+        let summary = self.load_failure_summary()?;
+        let pointer = api::hostlog::logged(api::hostlog::Category::ScriptLifecycle);
+        Some(if pointer {
+            format!("{summary}{}", crate::LOG_POINTER)
+        } else {
+            summary
+        })
+    }
+
+    #[cfg(feature = "js")]
+    /// [`Self::load_failure_line`], after writing every failure the log does
+    /// not hold yet (`ScriptLifecycle`, `warn`, packed). One `(identity,
+    /// fingerprint)` is logged once, so showing the list again, or a second
+    /// Refresh that fails the same cards, adds no log line.
+    pub fn publish_load_failures(&mut self) -> Option<String> {
+        let summary = self.load_failure_summary()?;
+        let fresh = self.fresh_load_failure_lines();
+        let brief = crate::Brief::new(summary);
+        let brief = if fresh.is_empty() {
+            brief.logged_by_producer()
+        } else {
+            brief.with_detail(fresh)
+        };
+        Some(brief.publish(&crate::LogTarget::script_load()))
+    }
+
+    #[cfg(feature = "js")]
+    /// The summary of the recorded failures: the count and the first two
+    /// card names.
+    fn load_failure_summary(&self) -> Option<String> {
+        const NAMES_SHOWN: usize = 2;
+        const NAME_CHARS: usize = 24;
+        let failures = self.js.load_failures();
+        let count = failures.len();
+        if count == 0 {
+            return None;
+        }
+        let names: Vec<std::borrow::Cow<'_, str>> = failures
+            .iter()
+            .take(NAMES_SHOWN)
+            .map(|failure| api::hostlog::cut_chars(&failure.name, NAME_CHARS))
+            .collect();
+        let mut text = format!(
+            "{count} script{} failed to load: {}",
+            if count == 1 { "" } else { "s" },
+            names.join(", ")
+        );
+        if count > NAMES_SHOWN {
+            let _ = write!(text, " +{} more", count - NAMES_SHOWN);
+        }
+        Some(text)
+    }
+
+    #[cfg(feature = "js")]
+    /// The named lines of the failures not yet logged; marks them logged.
+    fn fresh_load_failure_lines(&mut self) -> Vec<String> {
+        let mut fresh = Vec::new();
+        for failure in self.js.load_failures() {
+            let key = (failure.identity_key.clone(), failure.fingerprint.clone());
+            if self.logged_load_failures.insert(key) {
+                fresh.push(failure.named_line());
+            }
+        }
+        fresh
     }
 
     /// Operator Start setup failures (profile, `script: …` text) since the
@@ -3070,7 +3155,7 @@ impl Scripts {
             (stopped, Some(operation))
         };
         #[cfg(feature = "js")]
-        self.reload.invalidate();
+        self.invalidate_reload_work("catalog import validation was cancelled");
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_report.as_deref() != Some(report.as_str()) {
             self.last_bulk_report = Some(report);
@@ -3495,6 +3580,18 @@ impl Scripts {
     /// card's load diagnostic; a failure records it) and parameter writes.
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        self.poll_with_profile(core, None);
+    }
+
+    pub fn poll_with_profile<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: Option<&crate::launch::BoundProfile>,
+    ) {
+        #[cfg(feature = "js")]
+        self.refresh_reload_validation_context(core, profile);
+        #[cfg(not(feature = "js"))]
+        let _ = profile;
         self.settle_parameter_edits(core);
         #[cfg(feature = "js")]
         {
@@ -3622,13 +3719,13 @@ impl Scripts {
                     PendingCard::Loaded(card) => {
                         let key = card.identity_key();
                         let had_failure = self.js.load_failure(&key).is_some();
-                        let listing = self.shown.take_if(|shown| {
-                            had_failure && *shown == self.js.named_failure_output()
-                        });
+                        let current = self.load_failure_line();
+                        let listing = self
+                            .shown
+                            .take_if(|shown| had_failure && Some(&*shown) == current.as_ref());
                         let _ = self.js.record_start_result(&card, Ok(()));
                         if let Some(shown) = listing {
-                            let with = (!self.js.load_failures().is_empty())
-                                .then(|| self.js.named_failure_output());
+                            let with = self.load_failure_line();
                             self.shown.clone_from(&with);
                             self.notice = Some(Notice::retract(shown, with));
                         }

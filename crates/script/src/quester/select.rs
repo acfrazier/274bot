@@ -599,8 +599,16 @@ mod tests {
         let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
         let mut snapshot = inventory_snapshot(&data, &[]);
         let bank = known_empty_bank();
-        for (x, z, expected) in [(3208, 3213, "near"), (3227, 3300, "far")] {
-            snapshot.seed_local_player(crate::quester::families::tests::local_player(
+        for (x, z, rendered_x, rendered_z, expected) in [
+            (3208, 3213, 3227, 3300, "near"),
+            (3227, 3300, 3208, 3213, "far"),
+        ] {
+            snapshot.seed_local_player(crate::quester::families::tests::local_player_with_network(
+                api::WorldTile {
+                    x: rendered_x,
+                    z: rendered_z,
+                    level: 0,
+                },
                 api::WorldTile { x, z, level: 0 },
             ));
             assert_eq!(
@@ -612,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn nearest_uses_authored_approach_for_talk() {
+    fn network_coords_nearest_uses_authored_approach_for_talk() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -620,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn nearest_uses_authored_approach_for_interact() {
+    fn network_coords_nearest_uses_authored_approach_for_interact() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -638,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn nearest_uses_authored_approach_for_use_on() {
+    fn network_coords_nearest_uses_authored_approach_for_use_on() {
         if !api::test_support::game_data_available() {
             return;
         }

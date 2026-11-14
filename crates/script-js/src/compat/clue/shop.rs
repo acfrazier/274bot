@@ -184,7 +184,14 @@ impl ClueRuntime {
                         input
                             .get("npcs")
                             .and_then(Value::as_array)
-                            .and_then(|page| pick_at_spawn(&NpcIdentity::Shantay, page, spawn))
+                            .and_then(|page| {
+                                pick_at_spawn(
+                                    &NpcIdentity::Shantay,
+                                    page,
+                                    spawn,
+                                    posted_here(input),
+                                )
+                            })
                     };
                     match pick {
                         Some(pick) => {

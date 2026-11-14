@@ -31,8 +31,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use host_play as map_host;
+#[path = "../../host-play/tests/support/map_catalogue_fixture.rs"]
+mod map_catalogue_fixture;
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
+#[path = "../../host-play/tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 
@@ -2401,22 +2405,264 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-import");
     let root = fake_rs2b0t_tree(iso.dir(), false);
-    let mut session = TuiSession::new(dummy_options());
-    let mut app = TuiApp::new("274bot headless");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.bind_script_test_world(std::sync::Arc::new(bank_fetch_fixtures::knife_nav_world(2)));
+    }
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
     session
         .import_rs2b0t_catalog(&mut app, &root)
         .expect("import");
     assert!(session.scripts.catalog_work_pending());
     assert!(!iso.home().join(".274bot/rs2b0t-path").exists());
-    settle_catalog_work(&mut session, &mut app);
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
         .card(CardSource::Catalog, "BoneBurier")
         .expect("catalog card");
     assert_eq!(card.description(), "Buries bones");
+    assert!(
+        card.is_transpiled(),
+        "catalog card validation did not commit"
+    );
+    assert!(
+        session.scripts.load_failure(&card.identity_key()).is_none(),
+        "catalog card validation recorded a runtime failure"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_retains_runtime_failure_for_new_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let iso = IsolatedStores::enter("tui-import-load-failure");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    std::fs::write(
+        root.join("src/bot/scripts/BoneBurier/BoneBurier.ts"),
+        "export default class BoneBurier extends LoopingBot { constructor() { super(); throw new Error('intentional test setup failure'); } override loop() {} }",
+    )
+    .unwrap();
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.bind_script_test_world(std::sync::Arc::new(bank_fetch_fixtures::knife_nav_world(2)));
+    }
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    let card = session
+        .scripts
+        .card(CardSource::Catalog, "BoneBurier")
+        .expect("catalog card");
+    assert!(
+        session.scripts.load_failure(&card.identity_key()).is_some(),
+        "catalog import must retain the first-load failure after applying its diff"
+    );
+    let named_failures = session.scripts.named_failure_output();
+    assert!(
+        named_failures.contains("BoneBurier")
+            && named_failures.contains("intentional test setup failure"),
+        "catalog import must retain the new card's load failure: {named_failures}"
+    );
+    assert_eq!(
+        app.error.as_deref(),
+        session.scripts.load_failure_line().as_deref(),
+        "the TUI must show the shared core failure notice"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_requires_selected_game_data() {
+    let iso = IsolatedStores::enter("tui-catalog-import-missing-context");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .clear_script_test_world();
+    assert!(session.bound().is_none());
+    assert!(session.core.game_data().is_none());
+    assert!(session.core.nav_world().is_none());
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Import catalog: missing selected game data"),
+        "catalog import must report missing selected game data"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_reports_unprepared_map_data() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let iso = IsolatedStores::enter("tui-catalog-import-missing-banks");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    {
+        let play = session.core.play_mut_for_test().unwrap();
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+        play.clear_script_test_world();
+    }
+    assert!(session.bound().is_none());
+    assert!(session.core.game_data().is_some());
+    assert!(session.core.nav_world().is_none());
+    select(&mut session, "alice");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import fixture catalog");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Import catalog: the map data for this profile is not prepared"),
+        "catalog import must report unprepared map data"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+#[ignore = "requires Engine A R289 assets and an untouched ae56 catalog clone"]
+fn compat_catalog_selected_facts_load() {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    const FROZEN_REVISION: &str = "ae56ccc95ba5681b12f1f66ec2adea14427fe497";
+    let iso = IsolatedStores::enter("tui-compat-catalog-selected-facts");
+    let root = PathBuf::from(
+        std::env::var_os("COMPAT_CATALOG_ROOT")
+            .expect("COMPAT_CATALOG_ROOT points to the untouched ae56 clone"),
+    );
+    let revision = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read frozen catalog revision");
+    assert!(
+        revision.status.success(),
+        "catalog revision check failed: {}",
+        String::from_utf8_lossy(&revision.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(revision.stdout).unwrap().trim(),
+        FROZEN_REVISION
+    );
+
+    let engine_dir =
+        PathBuf::from(std::env::var_os("ENGINE_A_DIR").expect("ENGINE_A_DIR selects Engine A"));
+    let nav_pack =
+        PathBuf::from(std::env::var_os("NAV_PACK_289").expect("NAV_PACK_289 selects R289"));
+    let nav_flags = std::env::var_os("NAV_FLAGS_289").map(PathBuf::from);
+    let options = host_play::ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        engine_dir: Some(engine_dir.clone()),
+        cache_dir: Some(iso.dir().join("cache")),
+        nav_pack: Some(nav_pack.clone()),
+        nav_flags: nav_flags.clone(),
+        catalog_root: Some(root.clone()),
+        ..Default::default()
+    };
+    let environment = ProfileEnvironment {
+        home: Some(iso.home().to_path_buf()),
+        engine_dir: Some(engine_dir),
+        nav_pack: Some(nav_pack),
+        nav_flags,
+        catalog_root: Some(root.clone()),
+        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+        ..Default::default()
+    };
+    let selected = options
+        .resolve_with_env(None, &environment)
+        .expect("resolve local-289 profile")
+        .bind()
+        .expect("bind local-289 profile");
+    let template =
+        host_play::SharedClientTemplate::load(selected).expect("load Engine A profile template");
+    let mut session = TuiSession::new_bound(template);
+    session.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
+    let profile = session.bound().expect("bound local-289 profile");
+    let data = profile.game_data().expect("selected game data");
+    assert_eq!(data.revision(), 289);
+    let world = profile.world().expect("selected navigation world");
+    if world.named_bank_facts().is_none() {
+        world
+            .bind_named_bank_facts(&data)
+            .expect("bind selected named-bank facts");
+    }
+    let bank = world
+        .named_bank_facts()
+        .expect("selected named-bank facts")
+        .banks()
+        .iter()
+        .find(|bank| bank.name == "Falador East")
+        .expect("selected Falador East");
+    assert_eq!((bank.tile.x, bank.tile.z, bank.tile.level), (3013, 3355, 0));
+
+    let mut app = TuiApp::new("compat catalog selected-facts load");
+    app.names = vec!["compat_catalog_probe".into()];
+    app.focused = Some(0);
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import untouched ae56 catalog through the TUI command");
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(45));
+    for name in ["JiveDragons", "GreenDragon", "MuleCrafter"] {
+        let card = session
+            .scripts
+            .card(CardSource::Catalog, name)
+            .unwrap_or_else(|| panic!("missing frozen catalog card {name}"));
+        assert!(
+            card.is_transpiled(),
+            "{name}: catalog card was not compiled"
+        );
+        let identity_key = card.identity_key();
+        let failure = session.scripts.load_failure(&identity_key);
+        assert!(
+            failure.is_none(),
+            "{name}: selected-facts validation failed: {}",
+            failure
+                .map(|failure| failure.named_line())
+                .unwrap_or_default()
+        );
+    }
 }
 
 #[test]
@@ -2494,9 +2740,11 @@ fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
 }
 
 #[cfg(feature = "js")]
-fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while (session.scripts.catalog_work_pending() || session.scripts.reload_validation_pending())
+        && Instant::now() < deadline
+    {
         session.core.poll();
         session.poll_scripts(app);
         std::thread::sleep(Duration::from_millis(5));
@@ -2506,6 +2754,10 @@ fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
     assert!(
         !session.scripts.catalog_work_pending(),
         "catalog work did not settle"
+    );
+    assert!(
+        !session.scripts.reload_validation_pending(),
+        "catalog validation did not settle"
     );
 }
 
@@ -2612,9 +2864,19 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     );
     settle_starts(&mut session, &mut app);
     assert_eq!(session.core.script_state("bob"), ScriptRunState::Running);
+    // The strip names the count and the card; the failure's diagnostic and
+    // path are in the retained failure (and in the log), not on the strip.
     let output = app.error.as_deref().unwrap();
-    assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
-    assert!(output.contains(&path.display().to_string()));
+    assert!(
+        output.starts_with("1 script failed to load: retry"),
+        "{output}"
+    );
+    assert!(
+        output.chars().count() <= frontend_core::LINE_MAX,
+        "{output}"
+    );
+    assert!(retained.contains("tui-initial-load") && retained.contains("runtime-load"));
+    assert!(retained.contains(&path.display().to_string()));
     session.script_start(&mut app, &sel); // active slot refuses before evaluating
     assert!(app
         .error
@@ -3062,7 +3324,9 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
-    session.core.set_play(Some(fixture.play(origin)));
+    session
+        .core
+        .set_play(Some(map_play_fixture::play(&fixture.template, origin)));
     publish_map_walk_snapshot(&mut session.core, "alice", origin);
     let mut app = TuiApp::new("274bot headless");
     app.map_active = true;
@@ -3086,6 +3350,184 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     assert!(session.core.walk_route_armed("alice"));
 }
 
+/// How the focused map bot of a refusal test stands in the host.
+#[derive(Clone, Copy)]
+enum MapBotSlot {
+    /// No running slot: the host's reason is `Walk/Teleport unavailable: no
+    /// focused running slot`.
+    NoSlot,
+    /// Attached but logged out: the reason is `not logged in`.
+    LoggedOut,
+    /// In the game at tile (0, 0), which is no position: the reason is
+    /// `no position yet`.
+    NoPosition,
+}
+
+/// A focused map bot for the refusal tests.
+fn focused_map_bot(
+    name: &str,
+    slot: MapBotSlot,
+) -> (map_fixture::MapFixture, TuiSession, TuiApp, Tile) {
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    session.core.fleet_mut().add(name);
+    select(&mut session, name);
+    let mut play = map_play_fixture::play(&fixture.template, origin);
+    if !matches!(slot, MapBotSlot::NoSlot) {
+        let in_game = matches!(slot, MapBotSlot::NoPosition);
+        play.attach_arm(name, SlotArm::new(1, false));
+        play.statuses.lock().unwrap().push(host_play::SlotStatus {
+            username: name.into(),
+            connected: in_game,
+            ingame: in_game,
+            tile_x: if in_game { 0 } else { origin.x },
+            tile_z: if in_game { 0 } else { origin.z },
+            tile_level: origin.level,
+            ..Default::default()
+        });
+    }
+    play.focus(name);
+    session.core.set_play(Some(play));
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec![name.into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.world = Some(Arc::clone(&world));
+    session.bind_map_context(&mut app);
+    let destination = Tile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    app.select_requested(destination);
+    (fixture, session, app, destination)
+}
+
+/// The process-log refusal lines of `command` for `name` that end with
+/// `reason`.
+fn refusal_lines(command: &str, name: &str, reason: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+
+    let mut process = LogView::new(LogScope::Process);
+    process.edit_filter(|filter| filter.set_text(format!("command refused: {command}")));
+    global().refresh(&mut process);
+    process
+        .rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        // The fixture's bot has no vault profile, so the line names it by
+        // identity.
+        .filter(|message| {
+            message.contains(&format!(" on {name}:"))
+                && message.ends_with(&format!("NotApplicable: {reason}"))
+        })
+        .collect()
+}
+
+/// Draw the message line that shows `error` at 80x24 and 120x40, print both
+/// frames (`--nocapture`) and check that the whole text is on screen.
+fn capture_notice_line(label: &str, error: &str) {
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some(error.to_owned());
+        let shown = crate::test_support::text(&crate::test_support::draw(&mut app, width, height));
+        println!("CAPTURE {label} {width}x{height}\n{shown}");
+        assert!(
+            shown.contains(&format!("msg: {error}")),
+            "{label} {width}x{height}: {shown}"
+        );
+    }
+}
+
+/// With the focused bot logged out, the map walk says why (`not logged in`),
+/// not `map: WalkTo was not applied`, and the command boundary logs the one
+/// refusal line for it.
+#[test]
+fn a_map_walk_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    frontend_core::log::global();
+    let name = "tui-walk-logged-out";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::LoggedOut);
+    session.arm_walk_on(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("not logged in"),
+        "{:?}",
+        app.error
+    );
+    assert!(!session.core.walk_route_armed(name));
+    let lines = refusal_lines("WalkTo", name, "not logged in");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// A slot that is attached but has no observed tile shows the host's own
+/// reason, `no position yet`, not `not logged in`, and logs the one refusal.
+#[test]
+fn a_map_walk_for_a_bot_with_no_position_shows_no_position_yet() {
+    frontend_core::log::global();
+    let name = "tui-walk-no-position";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::NoPosition);
+    session.arm_walk_on(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("no position yet"),
+        "{:?}",
+        app.error
+    );
+    assert!(!session.core.walk_route_armed(name));
+    let lines = refusal_lines("WalkTo", name, "no position yet");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+/// With the focused bot logged out, Teleport says why (`not logged in`)
+/// and the command boundary logs the one refusal line for it.
+#[test]
+fn a_teleport_for_a_logged_out_focused_bot_shows_its_reason_and_logs_one_refusal() {
+    frontend_core::log::global();
+    let name = "tui-teleport-logged-out";
+    let (_fixture, mut session, mut app, destination) = focused_map_bot(name, MapBotSlot::NoSlot);
+    app.error = Some("an older error".into());
+    session.map_teleport(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("not logged in"),
+        "{:?}",
+        app.error
+    );
+    let lines = refusal_lines("Teleport", name, "not logged in");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    capture_notice_line("teleport-logged-out", "not logged in");
+}
+
+/// A Teleport that is not applied and has no member detail shows the same
+/// generic text as the panel, and never clears the line.
+#[test]
+fn a_teleport_not_applied_with_no_detail_shows_the_generic_text() {
+    frontend_core::log::global();
+    let name = "tui-teleport-no-detail";
+    let (_fixture, mut session, mut app, destination) =
+        focused_map_bot(name, MapBotSlot::NoPosition);
+    // No focused map bot: nothing is staged, so the selected member settles
+    // not applied with no text of its own.
+    app.focused = None;
+    app.error = Some("an older error".into());
+    session.map_teleport(&mut app, destination);
+    assert_eq!(
+        app.error.as_deref(),
+        Some("map: Teleport was not applied"),
+        "{:?}",
+        app.error
+    );
+    capture_notice_line("teleport-not-applied", "map: Teleport was not applied");
+}
+
 #[test]
 fn removing_a_walk_slot_twice_logs_one_cancellation() {
     use frontend_core::log::{global, LogScope, LogView};
@@ -3098,11 +3540,14 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add(slot);
     select(&mut session, slot);
-    let mut play = fixture.play(Tile {
-        x: 0,
-        z: 1,
-        level: 0,
-    });
+    let mut play = map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
     play.attach_arm(slot, SlotArm::new(1, false));
     play.statuses.lock().unwrap().push(SlotStatus {
         username: slot.into(),
@@ -3182,7 +3627,7 @@ fn map_walk_uses_core_slot_position_and_keeps_snapped_destination() {
         z: 1,
         level: 0,
     };
-    let mut play = fixture.play(origin);
+    let mut play = map_play_fixture::play(&fixture.template, origin);
     play.attach_arm(name, SlotArm::new(1, false));
     play.statuses.lock().unwrap().push(host_play::SlotStatus {
         username: name.into(),
@@ -3230,7 +3675,9 @@ fn production_walk_uses_the_live_slot_origin_when_ui_position_is_missing() {
         z: 1,
         level: 0,
     };
-    session.core.set_play(Some(fixture.play(origin)));
+    session
+        .core
+        .set_play(Some(map_play_fixture::play(&fixture.template, origin)));
     publish_map_walk_snapshot(&mut session.core, name, origin);
     let mut app = TuiApp::new("274bot headless");
     app.names = vec![name.into()];
@@ -3290,11 +3737,14 @@ fn refused_no_origin_walk_does_not_arm_destination() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 0,
-        z: 0,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+    )));
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
@@ -3314,10 +3764,7 @@ fn refused_no_origin_walk_does_not_arm_destination() {
         app.walk_dest
     );
     let error = app.error.as_deref().unwrap_or("");
-    assert!(
-        error.contains("no observed player"),
-        "refusal must be visible: {error:?}"
-    );
+    assert_eq!(error, "no position yet", "the reason must be visible");
 }
 
 #[test]
@@ -5745,11 +6192,14 @@ fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         )
     });
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
-    session.core.set_play(Some(fixture.play(Tile {
-        x: 2778,
-        z: 3401,
-        level: 0,
-    })));
+    session.core.set_play(Some(map_play_fixture::play(
+        &fixture.template,
+        Tile {
+            x: 2778,
+            z: 3401,
+            level: 0,
+        },
+    )));
     let start_deadline = Instant::now() + Duration::from_secs(60);
     while !app.quester_paths_controller.is_running() {
         assert!(
@@ -6963,8 +7413,24 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
 #[cfg(feature = "js")]
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-bulk-scripts");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_world(Arc::clone(&world));
     let path = iso.dir().join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
     let card = session.scripts.load_card(&path).unwrap();
@@ -7248,7 +7714,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
         app.error
             .as_deref()
             .unwrap_or("")
-            .contains("tui-first-load"),
+            .contains("1 script failed to load"),
         "{:?}",
         app.error
     );
@@ -7903,7 +8369,7 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
         frontend_core::rs2b0t_import::Stage::Path
     );
 
-    settle_catalog_work(&mut session, &mut app);
+    settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
     assert!(!session.profile_import_preview_pending);
     assert_eq!(
         session.profile_import.stage(),
@@ -10020,90 +10486,154 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
     let _iso = iso;
 }
 
-/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
-/// out and says why, at 120x40 and 80x24. With `TUI_CAPTURE_DIR` set, the
-/// frames are written to `<dir>/idle-park` by the capture harness.
 #[test]
-fn an_idle_park_says_why_the_bot_is_logged_out_at_both_sizes() {
-    tui_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "logged out: disconnected while idle (Log in to connect)",
-        "logged-out-while-idle",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server, as in the panel.
-#[test]
-fn the_tui_calls_only_a_requested_logout_an_idle_logout() {
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "logged out: idle logout by the server (Log in to connect)",
-        "logged-out-idle-logout",
-    );
-    tui_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "logged out by the server (Log in to connect)",
-        "logged-out-by-the-server",
-    );
-}
-
-fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_name: &str) {
-    let iso = IsolatedStores::enter("tui-idle-park");
-    let (mut session, mut app) = tui_with_profiles(&iso, &["bob"]);
-    let dir = std::env::var_os("TUI_CAPTURE_DIR")
-        .map(|dir| std::path::PathBuf::from(dir).join("idle-park"));
-    if let Some(dir) = dir.as_deref() {
-        std::fs::create_dir_all(dir).unwrap();
-    }
+fn map_catalogue_build_failure_is_visible_and_retries_only_after_inputs_change() {
+    let _iso = IsolatedStores::enter("tui-map-catalogue-build-failure");
+    let small_world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let mut session = TuiSession::new_bound(Arc::clone(&profile_fixture.template));
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into()];
     app.focused = Some(0);
-    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
-    app.key_focus = crate::layout::Pane::Detail;
-    let arm = session
-        .core
-        .play_for_test()
-        .and_then(|play| play.arm("bob"))
-        .expect("bob's arm");
-    arm.complete_login_for_test();
-    exit(&arm);
-    publish_status(&session, "bob", |row| {
-        row.connected = false;
-        row.ingame = false;
-        row.login_latched = true;
-        row.login_latch_reason = arm.login_latch_reason();
-        row.startup_phase = host_play::StartupPhase::Queueing;
-        row.startup_phase_started = Instant::now();
-    });
-    session.pump(&mut app);
-    for (cols, rows) in [(120, 40), (80, 24)] {
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
-        terminal.draw(|frame| app.draw(frame)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let text: String = (0..rows)
-            .map(|y| {
-                (0..cols)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        // The narrowest status pane wraps the long line: match its head.
-        let head: String = format!("state: {state}").chars().take(30).collect();
-        assert!(text.contains(&head), "{cols}x{rows}:\n{text}");
-        if let Some(dir) = dir.as_deref() {
-            let proof = serde_json::json!({ "state": state });
-            super::manual_click_live_tests::capture(
-                &mut app,
-                cols,
-                rows,
-                dir,
-                &format!("{cols}x{rows}"),
-                capture_name,
-                &proof,
-            )
-            .unwrap();
-        }
+    app.world = Some(Arc::clone(&world));
+    assert_eq!(
+        app.on_key(crate::test_support::key(crossterm::event::KeyCode::F(4))),
+        AppAction::MapOpen
+    );
+    dispatch(&mut session, &mut app, AppAction::MapOpen);
+    assert!(
+        app.map_catalogue_status != MapCatalogueStatus::Unavailable
+            || !app.map_coverage.contains("reading cache"),
+        "unavailable status must not pair with reading-cache coverage: {}",
+        app.map_coverage
+    );
+
+    reset_map_catalogue_build_count();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(map_catalogue_build_count(), 1);
+    assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Unavailable);
+    assert!(
+        app.map_coverage.contains("catalogue unavailable"),
+        "{}",
+        app.map_coverage
+    );
+    assert!(!app.map_coverage.contains("reading cache"));
+    assert!(app.map_catalogue.is_none());
+    assert!(app.map_search_results.is_empty());
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt on the next frame"
+    );
+
+    for (width, height) in [(120, 40), (80, 24)] {
+        let rows = crate::test_support::draw(&mut app, width, height);
+        let rendered = crate::test_support::text(&rows);
+        assert!(
+            rendered.contains("map catalogue unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("status: Unavailable"),
+            "{width}x{height}:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("status: Unavailable  coverage: reading cache"),
+            "{width}x{height}:\n{rendered}"
+        );
     }
-    let _iso = iso;
+
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "identical failed inputs are not rebuilt"
+    );
+
+    let navpois = profile_fixture
+        .template
+        .profile()
+        .nav_pack()
+        .with_extension("navpois");
+    std::fs::write(&navpois, b"changed navpois input").unwrap();
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        1,
+        "navpois changes wait for the coarse metadata probe"
+    );
+    session.map_catalogue_probe = Some(Instant::now() - Duration::from_secs(2));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        2,
+        "changed navpois metadata permits one retry"
+    );
+
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    app.world = Some(Arc::clone(&changed_world));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        3,
+        "changed pack identity permits one retry"
+    );
+    let mut alternate_grid = nav_planner::grid::StepGrid::fixture_open_3x3();
+    alternate_grid.set_walkable(
+        nav_planner::tile::Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        false,
+    );
+    let alternate_world = nav_planner::world::NavWorld::from_grid(&alternate_grid);
+    let other_profile_fixture = map_fixture::MapFixture::new(&alternate_world, "local-289");
+    let other_ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(other_profile_fixture.template.profile());
+    let other_ready = other_ready_fixture.ready();
+    let original_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &ready,
+    );
+    let changed_ready_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        session.bound().expect("bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_ready_inputs);
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        4,
+        "changed ready catalogue identity permits an immediate retry"
+    );
+
+    let other_session = TuiSession::new_bound(Arc::clone(&other_profile_fixture.template));
+    let changed_profile_inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+        other_session.bound().expect("other bound profile"),
+        &changed_world,
+        &other_ready,
+    );
+    assert_ne!(original_inputs, changed_profile_inputs);
+
+    session
+        .launcher
+        .install_template(frontend_core::launch::ProfileTemplate::from_host(
+            Arc::clone(&other_profile_fixture.template),
+        ));
+    session.bind_ready_catalogue(&mut app, Arc::clone(&other_ready));
+    assert_eq!(
+        map_catalogue_build_count(),
+        5,
+        "changed profile identity permits an immediate retry"
+    );
 }

@@ -532,6 +532,11 @@ impl JsLibrary {
         rows
     }
 
+    /// How many load failures are recorded.
+    pub fn load_failure_count(&self) -> usize {
+        self.failures.len()
+    }
+
     pub fn load_failure(&self, identity_key: &str) -> Option<&LoadFailure> {
         self.failures.get(identity_key)
     }

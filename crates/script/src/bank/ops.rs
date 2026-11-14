@@ -1006,13 +1006,6 @@ pub trait LocRow: OpLabels {
     fn name(&self) -> Option<&str>;
 }
 
-/// An npc row a bank-open decision scans.
-pub trait NpcRow: OpLabels {
-    fn tile(&self) -> WorldTile;
-    fn distance(&self) -> i32;
-    fn name(&self) -> Option<&str>;
-}
-
 impl OpLabels for LocView {
     fn op_len(&self) -> i32 {
         i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
@@ -1048,20 +1041,6 @@ impl OpLabels for NpcView {
 
     fn op_label(&self, one_based: i32) -> Option<&str> {
         self.actions.get(op_index(one_based)?)?.as_deref()
-    }
-}
-
-impl NpcRow for NpcView {
-    fn tile(&self) -> WorldTile {
-        self.tile
-    }
-
-    fn distance(&self) -> i32 {
-        self.distance
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
     }
 }
 
@@ -1193,10 +1172,15 @@ pub fn booth_catalog<'a, R: LocRow>(
         .min_by_key(|row| (chebyshev(row), row.id()))
 }
 
-/// The first npc standing exactly on `tile`, named `name`.
-pub fn npc_at<'a, R: NpcRow>(rows: &'a [R], tile: WorldTile, name: &str) -> Option<&'a R> {
+/// The first native NPC view whose network path head is exactly `tile`,
+/// named `name` without regard to ASCII case.
+pub fn npc_at<'a>(rows: &'a [NpcView], tile: WorldTile, name: &str) -> Option<&'a NpcView> {
     rows.iter().find(|row| {
-        row.tile() == tile && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+        row.network == tile
+            && row
+                .name
+                .as_deref()
+                .is_some_and(|got| got.eq_ignore_ascii_case(name))
     })
 }
 

@@ -548,7 +548,7 @@ impl Reach {
                         0,
                         npc_adjacent(cx, npc),
                     ),
-                    Some((npc, false)) => Choice::Approach(npc.tile),
+                    Some((npc, false)) => Choice::Approach(npc.network),
                     None => Choice::Missing,
                 }
             }
@@ -850,7 +850,7 @@ impl Reach {
                     &avoid,
                 )
                 .any()
-                .map(|npc| npc.tile),
+                .map(|npc| npc.network),
                 ReachKind::Ground { id, .. } => choose_ground(
                     cx,
                     *id,
@@ -1135,12 +1135,19 @@ impl Footprint {
     }
 }
 
-fn npc_footprint(npc: &api::snapshot::NpcView) -> Footprint {
-    Footprint {
-        tile: npc.tile,
+/// Distance between the player's and NPC's server path-head tiles.
+/// An absent player or a different level cannot establish proximity.
+pub(crate) fn npc_distance(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> i32 {
+    cx.snapshot().local_player().map_or(i32::MAX, |player| {
+        chebyshev(player.value.player.network, npc.network)
+    })
+}
+
+fn npc_footprint(npc: &api::snapshot::NpcView) -> route::Footprint {
+    route::Footprint {
+        tile: npc.network,
         width: npc.size.max(1),
         length: npc.size.max(1),
-        distance: npc.distance,
     }
 }
 
@@ -1220,7 +1227,15 @@ pub fn choose_npc_matching<'a>(
         npcs.value
             .iter()
             .filter(|npc| matches(npc) && !avoid.contains(AvoidKey::Npc(npc.index))),
-        npc_footprint,
+        |npc| {
+            let footprint = npc_footprint(npc);
+            Footprint {
+                tile: footprint.tile,
+                width: footprint.width,
+                length: footprint.length,
+                distance: npc_distance(cx, npc),
+            }
+        },
     )
 }
 
@@ -1468,10 +1483,10 @@ pub fn choose_loc<'a>(
 
 /// Route steps from the player to a loc's best footprint stand, when known.
 pub fn loc_route_steps(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> Option<u32> {
-    footprint_route_steps(cx, loc_footprint(loc))
+    footprint_route_steps(cx, loc_footprint(loc).shape())
 }
 
-/// Route steps from the player to an NPC's best footprint stand, when known.
+/// Route steps from the player's network origin to the NPC's network footprint.
 pub fn npc_route_steps(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> Option<u32> {
     footprint_route_steps(cx, npc_footprint(npc))
 }
@@ -1488,7 +1503,7 @@ pub fn reach_known(cx: &ActionContext<'_>) -> bool {
     .is_some()
 }
 
-fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
+fn footprint_route_steps(cx: &ActionContext<'_>, fp: route::Footprint) -> Option<u32> {
     let snapshot = cx.snapshot();
     let view = route::live(
         snapshot.reach().map(|reach| reach.value),
@@ -1496,22 +1511,27 @@ fn footprint_route_steps(cx: &ActionContext<'_>, fp: Footprint) -> Option<u32> {
             .local_player()
             .map(|player| player.value.player.network),
     )?;
-    route::route_steps(view, fp.shape()).map(|(steps, _)| steps)
+    route::route_steps(view, fp).map(|(steps, _)| steps)
 }
 
-/// Whether the player can operate on an NPC now: orthogonally beside its
-/// whole footprint across a wall-valid edge, not inside it. Without a live
-/// reach view this keeps the straight-line one-tile check.
+/// Whether the player can operate on the NPC's network footprint now:
+/// orthogonally beside it across a wall-valid edge, not inside it. Without a
+/// posted reach view, use network distance; a stale-origin view proves nothing.
 pub fn npc_adjacent(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> bool {
     let snapshot = cx.snapshot();
-    let here = snapshot
+    let Some(here) = snapshot
         .local_player()
-        .map(|player| player.value.player.network);
-    let (Some(here), Some(view)) = (here, route::live(snapshot.reach().map(|r| r.value), here))
+        .map(|player| player.value.player.network)
     else {
-        return npc.distance <= 1;
+        return false;
     };
-    let fp = npc_footprint(npc).shape();
+    let Some(reach) = snapshot.reach() else {
+        return chebyshev(here, npc.network) <= 1;
+    };
+    let Some(view) = route::live(Some(reach.value), Some(here)) else {
+        return false;
+    };
+    let fp = npc_footprint(npc);
     if fp.tiles().any(|tile| tile == here) {
         return false;
     }

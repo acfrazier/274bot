@@ -979,4 +979,85 @@ mod tests {
         );
         crate::compat::hunt_key::on_reset();
     }
+
+    #[derive(Default)]
+    struct PredicateHost {
+        points: Vec<Value>,
+    }
+
+    impl Host for PredicateHost {
+        fn has(&mut self, requested: usize) -> bool {
+            requested == hook::IN_AREA
+        }
+
+        fn ask(&mut self, requested: usize, args: &[Value]) -> Result<Value, Ended> {
+            assert_eq!(requested, hook::IN_AREA);
+            self.points.push(args[0].clone());
+            Ok(json!(false))
+        }
+    }
+
+    #[test]
+    fn hunt_area_network_coords_preserves_render_and_path_head_predicates() {
+        let here = observed::Tile {
+            x: 3000,
+            z: 3000,
+            level: 0,
+        };
+        observed::replace(1, true, |post| {
+            post.session(true)
+                .here(here)
+                .npcs(vec![observed::EntityRow {
+                    index: 7,
+                    x: 3001,
+                    z: 3002,
+                    nx: 3010,
+                    nz: 3011,
+                    size: 2,
+                    level: 0,
+                    ..observed::EntityRow::default()
+                }]);
+        });
+        let mut host = PredicateHost::default();
+        fill_area(&mut Area::default(), &mut host, true).unwrap();
+        assert!(host
+            .points
+            .contains(&json!({ "x": 3000, "z": 3000, "level": 0 })));
+        assert!(host
+            .points
+            .contains(&json!({ "x": 3001, "z": 3002, "level": 0 })));
+        assert!(host
+            .points
+            .contains(&json!({ "x": 3010, "z": 3011, "level": 0 })));
+        observed::on_reset();
+    }
+
+    #[test]
+    fn network_coords_native_row_layout_has_headroom() {
+        for (name, size, baseline) in [
+            (
+                "EnterNpc",
+                std::mem::size_of::<crate::compat::hunt_lair::EnterNpc>(),
+                72,
+            ),
+            (
+                "CellNpc",
+                std::mem::size_of::<crate::compat::hunt_cell::CellNpc>(),
+                80,
+            ),
+            (
+                "KeyNpc",
+                std::mem::size_of::<crate::compat::hunt_key::KeyNpc>(),
+                80,
+            ),
+            (
+                "FightNpc",
+                std::mem::size_of::<crate::compat::hunt_fight::FightNpc>(),
+                104,
+            ),
+        ] {
+            println!("Native hunt layout {name}={size} limit={}", baseline + 64);
+            assert!(size <= baseline + 64, "{name}={size}");
+        }
+    }
 }

@@ -68,6 +68,26 @@ use crate::script_shape::{categories_present, resolve_category_order, BrowseCard
 #[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
+/// TUI retry cadence after a failed map-catalogue bind.
+const MAP_CATALOGUE_RETRY: Duration = Duration::from_secs(1);
+
+#[cfg(test)]
+thread_local! {
+    static MAP_CATALOGUE_BUILD_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_map_catalogue_build_count() {
+    MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn map_catalogue_build_count() -> usize {
+    MAP_CATALOGUE_BUILD_COUNT.with(std::cell::Cell::get)
+}
+
 /// What `tui-play` should do this run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunMode {
@@ -433,6 +453,10 @@ pub struct TuiSession {
     /// Core-owned map demand, bake consent and accepted walk destination.
     map_desk: MapDesk,
     map_catalogue_named: bool,
+    map_catalogue_unavailable: bool,
+    map_catalogue_failed_inputs: Option<frontend_core::walk_map::WalkCatalogueBuildInputs>,
+    /// Retry a failed catalogue bind at a coarse cadence, not every frame.
+    map_catalogue_probe: Option<Instant>,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
@@ -791,6 +815,9 @@ impl TuiSession {
             launcher,
             map_desk: MapDesk::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
+            map_catalogue_unavailable: false,
+            map_catalogue_failed_inputs: None,
+            map_catalogue_probe: None,
             last_focused: None,
             walk_reset: false,
             live_name: None,
@@ -1671,8 +1698,9 @@ impl TuiSession {
                 return;
             }
         }
-        if app.map_catalogue_status == MapCatalogueStatus::Unavailable
-            || app.map_catalogue_status == MapCatalogueStatus::Inactive
+        if !self.map_catalogue_unavailable
+            && (app.map_catalogue_status == MapCatalogueStatus::Unavailable
+                || app.map_catalogue_status == MapCatalogueStatus::Inactive)
         {
             app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
             app.map_coverage = "coverage: reading cache".into();
@@ -1685,6 +1713,30 @@ impl TuiSession {
             return;
         }
         self.core.poll_map_demand(&mut self.map_desk);
+
+        // Keep a bind failure visible while we wait before trying the ready
+        // catalogue again. Progress updates must not hide the map error.
+        if self.map_catalogue_unavailable {
+            let now = Instant::now();
+            if self
+                .map_catalogue_probe
+                .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_RETRY)
+            {
+                if let Some(profile) = self.bound().map(|profile| profile.share()) {
+                    let ready = self
+                        .map_desk
+                        .map_demand()
+                        .and_then(|handle| handle.ready_catalogue().ok())
+                        .or_else(|| peek_walk_catalogue(&profile));
+                    if let Some(ready) = ready {
+                        self.bind_ready_catalogue(app, ready);
+                    } else {
+                        self.map_catalogue_probe = Some(now);
+                    }
+                }
+            }
+            return;
+        }
         let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
@@ -1751,24 +1803,63 @@ impl TuiSession {
         let Some(world) = app.world.clone().or_else(|| self.core.nav_world()) else {
             return;
         };
-        let Some(profile) = self.bound().map(|profile| profile.share()) else {
+        let Some(bound) = self.bound().map(|bound| bound.share()) else {
             return;
         };
+        let Some(nav) = bound.nav_pack_id() else {
+            return;
+        };
+        let data = bound.game_data().or_else(|| self.core.game_data());
         let identity = ready.identity();
-        let Some(nav) = profile.nav_pack_id() else {
-            return;
-        };
-        let data = profile.game_data().or_else(|| self.core.game_data());
         let same = app.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity && catalogue.nav_pack_id() == nav
         });
-        if same && (self.map_catalogue_named || data.is_none()) {
+        if !self.map_catalogue_unavailable && same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let Ok((mut catalogue, named)) =
-            self.core.walk_catalogue_from_ready(&profile, world, ready)
-        else {
-            return;
+        let failed_inputs = if self.map_catalogue_unavailable {
+            let world_nav = nav_planner::producer::identity(&world)
+                .ok()
+                .map(|identity| identity.pack());
+            if self
+                .map_catalogue_failed_inputs
+                .as_ref()
+                .is_some_and(|failed| failed.matches_binding(&bound, world_nav, &ready))
+            {
+                let now = Instant::now();
+                if self
+                    .map_catalogue_probe
+                    .is_some_and(|at| now.duration_since(at) < MAP_CATALOGUE_RETRY)
+                {
+                    return;
+                }
+                self.map_catalogue_probe = Some(now);
+                let inputs =
+                    frontend_core::walk_map::WalkCatalogueBuildInputs::new(&bound, &world, &ready);
+                if self.map_catalogue_failed_inputs.as_ref() == Some(&inputs) {
+                    return;
+                }
+                inputs
+            } else {
+                self.map_catalogue_probe = Some(Instant::now());
+                frontend_core::walk_map::WalkCatalogueBuildInputs::new(&bound, &world, &ready)
+            }
+        } else {
+            frontend_core::walk_map::WalkCatalogueBuildInputs::new(&bound, &world, &ready)
+        };
+        if self.map_catalogue_unavailable {
+            self.map_catalogue_unavailable = false;
+            self.map_catalogue_failed_inputs = None;
+        }
+        #[cfg(test)]
+        MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        let (mut catalogue, named) = match self.core.walk_catalogue_from_ready(&bound, world, ready)
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.mark_map_catalogue_unavailable(app, error, failed_inputs);
+                return;
+            }
         };
         self.map_catalogue_named = named;
         if !named {
@@ -1778,11 +1869,41 @@ impl TuiSession {
                         self.map_catalogue_named = true;
                         catalogue = named_catalogue;
                     }
-                    Err(_) => return,
+                    Err(error) => {
+                        self.mark_map_catalogue_unavailable(app, error, failed_inputs);
+                        return;
+                    }
                 }
             }
         }
+        self.map_catalogue_probe = None;
+        self.map_catalogue_failed_inputs = None;
+        self.map_catalogue_unavailable = false;
         app.bind_walk_catalogue(Arc::new(catalogue));
+    }
+
+    fn mark_map_catalogue_unavailable(
+        &mut self,
+        app: &mut TuiApp,
+        error: impl std::fmt::Display,
+        failed_inputs: frontend_core::walk_map::WalkCatalogueBuildInputs,
+    ) {
+        self.map_catalogue_probe = Some(Instant::now());
+        if self.map_catalogue_unavailable
+            && self.map_catalogue_failed_inputs.as_ref() == Some(&failed_inputs)
+        {
+            return;
+        }
+        api::host_log!(
+            stderr;
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "WalkTo map catalogue: {error}"
+        );
+        self.map_catalogue_unavailable = true;
+        self.map_catalogue_failed_inputs = Some(failed_inputs);
+        self.map_catalogue_named = false;
+        app.set_map_unavailable("coverage: map catalogue unavailable; terrain imagery unavailable");
     }
 
     fn release_map_catalogue(&mut self) {
@@ -1793,6 +1914,9 @@ impl TuiSession {
             }
         }
         self.map_catalogue_named = false;
+        self.map_catalogue_unavailable = false;
+        self.map_catalogue_failed_inputs = None;
+        self.map_catalogue_probe = None;
     }
 
     /// Confirm the pending map Walk through the shared operator session.
@@ -1810,39 +1934,21 @@ impl TuiSession {
         match result {
             Ok(submitted) => {
                 let failure = self.core.command_failure(submitted.request());
-                let report = self.core.commands().report(submitted.request());
-                let applied = report.is_some_and(|report| {
-                    report.members().iter().any(|member| {
-                        matches!(
-                            member.terminal(),
-                            Some(api::identity::Settlement::Completed(
-                                frontend_core::command::Completion::Done
-                            ))
-                        )
-                    })
-                });
-                let not_logged_in = report.is_some_and(|report| {
-                    report.members().iter().any(|member| {
-                        matches!(
-                            member.terminal(),
-                            Some(api::identity::Settlement::Completed(
-                                frontend_core::command::Completion::Skipped(
-                                    frontend_core::command::SkipReason::NotLoggedIn
-                                )
-                            ))
-                        )
-                    })
-                });
+                let applied = self.request_applied(submitted.request());
 
                 if let Some(error) = failure {
                     app.error = Some(error.to_string());
                 } else if applied {
                     app.walk_dest = self.map_desk.walk_dest();
                     app.error = None;
-                } else if not_logged_in {
-                    app.error = Some("map: no observed player".into());
                 } else {
-                    app.error = Some("map: WalkTo was not applied".into());
+                    // The member's own reason (`not logged in`), else the
+                    // generic text.
+                    app.error = Some(
+                        self.core
+                            .not_applied_reason(submitted.request(), "WalkTo")
+                            .unwrap_or_else(|| "map: WalkTo was not applied".into()),
+                    );
                 }
             }
             Err(error) => app.error = Some(error),
@@ -1860,13 +1966,38 @@ impl TuiSession {
         let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
         let result = self.submit(OperatorCommand::Teleport, targets);
         app.clear_consumed_map_selection();
-        app.error = match result {
-            Err(error) => Some(error),
-            Ok(submitted) => self
-                .core
-                .command_failure(submitted.request())
-                .map(|error| error.to_string()),
-        };
+        match result {
+            Err(error) => app.error = Some(error),
+            Ok(submitted) => {
+                if let Some(error) = self.core.command_failure(submitted.request()) {
+                    app.error = Some(error.to_string());
+                } else if self.request_applied(submitted.request()) {
+                    app.error = None;
+                } else {
+                    // The member's own reason, else the generic text; the
+                    // line is never cleared on a Teleport that did not apply.
+                    app.error = Some(
+                        self.core
+                            .not_applied_reason(submitted.request(), "Teleport")
+                            .unwrap_or_else(|| "map: Teleport was not applied".into()),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether any member of `request` completed it.
+    fn request_applied(&self, request: api::identity::RequestId) -> bool {
+        self.core.commands().report(request).is_some_and(|report| {
+            report.members().iter().any(|member| {
+                matches!(
+                    member.terminal(),
+                    Some(api::identity::Settlement::Completed(
+                        frontend_core::command::Completion::Done
+                    ))
+                )
+            })
+        })
     }
 
     /// Walk every marked bot through the shared operator-session operation.
@@ -1885,7 +2016,11 @@ impl TuiSession {
                     if report.done_count() > 0 {
                         app.walk_dest = self.map_desk.walk_dest();
                     }
-                    app.error = Some(report.summary());
+                    app.error = Some(
+                        report
+                            .brief()
+                            .publish(&frontend_core::LogTarget::walk(None)),
+                    );
                 }
                 None => app.error = Some("map: GroupWalk produced no result".into()),
             },
@@ -2584,25 +2719,23 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    /// Fold settled script work (reload validation, Start setup, parameter
-    /// writes) after the core poll and show its notice. Called once per
-    /// pump.
+    /// Fold settled catalog/reload validation, Start setup and parameter
+    /// writes after the core poll. Called once per pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
-        self.scripts.poll(&mut self.core);
+        let profile = self.bound().map(frontend_core::launch::BoundProfile::share);
+        self.scripts
+            .poll_with_profile(&mut self.core, profile.as_ref());
         #[cfg(feature = "js")]
         if let Some((root, result)) = self.scripts.take_catalog_import_update() {
-            match result {
-                Ok(_) => {
-                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                        &frontend_core::scripts::paths::rs2b0t_import_file(),
-                    );
-                    self.rs2b0t_catalog_dir = root.clone();
-                    app.rs2b0t_catalog_dir = root;
-                    self.rs2b0t_catalog_open = false;
-                    app.rs2b0t_catalog_open = false;
-                    app.error = None;
-                }
-                Err(error) => app.error = Some(error),
+            if result.is_ok() {
+                let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                    &frontend_core::scripts::paths::rs2b0t_import_file(),
+                );
+                self.rs2b0t_catalog_dir = root.clone();
+                app.rs2b0t_catalog_dir = root;
+                self.rs2b0t_catalog_open = false;
+                app.rs2b0t_catalog_open = false;
+                app.error = None;
             }
         }
         #[cfg(feature = "js")]
@@ -3173,11 +3306,9 @@ impl TuiSession {
             Ok(_) => {
                 app.script_sel = self.scripts.browse_selection().map(ScriptChoice::duplicate);
                 app.browse_changed = true;
-                app.error = if self.scripts.load_failure_count() == 0 {
-                    None
-                } else {
-                    Some(self.scripts.named_failure_output())
-                };
+                // The banner gets the count and two names; every failure is
+                // in the log and in the Script tab's load-failure list.
+                app.error = self.scripts.publish_load_failures();
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
                     app.script_load_last_dir = self.script_load_last_dir.clone();
@@ -3185,7 +3316,7 @@ impl TuiSession {
             }
             Err(error) => {
                 app.error = if self.scripts.load_failure_count() > 1 {
-                    Some(self.scripts.named_failure_output())
+                    self.scripts.publish_load_failures()
                 } else {
                     Some(format!("script: {error}"))
                 };
@@ -3800,6 +3931,13 @@ impl TuiSession {
         let focused = app.focused_name();
         if self.last_focused.as_deref() != focused.as_deref() {
             self.last_focused = focused.clone();
+            if self.map_catalogue_unavailable {
+                self.release_map_catalogue();
+                if app.map_active {
+                    app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
+                    app.map_coverage = "coverage: reading cache".into();
+                }
+            }
             let heading = focused
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));
@@ -3860,6 +3998,21 @@ impl TuiSession {
         self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
         app.script_cards = self.scripts.browse_cards().map(BrowseCard::from).collect();
+        #[cfg(feature = "js")]
+        if self.scripts.load_failure_count() > 0 || !app.script_failures.is_empty() {
+            app.script_failures = self
+                .scripts
+                .load_failures()
+                .map(crate::script_failures::LoadFailureRow::from_view)
+                .collect();
+            match app.script_failures.len().checked_sub(1) {
+                Some(last) => app.failure_sel = app.failure_sel.min(last),
+                None => {
+                    app.script_failures_open = false;
+                    app.failure_sel = 0;
+                }
+            }
+        }
         app.script_card_choices = self
             .scripts
             .browse_cards()
@@ -5427,13 +5580,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
             app.error = match session.import_rs2b0t_catalog(app, &root) {
-                Ok(_) => {
-                    if session.scripts.load_failure_count() == 0 {
-                        None
-                    } else {
-                        Some(session.scripts.named_failure_output())
-                    }
-                }
+                Ok(_) => session.scripts.publish_load_failures(),
                 Err(error) => Some(error),
             };
         }

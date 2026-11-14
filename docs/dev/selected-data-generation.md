@@ -36,6 +36,13 @@ converts them to static Rust tables in Cargo's `OUT_DIR`. No Rust source is
 generated beneath the ignored data directory. The application retains borrowed
 static tables, not another JSON copy or a runtime catalog parser.
 
+The generator also writes `<revision>/bank_npcs.json` for navigation baking.
+NPC bank access follows the resolved operation handler through content labels
+and procedures to the bank-inventory interface opener. An option named Bank
+does not prove access. A category selects a handler but does not prove access.
+The packed bank table and named-bank placements consume the same derived NPC
+identities. Existing booth discovery stays unchanged.
+
 ## The rs2b0t gather catalogs
 
 The curated camp tables (woodcutting, mining and fishing camps), the fishing methods and gear vendors, the fish-camp

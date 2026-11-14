@@ -354,9 +354,6 @@ impl<Io> OperatorSession<Io> {
                 LoginLatchReason::OperatorLogout => ParkReason::OperatorLogout,
                 LoginLatchReason::PersistedLogout => ParkReason::PersistedLogout,
                 LoginLatchReason::RepeatedUnexpectedLogouts { .. } => ParkReason::RepeatGuard,
-                LoginLatchReason::IdleLogout => ParkReason::IdleLogout,
-                LoginLatchReason::ServerLogout => ParkReason::ServerLogout,
-                LoginLatchReason::IdleDisconnect => ParkReason::IdleDisconnect,
             });
             (
                 Settlement::Cancelled(Cancellation::Superseded),
@@ -375,10 +372,7 @@ impl<Io> OperatorSession<Io> {
         terminal: Settlement<Completion, CommandFailure>,
         detail: Option<&str>,
     ) {
-        let _ = self
-            .commands
-            .book
-            .settle(switch.request, switch.subject, terminal, detail);
+        self.settle_brief(switch.request, switch.subject, terminal, detail);
     }
 }
 

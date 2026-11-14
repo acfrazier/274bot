@@ -36,9 +36,9 @@ fn npc<'a>(name: &'a str, actions: &'a [String], index: i32) -> SceneEntityInput
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 2532,
+        nz: 4712,
         shape: 0,
         angle: 0,
     }
@@ -1153,6 +1153,8 @@ fn open_dialogue_uses_door_aware_npc_reach() {
     let mut target = npc("Gundai", &talk, 4);
     target.x = 8;
     target.z = 5;
+    target.nx = 8;
+    target.nz = 5;
     target.distance = 3;
     target.reachable = false;
     target.reachable_adj = false;

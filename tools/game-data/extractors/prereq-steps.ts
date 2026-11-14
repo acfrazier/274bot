@@ -64,8 +64,12 @@ export type CrossingTemplate = {
     pass: { message: string; proves: RangeWire };
     delay: { ticks: number };
 };
-export type AuthoredPrereqRow = Omit<PrereqRowWire, 'crossings'> & { crossings: CrossingTemplate[] };
-export type AuthoredPrereqTemplates = { rows: AuthoredPrereqRow[]; journals: PrereqJournalWire[] };
+export type AuthoredPrereqRow = Omit<PrereqRowWire, 'crossings'> & {
+    crossings: CrossingTemplate[];
+    reviewed_writes?: unknown;
+};
+type AuthoredPrereqJournal = PrereqJournalWire & { reviewed_writes?: unknown };
+export type AuthoredPrereqTemplates = { rows: AuthoredPrereqRow[]; journals: AuthoredPrereqJournal[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -123,7 +127,10 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
         }
     }
     for (const value of parsed.journals) {
-        if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'after,establishes,id,quest,rules'
+        if (!isRecord(value)) throw new Error('prereq_steps: authored journal is malformed');
+        const journalKeys = Object.keys(value).sort().join(',');
+        if ((journalKeys !== 'after,establishes,id,quest,rules'
+            && journalKeys !== 'after,establishes,id,quest,reviewed_writes,rules')
             || typeof value.id !== 'string' || value.id.length === 0
             || typeof value.quest !== 'string' || value.quest.length === 0
             || !isRecord(value.establishes) || Object.keys(value.establishes).sort().join(',') !== 'quest,signal,values'
@@ -413,8 +420,9 @@ function buildPrereqFacts(templates: AuthoredPrereqTemplates, projection: Valida
                 consumed.add(projectionIdentityKey(matches[0].crossing));
             }
         }
-        const { crossings: _templateCrossings, ...rest } = row;
+        const { crossings: _templateCrossings, reviewed_writes: _reviewedWrites, ...rest } = row;
         void _templateCrossings;
+        void _reviewedWrites;
         return { ...rest, crossings } as PrereqRowWire;
     });
     for (const entry of legal) {
@@ -437,7 +445,12 @@ function buildPrereqFacts(templates: AuthoredPrereqTemplates, projection: Valida
             }
         }
     }
-    return { rows, journals: templates.journals };
+    const journals: PrereqJournalWire[] = templates.journals.map((journal) => {
+        const { reviewed_writes: _reviewedWrites, ...runtimeJournal } = journal;
+        void _reviewedWrites;
+        return runtimeJournal;
+    });
+    return { rows, journals };
 }
 
 export function extractPrereqStepsFacts(

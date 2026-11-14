@@ -399,6 +399,111 @@ fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
         "the endpoint crossing is retained"
     );
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let combat = selected_combat();
+    let mut graph = TransportGraph {
+        wilderness: WildernessRules {
+            zones: vec![WildernessZone {
+                x1: 6,
+                z1: 0,
+                x2: 8,
+                z2: 0,
+                level1: 0,
+                level2: 0,
+                origin_z: 0,
+            }],
+            divisor: 1,
+            offset: 1,
+        },
+        ..Default::default()
+    };
+    let from = tile(0, 1);
+    let to = tile(12, 1);
+    let mut quest_edge = transport_edge(TransportKind::Ladder, from, to);
+    quest_edge.quest_req.push("unproven quest".to_owned());
+    graph.edges.push(quest_edge);
+    graph.at.insert(from, vec![0]);
+    graph
+        .teleports
+        .push(transport_edge(TransportKind::Teleport, from, to));
+    let world = fixture_world(
+        combat.clone(),
+        open_corridor(16, 3, 1),
+        vec![zone(5, 0, None)],
+        vec![ice_kind(&combat)],
+        Vec::new(),
+        graph,
+    );
+    let state = WorldState::default();
+    let original_state = state.clone();
+    let avoid = [AvoidRect {
+        min_x: 2,
+        max_x: 2,
+        min_z: 0,
+        max_z: 0,
+        level: Some(0),
+    }];
+    let original_avoid = avoid;
+    let options = FindOptions {
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        bank_preferences: Default::default(),
+        prefer_target_order: false,
+        essence: None,
+        zones: ZoneExempt::NONE,
+    };
+    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let ((result, searches), kernels) = count_kernels(|| {
+        let mut seen = Vec::new();
+        let result = route(
+            &world,
+            &admission,
+            options,
+            |opts| {
+                assert_eq!(
+                    state, original_state,
+                    "quest/readiness evidence is request-frozen"
+                );
+                assert_eq!(avoid, original_avoid, "caller avoids are request-frozen");
+                assert_eq!(opts.allow_teleports, options.allow_teleports);
+                assert_eq!(opts.allow_wilderness, options.allow_wilderness);
+                assert_eq!(opts.allow_bank_fetch, options.allow_bank_fetch);
+                assert_eq!(opts.essence, options.essence);
+                seen.push(opts);
+                real_search(&world, from, to, opts, &state, &avoid)
+            },
+            || real_witness(&world, from, to, options, &state, &avoid),
+        );
+        (result, seen)
+    });
+
+    assert_eq!(searches.len(), 2);
+    assert_eq!(kernels, 5);
+    assert_eq!(searches[0].zones, ZoneExempt::NONE);
+    assert_eq!(
+        searches[1].zones,
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap()
+    );
+    let route = routed(&result);
+    assert!(route.legs.iter().all(|leg| matches!(leg, Leg::Walk { .. })));
+    for leg in &route.legs {
+        if let Leg::Walk { tiles } = leg {
+            assert!(tiles.iter().all(|&tile| !avoid[0].contains(tile)));
+            assert!(tiles
+                .iter()
+                .all(|&tile| !world.graph.wilderness.contains(tile)));
+        }
+    }
+    assert_eq!(state, original_state);
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear() {
@@ -1204,6 +1309,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        bank_preferences: Default::default(),
         prefer_target_order: false,
         essence: None,
         zones: ZoneExempt::NONE,

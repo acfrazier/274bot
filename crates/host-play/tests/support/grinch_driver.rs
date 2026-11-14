@@ -2580,8 +2580,7 @@ fn capture_raw_frame(
     }
     let position = snapshot
         .local_player()
-        .map(|player| tile_from_world(player.player.actor.tile))
-        .or_else(|| snapshot.tile().map(|(x, z, plane)| Tile { x, z, plane }))
+        .map(|player| tile_from_world(player.player.network))
         .ok_or_else(|| {
             format!(
                 "{} PLAYER_INFO frame lacks an observed local tile",
@@ -2630,7 +2629,7 @@ fn capture_raw_frame(
     let visible_players = snapshot.players().iter().filter_map(|player| {
         let name = player.actor.name.as_deref()?;
         if actor_ref.player_name.eq_ignore_ascii_case(name) { return None; }
-        Some(json!({"account_id": Value::Null, "player_name": name, "position": tile_to_json(tile_from_world(player.actor.tile))}))
+        Some(json!({"account_id": Value::Null, "player_name": name, "position": tile_to_json(tile_from_world(player.network))}))
     }).collect();
     Ok(RawFrame {
         role: actor.role,
