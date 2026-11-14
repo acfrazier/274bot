@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractQuestIdentityFacts } from './quests.ts';
+import { captureProgressWriterDomains, extractQuestIdentityFacts } from './quests.ts';
 import { assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
 import { revisions } from '../generate.ts';
 import { postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
@@ -451,3 +451,39 @@ switch_component(last_com) {
     );
     assert.deepEqual(possible.map(({ right }) => right), ['1', '0']);
 }
+withContent({
+    'scripts/progress.varp': '[progress]\nscope=perm\n',
+    'scripts/writer.rs2': '[proc,writer]()()\n%progress = 61;\n',
+}, (root) => {
+    const domain = captureProgressWriterDomains(root)('progress');
+    assert.deepEqual(domain, { min: 0, max: 61 });
+    const unboundedFile = path.join(root, 'scripts/unbounded.rs2');
+    fs.writeFileSync(unboundedFile, '[proc,unbounded](int $value)()\n%progress = $value;\n');
+    assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an unbounded writer removes the domain authority');
+
+    fs.writeFileSync(unboundedFile, [
+        '[proc,unbounded](int $left)()',
+        'if (%progress >= 61) { return; }',
+        'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
+    ].join('\n'));
+    assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an entry guard does not bound an arbitrary increment loop');
+
+    const counted = [
+        '[proc,counted]()()',
+        'def_int $needed = calc(60 - %progress);',
+        'def_int $held = inv_total(inv, essence);',
+        'def_int $left = min($needed, $held);',
+        'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
+    ].join('\n');
+    fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 0;\n');
+    fs.writeFileSync(unboundedFile, counted);
+    assert.deepEqual(captureProgressWriterDomains(root)('progress'), { min: 0, max: 60 }, 'the remaining-needed counter bounds every iteration');
+    fs.writeFileSync(unboundedFile, `${counted} %progress = add(%progress, 1);\n`);
+    assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an extra same-line increment cannot hide behind the counted loop');
+
+    fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 61;\n');
+    fs.rmSync(unboundedFile);
+    fs.mkdirSync(path.join(root, 'scripts/_test'));
+    fs.writeFileSync(path.join(root, 'scripts/_test/debug.rs2'), '[proc,debug](int $value)()\n%progress = $value;\n');
+    assert.deepEqual(captureProgressWriterDomains(root)('progress'), domain, 'debug writers are excluded by the production census');
+});
