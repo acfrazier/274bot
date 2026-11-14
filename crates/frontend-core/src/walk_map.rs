@@ -6,7 +6,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -865,25 +865,15 @@ pub struct WalkCatalogueBuildInputs {
     navpois: NavPoisInputStamp,
 }
 
-/// A revision/policy identity does not identify one ready publication. Keeping
-/// its weak allocation identity distinguishes replacements without retaining
-/// their POI data, and prevents an old address from being reused for a new key.
-#[derive(Debug)]
-struct CataloguePublication(Weak<host_play::map_cache::ReadyCatalogue>);
+/// A serial distinguishes replaced publications without retaining them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CataloguePublication(u64);
 
 impl CataloguePublication {
     fn matches(&self, ready: &WalkReadyCatalogue) -> bool {
-        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&ready.0))
+        self.0 == ready.0.publication()
     }
 }
-
-impl PartialEq for CataloguePublication {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.ptr_eq(&other.0)
-    }
-}
-
-impl Eq for CataloguePublication {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NavPoisInputStamp {
@@ -908,7 +898,7 @@ impl WalkCatalogueBuildInputs {
                 .ok()
                 .map(|identity| identity.pack()),
             catalogue: ready.identity(),
-            catalogue_publication: CataloguePublication(Arc::downgrade(&ready.0)),
+            catalogue_publication: CataloguePublication(ready.0.publication()),
             navpois: NavPoisInputStamp {
                 beside_pack: file_input_stamp(&nav_pack.with_extension("navpois")),
                 shared: file_input_stamp(&nav_pack.with_file_name("274bot.navpois")),

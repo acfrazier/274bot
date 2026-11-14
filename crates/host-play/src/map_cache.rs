@@ -1527,20 +1527,29 @@ impl PruneCursor {
     }
 }
 
+static NEXT_READY_CATALOGUE_PUBLICATION: AtomicU64 = AtomicU64::new(1);
+
 /// Ready catalogue data plus the shared lock that protects its directory from
 /// cross-process pruning while any consumer retains the Arc.
 #[derive(Debug)]
 pub struct ReadyCatalogue {
     inner: NavReadyCatalogue,
     _lock: PublishLock,
+    serial: u64,
 }
 
 impl ReadyCatalogue {
     fn open(directory: &Path, lock: PublishLock) -> Result<Self, MapCacheError> {
+        let inner = NavReadyCatalogue::open(directory)?;
         Ok(Self {
-            inner: NavReadyCatalogue::open(directory)?,
+            inner,
             _lock: lock,
+            serial: NEXT_READY_CATALOGUE_PUBLICATION.fetch_add(1, AtomicOrdering::Relaxed),
         })
+    }
+    /// Unique per opened publication in this process, never reused.
+    pub fn publication(&self) -> u64 {
+        self.serial
     }
 
     pub fn manifest(&self) -> &CatalogueManifest {
@@ -7339,6 +7348,28 @@ mod tests {
         drop(catalogue_ready);
         drop(images);
         drop(catalogue);
+    }
+
+    #[test]
+    fn ready_catalogue_publication_serial_tracks_openings_and_arc_reuse() {
+        let root = temp_root("catalogue-publication-serial");
+        let manager = MapDemandManager::new(root.clone(), FixtureProducer::new(false));
+        let handle = manager
+            .request(descriptor(&root), MapDemand::CatalogueOnly)
+            .unwrap();
+        wait_ready(&handle);
+        let ready = handle.ready().unwrap();
+        let catalogue = Arc::clone(&ready.catalogue);
+        let clone = Arc::clone(&catalogue);
+        assert_eq!(catalogue.publication(), clone.publication());
+
+        let kind = ArtifactKind::Catalogue;
+        let key = cache_root_key(274, kind);
+        let lock = PublishLock::try_acquire_shared(&root.lock_path(274, kind, key))
+            .unwrap()
+            .expect("the ready catalogue remains available");
+        let reopened = ReadyCatalogue::open(&root.catalogue_dir(274), lock).unwrap();
+        assert_ne!(catalogue.publication(), reopened.publication());
     }
 
     #[test]
