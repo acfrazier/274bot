@@ -78,11 +78,9 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
 
 #[test]
 fn scenario_runner_quantity_baseline_storage_stays_within_ceiling() {
-    // Measured 5,648 B + 64 B per the default-headroom rule.
-    // The +8 B over 5,640 comes from merged dev's FollowRun::walk_packet_budget
-    // in crates/nav-executor/src/traveller.rs, not this branch's quantity fields.
+    // Measured merged 5,784 B + 64 B headroom; release quest evidence/colours add 136 B.
     assert!(
-        std::mem::size_of::<ScenarioRunner>() <= 5_712,
-        "ScenarioRunner exceeded its 5,648 B measurement + 64 B default headroom"
+        std::mem::size_of::<ScenarioRunner>() <= 5_848,
+        "ScenarioRunner exceeded its 5,784 B measurement + 64 B default headroom"
     );
 }
