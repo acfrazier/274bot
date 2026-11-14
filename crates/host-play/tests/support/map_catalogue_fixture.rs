@@ -27,13 +27,11 @@ impl ReadyCatalogueFixture {
         ));
         let cache = MapCacheRoot::from_root(&root);
         let manager = MapDemandManager::new(cache, Arc::new(CountingMapProducer::default()));
-        // The unique root keeps each synthetic ready identity distinct; the producer
-        // ignores client assets.
+        // The unique cache root isolates each fixture; the producer ignores client assets.
         let (image_policy, catalogue_policy) =
             map_host::map_artifact_policies().expect("map artifact policies");
         let descriptor = map_host::map_cache::MapProfileDescriptor::new(
             profile.revision().as_i32() as u16,
-            nav_planner::map::identity::Digest::of(root.to_string_lossy().as_bytes()),
             image_policy,
             catalogue_policy,
         )

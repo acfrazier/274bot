@@ -2278,6 +2278,8 @@ mod tests {
                 varp_id: 42,
                 complete: 10,
                 colour_authoritative: false,
+                completion_range: None,
+                completion_range_after_login: None,
                 stage_domain: Some(InclusiveRange {
                     min: Some(0),
                     max: Some(20),

@@ -32,7 +32,7 @@ fn check(base: &Path) -> Result<serde_json::Value, String> {
         ));
     }
     description
-        .validate(description.identity)
+        .validate()
         .map_err(|error| format!("validate shipped catalogue description: {error}"))?;
     let catalogue_dir = map_root
         .join("catalogues")
