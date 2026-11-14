@@ -117,6 +117,9 @@ function compareFor(text: string, variable: string, constants: ReadonlyMap<strin
 function reversedOperator(operator: string) {
     return ({ '<': '>', '<=': '>=', '>': '<', '>=': '<=', '=': '=', '==': '==', '!=': '!=' } as Record<string, string>)[operator];
 }
+function negatedOperator(operator: string) {
+    return ({ '<': '>=', '<=': '>', '>': '<=', '>=': '<', '=': '!=', '==': '!=', '!=': '=' } as Record<string, string>)[operator];
+}
 
 function comparisonAt(text: string, variable: string, constants: ReadonlyMap<string, number>) {
     const found = compareFor(text, variable, constants);
