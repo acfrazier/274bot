@@ -555,6 +555,15 @@ cells = [
   "host.receipt-377-cook-raster-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} ROUTE_A_RASTER=1 ROUTE_A_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1",
 ]
 
+# The R289 bank and R377 Hans dialogue render live interface widgets from cache.
+[[cover]]
+globs = ["vendor/fr-client-rust/crates/client/src/config/if_type.rs"]
+cells = [
+  "host.bank-mage-teller-native|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_mage_teller_native_real_play_receipt --nocapture --test-threads=1",
+  "host.receipt-377-client-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p tui --bin tui-play -- --revision 377 --engine ${ENGINE_377_DIR:?} --cache ${CLIENT_377_CACHE_DIR:?} --unpack ${CLIENT_377_UNPACK_DIR:?} --nav-pack ${NAV_PACK_377:?} --nav-flags ${NAV_FLAGS_377:?} --live script_client_377|--locked -p scenario --features api/test-support --lib receipt_",
+]
+
+
 # Shared world assembly is used by real R289 arrival and R377 raster routes.
 [[cover]]
 globs = ["vendor/fr-client-rust/crates/client/src/core/world.rs"]
