@@ -4605,6 +4605,9 @@ mod tests {
 
     #[test]
     fn native_teller_network_coords_selects_nearest_path_head_through_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let origin = WorldTile {
             x: 3200,
             z: 3200,

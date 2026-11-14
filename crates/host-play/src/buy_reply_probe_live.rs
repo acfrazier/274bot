@@ -2339,6 +2339,9 @@ mod network_coords_tests {
 
     #[test]
     fn keeper_candidate_uses_network_coords_without_size_fallback() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let rendered = WorldTile {
             x: 10,
             z: 10,
