@@ -431,9 +431,12 @@ fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
     );
 }
 
+/// DANGER-SIMPLIFY-1109 intentionally retired automatic named retries.
+/// A permitted request receives its all-zone grant up front; every other
+/// hard routing constraint remains request-frozen.
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
+fn u6_permitted_search_keeps_teleport_wilderness_avoid_and_quest_authority() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -481,6 +484,9 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
         level: Some(0),
     }];
     let original_avoid = avoid;
+    let (admission, decision) =
+        decided_admission(crate::DangerLevel::Never, true, false, input(99));
+    assert!(decision.permitted && decision.enforce);
     let options = FindOptions {
         allow_teleports: false,
         allow_wilderness: false,
@@ -488,9 +494,8 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
         bank_preferences: Default::default(),
         prefer_target_order: false,
         essence: None,
-        zones: ZoneExempt::NONE,
+        zones: admission.grants,
     };
-    let admission = make_admission(RiskPolicy::Avoid, input(99));
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
         let result = route(
@@ -515,13 +520,9 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
         (result, seen)
     });
 
-    assert_eq!(searches.len(), 2);
-    assert_eq!(kernels, 5);
-    assert_eq!(searches[0].zones, ZoneExempt::NONE);
-    assert_eq!(
-        searches[1].zones,
-        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap()
-    );
+    assert_eq!(searches.len(), 1);
+    assert_eq!(kernels, 1);
+    assert_eq!(searches[0].zones, ZoneExempt::all());
     let route = routed(&result);
     assert!(route.legs.iter().all(|leg| matches!(leg, Leg::Walk { .. })));
     for leg in &route.legs {
