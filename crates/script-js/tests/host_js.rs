@@ -26,6 +26,44 @@ fn ground_identity_request_layout_measurement() {
 fn host_js_dts_includes_required_interfaces() {
     let src = render_host_js_dts();
     assert!(src.contains("export interface FindOptions"));
+
+    assert!(src.contains("export type ScriptManifestCapability = 'host-packet-protocol';"));
+    assert!(src.contains(
+        "export type ScriptManifestSettingType = 'boolean' | 'number' | 'string' | 'string[]' | 'tile';"
+    ));
+    let tile = interface_block(&src, "ScriptManifestTile");
+    assert!(tile.contains("x: number;") && tile.contains("z: number;"));
+    assert!(tile.contains("level: number;"));
+    let setting = interface_block(&src, "ScriptManifestSetting");
+    for field in [
+        "type: ScriptManifestSettingType;",
+        "default: boolean | number | string | readonly string[] | ScriptManifestTile;",
+        "label?: string;",
+        "min?: number;",
+        "max?: number;",
+        "options?: readonly string[];",
+        "optionLabels?: Readonly<Record<string, string>>;",
+        "group?: string;",
+        "showIf?: { key: string; anyOf: readonly string[] };",
+        "optionsFrom?: 'loadouts' | 'named-banks';",
+        "help?: string;",
+    ] {
+        assert!(setting.contains(field), "{field}");
+    }
+    let manifest = interface_block(&src, "ScriptManifest");
+    for field in [
+        "apiVersion: 2;",
+        "name: string;",
+        "version: string;",
+        "author: string;",
+        "description: string;",
+        "category: string;",
+        "tags: readonly string[];",
+        "settings: Readonly<Record<string, ScriptManifestSetting>>;",
+        "capabilities: readonly ScriptManifestCapability[];",
+    ] {
+        assert!(manifest.contains(field), "{field}");
+    }
     assert!(src.contains("allow_wilderness"));
     assert!(
         src.contains("wilderness"),

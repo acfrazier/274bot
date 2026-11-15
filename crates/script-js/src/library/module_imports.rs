@@ -2,6 +2,7 @@
 //! from the `deno_ast` parse rather than a text scan. Type-only declarations
 //! are flagged so load scans follow only what the transpiled module imports.
 
+use super::ast::strip_bom;
 use deno_ast::swc::ast::ExportSpecifier;
 use deno_ast::swc::ast::{ImportSpecifier, ModuleDecl, ModuleExportName, ModuleItem};
 use deno_ast::ProgramRef;
@@ -31,6 +32,7 @@ impl ModuleImport {
 /// Every static dependency of `source`. A source that does not parse as
 /// TypeScript has none here; the transpile at Load reports that failure.
 pub fn module_imports(source: &str) -> Vec<ModuleImport> {
+    let (source, _) = strip_bom(source);
     let Ok(specifier) = deno_ast::ModuleSpecifier::parse("file:///module.ts") else {
         return Vec::new();
     };

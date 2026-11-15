@@ -634,6 +634,7 @@ fn module_edges(
     referrer: &deno_ast::ModuleSpecifier,
     modules: &[Module],
 ) -> Option<ModuleEdges> {
+    let (source, _) = crate::library::ast::strip_bom(source);
     let parsed = deno_ast::parse_module(ParseParams {
         specifier: referrer.clone(),
         text: source.into(),

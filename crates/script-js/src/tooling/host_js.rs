@@ -51,10 +51,11 @@ pub fn write_host_js_dts_to(path: &Path) -> Result<(), String> {
 pub fn render_host_js_dts() -> String {
     let mut out = String::from(
         "// Generated from host verb tables — do not edit by hand.\n\
-         // Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored\n\
-         // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
+         // NativeTick Load uses a checked `manifest` export.\n\
          // Not a clone of rs2b0t-api.\n\n",
     );
+    render_manifest_types(&mut out);
+    out.push('\n');
 
     for iface in SUPPORTING_INTERFACES {
         render_interface(&mut out, iface);
@@ -175,6 +176,42 @@ pub fn render_host_js_dts() -> String {
     render_native_v2(&mut out);
 
     out
+}
+
+fn render_manifest_types(out: &mut String) {
+    out.push_str(
+        "export type ScriptManifestCapability = 'host-packet-protocol';\n\
+         export type ScriptManifestSettingType = 'boolean' | 'number' | 'string' | 'string[]' | 'tile';\n\
+         export interface ScriptManifestTile {\n\
+           x: number;\n\
+           z: number;\n\
+           level: number;\n\
+         }\n\
+         export interface ScriptManifestSetting {\n\
+           type: ScriptManifestSettingType;\n\
+           default: boolean | number | string | readonly string[] | ScriptManifestTile;\n\
+           label?: string;\n\
+           min?: number;\n\
+           max?: number;\n\
+           options?: readonly string[];\n\
+           optionLabels?: Readonly<Record<string, string>>;\n\
+           group?: string;\n\
+           showIf?: { key: string; anyOf: readonly string[] };\n\
+           optionsFrom?: 'loadouts' | 'named-banks';\n\
+           help?: string;\n\
+         }\n\
+         export interface ScriptManifest {\n\
+           apiVersion: 2;\n\
+           name: string;\n\
+           version: string;\n\
+           author: string;\n\
+           description: string;\n\
+           category: string;\n\
+           tags: readonly string[];\n\
+           settings: Readonly<Record<string, ScriptManifestSetting>>;\n\
+           capabilities: readonly ScriptManifestCapability[];\n\
+         }\n",
+    );
 }
 
 fn render_find_options(out: &mut String) {
