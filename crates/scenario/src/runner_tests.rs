@@ -5383,6 +5383,12 @@ fn unknown_zero_needs_a_matching_witness_even_when_metadata_says_private() {
         "an unknown zero passed without a witness: {:?}",
         unobserved.status()
     );
+    let receipt = unobserved.evidence().expect("unavailable receipt");
+    assert_eq!(receipt.outcome, "UNAVAILABLE");
+    assert!(receipt
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("UnobservedBaseVarp")));
     drop(unobserved);
 
     for witness in [

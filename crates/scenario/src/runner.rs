@@ -1793,9 +1793,11 @@ impl ScenarioRunner {
                     VarbitObservation::Unknown {
                         base_varp,
                         base_value,
-                    } => observed_base_varp.is_some_and(|witness| {
+                    } => {
+                        let witness = observed_base_varp
+                            .ok_or(VarbitUnavailable::UnobservedBaseVarp { id, base_varp })?;
                         witness.varp_id == base_varp && witness.value == base_value
-                    }),
+                    }
                 };
                 Ok(observed && result.value == value)
             }
