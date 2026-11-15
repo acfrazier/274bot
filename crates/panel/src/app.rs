@@ -8130,6 +8130,45 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
     }
 }
 
+/// The saved-data preflight of the panel's start, before any window opens:
+/// the probe of the stores beneath `root` and its one old-format question.
+/// `Ok(None)`: startup goes on (nothing was refused). `Ok(Some(..))`: the
+/// refused files and the question the first frame asks about them. An I/O
+/// failure of the probe, or refused files a run that cannot ask about
+/// (`skip_lock`) must keep, stops the start. A legacy preferences file the
+/// state database cannot import is none of these: the probe does not open
+/// it, and the database's refusal (path, cause and remedy) shows on the
+/// preferences' own surface while the start and every other store go on.
+fn saved_data_preflight(
+    root: &frontend_core::saved_data::StateRoot,
+    skip_lock: bool,
+) -> Result<Option<(frontend_core::saved_data::SavedDataStartup, String)>, window::PanelError> {
+    let startup = frontend_core::saved_data::SavedDataStartup::check(root).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        window::PanelError::StartupFailure(message)
+    })?;
+    let Some(message) = startup.refusal().map(ToString::to_string) else {
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                window::PanelError::StartupFailure(message)
+            })?;
+        return Ok(None);
+    };
+    if skip_lock {
+        let error = startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+            .expect_err("the preflight found refused saved data");
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        return Err(window::PanelError::StartupFailure(message));
+    }
+    Ok(Some((startup, message)))
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
@@ -8145,32 +8184,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
-    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
-        let message = error.to_string();
-        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-        window::PanelError::StartupFailure(message)
-    })?;
-    let refusal_text = startup.refusal().map(ToString::to_string);
-    let mut saved_data_prompt = if let Some(message) = refusal_text {
-        if skip_lock {
-            let error = startup
-                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
-                .expect_err("the preflight found refused saved data");
-            let message = error.to_string();
-            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-            return Err(window::PanelError::StartupFailure(message));
-        }
-        Some((startup, message))
-    } else {
-        startup
-            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
-            .map_err(|error| {
-                let message = error.to_string();
-                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-                window::PanelError::StartupFailure(message)
-            })?;
-        None
-    };
+    let mut saved_data_prompt = saved_data_preflight(&root, skip_lock)?;
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");

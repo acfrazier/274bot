@@ -154,6 +154,7 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     let root = StateRoot::new(dir.join(".274bot"));
     std::fs::create_dir_all(root.path()).expect("root");
     let legacy = d_sized();
+    let document_bytes = legacy.len() as isize;
     std::fs::write(root.preferences_file(), &legacy).expect("legacy file");
     drop(legacy);
     #[cfg(unix)]
@@ -170,6 +171,7 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     let gate = Mutex::new(gate);
     let held = Arc::new(AtomicBool::new(false));
     counter_counts_growth_and_release();
+    counter_counts_realloc();
     let baseline = LIVE.load(Ordering::SeqCst);
     PEAK.store(baseline, Ordering::SeqCst);
 
@@ -227,6 +229,13 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     drop(preferences);
     let retained = LIVE.load(Ordering::SeqCst) - baseline;
     println!("T53_RUST_MEMORY peak={peak} retained={retained}");
+    // The durable snapshot alone holds the imported document, so a retained
+    // total under its size means the counter saw releases that it did not
+    // see allocations for (a `realloc` it missed reads negative here).
+    assert!(
+        retained >= document_bytes,
+        "retained {retained} < the imported document's {document_bytes} bytes: the counter missed allocations"
+    );
     // The queued patches alone hold 9 x 25 values of 3,800 bytes while the
     // writer is stalled, so a counter that saw the work reads at least that
     // much. A peak under the floor means the counter stopped counting.
@@ -263,6 +272,7 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
 
 /// The counter moves with allocation and back with release: a counter
 /// that ignores its deltas would let every tripwire above pass at zero.
+/// [`counter_counts_realloc`] checks the third way memory changes hands.
 /// This target runs one test, so no other thread allocates meanwhile.
 fn counter_counts_growth_and_release() {
     const SIZE: usize = 1 << 20;
@@ -283,5 +293,52 @@ fn counter_counts_growth_and_release() {
     assert!(
         after < SIZE as isize,
         "the counter kept {after} bytes after the {SIZE}-byte block was released"
+    );
+}
+
+/// The counter moves with every `realloc`, in both directions, by the
+/// difference of the two sizes. Every `Vec` and `String` the product grows
+/// or shrinks goes through `realloc`, so a counter that missed it would
+/// read a fraction of the true peak and a negative live total once the
+/// buffers were released, and both tripwires above would pass.
+fn counter_counts_realloc() {
+    const SMALL: usize = 1 << 20;
+    const LARGE: usize = 3 << 20;
+    // Other threads of the test harness allocate and free a few hundred
+    // bytes; a missed or doubled `realloc` is off by a megabyte or more.
+    const SLACK: isize = 64 << 10;
+    let before = LIVE.load(Ordering::SeqCst);
+    PEAK.store(before, Ordering::SeqCst);
+    let mut block = std::hint::black_box(Vec::<u8>::with_capacity(SMALL));
+    block.resize(SMALL, 1);
+    // Growth: the vector asks the allocator to resize its one block.
+    block.reserve_exact(LARGE - SMALL);
+    std::hint::black_box(&mut block);
+    let grown_to = block.capacity() as isize;
+    assert!(grown_to > SMALL as isize, "the vector grew its block");
+    let grown = LIVE.load(Ordering::SeqCst) - before;
+    assert!(
+        (grown_to - SLACK..grown_to + SLACK).contains(&grown),
+        "the counter holds {grown} bytes for one block grown by realloc to {grown_to} bytes"
+    );
+    assert!(
+        PEAK.load(Ordering::SeqCst) - before >= grown_to - SLACK,
+        "the peak did not cover a block grown by realloc to {grown_to} bytes"
+    );
+    // Shrinking: the same block gives back all but `SMALL` bytes.
+    block.shrink_to(SMALL);
+    std::hint::black_box(&mut block);
+    let shrunk_to = block.capacity() as isize;
+    assert!(shrunk_to < grown_to, "the vector shrank its block");
+    let shrunk = LIVE.load(Ordering::SeqCst) - before;
+    assert!(
+        (shrunk_to - SLACK..shrunk_to + SLACK).contains(&shrunk),
+        "the counter holds {shrunk} bytes for one block shrunk by realloc to {shrunk_to} bytes"
+    );
+    drop(block);
+    let after = LIVE.load(Ordering::SeqCst) - before;
+    assert!(
+        (-SLACK..SLACK).contains(&after),
+        "the counter holds {after} bytes after the grown and shrunk block was released"
     );
 }

@@ -193,6 +193,15 @@ impl WaitCause {
             }
         }
     }
+
+    /// The cause alone, for a sentence that is not about a save that was
+    /// not saved ("another writer holds the preferences database lock").
+    pub(super) fn reason(self) -> &'static str {
+        let text = self.text();
+        text.strip_prefix("Preferences not saved: ")
+            .unwrap_or(text)
+            .trim_end_matches('.')
+    }
 }
 
 /// What a database job ended with, short of success.
@@ -317,13 +326,20 @@ pub(crate) enum CommitFault {
 pub(crate) type ConnectionProbe = Arc<dyn Fn(Option<(bool, bool)>) + Send + Sync>;
 
 /// The test seams of one database: a stall run inside a real SQL statement
-/// on the writer, and a COMMIT outcome.
+/// on the writer (the first hydration, a refresh, a save), a COMMIT
+/// outcome, and a failing reconnect after an uncertain COMMIT.
 #[cfg(test)]
 #[derive(Default, Clone)]
 pub(crate) struct Seams {
     pub(crate) stall_in_sql: Option<Arc<dyn Fn() + Send + Sync>>,
     pub(crate) commit_fault: Option<Arc<dyn Fn() -> Option<CommitFault> + Send + Sync>>,
-    /// Called at named points of the import (a child process aborts there).
+    /// Asked when the connection is reopened to settle an uncertain COMMIT
+    /// ([`Db::resolve_uncertain`]): `Some` fails that reopening as given
+    /// (a busy database, a refused one).
+    pub(super) reconnect_fault: Option<Arc<dyn Fn() -> Option<SqlFailure> + Send + Sync>>,
+    /// Called at named points of the import, a save and the writer's
+    /// adoption of a version (a child process aborts there, or a stall
+    /// holds there).
     pub(crate) point: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
     /// Called at the end of every [`Db::commit`] with the worker
     /// connection's state: `None` when it was closed, else whether it is
@@ -406,6 +422,8 @@ impl Db {
     /// The durable document when another connection committed since this
     /// connection last read (`PRAGMA data_version`), else `None`.
     pub(super) fn refresh(&mut self) -> Result<Option<Durable>, SqlFailure> {
+        #[cfg(test)]
+        self.stall_in_sql()?;
         let conn = self.conn.as_ref().ok_or_else(closed)?;
         let version: i64 = conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))
@@ -694,6 +712,14 @@ impl Db {
             digest,
             len: body.len(),
         };
+        // A test's hand right after the COMMIT returned: the save is durable
+        // and nothing of it is settled yet (it may die here).
+        #[cfg(test)]
+        if committed.is_ok() {
+            if let Some(point) = &point {
+                point("after-commit");
+            }
+        }
         let mut recovered = false;
         if let Err(error) = committed {
             let code = error.sqlite_error_code();
@@ -702,23 +728,56 @@ impl Db {
                     // Uncertain: the COMMIT may or may not have reached the
                     // disk. Reconnect on this worker and look for this
                     // operation's row; never replay it as a new request.
-                    if !self.resolve_uncertain(epoch, request, version, &digest)? {
-                        self.point("commit-uncertain-lost");
-                        return Ok(Commit::Declined {
-                            code: ErrorCode::Failed {
-                                domain: LocalStateDomain::Preferences,
-                                reason: FailureReason::Io,
-                            },
-                            detail: Some(Arc::from(format!(
-                                "the save's outcome is unknown after a disk error at COMMIT \
-                                 ({error}); it was not retried, and the preferences show what \
-                                 the database holds"
-                            ))),
-                            observed,
-                        });
+                    match self.resolve_uncertain(epoch, request, version, &digest) {
+                        Ok(true) => {
+                            self.point("commit-uncertain-found");
+                            recovered = true;
+                        }
+                        Ok(false) => {
+                            self.point("commit-uncertain-lost");
+                            return Ok(Commit::Declined {
+                                code: ErrorCode::Failed {
+                                    domain: LocalStateDomain::Preferences,
+                                    reason: FailureReason::Io,
+                                },
+                                detail: Some(unknown_outcome(
+                                    &error,
+                                    "it was not retried, and the preferences show what the \
+                                     database holds",
+                                )),
+                                observed,
+                            });
+                        }
+                        Err(failure) => {
+                            // The reconnect that would have settled it
+                            // failed (plan §4.2): the save stays unresolved.
+                            // It is neither retried (a retry decides against
+                            // the head its own COMMIT may have made, and
+                            // would settle "unchanged" or apply twice) nor
+                            // reported as not saved, and a refused reopening
+                            // keeps that state in front of its own cause.
+                            self.point("commit-uncertain-unresolved");
+                            let cause = match &failure {
+                                SqlFailure::Wait(cause) => cause.reason(),
+                                SqlFailure::Refused { detail, .. } => detail.trim_end_matches('.'),
+                            };
+                            return Ok(Commit::Declined {
+                                code: ErrorCode::Failed {
+                                    domain: LocalStateDomain::Preferences,
+                                    reason: FailureReason::Io,
+                                },
+                                detail: Some(unknown_outcome(
+                                    &error,
+                                    &format!(
+                                        "it was not retried, and the database could not be \
+                                         reopened to check it ({cause}); the preferences show \
+                                         what the database holds once it opens"
+                                    ),
+                                )),
+                                observed,
+                            });
+                        }
                     }
-                    self.point("commit-uncertain-found");
-                    recovered = true;
                 }
                 Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
                     self.confirm_rolled_back()?;
@@ -799,6 +858,15 @@ impl Db {
     ) -> Result<bool, SqlFailure> {
         self.conn = None;
         self.data_version = None;
+        #[cfg(test)]
+        if let Some(fault) = self
+            .seams
+            .reconnect_fault
+            .as_ref()
+            .and_then(|fault| fault())
+        {
+            return Err(fault);
+        }
         let conn = open_connection(&self.root)?;
         let found = conn
             .query_row(
@@ -869,14 +937,14 @@ impl Db {
 
     /// A test's named point (no effect in product builds).
     #[cfg(test)]
-    fn point(&self, name: &'static str) {
+    pub(super) fn point(&self, name: &'static str) {
         if let Some(point) = &self.seams.point {
             point(name);
         }
     }
 
     #[cfg(not(test))]
-    fn point(&self, _name: &'static str) {}
+    pub(super) fn point(&self, _name: &'static str) {}
 
     #[cfg(test)]
     fn stall_in_sql(&self) -> Result<(), SqlFailure> {
@@ -2628,6 +2696,15 @@ fn statement_failure(error: &rusqlite::Error) -> ErrorCode {
             reason: FailureReason::Io,
         },
     }
+}
+
+/// What a save says when the disk error at its COMMIT left its outcome
+/// unknown (plan §4.2): the COMMIT may have reached the disk, so the save is
+/// never said not to be saved, and never retried. `then` says what follows.
+fn unknown_outcome(error: &rusqlite::Error, then: &str) -> Arc<str> {
+    Arc::from(format!(
+        "the save's outcome is unknown after a disk error at COMMIT ({error}); {then}"
+    ))
 }
 
 #[cfg(test)]

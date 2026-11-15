@@ -8144,6 +8144,87 @@ fn refused_preferences_show_their_cause_and_remedy_in_the_settings_window() {
     std::fs::set_permissions(&legacy, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) is no startup failure (plan §5.1,
+/// T5.3 S1 round 2): the saved-data preflight of the panel's start lets it
+/// go on, the preferences' own refusal (path, cause, remedy) shows on the
+/// banner and in General config, and the bank hint store beside it still
+/// saves. Repairing the source lets the next read import it.
+#[test]
+fn a_bad_legacy_preferences_source_neither_stops_the_panel_start_nor_hides_its_refusal() {
+    use frontend_core::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    let _guard = crate::test_support::imgui_context_guard();
+    for case in BadPreferencesSource::ALL {
+        let iso = frontend_core::test_support::IsolatedStores::enter(&format!(
+            "panel-bad-source-{}",
+            case.label()
+        ));
+        let state = iso.home().join(".274bot");
+        let source = state.join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        // What `run_panel` does before any window, on the same root.
+        let root = frontend_core::saved_data::StateRoot::new(state);
+        for skip_lock in [false, true] {
+            let prompt = super::saved_data_preflight(&root, skip_lock).unwrap_or_else(|error| {
+                panic!(
+                    "{}: a bad preferences source stopped the start: {error}",
+                    case.label()
+                )
+            });
+            assert!(prompt.is_none(), "{}: nothing to ask", case.label());
+        }
+
+        let mut ctx = dock_host_context();
+        let mut session = crate::session::Session::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while session.core.preference_error().is_none() {
+            session.pump_status();
+            session.poll_panel_preferences();
+            assert!(
+                Instant::now() < deadline,
+                "{}: the refusal never settled",
+                case.label()
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+        let refusal = session.core.preference_error().unwrap().to_owned();
+        case.assert_refusal(&refusal, &source);
+        assert_eq!(
+            session.error.as_deref(),
+            Some(refusal.as_str()),
+            "{}: the banner shows the refusal",
+            case.label()
+        );
+        for _ in 0..2 {
+            let shown = without_log_pane(preference_frame(&mut ctx, &mut session, &|ui, s| {
+                super::global_config_section(ui, s)
+            }));
+            assert!(shown.contains("Preferences not loaded:"), "{shown}");
+            assert!(shown.contains(&refusal), "{shown}");
+            assert!(!shown.contains("Loading preferences"), "{shown}");
+        }
+        assert!(
+            bank_hint_saves(&session.core, "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        session.preferences.reload().unwrap();
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert_eq!(
+            session.core.preference_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+    }
+}
+
 /// The Browse window as the operator sees it, with the General config's
 /// Global section beside it (where "Saving preferences…" shows).
 fn browse_and_global(ui: &dear_imgui_rs::Ui, session: &mut crate::session::Session) {

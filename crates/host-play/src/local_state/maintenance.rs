@@ -14,7 +14,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::host_log;
@@ -332,6 +332,22 @@ fn recover(
     ))
 }
 
+/// Create `dir` new (an existing one is `AlreadyExists`) owner-only from the
+/// start where the platform has modes, whatever the process umask (a umask
+/// only removes bits). The preserved copies of the database never sit in a
+/// directory others can enter, not even before the first one is written.
+fn create_new_private_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir(dir)
+    }
+}
+
 /// Keep a private, verified copy of every existing file of the database
 /// set in a new `preserved-<time>` directory, sync it, then remove the
 /// originals. No connection is open in this process, and the exclusive
@@ -355,7 +371,7 @@ fn preserve(root: &StateRoot) -> io::Result<Option<PathBuf>> {
             0 => format!("preserved-{stamp}"),
             n => format!("preserved-{stamp}-{n}"),
         });
-        match fs::create_dir(&candidate) {
+        match create_new_private_dir(&candidate) {
             Ok(()) => {
                 dir = Some(candidate);
                 break;
@@ -370,7 +386,6 @@ fn preserve(root: &StateRoot) -> io::Result<Option<PathBuf>> {
             "no free preserved-<time> name",
         )
     })?;
-    vault::create_private_dir(&dir)?;
     for path in &set {
         let bytes = fs::read(path)?;
         let name = path

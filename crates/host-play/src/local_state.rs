@@ -2513,8 +2513,24 @@ impl State {
 
     /// Take what the preferences database holds into the store at its own
     /// durable version. A version this service did not hold is an outside
-    /// change (another process's commit, an import), counted once.
-    fn adopt_durable(&mut self, durable: sql::Durable) {
+    /// change (another process's commit, an import), counted once. The
+    /// writer prepared `adoption` before it took the lock
+    /// ([`Shared::adoption`]): this is the short in-memory swap of plan §3.2.
+    fn adopt_durable(&mut self, adoption: Adoption) {
+        let (durable, snapshot) = match adoption {
+            Adoption::Same(version) => {
+                self.observe_version(version);
+                if let Some(store) = self.stores.get_mut(&StoreKey::Preferences) {
+                    if let FileState::Read(cached) = &mut store.file {
+                        if cached.version == version {
+                            cached.refreshed_at = Instant::now();
+                        }
+                    }
+                }
+                return;
+            }
+            Adoption::New { durable, snapshot } => (durable, snapshot),
+        };
         self.observe_version(durable.version);
         let Some(store) = self.stores.get_mut(&StoreKey::Preferences) else {
             return;
@@ -2526,7 +2542,6 @@ impl State {
             }
         }
         let known = matches!(store.file, FileState::Read(_));
-        let (rows, _) = files::preference_rows(&durable.projection.document);
         if known {
             store.external += 1;
             host_log!(
@@ -2539,7 +2554,7 @@ impl State {
         store.file = FileState::Read(Cached {
             version: durable.version,
             at: DurableTimestamp::now(),
-            snapshot: LeaseSnapshot::preferences(rows),
+            snapshot,
             preferences: Some(durable.projection),
             refreshed_at: Instant::now(),
             digest: Some(durable.digest),
@@ -2571,6 +2586,21 @@ impl State {
         }
         store.file = FileState::Rejected(Rejection { reason, detail });
     }
+}
+
+/// A durable preference version the writer read, prepared to be taken into
+/// the store (plan §3.2: parsed and projected outside every service mutex,
+/// published under only a short in-memory lock). The one costly step is the
+/// lease rows: every member of the document serialized, up to D bytes. It is
+/// done here, before the lock, so the swap under the lock only moves values.
+enum Adoption {
+    /// The store already holds this version: only its freshness moves.
+    Same(StoreVersion),
+    /// A version the store does not hold, with its lease rows built.
+    New {
+        durable: sql::Durable,
+        snapshot: LeaseSnapshot,
+    },
 }
 
 /// What the writer staged for one edit, decided outside the service lock.
@@ -3501,6 +3531,9 @@ impl Shared {
                 Some(hydrated.durable)
             })
         };
+        // The lease rows of a version the store does not hold are built here,
+        // with no service lock held; the swap below only moves them.
+        let read = read.map(|durable| durable.map(|durable| self.adoption(db, durable)));
         let mut state = self.state.lock();
         match read {
             Err(sql::SqlFailure::Wait(cause)) => {
@@ -3514,7 +3547,7 @@ impl Shared {
                     cached.refreshed_at = Instant::now();
                 }
             }
-            Ok(Some(durable)) => state.adopt_durable(durable),
+            Ok(Some(adoption)) => state.adopt_durable(adoption),
             Err(sql::SqlFailure::Refused { reason, detail }) => {
                 state.reject_preferences(reason, detail);
             }
@@ -3523,6 +3556,31 @@ impl Shared {
         state.preference_readback_retry = Retry::default();
         state.readback_done(&key);
         None
+    }
+
+    /// Prepare `durable` to be taken into the preferences store: a version
+    /// the store already holds needs nothing, and a new one gets its lease
+    /// rows built. No service lock is held while they are built: the lock
+    /// is taken only for a short look at the cached version here, and by
+    /// the caller for the swap (plan §3.2).
+    fn adoption(&self, db: &sql::Db, durable: sql::Durable) -> Adoption {
+        let held = self
+            .state
+            .lock()
+            .stores
+            .get(&StoreKey::Preferences)
+            .is_some_and(|store| {
+                matches!(&store.file, FileState::Read(cached) if cached.version == durable.version)
+            });
+        if held {
+            return Adoption::Same(durable.version);
+        }
+        db.point("lease-rows");
+        let (rows, _) = files::preference_rows(&durable.projection.document);
+        Adoption::New {
+            snapshot: LeaseSnapshot::preferences(rows),
+            durable,
+        }
     }
 
     /// One preference save through the database (plan §4.2–§4.5): the
@@ -3648,7 +3706,8 @@ impl Shared {
                 observed,
             }) => {
                 if let Some(observed) = observed {
-                    self.state.lock().adopt_durable(observed);
+                    let adoption = self.adoption(db, observed);
+                    self.state.lock().adopt_durable(adoption);
                 }
                 self.finish_with_detail(&key, queued, Settlement::Failed(code), detail);
                 None
@@ -3664,7 +3723,8 @@ impl Shared {
             }
             Ok(sql::Commit::Unchanged { staged, observed }) => {
                 if let Some(observed) = observed {
-                    self.state.lock().adopt_durable(observed);
+                    let adoption = self.adoption(db, observed);
+                    self.state.lock().adopt_durable(adoption);
                 }
                 self.finish(
                     &key,

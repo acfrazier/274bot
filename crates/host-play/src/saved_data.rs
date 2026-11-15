@@ -89,18 +89,24 @@ pub struct SavedDataStartup {
 impl SavedDataStartup {
     /// Probe the stores beneath the already-resolved operator state root.
     ///
-    /// Preferences, script settings, loadouts, and server profiles have no
-    /// shape older than the 0.2.8 format to reject: 0.2.8 read every shape
-    /// they hold. They are opened here to make startup I/O failures early;
-    /// their current readers retain ordinary corruption and schema
-    /// handling. Bank hints from before schema 1 and the retired worlds file
-    /// have identifiable older shapes and are collected as one refusal.
+    /// Script settings, loadouts, and server profiles have no shape older
+    /// than the 0.2.8 format to reject: 0.2.8 read every shape they hold.
+    /// They are opened here to make startup I/O failures early; their
+    /// current readers retain ordinary corruption and schema handling. Bank
+    /// hints from before schema 1 and the retired worlds file have
+    /// identifiable older shapes and are collected as one refusal.
+    ///
+    /// Preferences are not probed. They live in the state database, and the
+    /// legacy `panel-ui.json` is only an import source that the database's
+    /// writer reads. A source it cannot read (a directory, a denied
+    /// permission, an I/O error) refuses the preferences alone, with its
+    /// path, cause and remedy, on the preferences' own error surface (plan
+    /// §5.1); the start and every other store go on.
     pub fn check(root: &StateRoot) -> Result<Self, SavedDataCheckError> {
         let mut refusal_paths = Vec::new();
         let mut first_error = None;
 
         for path in [
-            root.preferences_file(),
             root.path().join("script-settings.json"),
             root.loadouts_file(),
         ] {
@@ -449,6 +455,42 @@ mod tests {
 
         let startup = SavedDataStartup::check(&dir.root()).unwrap();
         assert!(startup.refusal().is_none());
+    }
+
+    /// The legacy `panel-ui.json` is an import source of the state database,
+    /// not a store this probe opens (plan §5.1, §5.5): a directory at its
+    /// path, or a file the process may not read, refuses the preferences
+    /// alone (the database import says so with the path, cause and remedy)
+    /// and leaves the start, and every other store, going on.
+    #[test]
+    fn a_directory_or_unreadable_preferences_source_does_not_stop_the_start() {
+        let dir = Scratch::new();
+        dir.write(
+            "bank-hints/alice/alice.json",
+            br#"{"schema_version":1,"profile":"alice","account":"alice","revision":289,"content":"alice","observed_at_unix":1,"rows":[]}"#,
+        );
+        let source = dir.0.join("panel-ui.json");
+
+        fs::create_dir(&source).unwrap();
+        let startup = SavedDataStartup::check(&dir.root())
+            .expect("a directory at the preferences source is not a startup failure");
+        assert_eq!(startup.refusal(), None);
+        fs::remove_dir(&source).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            dir.write("panel-ui.json", br#"{"last_focus":"alice"}"#);
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o000)).unwrap();
+            // A process that may read a mode-000 file anyway (root) cannot
+            // make this case; the directory case above still holds.
+            if File::open(&source).is_err() {
+                let startup = SavedDataStartup::check(&dir.root())
+                    .expect("an unreadable preferences source is not a startup failure");
+                assert_eq!(startup.refusal(), None);
+            }
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
 
     /// Shapes older than what 0.2.8 wrote, which 0.2.8 still read without

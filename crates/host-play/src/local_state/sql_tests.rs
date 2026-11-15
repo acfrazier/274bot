@@ -1952,6 +1952,180 @@ fn commit_outcomes_follow_their_own_rules_and_settle_once() {
     }
 }
 
+/// What one save writes together: the stored document, the domain head, the
+/// version sequence and the recent-commit ledger, read through the test's
+/// own connection.
+#[derive(Debug, PartialEq, Eq)]
+struct SaveRows {
+    document: Vec<u8>,
+    head: u64,
+    sequence: u64,
+    /// (epoch, request, new version, digest) of every ledger row, oldest first.
+    commits: Vec<(u64, u64, u64, Vec<u8>)>,
+}
+
+fn save_rows(root: &StateRoot) -> SaveRows {
+    let conn = inspect(root);
+    let number = |sql: &str| -> u64 {
+        let raw: Vec<u8> = conn.query_row(sql, [], |row| row.get(0)).unwrap();
+        sql::decode_u64(&raw).unwrap()
+    };
+    let mut ledger = conn
+        .prepare("SELECT epoch, request, new_version, digest FROM recent_commit ORDER BY seq")
+        .unwrap();
+    let commits = ledger
+        .query_map([], |row| {
+            let decoded = |index: usize| -> rusqlite::Result<u64> {
+                let raw: Vec<u8> = row.get(index)?;
+                Ok(sql::decode_u64(&raw).unwrap())
+            };
+            Ok((decoded(0)?, decoded(1)?, decoded(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    SaveRows {
+        document: conn
+            .query_row(
+                "SELECT body FROM preference_document WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        head: number("SELECT version FROM domain_head WHERE domain = 'preferences'"),
+        sequence: number("SELECT sequence FROM store_meta WHERE id = 1"),
+        commits,
+    }
+}
+
+/// A COMMIT that ends in a disk error is uncertain, and stays so when the
+/// reconnect that would settle it fails (plan §4.2): the save is not retried
+/// (a retry would decide against the head its own COMMIT made), is never
+/// said not to be saved, and settles once with its outcome unknown, whether
+/// the reopening is busy or refused. The database holds the one commit the
+/// save made, and the cache follows it.
+#[test]
+fn an_uncertain_commit_whose_reconnect_fails_stays_unknown_and_is_not_replayed() {
+    let _state_lease = crate::test_process::state();
+    let cases = [
+        (
+            "busy",
+            sql::SqlFailure::Wait(sql::WaitCause::Busy),
+            "another writer holds the preferences database lock",
+        ),
+        (
+            "refused",
+            sql::SqlFailure::Refused {
+                reason: FailureReason::Io,
+                detail: Arc::from(
+                    "Preferences refused at \"/x/state.sqlite3\": the database did not open: \
+                     disk gone.",
+                ),
+            },
+            "the database did not open: disk gone",
+        ),
+    ];
+    for (case, failure, cause) in cases {
+        let scratch = IsolatedEnv::enter(&format!("t53s4-uncertain-reconnect-{case}"));
+        let root = root_of(&scratch);
+        let service = open(&scratch);
+        let preferences = service.preferences();
+        ready(&preferences);
+        let audits = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&audits);
+        service.set_audit_hook(Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+        let terminals = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&terminals);
+        service.set_terminal_hook(Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+        // The attempt that settles the save leaves no preference save
+        // queued or in flight (a requeued attempt leaves its save queued),
+        // so that attempt's job hook, which runs after the terminal line, is
+        // the fence for the counters.
+        let (job_done, job_done_rx) = mpsc::channel::<()>();
+        let job_done = std::sync::Mutex::new(job_done);
+        let writer = Arc::downgrade(&service);
+        service.set_job_hook_for_test(Arc::new(move |class, _| {
+            if class != "pref-save" {
+                return;
+            }
+            let Some(service) = writer.upgrade() else {
+                return;
+            };
+            if service.preference_occupancy_for_test() == (0, false) {
+                let _ = job_done.lock().unwrap().send(());
+            }
+        }));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let fault = Arc::new(std::sync::Mutex::new(Some(
+            sql::CommitFault::IoErrAfterCommit,
+        )));
+        let reconnect = Arc::new(std::sync::Mutex::new(Some(failure)));
+        service.set_sql_seams_for_test(sql::Seams {
+            commit_fault: Some(Arc::new(move || fault.lock().unwrap().take())),
+            reconnect_fault: Some(Arc::new(move || reconnect.lock().unwrap().take())),
+            after_commit: Some(Arc::new(move |_| {
+                counted.fetch_add(1, Ordering::SeqCst);
+            })),
+            ..sql::Seams::default()
+        });
+
+        let before = save_rows(&root);
+        let Update::Queued(mut update) = preferences.begin_set("n", json!(5)).unwrap() else {
+            panic!("queued");
+        };
+        let request = update.request_id();
+        let error = update
+            .wait(WAIT)
+            .expect("settles")
+            .expect_err("a save of unknown outcome is not reported done")
+            .to_string();
+        job_done_rx
+            .recv_timeout(WAIT)
+            .unwrap_or_else(|_| panic!("{case}: the writer job never completed"));
+
+        assert!(error.contains("outcome is unknown"), "{case}: {error}");
+        assert!(
+            error.contains("could not be reopened to check it"),
+            "{case}: {error}"
+        );
+        assert!(error.contains(cause), "{case}: {error}");
+        assert!(!error.contains("not saved"), "{case}: {error}");
+        assert!(
+            matches!(
+                service.request_state(request),
+                RequestState::Settled(Settlement::Failed(_))
+            ),
+            "{case}"
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "{case}: the save ran once and was not retried"
+        );
+        assert_eq!(audits.load(Ordering::SeqCst), 0, "{case}: no saved line");
+        assert_eq!(
+            terminals.load(Ordering::SeqCst),
+            1,
+            "{case}: exactly one terminal line"
+        );
+        // The COMMIT did reach the disk, once, at one version.
+        let after = save_rows(&root);
+        assert_eq!(after.head, before.head + 1, "{case}");
+        assert_eq!(after.commits.len(), before.commits.len() + 1, "{case}");
+        assert_eq!(stored_document(&root)["n"], json!(5), "{case}");
+        // The preferences show what the database holds.
+        preferences.reload().unwrap();
+        let snapshot = ready(&preferences);
+        assert_eq!(snapshot.version().get(), after.head, "{case}");
+        assert_eq!(snapshot.document()["n"], json!(5), "{case}");
+    }
+}
+
 #[test]
 fn a_held_sqlite_write_lock_fails_the_save_busy_at_its_deadline_while_bank_hints_save() {
     let _state_lease = crate::test_process::state();
@@ -2544,6 +2718,120 @@ fn a_crash_after_the_malformed_copy_commits_defaults_once_and_never_loses_the_so
     assert!(copies >= 1, "the damaged bytes are kept");
 }
 
+/// A child of [`a_process_that_dies_in_a_save_leaves_all_of_it_or_none_of_it`]:
+/// one save through the service, and the process aborts at the database's
+/// named point `T53_CRASH_AT` (`before-commit`: inside the open write
+/// transaction, every statement of the save run and none committed;
+/// `after-commit`: the COMMIT returned and nothing of the save is settled).
+#[test]
+#[ignore = "child process of the save crash test"]
+fn save_crash_child() {
+    let root = StateRoot::new(env_path("T53_ROOT"));
+    let at = std::env::var("T53_CRASH_AT").unwrap();
+    let point: Arc<dyn Fn(&'static str) + Send + Sync> = Arc::new({
+        let at = at.clone();
+        move |name| {
+            if name == at {
+                std::process::abort();
+            }
+        }
+    });
+    let service = LocalStateService::open_process_with_seams_for_test(
+        root,
+        sql::Seams {
+            point: Some(point),
+            ..sql::Seams::default()
+        },
+        None,
+    );
+    let preferences = service.preferences();
+    ready(&preferences);
+    let _ = save(&preferences, "crashed", json!(2));
+    panic!("the child should have aborted at {at}");
+}
+
+/// A real process that dies in a save leaves all of it or none of it (plan
+/// §5.4, §9.5). Inside the open write transaction, with every statement of
+/// the save run and none committed, the document, the domain head, the
+/// version sequence and the commit ledger are all as they were. Right after
+/// the COMMIT returned, all four hold the save, at one version, and the
+/// ledger's digest is the document's. A new process then reads what is
+/// durable, from a database that passes its own integrity check.
+#[cfg(unix)]
+#[test]
+fn a_process_that_dies_in_a_save_leaves_all_of_it_or_none_of_it() {
+    use std::os::unix::process::ExitStatusExt;
+    crate::test_process::isolate_state_test!(
+        a_process_that_dies_in_a_save_leaves_all_of_it_or_none_of_it
+    );
+    for (point, durable) in [("before-commit", false), ("after-commit", true)] {
+        let scratch = IsolatedEnv::enter(&format!("t53s4-save-crash-{point}"));
+        let root = root_of(&scratch);
+        {
+            let service = open(&scratch);
+            let preferences = service.preferences();
+            ready(&preferences);
+            save(&preferences, "kept", json!(1)).unwrap();
+        }
+        let before = save_rows(&root);
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "local_state::sql_tests::save_crash_child",
+            ])
+            .env("T53_ROOT", root.path())
+            .env("T53_CRASH_AT", point)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGABRT),
+            "{point}: the child died by its abort at the point ({status})"
+        );
+
+        let after = save_rows(&root);
+        let integrity: String = inspect(&root)
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok", "{point}");
+        let document: serde_json::Value = serde_json::from_slice(&after.document).unwrap();
+        if durable {
+            assert_eq!(after.head, before.head + 1, "{point}: one version");
+            assert_eq!(after.sequence, after.head, "{point}: the sequence follows");
+            assert_eq!(document["kept"], json!(1), "{point}");
+            assert_eq!(document["crashed"], json!(2), "{point}: the whole save");
+            assert_eq!(
+                after.commits.len(),
+                before.commits.len() + 1,
+                "{point}: its ledger row"
+            );
+            let (_, _, version, digest) = after.commits.last().unwrap();
+            assert_eq!(*version, after.head, "{point}");
+            assert_eq!(
+                digest.as_slice(),
+                files::digest(&after.document).as_slice(),
+                "{point}: the ledger names the stored document"
+            );
+        } else {
+            assert_eq!(after, before, "{point}: nothing of the save is visible");
+            assert!(document.get("crashed").is_none(), "{point}");
+        }
+
+        let service = open(&scratch);
+        let snapshot = ready(&service.preferences());
+        assert_eq!(snapshot.version().get(), after.head, "{point}");
+        assert_eq!(snapshot.document()["kept"], json!(1), "{point}");
+        assert_eq!(
+            snapshot.document().get("crashed"),
+            durable.then_some(&json!(2)),
+            "{point}"
+        );
+    }
+}
+
 /// A child of [`the_live_metadata_check_never_cancels_sqlite_locks`]: it
 /// probes the write lock directly with no busy wait. Exit 3 for BUSY, 0
 /// when it got the lock.
@@ -2598,28 +2886,67 @@ fn the_live_metadata_check_never_cancels_sqlite_locks() {
     assert_eq!(probe().code(), Some(0));
 }
 
-/// A child of [`private_files_stay_private_under_both_umasks`].
+/// The permission bits of `path`.
+#[cfg(unix)]
+fn mode_of(path: &std::path::Path) -> u32 {
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+/// The state directory is 0700 and every file of the live database set 0600.
+#[cfg(unix)]
+fn assert_private_live_set(root: &StateRoot) {
+    assert_eq!(mode_of(&root.state_dir()), 0o700);
+    for file in sql::database_set(root) {
+        assert_eq!(mode_of(&file), 0o600, "{}", file.display());
+    }
+}
+
+/// A child of [`private_files_stay_private_under_both_umasks`]: the live
+/// set, then, after a recovery that preserves it and starts a new history,
+/// the preserved set and the new live set. Every directory is 0700 and every
+/// file 0600 whatever the umask the child runs under.
 #[test]
 #[ignore = "child process of the umask test"]
 fn umask_child() {
     let root = StateRoot::new(env_path("T53_ROOT"));
-    let service = LocalStateService::open_process(root.clone());
-    let preferences = service.preferences();
-    ready(&preferences);
-    save(&preferences, "n", json!(1)).unwrap();
+    {
+        let service = LocalStateService::open_process(root.clone());
+        let preferences = service.preferences();
+        ready(&preferences);
+        save(&preferences, "n", json!(1)).unwrap();
+        #[cfg(unix)]
+        assert_private_live_set(&root);
+    }
+    // The service is closed: the recovery takes the root exclusively.
+    run_preferences_maintenance(
+        &root,
+        Frontend::Headless,
+        &MaintenanceAction::RecoverDefaults,
+    )
+    .unwrap();
     #[cfg(unix)]
     {
-        assert_eq!(
-            std::fs::metadata(root.state_dir())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        for file in sql::database_set(&root) {
-            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "{}", file.display());
+        assert_private_live_set(&root);
+        let preserved: Vec<_> = std::fs::read_dir(root.state_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("preserved-")
+            })
+            .collect();
+        assert_eq!(preserved.len(), 1, "the recovery preserved the old set");
+        let preserved = preserved[0].path();
+        assert_eq!(mode_of(&preserved), 0o700, "{}", preserved.display());
+        let copies: Vec<_> = std::fs::read_dir(&preserved)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .collect();
+        assert!(!copies.is_empty(), "the preserved set holds the database");
+        for copy in copies {
+            assert_eq!(mode_of(&copy.path()), 0o600, "{}", copy.path().display());
         }
     }
 }
@@ -2868,6 +3195,125 @@ fn cold_walk_reads_return_at_once_while_the_writer_is_inside_a_real_sql_call() {
     release.send(()).unwrap();
     ready(&preferences);
     assert!(preferences.walk_globals().is_ok());
+}
+
+/// Run `read` on its own thread while the writer is held, and return what it
+/// returned. It must finish before `release` is sent; the 4 s guard only
+/// turns a hang into a failure.
+fn answers_while_held<T: Send + 'static>(
+    release: &mpsc::Sender<()>,
+    read: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let (done_tx, done) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = done_tx.send(read());
+    });
+    match done.recv_timeout(Duration::from_secs(4)) {
+        Ok(value) => {
+            worker.join().unwrap();
+            value
+        }
+        Err(_) => {
+            let _ = release.send(());
+            let _ = worker.join();
+            panic!("a cached read waited for the held writer");
+        }
+    }
+}
+
+/// The cold-start test above holds the first hydration. A warm service has
+/// three more places where the writer is busy and no cache-only reader may
+/// wait for it (plan §3.2, §9.5): inside the SQL of a refresh that follows
+/// another process's commit, building the lease rows of that version, and
+/// inside the SQL of a save. Hold the writer at each, and the cached walk
+/// view, document and snapshot still answer at once with what the cache
+/// held; after the release the refresh has adopted the other process's
+/// commit and the save is durable.
+#[test]
+fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_a_lease_build_or_a_save() {
+    let _state_lease = crate::test_process::state();
+    for phase in ["refresh", "lease-rows", "save"] {
+        let scratch = IsolatedEnv::enter(&format!("t53s4-warm-hold-{phase}"));
+        let service = open(&scratch);
+        let preferences = service.preferences();
+        ready(&preferences);
+
+        // The hold is installed while the cache is fresh and nobody reads
+        // it, so no refresh can run before the one this test asks for.
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let armed = AtomicBool::new(true);
+        let hold: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if armed.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = released.lock().unwrap().recv_timeout(WAIT);
+            }
+        });
+        service.set_sql_seams_for_test(match phase {
+            "lease-rows" => sql::Seams {
+                point: Some(Arc::new(move |name| {
+                    if name == "lease-rows" {
+                        hold();
+                    }
+                })),
+                ..sql::Seams::default()
+            },
+            _ => sql::Seams {
+                stall_in_sql: Some(hold),
+                ..sql::Seams::default()
+            },
+        });
+        // Another process of the root commits: this service has a version to
+        // adopt at its next refresh.
+        let peer = open(&scratch);
+        save(&peer.preferences(), "peer", json!(1)).unwrap();
+
+        let mut saving = None;
+        if phase == "save" {
+            let Update::Queued(update) = preferences.begin_set("n", json!(1)).unwrap() else {
+                panic!("queued");
+            };
+            saving = Some(update);
+        } else {
+            // A stale cache asks for a refresh.
+            service.expire_preference_cache_for_test();
+            let _ = preferences.walk_globals();
+        }
+        entered
+            .recv_timeout(WAIT)
+            .unwrap_or_else(|_| panic!("{phase}: the writer never reached the held point"));
+
+        let reader = preferences.clone();
+        let (walk, document, snapshot) = answers_while_held(&release, move || {
+            (reader.walk_globals(), reader.document(), reader.snapshot())
+        });
+        assert!(walk.is_ok(), "{phase}: the walk view reads while held");
+        let document = document.unwrap_or_else(|error| panic!("{phase}: {error}"));
+        assert!(snapshot.is_ok(), "{phase}: the snapshot reads while held");
+        assert!(
+            document.get("peer").is_none() && document.get("n").is_none(),
+            "{phase}: what the cache held, before the release"
+        );
+
+        release.send(()).unwrap();
+        match saving {
+            Some(mut update) => {
+                update.wait(WAIT).expect("settles").expect("durable");
+                assert_eq!(ready(&preferences).document()["n"], json!(1));
+            }
+            None => {
+                let deadline = Instant::now() + WAIT;
+                while ready(&preferences).document().get("peer").is_none() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{phase}: the held refresh never adopted the other process's commit"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+    }
 }
 
 #[test]

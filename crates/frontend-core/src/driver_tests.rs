@@ -7141,3 +7141,58 @@ fn a_refused_preferences_store_reaches_the_startup_error_view_until_it_reads() {
     driver.poll();
     assert_eq!(driver.startup_error(), None, "a later snapshot reads");
 }
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) refuses the preferences alone
+/// (plan §5.1): the driver opens, its startup error view names the source
+/// with its cause and the remedy, nothing is saved over it, and the bank
+/// hint store beside it still saves. Repairing the source and reading again
+/// imports it.
+#[test]
+fn a_bad_legacy_preferences_source_refuses_the_preferences_alone() {
+    use crate::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    for case in BadPreferencesSource::ALL {
+        let dir = scratch(&format!("bad-source-{}", case.label()));
+        let state = dir.join("state");
+        let source = state.join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        let _registry = crate::quester_paths::registry_source_test_lock();
+        let mut driver = HeadlessDriver::open(&state, InstancePermit::skip())
+            .expect("the bad source does not stop the driver opening");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while driver.startup_error().is_none() && std::time::Instant::now() < deadline {
+            driver.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let shown = driver
+            .startup_error()
+            .unwrap_or_else(|| panic!("{}: the refusal is never shown", case.label()))
+            .to_owned();
+        case.assert_refusal(&shown, &source);
+        assert_eq!(driver.session().preference_error(), Some(shown.as_str()));
+        assert!(
+            driver.session().preferences().unwrap().snapshot().is_err(),
+            "{}: no defaults stand in for the refused preferences",
+            case.label()
+        );
+        assert!(
+            bank_hint_saves(driver.session(), "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        driver.session().preferences().unwrap().reload().unwrap();
+        driver.poll();
+        assert_eq!(
+            driver.startup_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+    }
+}

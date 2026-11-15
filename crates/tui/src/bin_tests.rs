@@ -890,26 +890,21 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     );
 }
 
-/// A missing vault rejects `--user` before it can request a passphrase or
-/// create the vault file.
-#[test]
-fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
-    let iso = IsolatedStores::enter("tui-user-missing-vault");
+/// The arguments of a run that stops at `--user ghost` on a missing vault
+/// (`vault_path`): `run` refuses it before binding reads the engine key or
+/// prepares the cache, so the run needs neither the host's `ENGINE_DIR` nor
+/// `LOGIN_RSAN/E`, nor a running engine.
+fn ghost_user_args(iso: &IsolatedStores, vault_path: &std::path::Path) -> Args {
     // `run` resolves the vault from its own arguments and the process home,
-    // not from the thread-pinned stores, so name the vault path explicitly.
-    let vault_path = iso.dir().join("vault-test");
-    assert!(!vault_path.exists(), "the test starts without a vault");
+    // not from the thread-pinned stores, so the vault path is named
+    // explicitly.
     let nav_dir = std::env::current_exe()
         .expect("test binary path")
         .parent()
         .and_then(std::path::Path::parent)
         .expect("target debug directory")
         .join("nav/289");
-    // The local profile resolves with any engine directory; `--user` on a
-    // missing vault is refused before binding reads the engine key or
-    // prepares the cache, so the test needs neither the host's `ENGINE_DIR`
-    // nor `LOGIN_RSAN/E`, nor a running engine.
-    let args = parse_args_from([
+    parse_args_from([
         "--profile".to_string(),
         "local-289".to_string(),
         "--engine".to_string(),
@@ -929,7 +924,17 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
         "--user".to_string(),
         "ghost".to_string(),
     ])
-    .unwrap();
+    .unwrap()
+}
+
+/// A missing vault rejects `--user` before it can request a passphrase or
+/// create the vault file.
+#[test]
+fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
+    let iso = IsolatedStores::enter("tui-user-missing-vault");
+    let vault_path = iso.dir().join("vault-test");
+    assert!(!vault_path.exists(), "the test starts without a vault");
+    let args = ghost_user_args(&iso, &vault_path);
 
     let error = run(&args, RunMode::Interactive).unwrap_err();
     assert_eq!(
@@ -943,6 +948,35 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
         !vault_path.exists(),
         "a rejected user must not create a vault"
     );
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) is no startup failure (plan §5.1,
+/// T5.3 S1 round 2): `tui-play`'s start gets past its saved-data check and
+/// stops only at what the run itself refuses (here `--user ghost` on a
+/// missing vault), never at the preferences file.
+#[test]
+fn a_bad_legacy_preferences_source_does_not_stop_the_tui_start() {
+    use frontend_core::test_support::startup::BadPreferencesSource;
+    for case in BadPreferencesSource::ALL {
+        let iso = IsolatedStores::enter(&format!("tui-bad-source-run-{}", case.label()));
+        let source = iso.home().join(".274bot").join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+        let vault_path = iso.dir().join("vault-test");
+        let args = ghost_user_args(&iso, &vault_path);
+
+        let error = run(&args, RunMode::Interactive).unwrap_err();
+        assert_eq!(
+            error,
+            unknown_profile_error("ghost"),
+            "{}: the start must reach the run's own refusal",
+            case.label()
+        );
+        assert!(!vault_path.exists());
+        case.repair(&source);
+    }
 }
 
 /// `--user` selects an existing profile as the boot focus, and an
@@ -10785,4 +10819,84 @@ fn a_refused_preferences_store_shows_on_the_message_line_with_the_library_refusa
         !remaining.contains(refusal.path()),
         "recovery drops the preferences refusal: {remaining}"
     );
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) refuses the preferences alone
+/// (plan §5.1, T5.3 S1 round 2): the message line shows its path, cause and
+/// remedy, the settings popup shows them whole while the refusal stands,
+/// and the bank hint store beside it still saves. Repairing the source
+/// lets the next read import it and drops the refusal.
+#[test]
+fn a_bad_legacy_preferences_source_shows_its_refusal_on_the_message_line() {
+    use frontend_core::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    for case in BadPreferencesSource::ALL {
+        let iso = IsolatedStores::enter(&format!("tui-bad-source-{}", case.label()));
+        let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+        let source = iso.home().join(".274bot").join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.error.is_none() && Instant::now() < deadline {
+            session.pump(&mut app);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let shown = app.error.clone().unwrap_or_else(|| {
+            panic!(
+                "{}: the refusal never reached the message line",
+                case.label()
+            )
+        });
+        case.assert_refusal(&shown, &source);
+        assert_eq!(session.core.preference_error(), Some(shown.as_str()));
+        // The message line is one line and cuts the text; the settings
+        // popup shows the whole refusal while it stands. It wraps at its
+        // width, inside words too: compare without spaces.
+        app.settings_state.open = true;
+        let letters: String = screen_words(&mut app, 120, 40)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for needle in [
+            crate::settings::PREFERENCES_NOT_LOADED,
+            case.cause(),
+            "Restore readable private preferences JSON",
+        ] {
+            let needle: String = needle.chars().filter(|c| !c.is_whitespace()).collect();
+            assert!(
+                letters.contains(&needle),
+                "{}: {needle}: {letters}",
+                case.label()
+            );
+        }
+        app.settings_state.open = false;
+        assert!(
+            bank_hint_saves(&session.core, "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        session.preferences.reload().unwrap();
+        session.pump(&mut app);
+        session.pump(&mut app);
+        assert_eq!(
+            session.core.preference_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+        assert_eq!(
+            app.error,
+            None,
+            "{}: the refusal is off the line",
+            case.label()
+        );
+        assert_eq!(app.preferences_refused, None, "the popup drops it too");
+    }
 }
