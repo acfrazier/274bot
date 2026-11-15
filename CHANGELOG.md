@@ -36,7 +36,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   file, the field and the object it sits in and asking you to edit the
   file to remove one of them; preference saves refuse too, so the file's
   bytes stay as they are and neither a `.corrupt-` copy nor fresh
-  preferences replace it.
+  preferences replace it. A file whose content does not parse at all —
+  say, one truncated in the middle of the repeated field — is still the
+  unreadable file: the next save moves it aside and starts fresh,
+  whatever fields it also names.
 
 ### Game client
 

@@ -34,6 +34,7 @@
 //! processes on one `HOME`, or two compositions in one process) never
 //! interleave on one file.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
@@ -53,7 +54,7 @@ use api::local_state::{
 use script::native::PvpGlobals;
 use serde::de::{self, DeserializeSeed};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{map::Entry, Map, Value};
 use sha2::{Digest, Sha256};
 use vault::read_private_file;
 /// The explicit state root, `<home>/.274bot`, resolved once by the
@@ -451,6 +452,9 @@ pub(super) enum ReadError {
     /// `object` is that object as the refusal names it (`the top level`,
     /// `the object "nav"`) and `field` is the name named twice. Which of
     /// the two values was meant is unknown, so the file is refused whole.
+    /// It is reported only for a document that parses whole: a file whose
+    /// content is not JSON is refused as that JSON error, even when it
+    /// also names a field twice.
     #[error("field {field:?} is named twice in {object}; edit the file to remove one of them")]
     DuplicateField { object: String, field: String },
     #[error("rows: {0}")]
@@ -593,42 +597,76 @@ fn script_runtime_settings_identity(
     ))
 }
 
-/// The position of a member's value inside the object at `object`: the
-/// root object's members sit at their name alone, a nested object's
-/// member at `parent.name`.
-fn member_path(object: &str, field: &str) -> String {
-    match object.is_empty() {
-        true => field.to_owned(),
-        false => format!("{object}.{field}"),
-    }
+/// One segment of a value's position in the document: a member's field
+/// name, borrowed from the document text when it holds no escapes, or an
+/// array element's index.
+enum Segment<'a, 'de> {
+    Field(&'a Cow<'de, str>),
+    Index(usize),
 }
 
-/// The position of an array element inside the value at `array`.
-fn element_path(array: &str, index: usize) -> String {
-    format!("{array}[{index}]")
+/// Where a value sits in the document, as a chain of the parsing frames'
+/// own segments: the root object's members sit at their name alone, a
+/// nested object's member at `parent.name`, an array element at
+/// `array[index]`. The chain lives on the parsing frames' stacks, so a
+/// deep document costs no path text while it parses; a refusal builds the
+/// text once, for its message.
+struct Position<'a, 'de> {
+    parent: Option<&'a Position<'a, 'de>>,
+    segment: Segment<'a, 'de>,
+}
+
+impl Position<'_, '_> {
+    /// The position's path as a refusal names it: `nav[0].rows`.
+    fn path(&self) -> String {
+        let mut frames = Vec::new();
+        let mut cursor = Some(self);
+        while let Some(position) = cursor {
+            frames.push(position);
+            cursor = position.parent;
+        }
+        let mut path = String::new();
+        for frame in frames.iter().rev() {
+            match &frame.segment {
+                Segment::Field(name) => {
+                    if !path.is_empty() {
+                        path.push('.');
+                    }
+                    path.push_str(name);
+                }
+                Segment::Index(index) => {
+                    path.push('[');
+                    path.push_str(&index.to_string());
+                    path.push(']');
+                }
+            }
+        }
+        path
+    }
 }
 
 /// The object a refusal names from a position: the document's root
 /// object is `the top level`, a member's object `the object "nav"`.
-fn object_phrase(path: &str) -> String {
-    match path.is_empty() {
-        true => "the top level".to_owned(),
-        false => format!("the object {path:?}"),
+fn object_phrase(position: Option<&Position>) -> String {
+    match position {
+        None => "the top level".to_owned(),
+        Some(position) => format!("the object {:?}", position.path()),
     }
 }
 
 /// A `Value` parse that refuses a file naming a field twice in one
 /// object. `serde_json` builds its maps silently keeping the last value,
-/// so the check walks the parse itself: `object` is where this value
-/// sits in the document, and the first duplicate is carried out through
-/// `found` because a `serde_json` deserializer can only return its own
-/// error.
-struct NoDuplicateFields<'a> {
-    object: &'a str,
+/// so the check walks the parse itself, carrying the first duplicate out
+/// through `found` because a `serde_json` deserializer can only return
+/// its own error: the parse is not interrupted, so a document that does
+/// not parse whole is refused as the JSON error even when it also names
+/// a field twice.
+struct NoDuplicateFields<'a, 'de> {
+    object: Option<&'a Position<'a, 'de>>,
     found: &'a std::cell::RefCell<Option<ReadError>>,
 }
 
-impl<'de> de::DeserializeSeed<'de> for NoDuplicateFields<'_> {
+impl<'de> de::DeserializeSeed<'de> for NoDuplicateFields<'_, 'de> {
     type Value = Value;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Value, D::Error>
@@ -639,7 +677,7 @@ impl<'de> de::DeserializeSeed<'de> for NoDuplicateFields<'_> {
     }
 }
 
-impl<'de> de::Visitor<'de> for NoDuplicateFields<'_> {
+impl<'de> de::Visitor<'de> for NoDuplicateFields<'_, 'de> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -695,10 +733,18 @@ impl<'de> de::Visitor<'de> for NoDuplicateFields<'_> {
         A: de::SeqAccess<'de>,
     {
         let mut elements = Vec::new();
-        while let Some(element) = access.next_element_seed(NoDuplicateFields {
-            object: &element_path(self.object, elements.len()),
-            found: self.found,
-        })? {
+        loop {
+            let position = Position {
+                parent: self.object,
+                segment: Segment::Index(elements.len()),
+            };
+            let element = match access.next_element_seed(NoDuplicateFields {
+                object: Some(&position),
+                found: self.found,
+            })? {
+                Some(element) => element,
+                None => break,
+            };
             elements.push(element);
         }
         Ok(Value::Array(elements))
@@ -709,39 +755,59 @@ impl<'de> de::Visitor<'de> for NoDuplicateFields<'_> {
         A: de::MapAccess<'de>,
     {
         let mut fields = Map::new();
-        while let Some(field) = access.next_key::<String>()? {
-            if fields.contains_key(&field) {
-                *self.found.borrow_mut() = Some(ReadError::DuplicateField {
-                    object: object_phrase(self.object),
-                    field,
-                });
-                return Err(de::Error::custom("a field of this object is named twice"));
-            }
-            let member = member_path(self.object, &field);
+        while let Some(field) = access.next_key::<Cow<'de, str>>()? {
             let value = access.next_value_seed(NoDuplicateFields {
-                object: &member,
+                object: Some(&Position {
+                    parent: self.object,
+                    segment: Segment::Field(&field),
+                }),
                 found: self.found,
             })?;
-            fields.insert(field, value);
+            // A repeated field is refused once its second value has
+            // parsed: a value that does not parse is the JSON error. The
+            // first duplicate stands (a later one names the same file no
+            // better), and the map keeps the last value while the parse
+            // walks on.
+            match fields.entry(field.into_owned()) {
+                Entry::Occupied(mut entry) => {
+                    if self.found.borrow().is_none() {
+                        *self.found.borrow_mut() = Some(ReadError::DuplicateField {
+                            object: object_phrase(self.object),
+                            field: entry.key().clone(),
+                        });
+                    }
+                    entry.insert(value);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+            }
         }
         Ok(Value::Object(fields))
     }
 }
 
 /// Parses `raw` into a JSON object, refusing a file that names a field
-/// twice in one object at any level. Every other read result is the
-/// plain `serde_json` parse: a valid file holds exactly the values it
-/// held before the check.
-fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
+/// twice in one object at any level. The JSON error wins over the
+/// duplicates: a file whose content is not JSON is refused (and, on a
+/// save-path read, quarantined) as malformed even when it also names a
+/// field twice, so a duplicate is reported only once the document has
+/// parsed whole. Every other read result is the plain `serde_json`
+/// parse: a valid file holds exactly the values it held before the
+/// check.
+pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
     let found = std::cell::RefCell::new(None);
     let mut parser = serde_json::Deserializer::from_str(raw);
     let document = NoDuplicateFields {
-        object: "",
+        object: None,
         found: &found,
     }
     .deserialize(&mut parser)
-    .map_err(|error| found.borrow_mut().take().unwrap_or(ReadError::Json(error)))?;
-    parser.end()?;
+    .map_err(ReadError::Json)?;
+    parser.end().map_err(ReadError::Json)?;
+    if let Some(duplicate) = found.borrow_mut().take() {
+        return Err(duplicate);
+    }
     let Value::Object(document) = document else {
         return Err(ReadError::NotAnObject);
     };
