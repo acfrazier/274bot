@@ -102,15 +102,18 @@ const TRIPWIRES: Option<(isize, isize, isize, isize)> = None;
 const TRIPWIRES_LINUX_X86_64: (isize, isize, isize, isize) =
     (10_804_395, 12_154_945, 1_993_919, 2_243_159);
 
-/// macOS aarch64, measured on merlot 2026-11-14 (S1-PREFS-SQLITE-1114
-/// `measure/rust-memory-macos.txt`, six runs, every one peak 5,920,907 B
-/// and retained 1,994,323 B); T = M + ceil(M / 8). Measured with the earlier
-/// fixture (one document, no old owners, a smaller queue): the fixture above
-/// peaks higher on this target, so the peak check fails here until the
-/// values measured with it replace these.
+/// macOS aarch64. Peak: this fixture (three old owners, the full D-byte
+/// queue, three cycles), measured on the S1 candidate `44d233834` on merlot,
+/// three repeats, all complete (S1-PREFS-SQLITE-1114
+/// `measure/activation/macos-peak-three-summary.json`): M_peak 10,804,611 B,
+/// H_peak 1,350,577 B, T_peak 12,155,188 B (plan-r3.md:334). Retained:
+/// unchanged from S1-PREFS-SQLITE-1114 `measure/rust-memory-macos.txt`,
+/// 2026-11-14, six runs: M_retained 1,994,323 B, T_retained 2,243,614 B; this
+/// fixture's own retained value, 2,190,151 B in that summary, is within that
+/// T_retained.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const TRIPWIRES_MACOS_AARCH64: (isize, isize, isize, isize) =
-    (5_920_907, 6_661_021, 1_994_323, 2_243_614);
+    (10_804_611, 12_155_188, 1_994_323, 2_243_614);
 
 /// A surface with no devices and no models.
 struct Bare;
