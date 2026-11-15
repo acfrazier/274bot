@@ -3261,6 +3261,100 @@ fn cold_walk_reads_return_at_once_while_the_writer_is_inside_a_real_sql_call() {
     assert!(preferences.walk_globals().is_ok());
 }
 
+/// A Start through the service readback API waits for the preferences'
+/// first import to settle. It never queues behind the import on the shared
+/// writer, which cannot preempt a job in flight (operator decision on the
+/// S1 occupancy gate, 2026-11-15). The import is held inside a real SQL
+/// call. The Start's read, as a queue request and as a bounded call, ends
+/// `NotReady` and leaves nothing of itself in the writer's queue; once the
+/// import is released, a Start that waited for it reads, and so does the
+/// composition's Start read of the loadouts.
+#[test]
+fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-start-vs-import");
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let stalled = AtomicBool::new(false);
+    let stall: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        if !stalled.swap(true, Ordering::SeqCst) {
+            entered_tx.send(()).unwrap();
+            let _ = released.lock().unwrap().recv_timeout(WAIT);
+        }
+    });
+    let service = LocalStateService::open_process_with_seams_for_test(
+        root_of(&scratch),
+        sql::Seams {
+            stall_in_sql: Some(stall),
+            ..sql::Seams::default()
+        },
+        None,
+    );
+    entered
+        .recv_timeout(WAIT)
+        .expect("the first import is in flight");
+    let scope = ContentScope::try_new(client::io::ClientRevision::R289, "test-content").unwrap();
+    let composition = StateComposition::new(Arc::clone(&service), "local-289", scope);
+    let loadouts = composition
+        .identity(LocalStateDomain::LoadoutsReferences, "alice")
+        .unwrap();
+    let not_ready = ErrorCode::NotReady {
+        domain: LocalStateDomain::LoadoutsReferences,
+    };
+    let queued = || {
+        service
+            .shared
+            .state
+            .lock()
+            .stores
+            .get(&StoreKey::Loadouts)
+            .is_some_and(|store| store.readback != Readback::Idle)
+    };
+    assert!(
+        !queued(),
+        "the open's own loadouts read ran before the import"
+    );
+
+    // As a queue request: refused at once, nothing queued.
+    assert_eq!(service.start_readback(&loadouts).err(), Some(not_ready));
+    assert!(
+        !queued(),
+        "the Start's read is not queued behind the import"
+    );
+    // As the bounded call: the wait for the import counts against its
+    // timeout, and nothing is queued behind the import when it ends.
+    let started = Instant::now();
+    assert_eq!(
+        service.readback_lease(&loadouts, Duration::from_millis(250)),
+        Err(not_ready)
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "the Start waited for the import, not for a refusal: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        !queued(),
+        "the Start's read is not queued behind the import"
+    );
+
+    // A Start with room to wait waits for the import, then reads.
+    let waiting = {
+        let service = Arc::clone(&service);
+        let loadouts = loadouts.clone();
+        std::thread::spawn(move || service.readback_lease(&loadouts, WAIT))
+    };
+    release.send(()).unwrap();
+    assert_eq!(
+        waiting.join().unwrap(),
+        Ok(None),
+        "no loadouts file is no rows"
+    );
+    ready(&service.preferences());
+    assert!(composition.operator_loadouts("alice").unwrap().is_empty());
+}
+
 /// Run `read` on its own thread while the writer is held at `phase`, and
 /// return what it returned. It must finish before `release` is sent; the 4 s
 /// guard only turns a hang into a failure.

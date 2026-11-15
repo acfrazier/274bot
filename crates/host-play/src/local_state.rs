@@ -83,7 +83,10 @@
 //! puts the job back with a delayed retry (1 ms doubling to 50 ms), and a
 //! save that has not finished 5 s after its first attempt settles `Busy`
 //! with its cause. Bank, loadout and Start jobs always run before the next
-//! preference retry or checkpoint.
+//! preference retry or checkpoint. The writer cannot preempt a job in
+//! flight, so a Start's read never queues behind the first import of the
+//! preferences: it waits for them to settle first
+//! ([`LocalStateService::readback_lease`]).
 //!
 //! **Residual window.** A writer that does not take the lock (a text
 //! editor, a build older than T5.2 r3) is caught by the checks, except in
@@ -1300,6 +1303,16 @@ impl LocalStateService {
     /// old code did: a script Start reading the loadouts file, and a
     /// session boundary reading the account's hint file. Never called on a
     /// tick.
+    ///
+    /// A Start's read never queues behind the first import of the
+    /// preferences: the writer cannot preempt a job in flight, so a read
+    /// queued behind the import would wait for all of it. Until the
+    /// preferences have settled (read, or refused: a refusal holds no other
+    /// store back) the call waits outside the writer's queue, and `timeout`
+    /// counts that wait too (operator decision on the S1 occupancy gate,
+    /// 2026-11-15). Automatic deferred startup waits for the same
+    /// readiness (`OperatorSession::prepare_startup`). The preferences' own
+    /// readbacks are the import and never wait for it.
     pub fn readback_lease(
         &self,
         identity: &DomainIdentity,
@@ -1316,16 +1329,46 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<(DomainLease, bool), ErrorCode> {
+        let deadline = Instant::now() + timeout;
+        self.wait_for_first_import(identity, deadline)?;
         let ticket = self.start_readback(identity)?;
-        self.finish_readback(identity, ticket, Some(Instant::now() + timeout))
+        self.finish_readback(identity, ticket, Some(deadline))
             .unwrap_or(Err(ErrorCode::NotReady {
                 domain: identity.domain(),
             }))
     }
 
+    /// Wait, outside the writer's queue, until a read of `identity`'s store
+    /// no longer queues behind the preferences' first import
+    /// ([`Self::readback_lease`]), at most until `deadline`: `NotReady` then,
+    /// or when the service stops first.
+    fn wait_for_first_import(
+        &self,
+        identity: &DomainIdentity,
+        deadline: Instant,
+    ) -> Result<(), ErrorCode> {
+        let key = self.store_key(identity)?;
+        let mut state = self.shared.state.lock();
+        while self.shared.behind_first_import(&key, &state) {
+            if state.shutdown
+                || self
+                    .shared
+                    .settled
+                    .wait_until(&mut state, deadline)
+                    .timed_out()
+            {
+                return Err(ErrorCode::NotReady {
+                    domain: identity.domain(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Queue a re-read of `identity`'s store and return what
     /// [`Self::finish_readback`] waits for: a read that began after this
-    /// call.
+    /// call. `NotReady`, with nothing queued, while the read would queue
+    /// behind the preferences' first import ([`Self::readback_lease`]).
     pub(crate) fn start_readback(
         &self,
         identity: &DomainIdentity,
@@ -1334,6 +1377,9 @@ impl LocalStateService {
         let domain = identity.domain();
         let mut state = self.shared.state.lock();
         state.admit(&key)?;
+        if self.shared.behind_first_import(&key, &state) {
+            return Err(ErrorCode::NotReady { domain });
+        }
         let Some(target) = self.shared.request_readback(&mut state, &key) else {
             return Err(ErrorCode::NotReady { domain });
         };
@@ -3176,6 +3222,19 @@ mod preference_audit_tests {
 }
 
 impl Shared {
+    /// Whether a read of `key` would queue behind the preferences' first
+    /// import: `key` is another store, and the preferences are open and
+    /// still cold (their first read is queued, in flight or waiting to
+    /// retry). A read or refused store has settled and holds nothing back.
+    fn behind_first_import(&self, key: &StoreKey, state: &State) -> bool {
+        !matches!(key, StoreKey::Preferences)
+            && self.open[domain_index(LocalStateDomain::Preferences)]
+            && state
+                .stores
+                .get(&StoreKey::Preferences)
+                .is_some_and(|store| matches!(store.file, FileState::Cold))
+    }
+
     /// Queue a readback of the admitted store `key` (unless one is queued
     /// already) and make sure the writer is up. What the store's completed
     /// readback count must reach for a read that began after this call, or

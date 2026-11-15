@@ -120,6 +120,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   274bot process is saving preferences." A save that is already inside its
   database transaction when 274bot is closed keeps that transaction's own
   outcome (saved, or not saved) and is never reported as cancelled.
+- A script Start (its loadouts and script settings), and a bank load at a
+  session start, in the first moments after launch, while the preferences are
+  still being imported into the database, now wait for that import to settle
+  before they read their file. They no longer queue behind it on the shared
+  writer, and still give up after their own timeout (5 seconds for a Start).
+  A preferences store that is refused does not hold them back.
 - The Debug tab saves a pinned command and the recent commands separately. A
   pin that failed to save is no longer saved when you send a command, and a
   recent command that failed to save is no longer saved when you pin one.
