@@ -14,6 +14,8 @@ const BASE_ID: i32 = 33;
 const LEVER_ID: i32 = 146;
 const LEVER_TILE: (i32, i32, i32) = (3108, 9745, 0);
 const STAND: (i32, i32, i32) = (3107, 9745, 0);
+// ClientCheatHandler.ts:577-610 takes level,mapsquare-x,mapsquare-z,local-x,local-z.
+const TELEPORT_STAND: &str = "tele 0,48,152,35,17";
 // all.varbit:4881-4884 and all.varp:1129 define a private, untransmitted base.
 const PRIVATE_ID: i32 = 997;
 const PRIVATE_BASE: i32 = 562;
@@ -296,10 +298,10 @@ fn varbit_377_known_and_missing_are_read_only() -> Result<(), String> {
             &mut log,
             "seed-position",
             json!({
-                "command": "tele 3107 9745 0", "scope": "own position",
+                "command": TELEPORT_STAND, "scope": "own position", "expected_tile": STAND,
             }),
         )?;
-        if !interact::cheat(&mut client, "tele 3107 9745 0").is_sent() {
+        if !interact::cheat(&mut client, TELEPORT_STAND).is_sent() {
             return Err("lever fixture teleport refused".into());
         }
         wait_for(
@@ -309,6 +311,11 @@ fn varbit_377_known_and_missing_are_read_only() -> Result<(), String> {
             "varbit-lever-fixture",
             Duration::from_secs(60),
             |state| state.scene_state() == 2 && state.tile() == Some(STAND),
+        )?;
+        write_record(
+            &mut log,
+            "seed-position-readback",
+            sample(&snapshot, &client),
         )?;
         let initial = candidate(&snapshot, &client, KNOWN_ID, BASE_ID, (1, 1))?;
         if initial.value != 0 {
