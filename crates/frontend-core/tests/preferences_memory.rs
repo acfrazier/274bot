@@ -89,31 +89,25 @@ const TRIPWIRES: Option<(isize, isize, isize, isize)> = Some(TRIPWIRES_MACOS_AAR
 )))]
 const TRIPWIRES: Option<(isize, isize, isize, isize)> = None;
 
-/// Linux x86_64. Peak: this fixture (three old owners, the full D-byte
-/// queue, three cycles), measured on the S1 candidate `44d233834` in the
-/// syrah guest on chardonnay, three repeats, all complete (S1-PREFS-SQLITE-1114
+/// Linux x86_64. This fixture (three old owners, the full D-byte queue, three
+/// cycles), measured on the S1 candidate `44d233834` in the syrah guest on
+/// chardonnay, three repeats, all complete (S1-PREFS-SQLITE-1114
 /// `measure/activation/peak-three-summary.json`, computed by
-/// `summarize-peak-three.py`): M_peak 10,804,395 B, H_peak 1,350,550 B,
-/// T_peak 12,154,945 B (plan-r3.md:334). Retained: unchanged from T5.3-S4
-/// `resource-chardonnay-1/rust-memory.log`, 2026-10-28: M_retained
-/// 1,993,919 B, T_retained 2,243,159 B; this fixture's own retained value,
-/// 2,189,871 B in that summary, is within that T_retained.
+/// `summarize-peak-three.py`). Peak: M 10,804,395 B, H 1,350,550 B, T
+/// 12,154,945 B. Retained: M 2,189,871 B, H 273,734 B, T 2,463,605 B. Each H
+/// is ceil(M / 8) and each T is M + H (plan-r3.md:334).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TRIPWIRES_LINUX_X86_64: (isize, isize, isize, isize) =
-    (10_804_395, 12_154_945, 1_993_919, 2_243_159);
+    (10_804_395, 12_154_945, 2_189_871, 2_463_605);
 
-/// macOS aarch64. Peak: this fixture (three old owners, the full D-byte
-/// queue, three cycles), measured on the S1 candidate `44d233834` on merlot,
-/// three repeats, all complete (S1-PREFS-SQLITE-1114
-/// `measure/activation/macos-peak-three-summary.json`): M_peak 10,804,611 B,
-/// H_peak 1,350,577 B, T_peak 12,155,188 B (plan-r3.md:334). Retained:
-/// unchanged from S1-PREFS-SQLITE-1114 `measure/rust-memory-macos.txt`,
-/// 2026-11-14, six runs: M_retained 1,994,323 B, T_retained 2,243,614 B; this
-/// fixture's own retained value, 2,190,151 B in that summary, is within that
-/// T_retained.
+/// macOS aarch64. This fixture, measured on the S1 candidate `44d233834` on
+/// merlot, three repeats, all complete (S1-PREFS-SQLITE-1114
+/// `measure/activation/macos-peak-three-summary.json`). Peak: M 10,804,611 B,
+/// H 1,350,577 B, T 12,155,188 B. Retained: M 2,190,151 B, H 273,769 B, T
+/// 2,463,920 B. Each H is ceil(M / 8) and each T is M + H (plan-r3.md:334).
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const TRIPWIRES_MACOS_AARCH64: (isize, isize, isize, isize) =
-    (10_804_611, 12_155_188, 1_994_323, 2_243_614);
+    (10_804_611, 12_155_188, 2_190_151, 2_463_920);
 
 /// A surface with no devices and no models.
 struct Bare;
