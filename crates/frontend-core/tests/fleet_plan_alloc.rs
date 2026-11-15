@@ -471,8 +471,9 @@ fn a_full_copy_queue_allocates_nothing_while_it_waits() {
     // frame is measured only while targets remain queued and no save slot
     // is free at both ends of it. The first frame that starts any of the
     // queue ends it: those allocations are the copy's own work. Frames
-    // measured before that still count, and a window that ends before any
-    // frame is reported as too short rather than as a regression.
+    // measured before that still count. A window that ends before any frame
+    // is measured fails as too short: a pass that measured nothing would
+    // hide a real per-frame allocation.
     let mut waiting_events = 0;
     let mut waiting_frames = 0;
     let mut ended_early = false;
@@ -504,6 +505,11 @@ fn a_full_copy_queue_allocates_nothing_while_it_waits() {
              after {waiting_frames} measured frames"
         );
     }
+    assert!(
+        waiting_frames > 0,
+        "window too short: the copy left its waiting state before any frame was \
+         measured, so this run proves nothing about the waiting path"
+    );
     assert!(
         waiting_events <= baseline_events,
         "{waiting_events} allocation calls over {waiting_frames} frames while the copy \
