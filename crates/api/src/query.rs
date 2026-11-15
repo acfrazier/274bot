@@ -9,12 +9,22 @@
 //! `widget_search`/`loc_approach` hold the free helper fns.
 
 use crate::snapshot::{
-    ActorTargetView, ChatLineView, GroundItemView, ItemView, LocLayer, LocView, LocalTile, NpcView,
-    PlayerView, SceneView, SideTabView, StatView, VarpView, WidgetRoot, WidgetVarpBindingView,
-    WidgetView, WorldTile,
+    ActorTargetView, ChatLineView, GroundItemView, ItemView, LocLayer, LocView, LocalTile,
+    MenuEntryQuery, NpcView, PlayerView, SceneView, SideTabView, StatView, VarpView, WidgetRoot,
+    WidgetVarpBindingView, WidgetView, WorldTile,
 };
+use client::client::Client;
 use client::dash3d::CollisionFlag;
 use std::sync::Arc;
+
+/// Does the current menu contain the requested structured operation and
+/// target? `None` is the unarmed path and returns without inspecting entries.
+pub fn menu_has_entry(client: &Client, query: Option<MenuEntryQuery>) -> bool {
+    let Some(query) = query else {
+        return false;
+    };
+    crate::snapshot::menu_entries(client).any(|entry| query.matches(entry))
+}
 
 /// Where the candidate values live: a borrowed snapshot slice, or an
 /// owned copy for derived sub-queries (`WidgetQueryExt::items`,
