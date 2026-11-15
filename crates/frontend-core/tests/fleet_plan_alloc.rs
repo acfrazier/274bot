@@ -68,6 +68,20 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
+/// The three tests below build 100-bot worlds and read process-wide state:
+/// one shared `WorkService` worker pool and one process log, and each sets
+/// the process environment's `NAV_PACK`. Run beside each other they stretch
+/// one another's frames and saturate the pool the other test's asynchronous
+/// native preparations use. One at a time keeps every measurement to its own
+/// work; the file's own binary already keeps other crates' tests out.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn live() -> isize {
     LIVE.with(Cell::get)
 }
@@ -185,6 +199,7 @@ fn settle_writes(d: &mut HeadlessDriver) {
 /// per-bot copy.
 #[test]
 fn a_100_target_plan_and_copy_hold_one_bounded_snapshot() {
+    let _serial = serial();
     const PLAN_CEILING: isize = 16 * 1024;
     const COPY_CEILING: isize = 56 * 1024;
     let mut d = driver("bounded");
@@ -283,6 +298,7 @@ fn a_100_target_plan_and_copy_hold_one_bounded_snapshot() {
 /// watcher list is filtered in place, the slot rows are not copied).
 #[test]
 fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
+    let _serial = serial();
     const PLAN_CEILING: isize = 16 * 1024;
     const RUNNING_CEILING: isize = 460 * 1024;
     const FRAME_CEILING: isize = 0;
@@ -379,11 +395,19 @@ fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
 /// Review F4-SOL-3: while a paced settings copy waits for room (the 48
 /// saves in flight are held), its queue is not copied each frame: a frame
 /// makes no more allocation calls than a frame with no copy at all.
+///
+/// "Waits" is a period of its own: the copy's native preparations free room
+/// as they finish (a frame slept 20 ms after the confirm sees the burst
+/// that copies the remaining queue, about 19,000 calls). The window below
+/// is 20 undelayed frames, which stay inside that period; the serial guard
+/// keeps the sibling 100-bot tests from stretching them and from
+/// saturating the shared worker pool.
 #[test]
 fn a_full_copy_queue_allocates_nothing_while_it_waits() {
     if !api::test_support::game_data_available() {
         return;
     }
+    let _serial = serial();
     let mut d = driver("copy-queue");
     // A native card's settings copy reads the revision's script data.
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
